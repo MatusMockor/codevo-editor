@@ -13,6 +13,7 @@ const watch: AgentSessionBackground = {
   ],
   sinceEpochMs: 1,
   taskSinceEpochMs: new Map([["b8kzpiexm", 1]]),
+  reply: { kind: "none" },
 };
 
 describe("agentSessionTaskControls", () => {

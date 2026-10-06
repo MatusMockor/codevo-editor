@@ -31,6 +31,7 @@ const watch: AgentSessionBackground = {
   ],
   sinceEpochMs: 1_700_000_001_000,
   taskSinceEpochMs: new Map([["b8kzpiexm", 1_700_000_001_000]]),
+  reply: { kind: "none" },
 };
 
 function selectedView(): AgentThreadView {

@@ -1126,3 +1126,6 @@ mod task_stop;
 
 #[path = "claude_session_router_compaction_tests.rs"]
 mod compaction;
+
+#[path = "claude_session_router_reply_tests.rs"]
+mod reply_level;

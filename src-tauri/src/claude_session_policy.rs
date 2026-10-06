@@ -135,6 +135,13 @@ pub struct ClaudeSessionBackgroundTask {
     pub description: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ClaudeSessionBackgroundReply {
+    None,
+    InProgress,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeSessionBackgroundTasksEvent {
@@ -143,6 +150,7 @@ pub struct ClaudeSessionBackgroundTasksEvent {
     pub total: usize,
     pub agents: usize,
     pub tasks: Vec<ClaudeSessionBackgroundTask>,
+    pub reply: ClaudeSessionBackgroundReply,
 }
 
 impl ClaudeSessionBackgroundTurnEvent {

@@ -179,7 +179,7 @@ describe("TauriAgentThreadSessionGateway", () => {
     const handler = vi.fn();
     const unsubscribe = await gateway.subscribeAgentSessionBackgroundTasks(handler);
     const pinned = JSON.parse(
-      '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}]}',
+      '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}],"reply":"none"}',
     ) as unknown;
     events.deliver(AGENT_SESSION_BACKGROUND_TASKS_EVENT, { ...(pinned as object), agents: 2 });
     events.deliver(AGENT_SESSION_BACKGROUND_TASKS_EVENT, pinned);
@@ -200,6 +200,7 @@ describe("TauriAgentThreadSessionGateway", () => {
           description: "Live Codex model catalog like Claude",
         },
       ],
+      reply: "none",
     });
     unsubscribe();
     expect(events.unsubscribe).toHaveBeenCalledTimes(1);

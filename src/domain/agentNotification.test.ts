@@ -8,6 +8,7 @@ import {
   type AgentThreadNotificationBaseline,
   type AgentThreadNotificationState,
   type AgentThreadNotificationSubject,
+  type AgentThreadSessionWork,
 } from "./agentNotification";
 
 function turn(turnId: string, status: AgentTurnStatus, origin?: "background"): AgentTurn {
@@ -90,7 +91,11 @@ function run(
 describe("agentThreadNotificationState", () => {
   it("reports completion of a successfully exited turn", () => {
     expect(
-      agentThreadNotificationState(thread([turn("u1", { kind: "exited", exitCode: 0 })]), null),
+      agentThreadNotificationState(
+        thread([turn("u1", { kind: "exited", exitCode: 0 })]),
+        null,
+        "idle",
+      ),
     ).toEqual(DONE);
   });
 
@@ -99,7 +104,7 @@ describe("agentThreadNotificationState", () => {
       { kind: "failed", message: "boom" },
       { kind: "exited", exitCode: 2 },
     ] satisfies AgentTurnStatus[]) {
-      expect(agentThreadNotificationState(thread([turn("u1", status)]), null)).toEqual({
+      expect(agentThreadNotificationState(thread([turn("u1", status)]), null, "idle")).toEqual({
         kind: "signal",
         signal: { kind: "failed", key: "u1:failed" },
       });
@@ -107,31 +112,32 @@ describe("agentThreadNotificationState", () => {
   });
 
   it("stays quiet for stopped and interrupted turns, including interrupted background replies", () => {
-    expect(agentThreadNotificationState(thread([turn("u1", { kind: "stopped" })]), null)).toEqual(
-      QUIET,
-    );
     expect(
-      agentThreadNotificationState(thread([turn("u1", { kind: "interrupted" })]), null),
+      agentThreadNotificationState(thread([turn("u1", { kind: "stopped" })]), null, "idle"),
+    ).toEqual(QUIET);
+    expect(
+      agentThreadNotificationState(thread([turn("u1", { kind: "interrupted" })]), null, "idle"),
     ).toEqual(QUIET);
     expect(
       agentThreadNotificationState(
         thread([turn("u2", { kind: "interrupted" }, "background")]),
         null,
+        "idle",
       ),
     ).toEqual(QUIET);
   });
 
   it("keys a pending interaction by its exact request while the turn runs", () => {
     const running = thread([turn("u2", { kind: "running" })]);
-    expect(agentThreadNotificationState(running, { kind: "approval", id: "req-9" })).toEqual(
-      approval("req-9"),
-    );
-    expect(agentThreadNotificationState(running, { kind: "input", id: "q-1" })).toEqual({
+    expect(
+      agentThreadNotificationState(running, { kind: "approval", id: "req-9" }, "idle"),
+    ).toEqual(approval("req-9"));
+    expect(agentThreadNotificationState(running, { kind: "input", id: "q-1" }, "idle")).toEqual({
       kind: "signal",
       signal: { kind: "input", key: "input:q-1" },
     });
-    expect(agentThreadNotificationState(running, null)).toEqual(QUIET);
-    expect(agentThreadNotificationState(running, undefined)).toEqual(UNKNOWN);
+    expect(agentThreadNotificationState(running, null, "idle")).toEqual(QUIET);
+    expect(agentThreadNotificationState(running, undefined, "idle")).toEqual(UNKNOWN);
   });
 
   it("never reports archived or empty threads", () => {
@@ -139,9 +145,10 @@ describe("agentThreadNotificationState", () => {
       agentThreadNotificationState(
         thread([turn("u1", { kind: "exited", exitCode: 0 })], { archived: true }),
         null,
+        "idle",
       ),
     ).toEqual(QUIET);
-    expect(agentThreadNotificationState(thread([]), null)).toEqual(QUIET);
+    expect(agentThreadNotificationState(thread([]), null, "idle")).toEqual(QUIET);
   });
 });
 
@@ -269,5 +276,146 @@ describe("detectAgentThreadNotifications", () => {
     expect(detectAgentThreadNotifications(new Map(), many).baseline.size).toBe(
       MAX_AGENT_THREAD_NOTIFICATION_SUBJECTS,
     );
+  });
+});
+
+describe("completion while session background work is live", () => {
+  const exitedCleanly: AgentTurnStatus = { kind: "exited", exitCode: 0 };
+  const running = thread([turn("u1", { kind: "running" })]);
+  const settled = thread([turn("u1", exitedCleanly)]);
+  const failed = thread([turn("u1", { kind: "exited", exitCode: 2 })]);
+  const replying = thread([
+    turn("u1", exitedCleanly),
+    turn("u2", { kind: "running" }, "background"),
+  ]);
+  const replied = thread([turn("u1", exitedCleanly), turn("u2", exitedCleanly, "background")]);
+
+  const at = (observed: AgentThread, work: AgentThreadSessionWork) =>
+    agentThreadNotificationState(observed, null, work);
+
+  function signalKeys(steps: ReadonlyArray<AgentThreadNotificationState>): ReadonlyArray<string> {
+    let baseline: AgentThreadNotificationBaseline = new Map();
+    const keys: string[] = [];
+    for (const state of steps) {
+      const detection = detectAgentThreadNotifications(baseline, [subject("t1", state)]);
+      baseline = detection.baseline;
+      keys.push(...detection.events.map((event) => event.signalKey));
+    }
+    return keys;
+  }
+
+  it("holds a completion back as a state naming the completion it holds", () => {
+    expect(at(settled, "live")).toEqual({ kind: "held", signal: DONE.signal });
+    expect(at(replied, "live")).toEqual({
+      kind: "held",
+      signal: { kind: "completed", key: "u2:completed" },
+    });
+  });
+
+  it("leaves failed, stopped, archived and running threads as they were", () => {
+    expect(at(failed, "live")).toEqual(at(failed, "idle"));
+    expect(at(thread([turn("u1", { kind: "failed", message: "boom" })]), "live")).toEqual({
+      kind: "signal",
+      signal: { kind: "failed", key: "u1:failed" },
+    });
+    expect(at(thread([turn("u1", { kind: "stopped" })]), "live")).toEqual(QUIET);
+    expect(at(thread([turn("u1", exitedCleanly)], { archived: true }), "live")).toEqual(QUIET);
+    expect(at(running, "live")).toEqual(QUIET);
+    expect(agentThreadNotificationState(running, undefined, "live")).toEqual(UNKNOWN);
+    expect(agentThreadNotificationState(running, { kind: "approval", id: "a" }, "live")).toEqual(
+      approval("a"),
+    );
+  });
+
+  it("fires the held completion once when the background work ends without a reply", () => {
+    const held = [at(running, "live"), at(settled, "live"), at(settled, "live")];
+    expect(signalKeys(held)).toEqual([]);
+    expect(signalKeys([...held, at(settled, "idle"), at(settled, "idle")])).toEqual([
+      "u1:completed",
+    ]);
+  });
+
+  it("fires once for the background reply turn that ends the work", () => {
+    expect(
+      signalKeys([
+        at(running, "idle"),
+        at(settled, "live"),
+        at(replying, "live"),
+        at(replied, "live"),
+        at(replied, "idle"),
+        at(replied, "idle"),
+      ]),
+    ).toEqual(["u2:completed"]);
+  });
+
+  it("reports a failure at once and does not repeat it when the work ends", () => {
+    expect(signalKeys([at(running, "live"), at(failed, "live"), at(failed, "idle")])).toEqual([
+      "u1:failed",
+    ]);
+  });
+
+  it("does not repeat a completion delivered before the work was observed", () => {
+    expect(
+      signalKeys([
+        at(running, "idle"),
+        at(settled, "idle"),
+        at(settled, "live"),
+        at(settled, "idle"),
+      ]),
+    ).toEqual(["u1:completed"]);
+  });
+
+  it.each(["approval", "input"] as const)(
+    "retires a resolved %s request once its turn's completion is held, then fires that completion once",
+    (kind) => {
+      const observe = (
+        previous: AgentThreadNotificationBaseline,
+        state: AgentThreadNotificationState,
+      ) => detectAgentThreadNotifications(previous, [subject("t1", state)]);
+      const started = observe(new Map(), at(running, "live"));
+      const asked = observe(
+        started.baseline,
+        agentThreadNotificationState(running, { kind, id: "r1" }, "live"),
+      );
+      const request = asked.events[0];
+      expect(request?.kind).toBe(kind);
+      if (request === undefined) return;
+      expect(agentThreadNotificationStillCurrent(asked.baseline, request)).toBe(true);
+
+      const held = observe(asked.baseline, at(settled, "live"));
+      expect(held.events).toEqual([]);
+      expect(agentThreadNotificationStillCurrent(held.baseline, request)).toBe(false);
+
+      const ended = observe(held.baseline, at(settled, "idle"));
+      expect(ended.events.map((event) => event.signalKey)).toEqual(["u1:completed"]);
+      expect(observe(ended.baseline, at(settled, "idle")).events).toEqual([]);
+    },
+  );
+
+  it("remembers nothing for a completion first seen while held and reports it when the work ends", () => {
+    const first = detectAgentThreadNotifications(new Map(), [subject("t1", at(settled, "live"))]);
+    expect(first.events).toEqual([]);
+    expect(first.baseline.get("t1")?.signalKey).toBeNull();
+    expect(signalKeys([at(settled, "live"), at(settled, "idle"), at(settled, "idle")])).toEqual([
+      "u1:completed",
+    ]);
+    expect(
+      run([
+        [subject("t1", at(settled, "live"), "owner-a")],
+        [subject("t1", at(settled, "live"), "owner-b")],
+        [subject("t1", at(settled, "idle"), "owner-b")],
+      ]),
+    ).toEqual(["t1:completed"]);
+  });
+
+  it("stays silent when the owner is replaced while the completion is held", () => {
+    expect(
+      run([
+        [subject("t1", at(running, "live"), "owner-a")],
+        [subject("t1", at(settled, "live"), "owner-a")],
+        [subject("t1", at(settled, "idle"), "owner-b")],
+        [subject("t1", at(settled, "idle"), "owner-b")],
+      ]),
+    ).toEqual([]);
   });
 });

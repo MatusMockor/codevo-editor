@@ -31,6 +31,7 @@ const watch: AgentSessionBackground = {
   ],
   sinceEpochMs: 1,
   taskSinceEpochMs: new Map(),
+  reply: { kind: "none" },
 };
 
 function view(sessionBackground: AgentSessionBackground | undefined, ownerId = OWNER_ID) {

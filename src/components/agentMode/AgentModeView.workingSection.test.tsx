@@ -77,6 +77,7 @@ function working(threadId: string, pinned = false): AgentThreadView {
       tasks: [{ taskId: `shell-${threadId}`, taskType: "shell" }],
       sinceEpochMs: 3_000,
       taskSinceEpochMs: new Map(),
+      reply: { kind: "none" },
     },
   };
 }

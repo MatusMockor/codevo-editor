@@ -3,6 +3,7 @@
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { agentThreadNotificationState } from "../domain/agentNotification";
 import { agentRootOwnerId } from "../domain/agentProject";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type {
@@ -13,6 +14,7 @@ import type {
   AgentTaskStatusEvent,
   StartAgentTaskRequest,
 } from "../domain/agentTask";
+import { agentSessionAwaitsFollowUp } from "../domain/agentSessionBackground";
 import { parseAgentThread, serializeAgentThread, type AgentThread } from "../domain/agentThread";
 import type {
   AgentSessionBackgroundTasksEvent,
@@ -760,6 +762,7 @@ describe("useAgentThreads Claude session lifecycle", () => {
           description: "Live Codex model catalog like Claude",
         },
       ],
+      reply: "none",
     };
     act(() => level?.({ ...resumed, workspaceId: "agent-root:/elsewhere" }));
     expect(harness.hook().threads[0]?.sessionBackground).toBeUndefined();
@@ -806,6 +809,7 @@ describe("useAgentThreads Claude session lifecycle", () => {
       tasks: [
         { taskId: "b8kzpiexm", taskType: "shell", description: "Watch beta.75 release workflow" },
       ],
+      reply: "none",
     };
     act(() => level?.(watch));
     expect(harness.hook().threads[0]?.sessionBackground?.tasks).toEqual(watch.tasks);
@@ -827,6 +831,109 @@ describe("useAgentThreads Claude session lifecycle", () => {
     expect(harness.hook().threads[0]?.sessionBackground?.tasks).toEqual(watch.tasks);
     act(() => level?.({ ...watch, total: 0, tasks: [] }));
     expect(harness.hook().threads[0]?.sessionBackground).toBeUndefined();
+    harness.unmount();
+  });
+
+  it("holds the settled turn's completion from the agent drain until the follow-up reply is recorded", async () => {
+    let level: ((event: AgentSessionBackgroundTasksEvent) => void) | null = null;
+    let background: ((event: AgentSessionBackgroundTurnEvent) => void) | null = null;
+    const session = {
+      ...sessionGateway(),
+      subscribeAgentSessionBackgroundTurn: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTurnEvent) => void) => {
+          background = handler;
+          return () => undefined;
+        },
+      ),
+      subscribeAgentSessionBackgroundTasks: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTasksEvent) => void) => {
+          level = handler;
+          return () => undefined;
+        },
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await waitForReact(() => {
+      expect(level).not.toBeNull();
+      expect(background).not.toBeNull();
+    });
+    expect(session.subscribeAgentSessionBackgroundTurn).toHaveBeenCalledTimes(1);
+    const working: AgentSessionBackgroundTasksEvent = {
+      workspaceId: OWNER,
+      threadId,
+      total: 1,
+      agents: 1,
+      tasks: [{ taskId: "a4b355dcf6056a875", taskType: "agent" }],
+      reply: "none",
+    };
+    const drained: AgentSessionBackgroundTasksEvent = {
+      ...working,
+      total: 0,
+      agents: 0,
+      tasks: [],
+    };
+    const observed = () => {
+      const view = harness.hook().threads[0];
+      if (view === undefined) return null;
+      return {
+        reply: view.sessionBackground?.reply.kind ?? null,
+        notification: agentThreadNotificationState(
+          view.thread,
+          null,
+          agentSessionAwaitsFollowUp(view.sessionBackground) ? "live" : "idle",
+        ),
+      };
+    };
+
+    act(() => level?.(working));
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+    const originalTurnId = harness.hook().threads[0]?.thread.turns[0]?.turnId ?? "";
+    const original = { kind: "completed", key: `${originalTurnId}:completed` };
+    const steps = [observed()];
+    act(() => level?.({ ...drained, workspaceId: "agent-root:/elsewhere" }));
+    steps.push(observed());
+    act(() => level?.(drained));
+    steps.push(observed());
+    act(() => level?.(drained));
+    steps.push(observed());
+    act(() => level?.({ ...drained, reply: "inProgress" }));
+    steps.push(observed());
+    expect(steps).toEqual([
+      { reply: "none", notification: { kind: "held", signal: original } },
+      { reply: "none", notification: { kind: "held", signal: original } },
+      { reply: "expected", notification: { kind: "held", signal: original } },
+      { reply: "expected", notification: { kind: "held", signal: original } },
+      { reply: "inProgress", notification: { kind: "held", signal: original } },
+    ]);
+
+    act(() =>
+      background?.({
+        workspaceId: OWNER,
+        threadId,
+        output: `${assistantLine("background-finished")}\n`,
+        truncated: false,
+        complete: true,
+      }),
+    );
+    const turns = harness.hook().threads[0]?.thread.turns ?? [];
+    expect(turns.map((turn) => turn.origin)).toEqual([undefined, "background"]);
+    const followUp = { kind: "completed", key: `${turns[1]?.turnId ?? ""}:completed` };
+    expect(followUp.key).not.toBe(original.key);
+    expect(observed()).toEqual({
+      reply: "inProgress",
+      notification: { kind: "held", signal: followUp },
+    });
+    act(() => level?.(drained));
+    expect(harness.hook().threads[0]?.sessionBackground).toBeUndefined();
+    expect(observed()).toEqual({
+      reply: null,
+      notification: { kind: "signal", signal: followUp },
+    });
     harness.unmount();
   });
 

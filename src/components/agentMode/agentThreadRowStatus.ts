@@ -3,7 +3,10 @@ import {
   projectAgentBackgroundActivity,
   type AgentBackgroundActivity,
 } from "../../domain/agentBackgroundActivity";
-import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
+import {
+  agentSessionReplySince,
+  type AgentSessionBackground,
+} from "../../domain/agentSessionBackground";
 import { agentAgentsRunningLabel } from "./agentBackgroundIndicatorPresentation";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
 import {
@@ -22,7 +25,7 @@ export type AgentRowStatus =
   | {
       readonly kind: "working";
       readonly startedAtEpochMs: number;
-      readonly activity?: "background" | "monitoring";
+      readonly activity?: "background" | "monitoring" | "replying";
     }
   | { readonly kind: "approval" }
   | { readonly kind: "input" }
@@ -103,6 +106,7 @@ export function agentRowIsLive(status: AgentRowStatus): boolean {
 export function agentRowStatusLabel(status: AgentRowStatus): string | null {
   switch (status.kind) {
     case "working":
+      if (status.activity === "replying") return "Replying";
       if (status.activity === "monitoring") return "Monitoring";
       if (status.activity === "background") return "Working in background";
       return "Working";
@@ -132,6 +136,8 @@ export function agentRowStatusTitle(status: AgentRowStatus): string | null {
       : `Working with ${agentCountLabel(status.count)}`;
   if (status.kind === "approval") return "Waiting for your approval";
   if (status.kind === "input") return "Waiting for your answer";
+  if (status.kind === "working" && status.activity === "replying")
+    return "Writing a follow-up reply";
   return null;
 }
 
@@ -199,6 +205,9 @@ function sessionBackgroundStatus(session: AgentSessionBackground): AgentRowStatu
       lead: "waiting",
       startedAtEpochMs: session.sinceEpochMs,
     };
+  const replyingSince = agentSessionReplySince(session.reply);
+  if (replyingSince !== null)
+    return { kind: "working", startedAtEpochMs: replyingSince, activity: "replying" };
   const monitoring =
     session.tasks.length === session.total &&
     session.tasks.every((task) => task.taskType === "monitor");

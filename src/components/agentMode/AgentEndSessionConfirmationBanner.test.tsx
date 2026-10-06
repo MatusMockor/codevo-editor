@@ -230,6 +230,7 @@ describe("AgentEndSessionConfirmationBanner", () => {
             ],
             sinceEpochMs: 1,
             taskSinceEpochMs: new Map(),
+            reply: { kind: "none" },
           },
         }),
       ],

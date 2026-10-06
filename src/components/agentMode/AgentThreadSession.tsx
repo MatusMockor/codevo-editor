@@ -36,6 +36,7 @@ import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentS
 import { AgentRecordedTurnChanges } from "./AgentRecordedTurnChanges";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
 import type { MonacoAppTheme } from "../../domain/settings";
+import { NO_AGENT_SESSION_REPLY } from "../../domain/agentSessionBackground";
 import { isTerminalAgentTurnStatus } from "../../domain/agentThread";
 import type { AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
@@ -380,9 +381,10 @@ function AgentThreadSessionBody({
     controls: sessionTaskControls,
     onStopSessionTask,
   });
+  const sessionReply = thread.sessionBackground?.reply ?? NO_AGENT_SESSION_REPLY;
   const activityBar = useMemo(
-    () => agentSessionActivityBar(running.work, liveBackground !== null),
-    [liveBackground, running.work],
+    () => agentSessionActivityBar(running.work, liveBackground !== null, sessionReply),
+    [liveBackground, running.work, sessionReply],
   );
   const findInsetRef = useRef(0);
   useLayoutEffect(() => {

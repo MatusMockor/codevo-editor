@@ -120,6 +120,7 @@ function withSession(
       tasks,
       sinceEpochMs,
       taskSinceEpochMs: new Map(),
+      reply: { kind: "none" },
     },
   };
 }

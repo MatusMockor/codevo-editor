@@ -48,6 +48,7 @@ function session(
     tasks,
     sinceEpochMs: 1_000,
     taskSinceEpochMs: new Map(tasks.map((task, index) => [task.taskId, 1_000 + index])),
+    reply: { kind: "none" },
   };
 }
 

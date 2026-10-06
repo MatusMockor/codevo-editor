@@ -46,6 +46,7 @@ function session(tasks: AgentSessionBackground["tasks"]): AgentSessionBackground
     tasks,
     sinceEpochMs: NOW - 125_000,
     taskSinceEpochMs: new Map(tasks.map((task) => [task.taskId, NOW - 125_000])),
+    reply: { kind: "none" },
   };
 }
 

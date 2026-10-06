@@ -3,7 +3,7 @@ use super::fake_claude_cli::*;
 use super::*;
 use agent_task_spawner::agent_launch::{AgentLaunchOptions, ClaudeEffortChoice};
 use agent_task_spawner::claude_session_policy::{
-    ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType,
+    ClaudeSessionBackgroundReply, ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType,
     ClaudeSessionBackgroundTasksEvent, ClaudeSessionBackgroundTurnEvent, ClaudeSessionEndReason,
     ClaudeSessionEndedEvent, ClaudeSessionInspection, ClaudeSessionKey, ClaudeSessionRestartPolicy,
     ClaudeSessionTuning, CLAUDE_SESSION_BUSY_ERROR, CLAUDE_SESSION_RESTART_CONFIRMATION_ERROR,
@@ -13,7 +13,8 @@ use agent_task_spawner::claude_session_registry::{
     CLAUDE_SESSION_ADMISSION_CLOSED_ERROR,
 };
 use agent_task_spawner::claude_session_router::{
-    BackgroundTaskKind, ClaudeBackgroundTasks, ClaudeBackgroundTurn, LiveBackgroundTask,
+    BackgroundTaskKind, ClaudeBackgroundReply, ClaudeBackgroundTasks, ClaudeBackgroundTurn,
+    LiveBackgroundTask,
 };
 use agent_task_spawner::claude_thread_session::ClaudeThreadSession;
 use agent_task_spawner::spawn_bound_process;
@@ -1131,20 +1132,25 @@ fn a_resumed_agent_reports_background_task_levels_only_for_its_key() {
         .len()
         == 1));
     assert!(wait_until(Duration::from_secs(5), || live(&events) == Some(1)));
-    let level = events.background_task_levels().last().cloned();
-    assert_eq!(
-        level,
-        Some(ClaudeSessionBackgroundTasksEvent {
-            workspace_id: "ws-a".to_string(),
-            thread_id: "t1".to_string(),
-            total: 1,
-            agents: 1,
-            tasks: vec![ClaudeSessionBackgroundTask {
-                task_id: "a4b355dcf6056a875".to_string(),
-                task_type: ClaudeSessionBackgroundTaskType::Agent,
-                description: Some("Live Codex model catalog like Claude".to_string()),
-            }],
-        })
+    let settled = Some(ClaudeSessionBackgroundTasksEvent {
+        workspace_id: "ws-a".to_string(),
+        thread_id: "t1".to_string(),
+        total: 1,
+        agents: 1,
+        tasks: vec![ClaudeSessionBackgroundTask {
+            task_id: "a4b355dcf6056a875".to_string(),
+            task_type: ClaudeSessionBackgroundTaskType::Agent,
+            description: Some("Live Codex model catalog like Claude".to_string()),
+        }],
+        reply: ClaudeSessionBackgroundReply::None,
+    });
+    assert!(
+        wait_until(Duration::from_secs(5), || events
+            .background_task_levels()
+            .last()
+            == settled.as_ref()),
+        "{:?}",
+        events.background_task_levels()
     );
     cli.release_agent();
     assert!(wait_until(Duration::from_secs(5), || live(&events) == Some(0)));
@@ -1184,6 +1190,7 @@ fn background_task_levels_from_a_stale_or_foreign_generation_are_dropped() {
         }],
         total: 1,
         agents: 1,
+        reply: ClaudeBackgroundReply::InProgress,
     };
     let key = session_key("ws-a", "t1");
     registry.deliver_background_tasks_for_tests(&key, stale, level());
@@ -1192,6 +1199,10 @@ fn background_task_levels_from_a_stale_or_foreign_generation_are_dropped() {
     assert!(events.background_task_levels().is_empty());
     registry.deliver_background_tasks_for_tests(&key, current, level());
     assert_eq!(events.background_task_levels().len(), 1);
+    assert_eq!(
+        events.background_task_levels()[0].reply,
+        ClaudeSessionBackgroundReply::InProgress
+    );
     assert!(registry.shutdown_all());
     registry.deliver_background_tasks_for_tests(&key, current, level());
     assert_eq!(events.background_task_levels().len(), 1);

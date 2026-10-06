@@ -109,7 +109,7 @@ fn an_agent_resumed_by_an_unprompted_send_message_is_live_session_work_until_it_
     assert_eq!(unprompted.settles, 0);
     assert_eq!(unprompted.background.len(), 1);
     assert!(unprompted.background[0].complete);
-    assert_eq!(unprompted.background_changes, 1);
+    assert_eq!(unprompted.background_changes, 3);
     assert_eq!(router.live_background_tasks(), 1);
     assert_eq!(
         listed(&router),

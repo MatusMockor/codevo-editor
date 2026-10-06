@@ -22,6 +22,7 @@ const watch: AgentSessionBackground = {
   ],
   sinceEpochMs: 1,
   taskSinceEpochMs: new Map(),
+  reply: { kind: "none" },
 };
 
 const cleanups: Array<() => void> = [];

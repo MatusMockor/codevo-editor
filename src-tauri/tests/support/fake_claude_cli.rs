@@ -90,7 +90,7 @@ def unprompted_result(text):
     message.update(next_result_fields())
     emit(message)
 
-def native_drain(task, ask=False, hold=False):
+def native_drain(task, ask=False, hold=False, hold_reply=False):
     if hold:
         wait_for_release("release-drain")
     else:
@@ -100,6 +100,8 @@ def native_drain(task, ask=False, hold=False):
     system("task_notification", task_id=task, status="completed", output_file="/dev/null",
            summary="Background command completed (exit code 0)")
     system("init")
+    if hold_reply:
+        wait_for_release("release-reply")
     if ask:
         emit({"type": "control_request", "request_id": "perm-bg-0001",
               "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": "cat out.txt"},
@@ -337,8 +339,9 @@ for raw in sys.stdin:
         result(uid, text="started")
         lifecycle(uid, "completed")
         ask = text.startswith("native-background-permission")
-        hold = text.startswith("native-held")
-        threading.Thread(target=native_drain, args=(task, ask, hold), daemon=True).start()
+        hold_reply = text.startswith("native-held-reply")
+        hold = text.startswith("native-held") and not hold_reply
+        threading.Thread(target=native_drain, args=(task, ask, hold, hold_reply), daemon=True).start()
         continue
     if text.startswith("agent-resume"):
         launched = root_tool(AGENT_LAUNCH, "Agent", "Async agent launched successfully.")
@@ -463,6 +466,10 @@ impl FakeCli {
 
     pub(crate) fn release_native_drain(&self) {
         fs::write(self.dir.join("release-drain"), b"").expect("release the native drain");
+    }
+
+    pub(crate) fn release_reply(&self) {
+        fs::write(self.dir.join("release-reply"), b"").expect("release the held reply");
     }
 
     pub(crate) fn release_agent(&self) {

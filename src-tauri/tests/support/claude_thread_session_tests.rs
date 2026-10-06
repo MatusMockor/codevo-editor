@@ -7,7 +7,7 @@ use agent_task_spawner::claude_session_policy::{
     CLAUDE_SESSION_BUSY_ERROR,
 };
 use agent_task_spawner::claude_session_router::{
-    BackgroundTaskKind, ClaudeBackgroundTasks, ClaudeBackgroundTurn,
+    BackgroundTaskKind, ClaudeBackgroundReply, ClaudeBackgroundTasks, ClaudeBackgroundTurn,
 };
 use agent_task_spawner::claude_session_turn::ClaudeSessionTurnChild;
 use agent_task_spawner::claude_thread_session::{
@@ -87,6 +87,7 @@ impl ClaudeSessionOwner for RecordingOwner {
             .lock()
             .expect("background lock")
             .push((generation, turn));
+        self.order.lock().expect("order lock").push("turn");
     }
 }
 
@@ -119,6 +120,19 @@ impl RecordingOwner {
 
     fn last_tasks(&self) -> Option<(u64, ClaudeBackgroundTasks)> {
         self.tasks.lock().expect("tasks lock").last().cloned()
+    }
+
+    fn last_reply(&self) -> Option<ClaudeBackgroundReply> {
+        self.last_tasks().map(|(_, tasks)| tasks.reply)
+    }
+
+    fn levels(&self) -> Vec<(usize, ClaudeBackgroundReply)> {
+        self.tasks
+            .lock()
+            .expect("tasks lock")
+            .iter()
+            .map(|(_, tasks)| (tasks.total, tasks.reply))
+            .collect()
     }
 
     fn order(&self) -> Vec<&'static str> {
@@ -584,6 +598,59 @@ fn a_native_background_task_settles_at_the_drain_and_its_wake_up_is_a_background
 }
 
 #[test]
+fn a_wake_up_reply_is_live_session_work_until_it_lands_and_the_turn_lands_first() {
+    let cli = FakeCli::new("session-held-reply");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+    let (output, mut turn) = run_turn(&session, "native-held-reply");
+    assert!(output.contains("\"task_updated\""), "{output}");
+    assert_eq!(turn.reap(), Ok(0));
+    assert_eq!(turn.outcome(), Some(TurnOutcome::Settled));
+    let replying = Some(ClaudeBackgroundReply::InProgress);
+    assert!(wait_until(TURN_TIMEOUT, || owner.last_reply() == replying));
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(owner.last_reply(), replying);
+    assert_eq!(session.background_tasks(), 0);
+    assert!(owner.background_turns().is_empty());
+
+    cli.release_reply();
+    assert!(wait_until(TURN_TIMEOUT, || owner.last_reply()
+        == Some(ClaudeBackgroundReply::None)
+        && !owner.background_turns().is_empty()));
+    let order = owner.order();
+    assert!(order.ends_with(&["turn", "tasks"]), "{order:?}");
+    assert_eq!(order.iter().filter(|event| **event == "turn").count(), 1);
+    let background = owner.background_turns();
+    assert!(background[0].1.complete);
+    let text = String::from_utf8_lossy(&background[0].1.output).into_owned();
+    assert!(text.contains("background-finished"), "{text}");
+    let (_, landed) = owner.last_tasks().expect("closing level");
+    assert_eq!(landed, ClaudeBackgroundTasks::default());
+    assert!(owner.reasons().is_empty());
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+    assert_eq!(owner.order().last(), Some(&"ended"));
+}
+
+#[test]
+fn a_session_killed_mid_reply_reports_nothing_after_its_end() {
+    let cli = FakeCli::new("session-held-reply-killed");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+    let (_, mut turn) = run_turn(&session, "native-held-reply");
+    assert_eq!(turn.reap(), Ok(0));
+    assert!(wait_until(TURN_TIMEOUT, || owner.last_reply()
+        == Some(ClaudeBackgroundReply::InProgress)));
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+    cli.release_reply();
+    thread::sleep(Duration::from_millis(300));
+    let order = owner.order();
+    assert_eq!(order.last(), Some(&"ended"), "{order:?}");
+    assert_eq!(order.iter().filter(|event| **event == "ended").count(), 1);
+}
+
+#[test]
 fn a_resumed_agent_is_live_session_work_while_idle_and_settles_on_its_completion() {
     let cli = FakeCli::new("session-agent-resume");
     let owner = Arc::new(RecordingOwner::default());
@@ -613,11 +680,15 @@ fn a_resumed_agent_is_live_session_work_while_idle_and_settles_on_its_completion
     assert!(wait_until(TURN_TIMEOUT, || owner.background_turns().len() == 2));
     assert!(wait_until(TURN_TIMEOUT, || owner.task_totals().last() == Some(&0)));
     assert_eq!(session.background_tasks(), 0);
-    let totals = owner.task_totals();
-    assert_eq!(totals.first(), Some(&1), "{totals:?}");
+    let levels = owner.levels();
+    assert_eq!(
+        levels.first(),
+        Some(&(1, ClaudeBackgroundReply::None)),
+        "{levels:?}"
+    );
     assert!(
-        totals.windows(2).all(|pair| pair[0] != pair[1]),
-        "{totals:?}"
+        levels.windows(2).all(|pair| pair[0] != pair[1]),
+        "{levels:?}"
     );
     let turns = owner.background_turns();
     let resumed = String::from_utf8_lossy(&turns[0].1.output).into_owned();
@@ -667,6 +738,38 @@ fn a_level_the_owner_could_not_deliver_is_offered_again_with_the_next_frame() {
     assert_eq!(owner.refuse_levels.load(Ordering::SeqCst), 0);
     let totals = owner.task_totals();
     assert_eq!(totals.first(), Some(&1), "{totals:?}");
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+}
+
+#[test]
+fn a_closing_reply_level_the_owner_could_not_deliver_is_offered_again_with_the_next_frame() {
+    let cli = FakeCli::new("session-reply-close-refused");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+    let (_, mut turn) = run_turn(&session, "native-held-reply");
+    assert_eq!(turn.reap(), Ok(0));
+    let replying = Some(ClaudeBackgroundReply::InProgress);
+    assert!(wait_until(TURN_TIMEOUT, || owner.last_reply() == replying));
+    owner.refuse_levels.store(1, Ordering::SeqCst);
+    cli.release_reply();
+    assert!(wait_until(TURN_TIMEOUT, || owner
+        .refuse_levels
+        .load(Ordering::SeqCst)
+        == 0));
+    assert_eq!(owner.background_turns().len(), 1);
+    assert_eq!(
+        owner.last_reply(),
+        replying,
+        "the closing level was refused"
+    );
+    let (next, mut second) = run_turn(&session, "hello");
+    assert!(next.contains("echo:hello"), "{next}");
+    assert_eq!(second.reap(), Ok(0));
+    assert!(wait_until(TURN_TIMEOUT, || owner.last_reply()
+        == Some(ClaudeBackgroundReply::None)));
+    let (_, landed) = owner.last_tasks().expect("closing level");
+    assert_eq!(landed, ClaudeBackgroundTasks::default());
     session.kill_now(ClaudeSessionEndReason::Shutdown);
     assert!(session.wait_reaped(REAP_TIMEOUT));
 }

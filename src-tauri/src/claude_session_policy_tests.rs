@@ -384,9 +384,21 @@ fn background_tasks_event_serializes_to_the_pinned_wire_shape() {
                 description: None,
             },
         ],
+        reply: ClaudeSessionBackgroundReply::None,
     };
     assert_eq!(
         serde_json::to_string(&event).unwrap(),
-        r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":2,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"},{"taskId":"bdxqm7bz6","taskType":"shell"}]}"#
+        r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":2,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"},{"taskId":"bdxqm7bz6","taskType":"shell"}],"reply":"none"}"#
+    );
+    let replying = ClaudeSessionBackgroundTasksEvent {
+        total: 0,
+        agents: 0,
+        tasks: Vec::new(),
+        reply: ClaudeSessionBackgroundReply::InProgress,
+        ..event
+    };
+    assert_eq!(
+        serde_json::to_string(&replying).unwrap(),
+        r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":0,"agents":0,"tasks":[],"reply":"inProgress"}"#
     );
 }

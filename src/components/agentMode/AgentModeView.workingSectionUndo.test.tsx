@@ -53,6 +53,7 @@ function workingInBackground(view: AgentThreadView): AgentThreadView {
       tasks: [{ taskId: `shell-${view.thread.threadId}`, taskType: "shell" }],
       sinceEpochMs: 3_000,
       taskSinceEpochMs: new Map(),
+      reply: { kind: "none" },
     },
   };
 }

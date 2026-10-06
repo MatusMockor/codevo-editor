@@ -109,6 +109,7 @@ function threadIn(
             tasks: [],
             sinceEpochMs: 1_700_000_000_000,
             taskSinceEpochMs: new Map(),
+            reply: { kind: "none" },
           },
         }
       : {}),

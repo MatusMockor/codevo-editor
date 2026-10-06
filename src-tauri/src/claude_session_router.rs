@@ -29,11 +29,19 @@ pub struct ClaudeBackgroundTurn {
     pub complete: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClaudeBackgroundReply {
+    #[default]
+    None,
+    InProgress,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClaudeBackgroundTasks {
     pub tasks: Vec<LiveBackgroundTask>,
     pub total: usize,
     pub agents: usize,
+    pub reply: ClaudeBackgroundReply,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -262,6 +270,14 @@ impl ClaudeSessionRouter {
             tasks,
             total,
             agents,
+            reply: self.reply(),
+        }
+    }
+
+    fn reply(&self) -> ClaudeBackgroundReply {
+        match self.unsolicited {
+            Some(_) => ClaudeBackgroundReply::InProgress,
+            None => ClaudeBackgroundReply::None,
         }
     }
 
@@ -294,13 +310,16 @@ impl ClaudeSessionRouter {
 
     fn background_change(&mut self) -> Option<ClaudeBackgroundTasks> {
         let revision = self.detector.background_revision();
-        if revision == self.background_revision && !self.background_offer_pending {
+        let refused = std::mem::take(&mut self.background_offer_pending);
+        if !refused
+            && revision == self.background_revision
+            && self.reply() == self.reported_background.reply
+        {
             return None;
         }
-        self.background_offer_pending = false;
         self.background_revision = revision;
         let current = self.background_tasks();
-        if current == self.reported_background {
+        if !refused && current == self.reported_background {
             return None;
         }
         self.reported_background = current.clone();
@@ -319,6 +338,7 @@ impl ClaudeSessionRouter {
             active.truncated |= dangling;
             step.background_turns.push(active.finish(false));
         }
+        step.background_tasks = self.background_change();
         step
     }
 

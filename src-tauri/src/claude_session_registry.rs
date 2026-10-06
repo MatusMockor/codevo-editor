@@ -2,7 +2,7 @@ use super::{
     agent_launch::AgentLaunchOptions,
     claude_session_policy::{
         choose_eviction, decide_session_disposition, idle_retirement_due, inspect_session,
-        ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType,
+        ClaudeSessionBackgroundReply, ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType,
         ClaudeSessionBackgroundTasksEvent, ClaudeSessionBackgroundTurnEvent,
         ClaudeSessionDisposition, ClaudeSessionEndReason, ClaudeSessionEndedEvent,
         ClaudeSessionFingerprint, ClaudeSessionInspection, ClaudeSessionKey,
@@ -11,7 +11,8 @@ use super::{
         CLAUDE_SESSION_RESTART_CONFIRMATION_ERROR, CLAUDE_SESSION_STOP_TIMEOUT_ERROR,
     },
     claude_session_router::{
-        BackgroundTaskKind, ClaudeBackgroundTasks, ClaudeBackgroundTurn, LiveBackgroundTask,
+        BackgroundTaskKind, ClaudeBackgroundReply, ClaudeBackgroundTasks, ClaudeBackgroundTurn,
+        LiveBackgroundTask,
     },
     claude_session_task_stop::ClaudeBackgroundTaskStopOutcome,
     claude_thread_session::{
@@ -657,6 +658,7 @@ impl ClaudeSessionOwner for RegistryInner {
             total: tasks.total,
             agents: tasks.agents,
             tasks: tasks.tasks.into_iter().map(wire_background_task).collect(),
+            reply: wire_background_reply(tasks.reply),
         };
         let _ = catch_unwind(AssertUnwindSafe(|| self.events.background_tasks(event)));
         true
@@ -673,6 +675,13 @@ fn wire_background_task(task: LiveBackgroundTask) -> ClaudeSessionBackgroundTask
             BackgroundTaskKind::Other => ClaudeSessionBackgroundTaskType::Other,
         },
         description: task.description,
+    }
+}
+
+fn wire_background_reply(reply: ClaudeBackgroundReply) -> ClaudeSessionBackgroundReply {
+    match reply {
+        ClaudeBackgroundReply::None => ClaudeSessionBackgroundReply::None,
+        ClaudeBackgroundReply::InProgress => ClaudeSessionBackgroundReply::InProgress,
     }
 }
 

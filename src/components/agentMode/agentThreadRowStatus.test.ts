@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
 import type { AgentTurn } from "../../domain/agentThread";
-import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
+import type {
+  AgentSessionBackground,
+  AgentSessionReply,
+} from "../../domain/agentSessionBackground";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
+  agentRowBelongsInWorkingSection,
   agentRowIsLive,
   agentRowStatus,
   agentRowStatusLabel,
@@ -133,7 +137,11 @@ describe("row status for background work", () => {
 
 const RESUMED_AT = 1_790_718_781_369;
 
-function idleSession(tasks: AgentSessionBackground["tasks"], exitCode = 0): AgentThreadView {
+function idleSession(
+  tasks: AgentSessionBackground["tasks"],
+  exitCode = 0,
+  reply: AgentSessionReply = { kind: "none" },
+): AgentThreadView {
   const settled = surfaceThreadView();
   const turn: AgentTurn = {
     turnId: "agt-mun7q6rd-9777",
@@ -158,6 +166,7 @@ function idleSession(tasks: AgentSessionBackground["tasks"], exitCode = 0): Agen
       tasks,
       sinceEpochMs: RESUMED_AT,
       taskSinceEpochMs: new Map(),
+      reply,
     },
   };
 }
@@ -194,6 +203,81 @@ describe("row status for live session background work", () => {
       kind: "working",
       startedAtEpochMs: RESUMED_AT,
       activity: "monitoring",
+    });
+  });
+
+  it("shows a follow-up reply being written as Replying, timed from the reply's own start", () => {
+    const replyingSince = RESUMED_AT + 42_000;
+    const reply = { kind: "inProgress", sinceEpochMs: replyingSince } as const;
+    const status = agentRowStatus(idleSession([], 0, reply));
+    expect(status).toEqual({
+      kind: "working",
+      startedAtEpochMs: replyingSince,
+      activity: "replying",
+    });
+    expect(agentRowStatusLabel(status)).toBe("Replying");
+    expect(agentRowStatusTitle(status)).toBe("Writing a follow-up reply");
+    expect(agentRowStatusTone(status)).toBe("work");
+    expect(agentRowIsLive(status)).toBe(true);
+    expect(agentRowBelongsInWorkingSection(status)).toBe(true);
+    expect(agentRowStatus(idleSession([], 1, reply))).toEqual(status);
+  });
+
+  it("shows a reply that is expected after the last agent drained exactly like one being written", () => {
+    const expectedSince = RESUMED_AT + 42_000;
+    const reply = {
+      kind: "expected",
+      sinceEpochMs: expectedSince,
+      untilEpochMs: expectedSince + 5_000,
+    } as const;
+    const monitor = { taskId: "mon-1", taskType: "monitor" } as const;
+    const status = agentRowStatus(idleSession([], 0, reply));
+    expect(status).toEqual({
+      kind: "working",
+      startedAtEpochMs: expectedSince,
+      activity: "replying",
+    });
+    expect(agentRowStatusLabel(status)).toBe("Replying");
+    expect(agentRowStatusTitle(status)).toBe("Writing a follow-up reply");
+    expect(agentRowIsLive(status)).toBe(true);
+    expect(agentRowBelongsInWorkingSection(status)).toBe(true);
+    expect(agentRowStatus(idleSession([monitor], 0, reply))).toEqual(status);
+    expect(agentRowStatus(idleSession([resumedAgent], 0, reply))).toMatchObject({
+      kind: "agents",
+      startedAtEpochMs: RESUMED_AT,
+    });
+  });
+
+  it("ranks live agents above a reply and a reply above monitoring or background work", () => {
+    const shell = { taskId: "bdxqm7bz6", taskType: "shell" } as const;
+    const monitor = { taskId: "mon-1", taskType: "monitor" } as const;
+    const replyingSince = RESUMED_AT + 42_000;
+    const reply = { kind: "inProgress", sinceEpochMs: replyingSince } as const;
+    const replying = { kind: "working", startedAtEpochMs: replyingSince, activity: "replying" };
+    expect(agentRowStatus(idleSession([resumedAgent], 0, reply))).toEqual({
+      kind: "agents",
+      count: 1,
+      lead: "waiting",
+      startedAtEpochMs: RESUMED_AT,
+    });
+    expect(agentRowStatus(idleSession([monitor], 0, reply))).toEqual(replying);
+    expect(agentRowStatus(idleSession([shell], 0, reply))).toEqual(replying);
+    expect(agentRowStatusTitle(agentRowStatus(idleSession([monitor])))).toBeNull();
+  });
+
+  it("leaves a running turn's status alone while a reply level is still open", () => {
+    const reply = { kind: "inProgress", sinceEpochMs: RESUMED_AT } as const;
+    const view = {
+      ...runningView([]),
+      sessionBackground: idleSession([], 0, reply).sessionBackground,
+    };
+    const signals = { pending: null, workingAgents: 0 };
+    expect(agentRowStatus(view, undefined, null, signals)).toEqual(
+      agentRowStatus(runningView([]), undefined, null, signals),
+    );
+    expect(agentRowStatus(view, undefined, null, signals)).toEqual({
+      kind: "working",
+      startedAtEpochMs: 1_000,
     });
   });
 

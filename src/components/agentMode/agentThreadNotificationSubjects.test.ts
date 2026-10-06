@@ -52,6 +52,52 @@ describe("agentThreadNotificationSubjects", () => {
     expect(agentThreadNotificationSubjects([archived], new Map(), projects)).toEqual([]);
   });
 
+  it("holds a completion back only while a background agent of the thread's session is live", () => {
+    const cache: SubjectCache = new WeakMap();
+    const settled = surfaceThreadView({
+      thread: {
+        ...view.thread,
+        turns: [
+          {
+            turnId: "turn-1",
+            prompt: "go",
+            status: { kind: "exited", exitCode: 0 },
+            startedAtEpochMs: 1,
+            endedAtEpochMs: 2,
+            events: [],
+            eventsTruncated: false,
+            lastStatusSequence: 1,
+            lastOutputSequence: 0,
+            launch: null,
+            cliVersion: null,
+          },
+        ],
+      },
+    });
+    const withBackground = (agents: number): AgentThreadView => ({
+      ...settled,
+      sessionBackground: {
+        ownerId: settled.thread.owner.ownerId,
+        total: 1,
+        agents,
+        tasks: [],
+        sinceEpochMs: 2,
+        taskSinceEpochMs: new Map(),
+        reply: { kind: "none" },
+      },
+    });
+    const stateOf = (observed: AgentThreadView) =>
+      agentThreadNotificationSubjects([observed], new Map(), projects, cache)[0]?.state;
+    const completed = {
+      kind: "signal",
+      signal: { kind: "completed", key: "turn-1:completed" },
+    };
+
+    expect(stateOf(withBackground(1))).toEqual({ ...completed, kind: "held" });
+    expect(stateOf(withBackground(0))).toEqual(completed);
+    expect(stateOf(settled)).toEqual(completed);
+  });
+
   it("keeps a remote thread's identity and toast across runner reconnects and inventory resets", () => {
     const remoteKey = "remote:build:runner:orders";
     const remote = (status: "running" | "done"): AgentThreadView =>

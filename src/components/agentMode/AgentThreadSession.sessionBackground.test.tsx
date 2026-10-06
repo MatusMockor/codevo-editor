@@ -68,6 +68,17 @@ const resumedAgent: AgentSessionBackground = {
   ],
   sinceEpochMs: RESUMED_AT,
   taskSinceEpochMs: new Map(),
+  reply: { kind: "none" },
+};
+
+const replyOnly: AgentSessionBackground = {
+  ownerId: "owner",
+  total: 0,
+  agents: 0,
+  tasks: [],
+  sinceEpochMs: RESUMED_AT,
+  taskSinceEpochMs: new Map(),
+  reply: { kind: "inProgress", sinceEpochMs: RESUMED_AT },
 };
 
 function PanelHarness({ children }: { readonly children: ReactNode }) {
@@ -160,6 +171,33 @@ describe("thread session with live session background work", () => {
     expect(bars()[0]?.querySelector(".cv-banner-line")?.textContent).toBe("1 agent running");
     expect(host.querySelector('button[aria-label="Stop agent and background work"]')).toBeNull();
     expect(host.textContent).toContain("Claude continued after background work finished");
+    render(undefined);
+    expect(bars()).toHaveLength(0);
+  });
+
+  it("shows one announced bar while Claude writes a follow-up reply, with nothing to view, stop or end", () => {
+    render(replyOnly);
+    expect(bars()).toHaveLength(1);
+    expect(bars()[0]?.querySelector(".cv-banner-line")?.textContent).toBe("Claude is replying");
+    expect(bars()[0]?.querySelectorAll("button")).toHaveLength(0);
+    expect(host.querySelector('button[aria-label="View background tasks"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="View agents"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="Stop agent and background work"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="End Claude session"]')).toBeNull();
+    expect(host.querySelector('.cv-session-dock__banners [aria-live="polite"]')).not.toBeNull();
+    render({
+      ...replyOnly,
+      reply: { kind: "expected", sinceEpochMs: RESUMED_AT, untilEpochMs: RESUMED_AT + 5_000 },
+    });
+    expect(bars()).toHaveLength(1);
+    expect(bars()[0]?.querySelector(".cv-banner-line")?.textContent).toBe("Claude is replying");
+    expect(bars()[0]?.querySelectorAll("button")).toHaveLength(0);
+    render({ ...resumedAgent, reply: replyOnly.reply });
+    expect(bars()).toHaveLength(1);
+    expect(bars()[0]?.querySelector(".cv-banner-line")?.textContent).toBe(
+      "Replying · 1 agent running",
+    );
+    expect(host.querySelector('button[aria-label="View agents"]')).not.toBeNull();
     render(undefined);
     expect(bars()).toHaveLength(0);
   });

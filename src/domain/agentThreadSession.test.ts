@@ -43,7 +43,10 @@ const START: StartAgentTaskRequest = {
 };
 
 const PINNED_BACKGROUND_TASKS_JSON =
-  '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}]}';
+  '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}],"reply":"none"}';
+
+const PINNED_BACKGROUND_REPLY_JSON =
+  '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":0,"agents":0,"tasks":[],"reply":"inProgress"}';
 
 const PINNED_BACKGROUND_TURN_JSON =
   '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","output":"...","truncated":false,"complete":true}';
@@ -180,6 +183,17 @@ describe("agent thread session contracts", () => {
             description: "Live Codex model catalog like Claude",
           },
         ],
+        reply: "none",
+      },
+    );
+    expect(parseAgentSessionBackgroundTasksEvent(JSON.parse(PINNED_BACKGROUND_REPLY_JSON))).toEqual(
+      {
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        total: 0,
+        agents: 0,
+        tasks: [],
+        reply: "inProgress",
       },
     );
     expect(
@@ -189,14 +203,23 @@ describe("agent thread session contracts", () => {
         total: 0,
         agents: 0,
         tasks: [],
+        reply: "none",
       }),
-    ).toEqual({ workspaceId: "ws-1", threadId: "agt-1-0a1c", total: 0, agents: 0, tasks: [] });
+    ).toEqual({
+      workspaceId: "ws-1",
+      threadId: "agt-1-0a1c",
+      total: 0,
+      agents: 0,
+      tasks: [],
+      reply: "none",
+    });
     expect(
       parseAgentSessionBackgroundTasksEvent({
         workspaceId: "ws-1",
         threadId: "agt-1-0a1c",
         total: 40,
         agents: 0,
+        reply: "none",
         tasks: Array.from({ length: MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS }, (_, index) => ({
           taskId: `b${index}`,
           taskType: "shell",
@@ -208,8 +231,18 @@ describe("agent thread session contracts", () => {
   it("rejects background-tasks levels that are not exactly the pinned, bounded shape", () => {
     const event = JSON.parse(PINNED_BACKGROUND_TASKS_JSON) as Record<string, unknown>;
     const task = { taskId: "a4b355dcf6056a875", taskType: "agent" };
+    const { reply: _reply, ...withoutReply } = event;
+    const drained = { ...event, total: 0, agents: 0, tasks: [] };
+    expect(parseAgentSessionBackgroundTasksEvent(drained).reply).toBe("none");
     for (const broken of [
       { ...event, extra: 1 },
+      withoutReply,
+      { ...event, reply: "writing" },
+      { ...event, reply: "InProgress" },
+      { ...event, reply: true },
+      { ...event, reply: null },
+      { ...drained, extra: 1 },
+      { ...drained, reply: "inProgress", replying: true },
       { ...event, total: -1 },
       { ...event, total: 1.5 },
       { ...event, total: 257 },

@@ -11,9 +11,12 @@ export interface AgentThreadNotificationSignal {
 export type AgentThreadNotificationState =
   | { readonly kind: "quiet" }
   | { readonly kind: "unknown" }
+  | { readonly kind: "held"; readonly signal: AgentThreadNotificationSignal }
   | { readonly kind: "signal"; readonly signal: AgentThreadNotificationSignal };
 
 export type AgentThreadNotificationMissingPolicy = "forget" | "retain";
+
+export type AgentThreadSessionWork = "idle" | "live";
 
 export interface AgentThreadNotificationSubject {
   readonly threadId: string;
@@ -59,6 +62,7 @@ const KEY_SEPARATOR = "\u0001";
 export function agentThreadNotificationState(
   thread: AgentThread,
   interaction: AgentPendingInteractionIdentity | null | undefined,
+  sessionWork: AgentThreadSessionWork,
 ): AgentThreadNotificationState {
   if (thread.archived) return QUIET;
   const running = runningTurn(thread);
@@ -71,7 +75,9 @@ export function agentThreadNotificationState(
   if (last === undefined) return QUIET;
   const kind = settledTurnKind(last.status);
   if (kind === null) return QUIET;
-  return signal(kind, `${last.turnId}:${kind}`);
+  const settled: AgentThreadNotificationSignal = { kind, key: `${last.turnId}:${kind}` };
+  if (kind === "completed" && sessionWork === "live") return { kind: "held", signal: settled };
+  return { kind: "signal", signal: settled };
 }
 
 export function detectAgentThreadNotifications(
@@ -131,6 +137,8 @@ function observedSignalKey(
       return null;
     case "unknown":
       return prior;
+    case "held":
+      return prior === state.signal.key ? prior : null;
     case "signal":
       return state.signal.key;
     default:

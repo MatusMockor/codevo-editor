@@ -75,12 +75,17 @@ export interface AgentSessionBackgroundTurnEvent {
   readonly complete: boolean;
 }
 
+export type AgentSessionBackgroundReply = "none" | "inProgress";
+
+const BACKGROUND_REPLIES: ReadonlyArray<AgentSessionBackgroundReply> = ["none", "inProgress"];
+
 export interface AgentSessionBackgroundTasksEvent {
   readonly workspaceId: string;
   readonly threadId: string;
   readonly total: number;
   readonly agents: number;
   readonly tasks: ReadonlyArray<AgentBackgroundTask>;
+  readonly reply: AgentSessionBackgroundReply;
 }
 
 export type AgentTaskInterruptOutcomeKind =
@@ -281,7 +286,7 @@ export function parseAgentSessionBackgroundTasksEvent(
   value: unknown,
 ): AgentSessionBackgroundTasksEvent {
   const event = record(value, "event");
-  exactKeys(event, ["workspaceId", "threadId", "total", "agents", "tasks"], "event");
+  exactKeys(event, ["workspaceId", "threadId", "total", "agents", "tasks", "reply"], "event");
   const total = boundedCount(event.total, MAX_AGENT_SESSION_BACKGROUND_TASKS, "event.total");
   const agents = boundedCount(event.agents, total, "event.agents");
   const tasks = backgroundTasks(event.tasks, total, "event.tasks");
@@ -292,6 +297,7 @@ export function parseAgentSessionBackgroundTasksEvent(
     total,
     agents,
     tasks,
+    reply: backgroundReply(event.reply, "event.reply"),
   };
 }
 
@@ -316,6 +322,12 @@ function sessionEndReason(value: unknown, path: string): AgentSessionEndReason {
   const reason = END_REASONS.find((known) => known === value);
   if (reason === undefined) return invalid(path, "a known session end reason");
   return reason;
+}
+
+function backgroundReply(value: unknown, path: string): AgentSessionBackgroundReply {
+  const reply = BACKGROUND_REPLIES.find((known) => known === value);
+  if (reply === undefined) return invalid(path, '"none" or "inProgress"');
+  return reply;
 }
 
 function backgroundTurnOutput(value: unknown, path: string): string {

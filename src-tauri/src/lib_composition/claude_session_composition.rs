@@ -292,8 +292,8 @@ pub(crate) async fn stop_agent_background_task(
 mod tests {
     use super::*;
     use crate::agent_task_spawner::claude_session_policy::{
-        ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType, ClaudeSessionRestartPolicy,
-        ClaudeSessionTuning,
+        ClaudeSessionBackgroundReply, ClaudeSessionBackgroundTask, ClaudeSessionBackgroundTaskType,
+        ClaudeSessionRestartPolicy, ClaudeSessionTuning,
     };
     use crate::agent_task_spawner::claude_session_registry::ClaudeSessionLease;
     use crate::agent_task_spawner::claude_thread_session::{ClaudeThreadSession, TurnOutcome};
@@ -683,6 +683,15 @@ for raw in sys.stdin:
                 task_type: ClaudeSessionBackgroundTaskType::Agent,
                 description: Some("Live Codex model catalog like Claude".to_string()),
             }],
+            reply: ClaudeSessionBackgroundReply::None,
+        });
+        sink.background_tasks(ClaudeSessionBackgroundTasksEvent {
+            workspace_id: "ws-1".to_string(),
+            thread_id: "agt-1-0a1c".to_string(),
+            total: 0,
+            agents: 0,
+            tasks: Vec::new(),
+            reply: ClaudeSessionBackgroundReply::InProgress,
         });
 
         assert_eq!(
@@ -691,7 +700,11 @@ for raw in sys.stdin:
         );
         assert_eq!(
             tasks.recv_timeout(EVENT_WAIT).expect("background tasks"),
-            r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}]}"#
+            r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":1,"tasks":[{"taskId":"a4b355dcf6056a875","taskType":"agent","description":"Live Codex model catalog like Claude"}],"reply":"none"}"#
+        );
+        assert_eq!(
+            tasks.recv_timeout(EVENT_WAIT).expect("reply level"),
+            r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":0,"agents":0,"tasks":[],"reply":"inProgress"}"#
         );
     }
 
