@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compactPersistedAgentSubagentLifecycle } from "./agentLifecyclePersistence";
 import wire from "../../contracts/agent-subagent-lifecycle-wire.json";
-import { parseAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle, type AgentSubagentLifecycle } from "@codevo/agent-events";
 import { legacyAgentSubagentLifecycle } from "./agentSubagentLifecycleLegacy";
 import {
   agentThreadNeedsLoggedLifecycles,

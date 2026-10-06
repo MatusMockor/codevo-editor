@@ -226,6 +226,9 @@ export async function formatHotspotBaseline(baseline) {
 
 export function isProductionSource(filePath) {
   if (filePath.startsWith("src-tauri/src/") && filePath.endsWith(".rs")) return true;
+  if (/^packages\/[^/]+\/src\/.*\.ts$/u.test(filePath)) {
+    return !filePath.includes(".test.");
+  }
   return (
     filePath.startsWith("src/") &&
     (filePath.endsWith(".ts") || filePath.endsWith(".tsx")) &&
@@ -235,10 +238,27 @@ export function isProductionSource(filePath) {
 }
 
 async function collectSourceFiles(projectRoot) {
+  const packageEntries = await readdir(path.join(projectRoot, "packages"), {
+    withFileTypes: true,
+  }).catch((error) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
   const relativePaths = [
     ...(await walk(path.join(projectRoot, "src"), projectRoot)),
     ...(await walk(path.join(projectRoot, "src-tauri/src"), projectRoot)),
   ];
+  for (const entry of packageEntries) {
+    if (!entry.isDirectory()) continue;
+    const packageSources = await walk(
+      path.join(projectRoot, "packages", entry.name, "src"),
+      projectRoot,
+    ).catch((error) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    relativePaths.push(...packageSources);
+  }
   const currentFiles = {};
   for (const relativePath of relativePaths.sort()) {
     const content = await readFile(path.join(projectRoot, relativePath), "utf8");

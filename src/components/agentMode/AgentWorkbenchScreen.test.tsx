@@ -14,6 +14,15 @@ import { WorkspaceTrustPromptCoordinator } from "../../application/workspaceTrus
 import type { WorkspaceTrustOrigin } from "../../domain/trust";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
+import {
+  controlledInvoke,
+  dictationTestPorts,
+  flushAsync,
+  installFakeBrowserAudio,
+  type FakeBrowserAudio,
+} from "../../test/speechDictationTestSupport";
+import { dictationUtterance } from "./dictation/agentComposerDictationTestSupport";
+import { dictationRemoteGateway } from "./dictation/dictationRemoteGatewayTestSupport";
 // @vitest-environment jsdom
 
 import { act } from "react";
@@ -95,6 +104,7 @@ describe("AgentWorkbenchScreen", () => {
   let reveals: RevealPathRequest[];
   let revealPathGateway: RevealPathGateway;
   let directoryListingGateway: DirectoryListingGateway;
+  let dictationAudio: FakeBrowserAudio | null = null;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -126,6 +136,8 @@ describe("AgentWorkbenchScreen", () => {
     host.remove();
     agentComposerDraftStore.reset();
     vi.unstubAllGlobals();
+    dictationAudio?.restore();
+    dictationAudio = null;
   });
 
   it("isolates a reused thread ID in another workspace and restores the original project selection", async () => {
@@ -1545,6 +1557,61 @@ describe("AgentWorkbenchScreen", () => {
     await show();
     expect(switchButton()?.disabled).toBe(false);
     expect(mutation.switchBranch).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, Partial<AgentWorkbenchScreenWorkbench>]>([
+    ["Settings covers the workbench", { settingsOpen: true }],
+    ["the editor layout replaces the agent layout", { agentModeActive: false }],
+    [
+      "the maximized right panel covers the thread",
+      { agentWorkbench: recordedLayoutState({ rightPanel: "open", rightPanelMaximized: true }) },
+    ],
+  ])("stops dictation and keeps the captured speech when %s", async (_name, hidden) => {
+    const audio = installFakeBrowserAudio({ sampleRate: 16000 });
+    dictationAudio = audio;
+    const speech = controlledInvoke();
+    const gateway = dictationRemoteGateway(
+      [{ id: "speech", connected: true, speechTranscription: true }],
+      speech,
+    );
+    const ports = dictationTestPorts(gateway);
+    const workbench = createWorkbench(ROOT_A);
+    const show = (next: AgentWorkbenchScreenWorkbench): void =>
+      act(() =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway} speechDictation={ports}>
+            <AgentWorkbenchScreen {...defaultProps(next)} />
+          </RemoteRunnerProvider>,
+        ),
+      );
+    const microphone = (): HTMLButtonElement | null =>
+      host.querySelector<HTMLButtonElement>(".agent-dictation__button");
+    show(workbench);
+    await waitForReact(() =>
+      expect(microphone()?.getAttribute("aria-label")).toBe("Start dictation"),
+    );
+    act(() => microphone()?.click());
+    await act(() => flushAsync());
+    act(() => audio.emit(dictationUtterance()));
+    expect(audio.microphoneLive()).toBe(true);
+
+    show({ ...workbench, ...hidden });
+
+    expect(audio.microphoneLive()).toBe(false);
+    expect(speech.calls).toHaveLength(1);
+    await act(async () => {
+      speech.calls[0]?.resolve({ text: "said before the view was hidden" });
+      await flushAsync();
+    });
+    expect(prompt().value).toBe("said before the view was hidden");
+    act(() => microphone()?.click());
+    await act(() => flushAsync());
+    expect(audio.getUserMedia).toHaveBeenCalledTimes(1);
+
+    show(workbench);
+    act(() => microphone()?.click());
+    await act(() => flushAsync());
+    expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
   });
 
   function render(workbench: AgentWorkbenchScreenWorkbench): void {

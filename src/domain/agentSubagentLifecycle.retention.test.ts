@@ -11,7 +11,7 @@ import {
   parseAgentSubagentLifecycle,
   retainAgentSubagentLifecycle,
   type AgentSubagentLifecycle,
-} from "./agentSubagentLifecycle";
+} from "@codevo/agent-events";
 import type { AgentTurnEvent } from "./agentThread";
 import { agentTurnStream, nestedSpawnAgentTurnStream } from "../test/agentTurnEventStreams";
 

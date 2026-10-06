@@ -8,10 +8,7 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import { AgentThreadSession } from "./AgentThreadSession";
 import { waitForReact } from "../../test/reactTestLifecycle";
 
-import {
-  appendRemoteAgentTranscript,
-  createRemoteAgentTranscript,
-} from "../../domain/remoteAgentTranscript";
+import { appendRemoteAgentTranscript, createRemoteAgentTranscript } from "@codevo/agent-events";
 describe("remote grouped activity", () => {
   let host: HTMLDivElement;
   let root: Root;

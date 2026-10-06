@@ -5,7 +5,11 @@ import {
   type AgentNewThreadDefaults,
 } from "../../domain/agentNewThreadDefaults";
 import { BUNDLED_CLAUDE_MODEL_MANIFEST } from "../../domain/claudeModelCatalog";
-import { parseCodexModelCatalog } from "../../domain/codexModelCatalog";
+import {
+  BUNDLED_CODEX_MODEL_CATALOG,
+  codexCatalogDefault,
+  parseCodexModelCatalog,
+} from "../../domain/codexModelCatalog";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   availableNewThreadDefaults,
@@ -447,6 +451,78 @@ describe("launchScopeExecutionTarget", () => {
 });
 
 describe("providerSwitchComposerLaunch", () => {
+  it("keeps the configured effort when the automatic Codex model is picked", () => {
+    const configured = newThreadComposerLaunch("codex", {
+      ...CONFIGURED,
+      codex: { model: "default", effort: "high" },
+    });
+    const picked: AgentLaunchOptions = {
+      provider: "codex",
+      model: codexCatalogDefault(BUNDLED_CODEX_MODEL_CATALOG).id,
+      mode: "dangerFullAccess",
+    };
+
+    expect(providerSwitchComposerLaunch(configured, picked)).toBe(configured);
+  });
+
+  it.each([
+    { configuredModel: null, pickedModel: "gpt-7-nova", effort: "ultra" },
+    { configuredModel: "gpt-6-astra", pickedModel: "gpt-6-astra", effort: "high" },
+  ] as const)(
+    "resolves the automatic Codex model against the live catalog and config $configuredModel",
+    ({ configuredModel, pickedModel, effort }) => {
+      const configured = newThreadComposerLaunch("codex", {
+        ...CONFIGURED,
+        codex: { model: "default", effort },
+      });
+      const picked: AgentLaunchOptions = {
+        provider: "codex",
+        model: pickedModel,
+        mode: "dangerFullAccess",
+      };
+
+      expect(providerSwitchComposerLaunch(configured, picked, configuredModel, LIVE_CODEX)).toBe(
+        configured,
+      );
+      expect(agentLaunchForDispatch(configured, configuredModel, undefined, LIVE_CODEX)).toEqual({
+        ...picked,
+        effort,
+      });
+    },
+  );
+
+  it("keeps the reset effort when another model is picked instead of the configured Codex default", () => {
+    const configured = newThreadComposerLaunch("codex", {
+      ...CONFIGURED,
+      codex: { model: "default", effort: "high" },
+    });
+    const picked: AgentLaunchOptions = {
+      provider: "codex",
+      model: "gpt-7-nova",
+      mode: "dangerFullAccess",
+    };
+
+    expect(providerSwitchComposerLaunch(configured, picked, "gpt-6-astra", LIVE_CODEX)).toBe(
+      picked,
+    );
+  });
+
+  it("does not guess the automatic Codex model when the configured runtime model is unknown", () => {
+    const configured = newThreadComposerLaunch("codex", {
+      ...CONFIGURED,
+      codex: { model: "default", effort: "high" },
+    });
+    const picked: AgentLaunchOptions = {
+      provider: "codex",
+      model: "gpt-7-nova",
+      mode: "dangerFullAccess",
+    };
+
+    expect(providerSwitchComposerLaunch(configured, picked, "gpt-unavailable", LIVE_CODEX)).toBe(
+      picked,
+    );
+  });
+
   it("keeps the configured effort when the picked model is the configured model", () => {
     const picked: AgentLaunchOptions = { ...CONFIGURED_CLAUDE, effort: "high" };
 

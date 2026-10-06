@@ -2310,6 +2310,34 @@ describe("AgentModeView", () => {
     expect(launchSelect("agent-launch-mode").value).toBe("acceptEdits");
   });
 
+  it.each(["shortcut", "button"])(
+    "restores configured Codex effort for a new thread through the %s",
+    async (entry) => {
+      const bridge = createAgentViewCommandBridge();
+      const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+      render(
+        { agents: surface({ agentCliKind: "codex", startThread }), viewCommands: bridge },
+        "none",
+        { ...defaultAgentNewThreadDefaults(), codex: { model: "default", effort: "high" } },
+      );
+      chooseLaunch("agent-launch-model", "gpt-6-astra");
+      expect(launchSelect("agent-launch-effort").value).toBe("default");
+
+      if (entry === "shortcut") act(() => bridge.run("agent.newThread"));
+      else click('button[aria-label="New thread"]');
+
+      expect(launchSelect("agent-launch-model").value).toBe("gpt-6.1-sol");
+      expect(launchSelect("agent-launch-effort").value).toBe("high");
+      typePrompt("Check the defaults");
+      await submitFormAsync();
+      expect(startThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          launch: expect.objectContaining({ provider: "codex", effort: "high" }),
+        }),
+      );
+    },
+  );
+
   it("starts new threads from the configured defaults instead of a newer last used launch", () => {
     const agents = surface({
       lastUsedLaunch: () => ({

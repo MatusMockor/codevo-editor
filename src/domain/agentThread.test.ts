@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createAgentOutputParserState, feedAgentOutput } from "./agentOutput/agentOutputParser";
+import { createAgentOutputParserState, feedAgentOutput } from "@codevo/agent-events";
 import type { AgentCliKind, AgentTaskStatusEvent } from "./agentTask";
 import {
   parseAgentThread as wireParseAgentThread,
@@ -1697,7 +1697,15 @@ describe("agent thread wire module", () => {
     ];
     for (const entry of fixtures) {
       const chunk = readFileSync(
-        join(process.cwd(), "src", "domain", "agentOutput", "fixtures", `${entry.name}.jsonl`),
+        join(
+          process.cwd(),
+          "packages",
+          "agent-events",
+          "src",
+          "agentOutput",
+          "fixtures",
+          `${entry.name}.jsonl`,
+        ),
         "utf8",
       );
       const parserState = createAgentOutputParserState(entry.kind);

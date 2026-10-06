@@ -1,6 +1,6 @@
 import { agentThreadAttention, agentThreadUnread } from "../domain/agentThread";
 import { describe, expect, it } from "vitest";
-import { utf8ByteLength } from "../domain/agentOutput/utf8Text";
+import { utf8ByteLength } from "@codevo/agent-events";
 import { MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES, type AgentShipState } from "../domain/agentShip";
 import { UNTITLED_AGENT_THREAD_TITLE, type AgentThread } from "../domain/agentThread";
 import type { GitShipStatus } from "../domain/gitIntegration";

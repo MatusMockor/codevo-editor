@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  appendRemoteAgentTranscript,
-  createRemoteAgentTranscript,
-} from "../../domain/remoteAgentTranscript";
+import { appendRemoteAgentTranscript, createRemoteAgentTranscript } from "@codevo/agent-events";
 import { agentTurnProjection, agentTurnWorkFold } from "./agentModePresentation";
 
 describe("completed remote Codex work", () => {

@@ -19,6 +19,8 @@ struct Capabilities {
     #[serde(default, deserialize_with = "optional_bool")]
     account_usage: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
+    speech_transcription: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     project_management: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     thread_management: Option<bool>,
@@ -94,6 +96,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
     let _ = (
         caps.task_execution,
         caps.account_usage,
+        caps.speech_transcription,
         caps.project_management,
         caps.thread_management,
         caps.turn_changes,
@@ -131,6 +134,7 @@ mod tests {
             "turnChanges",
             "accountUsage",
             "commandCatalog",
+            "speechTranscription",
         ] {
             let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
             assert!(validate(value.clone()).is_ok());

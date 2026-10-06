@@ -17,7 +17,7 @@ import {
   foldAgentTurnDigest,
   type AgentTurnDigestWire,
 } from "./agentTurnDigest";
-import { retainAgentTurnEvents } from "./agentTurnEventRetention";
+import { retainAgentTurnEvents } from "@codevo/agent-events";
 import { AGENT_TURN_LOG_LIMITS } from "./agentTurnLog";
 import { parseAgentTurnDigest } from "./agentTurnLogWire";
 

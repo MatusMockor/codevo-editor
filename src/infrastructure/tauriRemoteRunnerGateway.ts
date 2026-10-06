@@ -22,6 +22,7 @@ export const REMOTE_RUNNER_COMMANDS = {
   getRunner: "remote_runner_get_runner",
   getAccountUsage: "remote_runner_get_account_usage",
   getCommandCatalog: "remote_runner_get_command_catalog",
+  transcribeSpeech: "remote_runner_transcribe_speech",
   listProjects: "remote_runner_list_projects",
   listRepositoryHosts: "remote_runner_repository_hosts",
   lookupRepository: "remote_runner_lookup_repository",
@@ -129,6 +130,9 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
       throw new TypeError("Invalid remote runner command catalog provider.");
     }
     return catalog;
+  }
+  transcribeSpeech(request: R.RemoteRunnerTranscribeSpeechRequest) {
+    return this.call("transcribeSpeech", request);
   }
   getRunner(request: R.RemoteRunnerServerRequest) {
     return this.call("getRunner", request);

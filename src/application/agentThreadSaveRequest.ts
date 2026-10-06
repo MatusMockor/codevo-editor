@@ -1,5 +1,5 @@
 import { agentRootOwnerId } from "../domain/agentProject";
-import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentThread } from "../domain/agentThread";
 import type { SaveAgentThreadRequest } from "./agentThreadPorts";
 import type { AgentTurnLogFactsSource } from "./agentTurnLogStatusStore";

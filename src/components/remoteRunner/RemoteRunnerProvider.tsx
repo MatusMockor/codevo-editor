@@ -4,6 +4,7 @@ import { useRemoteRunnerConnections } from "../../application/useRemoteRunnerCon
 import type { RemoteRunnerGateway } from "../../domain/remoteRunner";
 import type { RemoteAgentMetadataRepository } from "../../application/remoteAgentMetadata";
 import type { RepositoryLookupGateway } from "../../application/repositoryLookupPorts";
+import type { SpeechDictationPorts } from "../../application/speechDictationPorts";
 
 import { RemoteRunnerContext } from "./remoteRunnerContext";
 
@@ -12,12 +13,14 @@ export function RemoteRunnerProvider({
   gateway,
   metadataRepository,
   repositoryLookup,
+  speechDictation = null,
   surfacesGateway,
 }: {
   readonly children: ReactNode;
   readonly gateway: RemoteRunnerGateway;
   readonly surfacesGateway?: RemoteRunnerSurfacesGateway | null;
   readonly repositoryLookup?: RepositoryLookupGateway | null;
+  readonly speechDictation?: SpeechDictationPorts | null;
   readonly metadataRepository?: RemoteAgentMetadataRepository;
 }) {
   const connections = useRemoteRunnerConnections({ gateway });
@@ -30,6 +33,7 @@ export function RemoteRunnerProvider({
         gateway,
         surfacesGateway,
         repositoryLookup,
+        speechDictation,
         selectedServerId,
         selectServer,
         metadataRepository,

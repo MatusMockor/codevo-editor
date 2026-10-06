@@ -33,8 +33,8 @@ function defaultShortcutsWithoutIntentionalCollisions(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(142);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(140);
+    expect(keymapCommands).toHaveLength(143);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(141);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -508,6 +508,28 @@ describe("keymap", () => {
         expect(keymapCommandIdsForShortcut(defaults, shortcut, platform)).toEqual([id]);
         expect(findKeymapSequenceConflicts(defaults, id, platform)).toEqual([]);
       }
+    }
+  });
+
+  it("binds Toggle Dictation to the dictation chord without shortcut collisions", () => {
+    expect(keymapCommands.find((command) => command.id === "agent.toggleDictation")).toMatchObject({
+      category: "Agent",
+      defaultShortcut: "Cmd+Alt+V",
+      label: "Toggle Dictation",
+    });
+    expect(isKeymapCommandId("agent.toggleDictation")).toBe(true);
+
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+      const primary = platform === "mac" ? "Cmd" : "Ctrl";
+      const shortcut = defaults["agent.toggleDictation"];
+
+      expect(shortcut).toBe(`${primary}+Alt+V`);
+      expect(keymapCommandIdsForShortcut(defaults, shortcut, platform)).toEqual([
+        "agent.toggleDictation",
+      ]);
+      expect(findKeymapConflicts(defaults, "agent.toggleDictation", platform)).toEqual([]);
+      expect(findKeymapSequenceConflicts(defaults, "agent.toggleDictation", platform)).toEqual([]);
     }
   });
 

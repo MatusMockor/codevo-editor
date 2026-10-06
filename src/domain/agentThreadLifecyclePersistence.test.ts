@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentThread } from "./agentThread";
 import { compactPersistedAgentSubagentLifecycle } from "./agentLifecyclePersistence";
 import { parseAgentThread, serializeAgentThread } from "./agentThreadWire";

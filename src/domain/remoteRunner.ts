@@ -1,3 +1,14 @@
+import type {
+  RemoteRunnerProvider,
+  RemoteRunnerPart,
+  RemoteRunnerEvent,
+  AgentSubagentLifecycle,
+} from "@codevo/agent-events";
+export type {
+  RemoteRunnerProvider,
+  RemoteRunnerPart,
+  RemoteRunnerEvent,
+} from "@codevo/agent-events";
 import type { AgentAccountUsageSnapshot } from "./agentAccountUsage";
 import type { AgentCommandCatalog } from "./agentCommandCatalog";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "./agentTurnChanges";
@@ -14,17 +25,16 @@ import type {
   RemoteThreadMetadataPage,
 } from "./remoteThreadMetadata";
 import type { RemoteProjectDirectories } from "./remoteProjectManagement";
-import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
 import type {
   RemoteRunnerCollectInstructionsRequest,
   RemoteRunnerInstructionSnapshot,
 } from "./remoteRunnerInstructions";
 import type { AgentLaunchOptions } from "./agentLaunch";
 import type { RemoteStartBase } from "./remoteGitSyncWire";
+import type { SpeechLanguage } from "./speechDictation";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
 export type RemoteRunnerIsolation = "in-place" | "worktree";
-export type RemoteRunnerProvider = "claude" | "codex";
 export type RemoteRunnerServerInput = Readonly<{
   id: string;
   name: string;
@@ -65,6 +75,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     interactiveQuestions?: boolean;
     gitSync?: boolean;
     portPreview?: boolean;
+    speechTranscription?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
@@ -83,8 +94,6 @@ export type RemoteRunnerCloneJob = Readonly<{
   project: RemoteRunnerProject | null;
   error: string | null;
 }>;
-export type RemoteRunnerPart =
-  Readonly<{ type: "text"; text: string }> | Readonly<{ type: "attachment"; attachmentId: string }>;
 export type RemoteRunnerTaskStatus =
   "draft" | "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
 export type RemoteRunnerTask = Readonly<{
@@ -137,27 +146,6 @@ export type RemoteRunnerPendingMessages = Readonly<{
 }>;
 export type RemoteRunnerCancelPendingRequest = RemoteRunnerTaskRequest &
   Readonly<{ pendingId: string }>;
-export type RemoteRunnerEvent = Readonly<{
-  sequence: number;
-  taskId: string;
-  type:
-    | "task.created"
-    | "task.queued"
-    | "task.running"
-    | "task.succeeded"
-    | "task.failed"
-    | "task.interrupted"
-    | "task.cancelled"
-    | "task.output"
-    | "task.input";
-  createdAt: string;
-  channel?: "stdout" | "stderr";
-  text?: string;
-  messageId?: string;
-  parts?: readonly RemoteRunnerPart[];
-  exitCode?: number | null;
-  error?: string;
-}>;
 export type RemoteRunnerPage<T> = Readonly<{ items: readonly T[]; nextCursor: number | null }>;
 export type RemoteRunnerEventPage = RemoteRunnerPage<RemoteRunnerEvent> &
   Readonly<{
@@ -252,10 +240,16 @@ export type RemoteRunnerAccountUsageRequest = RemoteRunnerServerRequest &
 
 export type RemoteRunnerCommandCatalogRequest = RemoteRunnerServerRequest &
   Readonly<{ runnerId: string; projectId: string; provider: RemoteRunnerProvider }>;
+export type RemoteRunnerTranscribeSpeechRequest = RemoteRunnerServerRequest &
+  Readonly<{ language: SpeechLanguage; base64: string }>;
+export type RemoteRunnerSpeechTranscript = Readonly<{ text: string }>;
 
 export interface RemoteRunnerGateway {
   getAccountUsage?(request: RemoteRunnerAccountUsageRequest): Promise<AgentAccountUsageSnapshot>;
   getCommandCatalog?(request: RemoteRunnerCommandCatalogRequest): Promise<AgentCommandCatalog>;
+  transcribeSpeech?(
+    request: RemoteRunnerTranscribeSpeechRequest,
+  ): Promise<RemoteRunnerSpeechTranscript>;
   listRepositoryHosts?(request: RemoteRunnerServerRequest): Promise<RepositoryHostsSnapshot>;
   lookupRepository?(
     request: RemoteRunnerServerRequest & Readonly<{ request: RepositoryLookupRequest }>,

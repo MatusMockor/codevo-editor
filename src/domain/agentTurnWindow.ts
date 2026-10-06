@@ -1,16 +1,15 @@
 import type { AgentTurnEvent } from "./agentThread";
 import { foldAgentTurnDigest, type AgentTurnDigestWire } from "./agentTurnDigest";
-import type { AgentTurnEventRetentionProbe } from "./agentTurnEventRetention";
 import {
+  type AgentTurnEventRetentionProbe,
   isAgentTurnCoalescibleTextEvent,
   isAgentTurnSnapshotEvent,
   mergeSupersededAgentTurnEvent,
-} from "./agentTurnEventSupersession";
-import {
   createAgentTurnSnapshotIndex,
   type AgentTurnSnapshotIndex,
   type AgentTurnSnapshotPlacement,
-} from "./agentTurnSnapshotIndex";
+} from "@codevo/agent-events";
+
 import {
   AGENT_TURN_LOG_FIRST_SEQ,
   NO_AGENT_TURN_LOG_LOSS,

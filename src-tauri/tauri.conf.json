@@ -32,6 +32,9 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    },
     "publisher": "Matus Mockor",
     "copyright": "Copyright 2026 Matus Mockor",
     "category": "DeveloperTool",

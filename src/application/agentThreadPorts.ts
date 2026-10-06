@@ -19,7 +19,7 @@ import type {
   FindAgentHistoryImportRequest,
 } from "../domain/agentHistory";
 import type { AgentThreadHistorySurface } from "./useAgentThreadHistory";
-import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentImageMime } from "../domain/agentAttachment";
 import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";

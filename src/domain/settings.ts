@@ -13,6 +13,8 @@ import {
   type LargeSmartDocumentPolicy,
 } from "./largeDocumentPolicy";
 import { normalizeGitCommitMessageHistory } from "./gitCommitMessageHistory";
+import { normalizeSpeechDictationLanguageSetting } from "./speechDictationLanguageSetting";
+import type { SpeechLanguage } from "./speechDictation";
 import {
   defaultAgentAppSettings,
   normalizeAgentCliKind,
@@ -143,6 +145,7 @@ export interface AppSettings {
   agentNewThreadDefaults?: AgentNewThreadDefaults;
   agentProviderPreferences: AgentProviderPreferences;
   maxConcurrentAgentTasks: number;
+  speechDictationLanguage?: SpeechLanguage;
   editorFontFamily: string;
   editorFontLigatures: boolean;
   editorFontSize: number;
@@ -489,6 +492,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     agentNewThreadDefaults: normalizeAgentNewThreadDefaults(value.agentNewThreadDefaults),
     agentProviderPreferences: normalizeAgentProviderPreferences(value.agentProviderPreferences),
     maxConcurrentAgentTasks: normalizeMaxConcurrentAgentTasks(value.maxConcurrentAgentTasks),
+    ...normalizeSpeechDictationLanguageSetting(value.speechDictationLanguage),
     editorFontFamily,
     editorFontLigatures,
     editorFontSize,

@@ -377,3 +377,49 @@ remain possible regardless of this runner policy.
 Deploy a compatible editor before the runner that adds these descriptor and question
 contracts. Back up runner data before schema migration. Do not restart the production
 service while user tasks are active.
+
+## Voice dictation
+
+The agent composer can turn speech into prompt text. Dictation needs a connected
+server whose runner has `CODEVO_SPEECH_URL` configured; such a runner advertises
+the `speechTranscription` capability. The editor uses the conversation's own server
+when it is connected and advertises the capability, otherwise the first connected
+server that does. Without one, the microphone button is unavailable: its tooltip and
+accessible description say why, and activating it shows the reason in the composer.
+Local conversations can dictate too, as long as one such server is connected. A
+session stays on the server it started with; a different preferred server applies
+from the next session, and the session fails only when its own server disconnects.
+
+Use the microphone button next to the send button, or Toggle Dictation
+(`Cmd+Alt+V` on macOS, `Ctrl+Alt+V` elsewhere; rebindable in Settings >
+Keybindings). While recording, the button shows a level meter and the elapsed time.
+Click it again, or press the shortcut again, to stop and transcribe the rest.
+`Esc` cancels dictation and discards audio that was not transcribed yet; it does not
+stop a running agent, which needs a second `Esc`. Transcribed text is inserted at
+the caret in the prompt. Dictation never sends the prompt: sending is blocked while
+the microphone is starting, while recording and while a transcript is still pending,
+and you send it yourself afterwards.
+Switching to another conversation or project cancels dictation, so a late transcript
+cannot land in a different draft. Recording also stops, and what was captured is
+still transcribed, when the composer is no longer on screen (Settings, the editor
+layout, a maximized right panel) or the window is hidden or minimised.
+
+Limits:
+
+- Speech is cut into segments of at most 30 seconds, each transcribed separately and
+  inserted in order.
+- One dictation session lasts at most 5 minutes, then stops and keeps what was
+  transcribed. A server that falls too far behind also stops the session early.
+- Supported languages are Slovak, English and Czech. Choose one in Settings > Providers >
+  Dictation language; until you do, the editor follows the system language and falls
+  back to English.
+
+Privacy: audio is captured in the editor window and sent through the existing SSH
+tunnel only to your own connected server, whose runner passes it to the speech service
+configured in `CODEVO_SPEECH_URL`. The editor does not store audio and does not send
+it to any other service. Only the returned text is kept, as part of your draft.
+
+Platform notes: macOS asks for microphone permission the first time; if it was
+denied, allow Codevo under System Settings > Privacy & Security > Microphone. On
+Linux, microphone capture depends on the WebKitGTK build and has not been verified
+yet; when capture is not available the button is unavailable with that reason.

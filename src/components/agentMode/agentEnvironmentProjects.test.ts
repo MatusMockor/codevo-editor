@@ -7,7 +7,11 @@ import {
 import { agentProjectGroups } from "./agentModePresentation";
 import { agentRailOwnedViews } from "./agentRailProjectLayout";
 import { agentRailScopeEntries, agentRailSections } from "./agentSidebarPresentation";
-import { environmentComposerScope, groupedEnvironmentProjects } from "./agentEnvironmentProjects";
+import {
+  environmentComposerScope,
+  groupedEnvironmentProjects,
+  newThreadEnvironmentProjectRootKey,
+} from "./agentEnvironmentProjects";
 import { projectFixture, fixtureRepository } from "./agentThreadsSurfaceTestFixtures";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 
@@ -47,6 +51,56 @@ const scope = {
 };
 
 describe("project display across environments", () => {
+  it("resets a new draft in the exact selected environment of a linked display project", () => {
+    const groups = groupedEnvironmentProjects(source, projects, links);
+    expect(newThreadEnvironmentProjectRootKey(local.rootKey, groups, projects, "linux")).toBe(
+      remoteKey,
+    );
+    expect(newThreadEnvironmentProjectRootKey(remoteKey, groups, projects, null)).toBe(remoteKey);
+    expect(newThreadEnvironmentProjectRootKey(local.rootKey, groups, projects, "other")).toBeNull();
+    expect(newThreadEnvironmentProjectRootKey(null, groups, projects, "linux")).toBeNull();
+  });
+
+  it("keeps unlinked new-thread destinations because they select their own environment", () => {
+    expect(newThreadEnvironmentProjectRootKey(local.rootKey, source, projects, "linux")).toBe(
+      local.rootKey,
+    );
+    expect(newThreadEnvironmentProjectRootKey(remoteKey, source, projects, null)).toBe(remoteKey);
+  });
+
+  it("refuses ambiguous linked draft destinations", () => {
+    const second = { ...remote, rootKey: "remote:linux:runner:other" };
+    const groups = [
+      { ...source[0]!, memberProjectRootKeys: [local.rootKey, remoteKey, second.rootKey] },
+    ];
+    expect(
+      newThreadEnvironmentProjectRootKey(local.rootKey, groups, [...projects, second], "linux"),
+    ).toBeNull();
+    const explicit = {
+      ...scope,
+      kind: "repository" as const,
+      projectRootKey: remoteKey,
+      repositoryRoot: remote.rootPath,
+      ownerId: remote.ownerId,
+      generation: remote.generation,
+    };
+    expect(
+      newThreadEnvironmentProjectRootKey(
+        local.rootKey,
+        groups,
+        [...projects, second],
+        "linux",
+        explicit,
+      ),
+    ).toBe(remoteKey);
+    expect(
+      newThreadEnvironmentProjectRootKey(local.rootKey, groups, [...projects, second], "linux", {
+        ...explicit,
+        generation: 99,
+      }),
+    ).toBeNull();
+  });
+
   it("merges only explicit links, includes both inventories, and preserves exact thread owners", () => {
     const groups = groupedEnvironmentProjects(source, projects, links);
     expect(groups).toHaveLength(1);

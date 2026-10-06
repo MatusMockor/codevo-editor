@@ -130,3 +130,31 @@ export function environmentComposerScope(
     generation: target.generation,
   };
 }
+
+/** New-thread commands retain the selected environment for a linked display project. */
+export function newThreadEnvironmentProjectRootKey(
+  projectRootKey: string | null,
+  groups: readonly AgentProjectGroup[],
+  projects: readonly AgentProjectDescriptor[],
+  serverId: string | null,
+  selectedScope: ComposerScope | null = null,
+): string | null {
+  if (projectRootKey === null) return null;
+  const group = groups.find((candidate) => candidate.projectRootKey === projectRootKey);
+  // Unlinked project commands select that project's environment before creating a draft.
+  if (group?.memberProjectRootKeys === undefined) return projectRootKey;
+  const project = projects.find((candidate) => candidate.rootKey === projectRootKey);
+  if (project === undefined) return null;
+  const requestedScope: ComposerScope =
+    selectedScope !== null && group.memberProjectRootKeys.includes(selectedScope.projectRootKey)
+      ? selectedScope
+      : {
+          kind: "project",
+          projectRootKey,
+          repositoryRoot: project.rootPath,
+          ownerId: project.ownerId,
+          generation: project.generation,
+        };
+  const scope = environmentComposerScope(requestedScope, groups, projects, serverId);
+  return scope?.kind === "missing" ? null : (scope?.projectRootKey ?? null);
+}
