@@ -57,6 +57,8 @@ struct Capabilities {
     git_sync: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     port_preview: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    command_catalog: Option<bool>,
 }
 
 fn optional_timeout<'de, D: serde::Deserializer<'de>>(
@@ -113,6 +115,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.interactive_questions,
         caps.git_sync,
         caps.port_preview,
+        caps.command_catalog,
     );
     Ok(descriptor.runner_id)
 }
@@ -127,6 +130,7 @@ mod tests {
             "threadManagement",
             "turnChanges",
             "accountUsage",
+            "commandCatalog",
         ] {
             let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
             assert!(validate(value.clone()).is_ok());

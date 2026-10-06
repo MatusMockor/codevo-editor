@@ -87,6 +87,8 @@ async function bootstrap(): Promise<void> {
     { TauriClaudeModelCatalogGateway },
     { CodexModelCatalogProvider },
     { TauriCodexModelCatalogGateway },
+    { AgentCommandCatalogProvider },
+    { TauriAgentCommandCatalogGateway },
     { ModelNewnessProvider },
     { BrowserModelFirstSeenRepository },
     { TauriRemoteRunnerGateway },
@@ -105,6 +107,8 @@ async function bootstrap(): Promise<void> {
     import("./infrastructure/tauriClaudeModelCatalogGateway"),
     import("./components/agentMode/CodexModelCatalogProvider"),
     import("./infrastructure/tauriCodexModelCatalogGateway"),
+    import("./components/agentMode/AgentCommandCatalogProvider"),
+    import("./infrastructure/tauriAgentCommandCatalogGateway"),
     import("./components/agentMode/ModelNewnessProvider"),
     import("./infrastructure/browserModelFirstSeenRepository"),
     import("./infrastructure/tauriRemoteRunnerGateway"),
@@ -116,10 +120,11 @@ async function bootstrap(): Promise<void> {
   // Root-level boundary: ANY render/lifecycle crash anywhere in the app
   // (not just inside the git diff view) now renders a recoverable fallback
   // instead of unmounting the whole tree to a blank screen.
+  const remoteRunnerGateway = new TauriRemoteRunnerGateway();
   const appTree = React.createElement(ErrorBoundary, {
     title: "Codevo Editor hit an unexpected error",
     children: React.createElement(RemoteRunnerProvider, {
-      gateway: new TauriRemoteRunnerGateway(),
+      gateway: remoteRunnerGateway,
       surfacesGateway: new TauriRemoteRunnerSurfacesGateway(),
       repositoryLookup: new TauriRepositoryLookupGateway(),
       metadataRepository: new BrowserRemoteAgentMetadataRepository(() => window.localStorage),
@@ -127,9 +132,13 @@ async function bootstrap(): Promise<void> {
         gateway: new TauriClaudeModelCatalogGateway(),
         children: React.createElement(CodexModelCatalogProvider, {
           gateway: new TauriCodexModelCatalogGateway(),
-          children: React.createElement(ModelNewnessProvider, {
-            repository: new BrowserModelFirstSeenRepository(),
-            children: React.createElement(App),
+          children: React.createElement(AgentCommandCatalogProvider, {
+            gateway: new TauriAgentCommandCatalogGateway(),
+            remoteGateway: remoteRunnerGateway,
+            children: React.createElement(ModelNewnessProvider, {
+              repository: new BrowserModelFirstSeenRepository(),
+              children: React.createElement(App),
+            }),
           }),
         }),
       }),

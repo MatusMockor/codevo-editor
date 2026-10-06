@@ -18,9 +18,21 @@ const MAX_INPUT: usize = 16 * 1024 * 1024;
 const MAX_OUTPUT: usize = 4 * 1024 * 1024;
 const MAX_IMAGE_OUTPUT: usize = (8 * 1024 * 1024_usize).div_ceil(3) * 4 + 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_COMMAND_CATALOG_OUTPUT: usize = 2 * 1024 * 1024;
+fn is_command_catalog_path(path: &str) -> bool {
+    path.strip_prefix("/v1/projects/")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(project, route)| {
+            super::types::id(project).is_ok()
+                && matches!(route, "command-catalog/claude" | "command-catalog/codex")
+        })
+}
 fn response_limit(method: &str, path: &str) -> usize {
     if method == "GET" && matches!(path, "/v1/account-usage/claude" | "/v1/account-usage/codex") {
         return 16 * 1024;
+    }
+    if method == "GET" && is_command_catalog_path(path) {
+        return MAX_COMMAND_CATALOG_OUTPUT;
     }
     let attachment = path
         .strip_prefix("/v1/attachments/")
@@ -211,6 +223,24 @@ mod tests {
         assert_eq!(response_limit("GET", "/v1/tasks"), MAX_OUTPUT);
         assert_eq!(response_limit("GET", "/v1/account-usage/claude"), 16 * 1024);
         assert_eq!(response_limit("GET", "/v1/account-usage/codex"), 16 * 1024);
+        for provider in ["claude", "codex"] {
+            let catalog = format!("/v1/projects/codevo-editor/command-catalog/{provider}");
+            assert_eq!(response_limit("GET", &catalog), MAX_COMMAND_CATALOG_OUTPUT);
+            assert_eq!(response_limit("POST", &catalog), MAX_OUTPUT);
+            assert_eq!(response_limit("GET", &format!("{catalog}?x=1")), MAX_OUTPUT);
+        }
+        assert_eq!(
+            response_limit("GET", "/v1/projects/a/b/command-catalog/codex"),
+            MAX_OUTPUT
+        );
+        assert_eq!(
+            response_limit("GET", "/v1/projects//command-catalog/codex"),
+            MAX_OUTPUT
+        );
+        assert_eq!(
+            response_limit("GET", "/v1/projects/codevo-editor/command-catalog/gemini"),
+            MAX_OUTPUT
+        );
         let artifact = "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/artifacts/7389088c-29b8-4cec-9a15-e825e1fb2f66/content";
         assert_eq!(response_limit("GET", artifact), MAX_IMAGE_OUTPUT);
         assert_eq!(response_limit("POST", artifact), MAX_OUTPUT);

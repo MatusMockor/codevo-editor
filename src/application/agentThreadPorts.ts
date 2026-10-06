@@ -3,6 +3,7 @@ import type { AgentAccountUsageLoadState } from "../domain/agentAccountUsage";
 import type { AgentAccountUsageSourcesPort } from "../domain/agentAccountUsageSources";
 import type { AgentAccountUsageRefreshOutcome } from "./agentAccountUsageRefresh";
 import type { RemoteGitProjectKey, RemoteGitSyncPort } from "../domain/remoteGitSync";
+import type { AgentCommandCatalogServerProject } from "../domain/agentCommandCatalogTarget";
 import type { AgentSessionBackground } from "../domain/agentSessionBackground";
 import type { AgentBackgroundTaskStopOutcome } from "../domain/agentThreadSession";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
@@ -387,6 +388,10 @@ export interface RemoteAgentGitAccess {
   project(projectRootKey: string): RemoteGitProjectKey | null;
 }
 
+export interface RemoteAgentCommandCatalogAccess {
+  project(projectRootKey: string): AgentCommandCatalogServerProject | null;
+}
+
 export interface AgentThreadsSurface {
   readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly accountUsageSources?: AgentAccountUsageSourcesPort;
@@ -394,6 +399,7 @@ export interface AgentThreadsSurface {
     provider: "claudeCode" | "codex",
   ) => Promise<AgentAccountUsageRefreshOutcome>;
   readonly remoteGit?: RemoteAgentGitAccess;
+  readonly remoteCommandCatalog?: RemoteAgentCommandCatalogAccess;
   readonly history?: AgentThreadHistorySurface;
   readonly catalog?: AgentHistoryCatalogSurface;
   readonly historySearch?: AgentHistorySearchPort;

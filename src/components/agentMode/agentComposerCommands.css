@@ -14,6 +14,11 @@
   line-height: 1.4;
 }
 
+.agent-composer-commands--noticed {
+  padding-bottom: 0;
+  scroll-padding-bottom: 36px;
+}
+
 .agent-composer-commands__option {
   display: flex;
   align-items: start;
@@ -26,6 +31,21 @@
 .agent-composer-commands__option:hover,
 .agent-composer-commands__option[aria-selected="true"] {
   background: var(--cv-tint-2);
+}
+
+.agent-composer-commands__option--group {
+  position: relative;
+  margin-top: 9px;
+}
+
+.agent-composer-commands__option--group::before {
+  position: absolute;
+  top: -5px;
+  right: 10px;
+  left: 10px;
+  height: 1px;
+  background: var(--cv-divider);
+  content: "";
 }
 
 .agent-composer-commands__name {
@@ -52,4 +72,50 @@
   display: flex;
   justify-content: space-between;
   gap: 12px;
+}
+
+.agent-composer-commands__description--line {
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-composer-commands__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.agent-composer-commands__invocation {
+  font-family: var(--cv-font-mono);
+  font-size: 12px;
+}
+
+.agent-composer-commands__hint {
+  font-family: var(--cv-font-mono);
+  font-size: 11px;
+  color: var(--cv-fg-muted);
+}
+
+.agent-composer-commands__notice {
+  position: sticky;
+  bottom: 0;
+  margin: 6px -6px 0;
+  padding: 8px 16px 8px;
+  background: var(--cv-popover);
+  color: var(--cv-fg-muted);
+  font-size: 11px;
+}
+
+.agent-composer-commands__notice::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--cv-divider);
+  content: "";
 }

@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 const ERROR_BODY_LIMIT: usize = 1024;
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -348,6 +348,7 @@ mod tests {
         assert!(tokens.contains(&"gitSync"));
         assert!(tokens.contains(&"portPreview"));
         assert!(tokens.contains(&"accountUsage"));
+        assert!(tokens.contains(&"commandCatalog"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);

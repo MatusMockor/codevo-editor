@@ -1,5 +1,9 @@
 // Agent runtime modules remain in the crate namespace.
 pub mod agent_cli_discovery;
+mod agent_command_catalog;
+mod agent_command_catalog_domain;
+mod agent_command_catalog_protocol;
+mod agent_command_catalog_service;
 pub mod agent_questions;
 mod agent_subagent_lifecycle;
 pub mod agent_task_admission;

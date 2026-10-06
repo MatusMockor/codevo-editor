@@ -568,7 +568,10 @@ export function AgentComposer({
     prompt,
     provider: effectiveLaunch.provider,
     followUp,
+    executionServerId,
+    repositoryRoot: target?.selectedRepositoryRoot ?? null,
     onChoose: chooseCommand,
+    onInsert: changePrompt,
   });
 
   const localCommandAvailable =
@@ -700,11 +703,7 @@ export function AgentComposer({
             spellCheck={false}
             aria-controls={commands.open ? "agent-composer-commands" : undefined}
             aria-expanded={commands.open}
-            aria-activedescendant={
-              commands.open
-                ? `agent-composer-command-${commands.rows[commands.activeIndex]?.id}`
-                : undefined
-            }
+            aria-activedescendant={commands.activeOptionId}
             onFocus={commands.onFocus}
             onBlur={commands.onBlur}
             onSelect={(event) => commands.onSelect(event.currentTarget)}
@@ -728,6 +727,7 @@ export function AgentComposer({
               anchor={textareaRef}
               rows={commands.rows}
               activeIndex={commands.activeIndex}
+              notice={commands.notice}
               onChoose={commands.choose}
               onClose={commands.close}
             />

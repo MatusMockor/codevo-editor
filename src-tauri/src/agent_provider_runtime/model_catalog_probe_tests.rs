@@ -155,3 +155,51 @@ fn a_probe_lease_is_not_an_active_turn() {
     assert_eq!(turn_count(&registry), 0);
     cleanup(&script);
 }
+
+#[test]
+fn a_command_catalog_probe_runs_in_the_workspace_and_is_cancelled_by_sign_in() {
+    let script = fake_codex(
+        "while IFS= read -r line; do case \"$line\" in *'\"method\":\"initialize\"'*) printf '{\"id\":0,\"result\":{}}\\n';; *'\"method\":\"skills/list\"'*) printf '{\"id\":1,\"result\":{\"data\":[{\"cwd\":\"%s\",\"skills\":[{\"name\":\"pdf\"}],\"errors\":[]}]}}\\n' \"$PWD\"; sleep 30;; esac; done",
+    );
+    let workspace = script.parent().unwrap().join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let workspace = workspace.canonicalize().unwrap();
+    let authority = Arc::new(fs::File::open(&workspace).unwrap());
+    let (registry, generation) = registry_for(&script);
+    let probe = registry.acquire_catalog_probe(CODEX, generation).unwrap();
+    let stdout = registry
+        .probe_command_catalog(&probe, &workspace, Arc::clone(&authority))
+        .unwrap();
+    let response: serde_json::Value = serde_json::from_slice(stdout.trim_ascii_end()).unwrap();
+    assert_eq!(
+        response["result"]["data"][0]["cwd"],
+        workspace.to_str().unwrap()
+    );
+    assert!(registry
+        .probe_command_catalog(&probe, Path::new("relative"), Arc::clone(&authority))
+        .is_err());
+    drop(probe);
+
+    let stalled =
+        fake_codex("touch \"$(dirname \"$0\")/started\"; while IFS= read -r line; do :; done");
+    let started_marker = stalled.parent().unwrap().join("started");
+    let (stalled_registry, stalled_generation) = registry_for(&stalled);
+    let stalled_probe = stalled_registry
+        .acquire_catalog_probe(CODEX, stalled_generation)
+        .unwrap();
+    let stalled_signer = Arc::clone(&stalled_registry);
+    let stalled_sign_in = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !started_marker.exists() {
+            assert!(Instant::now() < deadline, "stalled provider never started");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        stalled_signer.acquire_sign_in(CODEX, stalled_generation)
+    });
+    assert!(stalled_registry
+        .probe_command_catalog(&stalled_probe, &workspace, authority)
+        .is_err());
+    assert!(stalled_sign_in.join().unwrap().is_ok());
+    cleanup(&stalled);
+    cleanup(&script);
+}

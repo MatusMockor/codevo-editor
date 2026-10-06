@@ -1,4 +1,5 @@
 import { parseAgentAccountUsageSnapshot } from "./agentAccountUsage";
+import { parseAgentCommandCatalog } from "./agentCommandCatalog";
 import {
   parseAgentTurnChangeSummary,
   parseAgentTurnFileDiff,
@@ -310,17 +311,26 @@ const page = (item: Check) =>
   object({ items: array(item, 50), nextCursor: (v) => v === null || integer(0)(v) });
 const voidResponse: Check = (v) => v === null || v === undefined;
 
+const runnerIdentity: Check = (value) =>
+  text(128)(value) && typeof value === "string" && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
+
 export const remoteRunnerChecks = {
   getAccountUsage: {
     request: object({
       ...serverRequest,
-      runnerId: (value: unknown) =>
-        text(128)(value) &&
-        typeof value === "string" &&
-        !/[\u0000-\u001f\u007f-\u009f]/u.test(value),
+      runnerId: runnerIdentity,
       provider: choice("claude", "codex"),
     }),
     response: accepts(parseAgentAccountUsageSnapshot),
+  },
+  getCommandCatalog: {
+    request: object({
+      ...serverRequest,
+      runnerId: runnerIdentity,
+      projectId: identifier,
+      provider: choice("claude", "codex"),
+    }),
+    response: accepts(parseAgentCommandCatalog),
   },
   collectInstructions: {
     request: object({ rootPath: optional(text(4096)) }),
@@ -339,6 +349,7 @@ export const remoteRunnerChecks = {
       executionTimeoutMs: optional(integer(60_000, 604_800_000)),
       capabilities: object({
         accountUsage: optional(boolean),
+        commandCatalog: optional(boolean),
         taskExecution: boolean,
         eventReplay: boolean,
         taskDrafts: optional(boolean),

@@ -1,4 +1,6 @@
 import { useRemoteComposerGit } from "../../application/useRemoteDraftGitBase";
+import { remoteComposerCommandCatalogProject } from "../../application/remoteAgentCommandCatalog";
+import type { AgentCommandCatalogServerProject } from "../../domain/agentCommandCatalogTarget";
 import {
   carryAgentDraftIntoRecovery,
   useAgentComposerRecovery,
@@ -114,6 +116,7 @@ export type AgentComposerSurface = Pick<
   | "maxConcurrentAgentTasks"
   | "refreshIsolationStatus"
   | "remoteGit"
+  | "remoteCommandCatalog"
   | "sendFollowUp"
   | "startThread"
   | "steer"
@@ -165,6 +168,7 @@ export type AgentComposerControllerProps = Omit<
   readonly recovery?: AgentComposerRecovery | null;
   readonly draftKey: string | null;
   readonly previousWorktree?: AgentComposerPreviousWorktreeChoice | null;
+  readonly commandCatalogProject?: AgentCommandCatalogServerProject | null;
 };
 
 export type AgentComposerPromptProps = Omit<
@@ -768,6 +772,11 @@ export function useAgentComposerControllerState({
     worktreeOnlyReason,
     worktreeBase,
     remoteGit,
+    commandCatalogProject: remoteComposerCommandCatalogProject(
+      agents.remoteCommandCatalog,
+      composerProjectRootKey,
+      selectedThread,
+    ),
   };
 
   return {
@@ -872,7 +881,12 @@ export function agentComposerPromptBytes(
 export function useAgentComposerPromptState(
   controller: AgentComposerPromptController,
 ): AgentComposerPromptProps {
-  const { draftKey, recovery, ...composerProps } = controller.composerProps;
+  const {
+    draftKey,
+    recovery,
+    commandCatalogProject: _commandCatalogProject,
+    ...composerProps
+  } = controller.composerProps;
   const queuedEdit = composerProps.queuedEdit ?? null;
   const [ownDrafts] = useState(createAgentComposerDraftStore);
   const drafts = controller.drafts ?? ownDrafts;

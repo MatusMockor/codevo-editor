@@ -16,18 +16,25 @@ export interface RemoteComposerGit {
   readonly project: RemoteGitProjectKey;
 }
 
+/** A remote thread addresses its own project; a draft addresses the composer's project. */
+export function remoteComposerProjectRootKey(
+  projectRootKey: string | null,
+  thread: AgentThreadView | null,
+): string | null {
+  const execution = thread?.execution;
+  if (execution?.kind === "remote")
+    return remoteAgentProjectKey(execution.serverId, execution.runnerId, execution.projectId);
+  if (thread === null) return projectRootKey;
+  return null;
+}
+
 export function useRemoteComposerGit(
   access: RemoteAgentGitAccess | undefined,
   projectRootKey: string | null,
   thread: AgentThreadView | null,
 ): RemoteComposerGit | null {
   const execution = thread?.execution;
-  const rootKey =
-    execution?.kind === "remote"
-      ? remoteAgentProjectKey(execution.serverId, execution.runnerId, execution.projectId)
-      : thread === null
-        ? projectRootKey
-        : null;
+  const rootKey = remoteComposerProjectRootKey(projectRootKey, thread);
   const project = rootKey === null ? null : (access?.project(rootKey) ?? null);
   const key =
     project === null

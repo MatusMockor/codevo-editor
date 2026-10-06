@@ -36,6 +36,11 @@ const CODEX_APP_SERVER_HANDSHAKE: &str = concat!(
 #[path = "agent_provider_usage_probe.rs"]
 mod usage_probe;
 use usage_probe::CodexUsageProbe;
+#[path = "agent_provider_interactive_probe.rs"]
+mod interactive_probe;
+use interactive_probe::InteractiveProbe;
+#[path = "agent_provider_command_catalog_plan.rs"]
+pub(crate) mod command_catalog_plan;
 const CODEX_MODEL_LIST_REQUEST: &str =
     "{\"method\":\"model/list\",\"id\":1,\"params\":{\"includeHidden\":true,\"limit\":128}}\n";
 const CODEX_APP_SERVER_RESPONSE_MARKER: &[u8] = b"\"id\":1,\"result\"";
@@ -305,12 +310,14 @@ pub struct AgentProviderProcessPlan {
     identity: ExecutableIdentity,
     args: Box<[String]>,
     cwd: PathBuf,
+    cwd_authority: Option<Arc<fs::File>>,
     env: Box<[(String, String)]>,
     timeout: Duration,
     output_limit: usize,
     stdin_payload: Option<Box<[u8]>>,
     stdout_completion_marker: Option<Box<[u8]>>,
     usage_probe: Option<CodexUsageProbe>,
+    interactive_probe: Option<Arc<dyn InteractiveProbe>>,
     requires_update_authorization: bool,
 }
 
@@ -588,11 +595,13 @@ impl AgentProviderProcessPlan {
             identity,
             args: args.into_boxed_slice(),
             cwd,
+            cwd_authority: None,
             env: provider_environment(effective_path).into_boxed_slice(),
             timeout,
             output_limit,
             stdin_payload: None,
             usage_probe: None,
+            interactive_probe: None,
             stdout_completion_marker: None,
             requires_update_authorization,
         }
@@ -1130,7 +1139,6 @@ fn execute_agent_provider_plan_cancellable_inner(
     let command = bound.command_mut();
     command
         .args(plan.args.iter())
-        .current_dir(&plan.cwd)
         .env_clear()
         .envs(plan.env.iter().cloned())
         .stdin(if plan.stdin_payload.is_some() {
@@ -1142,9 +1150,28 @@ fn execute_agent_provider_plan_cancellable_inner(
         .stderr(Stdio::piped());
     #[cfg(unix)]
     {
+        use std::os::fd::AsRawFd;
         use std::os::unix::process::CommandExt;
+        match &plan.cwd_authority {
+            Some(cwd_authority) => {
+                let cwd_fd = cwd_authority.as_raw_fd();
+                unsafe {
+                    command.pre_exec(move || {
+                        if libc::fchdir(cwd_fd) == 0 {
+                            return Ok(());
+                        }
+                        Err(io::Error::last_os_error())
+                    });
+                }
+            }
+            None => {
+                command.current_dir(&plan.cwd);
+            }
+        }
         command.process_group(0);
     }
+    #[cfg(not(unix))]
+    command.current_dir(&plan.cwd);
     let child = match bound.spawn_cancellable_with_budget(
         || cancelled() || Instant::now() >= deadline,
         before_spawn,
@@ -1198,6 +1225,7 @@ fn execute_agent_provider_plan_cancellable_inner(
         .usage_probe
         .as_ref()
         .map(|_| CodexUsageProbe::default());
+    owned.interactive_probe = plan.interactive_probe.clone();
     owned.settle(cancelled, output_sink)
 }
 
@@ -1209,6 +1237,7 @@ struct OwnedProviderChild {
     output_limit: usize,
     stdout_completion_marker: Option<Box<[u8]>>,
     usage_probe: Option<CodexUsageProbe>,
+    interactive_probe: Option<Arc<dyn InteractiveProbe>>,
     settled: bool,
 }
 
@@ -1228,6 +1257,7 @@ impl OwnedProviderChild {
             output_limit,
             stdout_completion_marker,
             usage_probe: None,
+            interactive_probe: None,
             settled: false,
         }
     }
@@ -1253,6 +1283,7 @@ impl OwnedProviderChild {
                     output_sink: Arc::clone(&output_sink),
                     completion_marker: self.stdout_completion_marker.clone(),
                     usage_probe: self.usage_probe.clone(),
+                    interactive_probe: self.interactive_probe.clone(),
                     completion_observed: Arc::clone(&completion_observed),
                 },
             )
@@ -1269,6 +1300,7 @@ impl OwnedProviderChild {
                     output_sink: Arc::clone(&output_sink),
                     completion_marker: None,
                     usage_probe: None,
+                    interactive_probe: None,
                     completion_observed: Arc::clone(&completion_observed),
                 },
             )
@@ -1291,6 +1323,19 @@ impl OwnedProviderChild {
             }
             if let Some(probe) = &self.usage_probe {
                 match probe.advance_input(self.stdin.as_mut()) {
+                    Ok(true) => {
+                        completed_by_marker = true;
+                        break None;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        self.terminate();
+                        return Err(AgentProviderProcessFailure::Uncertain(error));
+                    }
+                }
+            }
+            if let Some(probe) = &self.interactive_probe {
+                match probe.advance(self.stdin.as_mut(), Instant::now()) {
                     Ok(true) => {
                         completed_by_marker = true;
                         break None;
@@ -1340,13 +1385,17 @@ impl OwnedProviderChild {
             .usage_probe
             .as_ref()
             .is_some_and(CodexUsageProbe::is_complete)
+            || self
+                .interactive_probe
+                .as_ref()
+                .is_some_and(|probe| probe.is_complete())
         {
             completed_by_marker = true;
         }
         if completed_by_marker {
             return Ok(AgentProviderProcessOutput { stdout, stderr });
         }
-        if self.usage_probe.is_some() && status.is_some() {
+        if (self.usage_probe.is_some() || self.interactive_probe.is_some()) && status.is_some() {
             return Err(AgentProviderProcessFailure::Uncertain(
                 "Provider usage protocol did not complete.".to_string(),
             ));
@@ -1386,6 +1435,7 @@ struct ProviderReaderContext {
     output_sink: Arc<dyn AgentProviderProcessOutputSink>,
     completion_marker: Option<Box<[u8]>>,
     usage_probe: Option<CodexUsageProbe>,
+    interactive_probe: Option<Arc<dyn InteractiveProbe>>,
     completion_observed: Arc<AtomicBool>,
 }
 
@@ -1403,6 +1453,7 @@ fn spawn_reader<R: Read + Send + 'static>(
             output_sink,
             completion_marker,
             usage_probe,
+            interactive_probe,
             completion_observed,
         } = context;
         let mut output = Vec::new();
@@ -1447,7 +1498,10 @@ fn spawn_reader<R: Read + Send + 'static>(
                     Ordering::Acquire,
                 ) {
                     Ok(_) => {
-                        output.extend_from_slice(&buffer[..accepted]);
+                        match &interactive_probe {
+                            Some(probe) => probe.observe(&buffer[..accepted]),
+                            None => output.extend_from_slice(&buffer[..accepted]),
+                        }
                         if let Some(reader) = &mut usage_reader {
                             reader.observe(&buffer[..accepted]);
                         }

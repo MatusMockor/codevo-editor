@@ -10,6 +10,7 @@ import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentContextCompactionOffer } from "../../domain/agentContextCompaction";
 import { agentLaunchOptionsEqual } from "../../domain/agentLaunch";
 import { AgentComposer } from "./AgentComposer";
+import { AgentCommandCatalogProjectContext } from "./useAgentCommandCatalogStore";
 import { agentWorkspaceLocationEqual } from "./agentComposerThreadLocation";
 import type { AgentEndSessionConfirmationView } from "./useAgentEndSessionCommand";
 import type { AgentComposerDrawerContext } from "./composer/AgentComposerFrame";
@@ -97,23 +98,27 @@ export const AgentComposerController = memo(function AgentComposerController({
           running={interactions.thread?.lifecycle === "running"}
         />
       )}
-      <AgentComposer
-        {...controlledProps}
-        interaction={interactions === undefined ? null : interaction}
-        followUpBehavior={followUpBehavior}
-        executionServerId={executionServerId}
-        compactionOffer={compactionOffer}
-        modelFavoritesPersistence={modelFavoritesPersistence}
-        onOpenProviderSettings={onOpenProviderSettings}
-        onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-        onShowUsageLimits={onShowUsageLimits}
-        onCompactContext={compactContext}
-        providerEnabled={providerEnabled}
-        providerManagement={providerManagement}
-        banners={banners}
-        endSessionConfirmation={endSessionConfirmation}
-        renderDrawerEnd={renderDrawerEnd}
-      />
+      <AgentCommandCatalogProjectContext.Provider
+        value={composerProps.commandCatalogProject ?? null}
+      >
+        <AgentComposer
+          {...controlledProps}
+          interaction={interactions === undefined ? null : interaction}
+          followUpBehavior={followUpBehavior}
+          executionServerId={executionServerId}
+          compactionOffer={compactionOffer}
+          modelFavoritesPersistence={modelFavoritesPersistence}
+          onOpenProviderSettings={onOpenProviderSettings}
+          onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+          onShowUsageLimits={onShowUsageLimits}
+          onCompactContext={compactContext}
+          providerEnabled={providerEnabled}
+          providerManagement={providerManagement}
+          banners={banners}
+          endSessionConfirmation={endSessionConfirmation}
+          renderDrawerEnd={renderDrawerEnd}
+        />
+      </AgentCommandCatalogProjectContext.Provider>
     </>
   );
 }, agentComposerControllerPropsEqual);
@@ -165,6 +170,7 @@ function agentComposerControllerPropsEqual(
     leftProps.onWorktreeBaseChange === rightProps.onWorktreeBaseChange &&
     sameWorktreeBase(leftProps.worktreeBase, rightProps.worktreeBase) &&
     (leftProps.remoteGit ?? null) === (rightProps.remoteGit ?? null) &&
+    sameCommandCatalogProject(leftProps.commandCatalogProject, rightProps.commandCatalogProject) &&
     leftProps.onRefreshIsolation === rightProps.onRefreshIsolation &&
     leftProps.onLaunchChange === rightProps.onLaunchChange &&
     leftProps.onNewThread === rightProps.onNewThread &&
@@ -174,6 +180,20 @@ function agentComposerControllerPropsEqual(
     agentWorkspaceLocationEqual(leftProps.threadLocation, rightProps.threadLocation) &&
     samePreviousWorktree(leftProps.previousWorktree, rightProps.previousWorktree) &&
     agentLaunchOptionsEqual(leftProps.launch, rightProps.launch)
+  );
+}
+
+function sameCommandCatalogProject(
+  left: AgentComposerPresentation["commandCatalogProject"],
+  right: AgentComposerPresentation["commandCatalogProject"],
+): boolean {
+  const current = left ?? null;
+  const next = right ?? null;
+  if (current === null || next === null) return current === next;
+  return (
+    current.serverId === next.serverId &&
+    current.runnerId === next.runnerId &&
+    current.projectId === next.projectId
   );
 }
 

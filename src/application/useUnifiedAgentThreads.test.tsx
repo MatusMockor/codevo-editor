@@ -230,6 +230,42 @@ describe("unified original agent surface", () => {
     await h.render({ selectedThreadId: null, selectedServerId: null });
     expect(h.current.agents.accountUsage).toBe(accountUsage);
   });
+  it("resolves command catalog projects only for the connected runner that announces them", async () => {
+    const older = await setup();
+    await older.render({ selectedServerId: server.id });
+    expect(older.current.agents.remoteCommandCatalog).toBeUndefined();
+
+    const announce = (gw: ReturnType<typeof gateway>) =>
+      gw.getRunner.mockResolvedValue({
+        protocolVersion: 1,
+        runnerId: "runner",
+        name: "Linux",
+        capabilities: { taskExecution: true, eventReplay: true, commandCatalog: true },
+      });
+    const withoutReader = await setup(false, announce);
+    await withoutReader.render({ selectedServerId: server.id });
+    expect(withoutReader.current.agents.remoteCommandCatalog).toBeUndefined();
+
+    const h = await setup(false, (gw) => {
+      Object.assign(gw, { getCommandCatalog: vi.fn() });
+      announce(gw);
+    });
+    await h.render({ selectedServerId: server.id });
+    const access = h.current.agents.remoteCommandCatalog;
+    expect(access?.project(projectKey)).toEqual({
+      serverId: server.id,
+      runnerId: "runner",
+      projectId: "project",
+    });
+    expect(
+      access?.project(remoteAgentProjectKey(server.id, "runner-replaced", "project")),
+    ).toBeNull();
+    expect(access?.project("/workspace/app")).toBeNull();
+    await h.render({ selectedThreadId: remoteId });
+    expect(h.current.agents.remoteCommandCatalog).toBe(access);
+    await h.render({ servers: [{ ...server, connected: false }] });
+    expect(h.current.agents.remoteCommandCatalog).toBeUndefined();
+  });
   it.each([false, true])(
     "derives server checkout support from capability %s without local probes",
     async (supported) => {

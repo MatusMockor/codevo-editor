@@ -4,10 +4,14 @@ use super::{
     AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR, AGENT_PROVIDER_STALE_ERROR, AGENT_PROVIDER_UPDATING_ERROR,
 };
 use crate::agent_task_spawner::agent_provider::process::{
-    execute_agent_provider_maintenance_plan_cancellable, AgentProviderProcessIntent,
-    AgentProviderProcessPlan, ExecutableIdentity,
+    command_catalog_plan::CommandCatalogProbe, execute_agent_provider_maintenance_plan_cancellable,
+    execute_agent_provider_plan_cancellable, AgentProviderProcessIntent, AgentProviderProcessPlan,
+    ExecutableIdentity,
 };
 use crate::agent_task_spawner::AgentCliInvocation;
+use std::{fs, path::Path, sync::Arc};
+
+const COMMAND_CATALOG_PROBE_FAILED: &str = "Provider command catalog probe failed.";
 
 pub struct ProviderCatalogProbeLease {
     provider: AgentCliInvocation,
@@ -100,6 +104,33 @@ impl AgentProviderRuntimeRegistry {
         .map_err(|_| "Provider model catalog probe failed.".to_string())?;
         self.revalidate_catalog_probe(lease)?;
         Ok(output.stdout)
+    }
+
+    pub fn probe_command_catalog(
+        &self,
+        lease: &ProviderCatalogProbeLease,
+        workspace_root: &Path,
+        cwd_authority: Arc<fs::File>,
+    ) -> Result<Vec<u8>, String> {
+        self.revalidate_catalog_probe(lease)?;
+        let root = workspace_root
+            .to_str()
+            .ok_or_else(|| COMMAND_CATALOG_PROBE_FAILED.to_string())?;
+        let probe = CommandCatalogProbe::new(lease.provider, root);
+        let plan = AgentProviderProcessPlan::command_catalog_with_effective_path(
+            lease.cli_identity.clone(),
+            lease.provider,
+            workspace_root,
+            cwd_authority,
+            &lease.effective_path,
+            Arc::clone(&probe),
+        )?;
+        execute_agent_provider_plan_cancellable(&plan, || self.catalog_probe_cancelled(lease))
+            .map_err(|_| COMMAND_CATALOG_PROBE_FAILED.to_string())?;
+        self.revalidate_catalog_probe(lease)?;
+        probe
+            .take_result()
+            .ok_or_else(|| COMMAND_CATALOG_PROBE_FAILED.to_string())
     }
 }
 

@@ -1,6 +1,8 @@
 mod account_usage;
 pub use account_usage::*;
 mod artifacts;
+mod command_catalog;
+pub use command_catalog::*;
 mod attachments;
 mod commands;
 mod continuation;

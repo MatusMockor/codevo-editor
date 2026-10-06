@@ -1,4 +1,5 @@
 import type { AgentAccountUsageSnapshot } from "./agentAccountUsage";
+import type { AgentCommandCatalog } from "./agentCommandCatalog";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "./agentTurnChanges";
 import type {
   RepositoryHostsSnapshot,
@@ -41,6 +42,7 @@ export type RemoteRunnerDescriptor = Readonly<{
   executionTimeoutMs?: number;
   capabilities: Readonly<{
     accountUsage?: boolean;
+    commandCatalog?: boolean;
     taskExecution: boolean;
     eventReplay: boolean;
     taskDrafts?: boolean;
@@ -248,8 +250,12 @@ export type RemoteRunnerHistorySearchPage = Readonly<{
 export type RemoteRunnerAccountUsageRequest = RemoteRunnerServerRequest &
   Readonly<{ runnerId: string; provider: RemoteRunnerProvider }>;
 
+export type RemoteRunnerCommandCatalogRequest = RemoteRunnerServerRequest &
+  Readonly<{ runnerId: string; projectId: string; provider: RemoteRunnerProvider }>;
+
 export interface RemoteRunnerGateway {
   getAccountUsage?(request: RemoteRunnerAccountUsageRequest): Promise<AgentAccountUsageSnapshot>;
+  getCommandCatalog?(request: RemoteRunnerCommandCatalogRequest): Promise<AgentCommandCatalog>;
   listRepositoryHosts?(request: RemoteRunnerServerRequest): Promise<RepositoryHostsSnapshot>;
   lookupRepository?(
     request: RemoteRunnerServerRequest & Readonly<{ request: RepositoryLookupRequest }>,

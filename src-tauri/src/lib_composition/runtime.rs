@@ -254,6 +254,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             crate::claude_model_manifest::get_claude_model_manifest,
             crate::codex_model_catalog::get_codex_model_catalog,
+            crate::agent_command_catalog::get_agent_command_catalog,
             crate::artifact_preview::artifact_preview_create,
             crate::artifact_preview::workspace_html_preview::workspace_html_preview_create,
             crate::artifact_preview::artifact_preview_revoke,
@@ -266,6 +267,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_remove_server,
             crate::remote_runner::remote_runner_get_runner,
             crate::remote_runner::remote_runner_get_account_usage,
+            crate::remote_runner::remote_runner_get_command_catalog,
             crate::remote_runner::remote_runner_list_projects,
             crate::remote_runner::remote_runner_clone_project,
             crate::remote_runner::remote_runner_repository_hosts,

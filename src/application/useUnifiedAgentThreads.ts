@@ -40,6 +40,7 @@ import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { useRemoteAgentShip } from "./useRemoteAgentShip";
 import { RemoteChangeSummaryViews } from "./remoteChangeSummaryViews";
 import { useRemoteAgentAccountUsage } from "./useRemoteAgentAccountUsage";
+import { useRemoteAgentCommandCatalogAccess } from "./remoteAgentCommandCatalog";
 
 export interface UnifiedAgentThreadsOptions {
   readonly local: AgentThreadsSurface;
@@ -440,6 +441,11 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     workspaceOwner,
     sources: local.accountUsageSources,
   });
+  const remoteCommandCatalog = useRemoteAgentCommandCatalogAccess({
+    gateway,
+    servers,
+    snapshots: inventory.snapshots,
+  });
   const serverReady =
     servers.some((server) => server.id === effectiveServerId && server.connected) &&
     inventory.snapshots.some(
@@ -521,6 +527,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     ...local,
     ...(remoteMode ? remoteAccountUsage : {}),
     remoteGit: remoteShip.access,
+    remoteCommandCatalog,
     historySearch,
     ...actions,
     turnChangesRevision,
