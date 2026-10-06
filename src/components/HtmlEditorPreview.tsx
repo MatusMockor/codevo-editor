@@ -3,6 +3,7 @@ import type {
   HtmlFilePreviewHandle,
   HtmlFilePreviewPort,
 } from "../application/htmlFilePreviewPort";
+import { UNTRUSTED_PREVIEW_ALLOW, UNTRUSTED_PREVIEW_SANDBOX } from "./untrustedPreviewFrame";
 import "./htmlEditorPreview.css";
 
 type PreviewState =
@@ -142,11 +143,12 @@ function HtmlPreviewFrame({
     );
   return (
     <iframe
+      allow={UNTRUSTED_PREVIEW_ALLOW}
       className="html-editor-preview__frame"
       onLoad={state.loaded}
       onErrorCapture={state.failed}
       referrerPolicy="no-referrer"
-      sandbox="allow-scripts"
+      sandbox={UNTRUSTED_PREVIEW_SANDBOX}
       src={state.handle.url}
       title={`Preview of ${name}`}
     />

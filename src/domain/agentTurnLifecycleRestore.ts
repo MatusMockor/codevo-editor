@@ -1,5 +1,5 @@
 import { compactPersistedAgentSubagentLifecycle } from "./agentLifecyclePersistence";
-import { readAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { readAgentSubagentLifecycle, type AgentSubagentLifecycle } from "@codevo/agent-events";
 import {
   agentSubagentLifecycleHasRetainedDetail,
   sameLegacyAgentSubagentLifecycle,

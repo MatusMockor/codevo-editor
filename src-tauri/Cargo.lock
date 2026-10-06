@@ -551,6 +551,7 @@ dependencies = [
  "tungstenite",
  "unicode-normalization",
  "url",
+ "webkit2gtk",
 ]
 
 [[package]]

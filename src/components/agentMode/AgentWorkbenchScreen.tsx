@@ -1,5 +1,6 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
+import { rightPanelCoversThread } from "../workbenchShellPlacement";
 import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
 import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/browserAgentRailProjectCollapsePreference";
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
@@ -264,11 +265,12 @@ export function AgentWorkbenchScreen({
   workbench,
 }: AgentWorkbenchScreenProps) {
   const restoredSession = useAgentSessionRestore(sessionRestore);
+  const threadViewVisible = workbench.settingsOpen !== true && workbench.agentModeActive !== false;
   const threadNotifications = useAgentThreadNotificationCenter(
     {
       enabled: workbench.appSettings.agentThreadNotifications !== false,
       toastsVisible: workbench.settingsOpen !== true,
-      threadViewVisible: workbench.settingsOpen !== true && workbench.agentModeActive !== false,
+      threadViewVisible,
     },
     defaultThreadNotificationPorts,
   );
@@ -796,6 +798,8 @@ export function AgentWorkbenchScreen({
           <AgentModeView
             monacoTheme={monacoTheme}
             followUpBehavior={appSettings.agentFollowUpBehavior}
+            dictationLanguage={appSettings.speechDictationLanguage}
+            composerVisible={threadViewVisible && !rightPanelCoversThread(agentWorkbench.layout)}
             questionGateway={DEFAULT_QUESTION_GATEWAY}
             artifactLoader={DEFAULT_ARTIFACT_LOADER}
             artifactPreview={DEFAULT_ARTIFACT_PREVIEW}

@@ -1,3 +1,5 @@
+mod speech;
+pub use speech::*;
 mod account_usage;
 pub use account_usage::*;
 mod artifacts;

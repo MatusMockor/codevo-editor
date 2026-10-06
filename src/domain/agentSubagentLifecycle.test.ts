@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  parseAgentSubagentLifecycle,
-  retainAgentSubagentLifecycle,
-} from "./agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle, retainAgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentTurnEvent } from "./agentThread";
 const spawn = (toolId: string): AgentTurnEvent => ({
   kind: "toolCall",

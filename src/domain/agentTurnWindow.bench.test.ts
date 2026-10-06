@@ -9,7 +9,7 @@ import {
   type AgentTurnEvent,
 } from "./agentThread";
 import { emptyAgentTurnDigest } from "./agentTurnDigest";
-import { retainAgentTurnEvents } from "./agentTurnEventRetention";
+import { retainAgentTurnEvents } from "@codevo/agent-events";
 import { AGENT_TURN_LOG_LIMITS } from "./agentTurnLog";
 import { agentTurnLogOpBytes } from "./agentTurnLogWire";
 import {

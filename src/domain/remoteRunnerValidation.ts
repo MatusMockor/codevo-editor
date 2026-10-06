@@ -23,10 +23,13 @@ import {
   isRemoteProjectDirectories,
   isRemoteProjectDirectoryPath,
 } from "./remoteProjectManagement";
-import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
 import { isRemoteStartBase } from "./remoteGitSyncWire";
+import { SPEECH_LANGUAGES } from "./speechDictation";
+import { isSpeechPcmBase64 } from "./speechPcm";
+import { isSpeechTranscriptText } from "./speechTranscription";
 import type * as R from "./remoteRunner";
 
 type Check = (value: unknown) => boolean;
@@ -332,6 +335,14 @@ export const remoteRunnerChecks = {
     }),
     response: accepts(parseAgentCommandCatalog),
   },
+  transcribeSpeech: {
+    request: object({
+      ...serverRequest,
+      language: choice(...SPEECH_LANGUAGES),
+      base64: isSpeechPcmBase64,
+    }),
+    response: object({ text: isSpeechTranscriptText }),
+  },
   collectInstructions: {
     request: object({ rootPath: optional(text(4096)) }),
     response: isRemoteRunnerInstructionSnapshot,
@@ -372,6 +383,7 @@ export const remoteRunnerChecks = {
         interactiveQuestions: optional(boolean),
         gitSync: optional(boolean),
         portPreview: optional(boolean),
+        speechTranscription: optional(boolean),
       }),
     }),
   },

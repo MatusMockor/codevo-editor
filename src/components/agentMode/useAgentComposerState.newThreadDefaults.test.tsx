@@ -234,8 +234,45 @@ describe("composer launch from the new-thread defaults", () => {
   }
 
   function openProject(rootKey: string): void {
-    act(() => composer().startNewThread(rootKey, rootKey));
+    act(() => {
+      navigation().setProjectScope(rootKey);
+      composer().clearSelection();
+    });
   }
+
+  it.each(["defaults", "lastUsed"] as const)(
+    "starts a fresh draft from %s after an explicit launch choice",
+    (source) => {
+      const agents = threadsSurfaceFixture({
+        agentCliKind: "codex",
+        lastUsedLaunch: () => ({ ...CONFIGURED_CODEX, effort: "medium" }),
+      });
+      render({ agents, settings: { ...CONFIGURED, source } });
+      act(() => composer().composerProps.onLaunchChange(CHOSEN_B));
+      expect(launch()).toEqual(CHOSEN_B);
+
+      act(() => composer().composerProps.onNewThread());
+
+      expect(launch()).toEqual({
+        ...CONFIGURED_CODEX,
+        effort: source === "defaults" ? "xhigh" : "medium",
+      });
+    },
+  );
+
+  it("starts a fresh draft in an explicit project without changing another project's draft", () => {
+    const projects = [projectFixture(), otherProject()];
+    render({ projects, settings: CONFIGURED });
+    act(() => composer().composerProps.onLaunchChange(CHOSEN_A));
+    openProject(OTHER_ROOT);
+    act(() => composer().composerProps.onLaunchChange(CHOSEN_B));
+
+    act(() => composer().startNewThread(OTHER_ROOT, OTHER_ROOT));
+
+    expect(launch()).toEqual(CONFIGURED_CLAUDE);
+    openProject(SURFACE_FIXTURE_ROOT);
+    expect(launch()).toEqual(CHOSEN_A);
+  });
 
   it("starts from the built-in launch while no defaults are stored", () => {
     render({ agents: threadsSurfaceFixture({ lastUsedLaunch: () => LAST_USED }) });

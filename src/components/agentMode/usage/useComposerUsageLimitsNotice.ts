@@ -2,7 +2,10 @@ import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import type { AgentAccountUsageWindow } from "../../../domain/agentAccountUsage";
 import { isAgentAccountUsageWindowExpired } from "../../../domain/agentAccountUsageFreshness";
 import {
-  representableResetEpochMs,
+  composerUsageDismissalKey,
+  normalizeComposerUsageDismissalKey,
+} from "../../../domain/composerUsageDismissal";
+import {
   USAGE_HOT_PERCENT,
   type UsageAccountStates,
   type UsageProviderKind,
@@ -43,7 +46,12 @@ export function useComposerUsageLimitsNotice(
     loadComposerUsageDismissals,
   );
   const dismissedKeys = useMemo(
-    () => parseComposerUsageDismissals(dismissedSnapshot),
+    () =>
+      new Set(
+        [...parseComposerUsageDismissals(dismissedSnapshot)].map(
+          normalizeComposerUsageDismissalKey,
+        ),
+      ),
     [dismissedSnapshot],
   );
   const [requestedKey, setRequestedKey] = useState<string | null>(null);
@@ -84,20 +92,13 @@ function hotWindowKeys(
   providers: ReadonlyArray<ComposerUsageLimitsEntry>,
   nowEpochMs: number,
 ): ReadonlyArray<string> {
-  return providers.flatMap(({ provider, windows }) =>
+  return providers.flatMap(({ provider, windows, observedAtEpochMs }) =>
     windows.flatMap((window) => {
       if (window.usedPercent < USAGE_HOT_PERCENT) return [];
       if (isAgentAccountUsageWindowExpired(window, nowEpochMs)) return [];
-      return [windowResetKey(provider, window)];
+      return [composerUsageDismissalKey(provider, window, observedAtEpochMs)];
     }),
   );
-}
-
-function windowResetKey(provider: UsageProviderKind, window: AgentAccountUsageWindow): string {
-  const resetsAtEpochMs = representableResetEpochMs(window.resetsAtEpochMs);
-  const reset =
-    resetsAtEpochMs === null ? `label:${window.resetsLabel ?? ""}` : `at:${resetsAtEpochMs}`;
-  return JSON.stringify([provider, window.id, reset]);
 }
 
 function snapshotKeyOf(accountUsage: UsageAccountStates | undefined): string {

@@ -3,6 +3,7 @@ import { SubmitButton } from "../../ui/foundation/SubmitButton";
 import { agentSubmitKeyShortcuts, type AgentSubmitShortcut } from "./agentSubmitShortcut";
 
 export function AgentComposerSubmitControls({
+  blockedReason = null,
   running,
   hasDraft,
   steering,
@@ -16,6 +17,7 @@ export function AgentComposerSubmitControls({
   onStop,
   onAlternate,
 }: {
+  readonly blockedReason?: string | null;
   readonly running: boolean;
   readonly hasDraft: boolean;
   readonly steering: boolean;
@@ -47,7 +49,7 @@ export function AgentComposerSubmitControls({
     <SubmitButton
       busy={dispatching}
       className="agent-composer__send"
-      disabled={disabled}
+      disabled={disabled || blockedReason !== null}
       keyShortcuts={enterOnly ? "Enter" : agentSubmitKeyShortcuts(shortcut)}
       label={submitName}
       mode={editingQueued ? "update" : "send"}
@@ -57,11 +59,12 @@ export function AgentComposerSubmitControls({
         if (!disabled && immediateBlockedReason === null) onAlternate();
       }}
       title={
-        steering && !editingQueued
+        blockedReason ??
+        (steering && !editingQueued
           ? `${submitName} (Enter); Ctrl/⌘-click or ${shortcut.secondary.glyphs}: ${immediateBlockedReason ?? alternateName}`
           : enterOnly
             ? `${submitName} (Enter)`
-            : `${submitName} (Enter or ${shortcut.secondary.glyphs})`
+            : `${submitName} (Enter or ${shortcut.secondary.glyphs})`)
       }
     />
   );

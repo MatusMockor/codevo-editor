@@ -95,6 +95,7 @@ async function bootstrap(): Promise<void> {
     { TauriRemoteRunnerSurfacesGateway },
     { TauriRepositoryLookupGateway },
     { BrowserRemoteAgentMetadataRepository },
+    { createSpeechDictationPorts },
   ] = await Promise.all([
     import("react"),
     import("react-dom/client"),
@@ -115,16 +116,18 @@ async function bootstrap(): Promise<void> {
     import("./infrastructure/tauriRemoteRunnerSurfacesGateway"),
     import("./infrastructure/tauriRepositoryLookupGateway"),
     import("./infrastructure/browserRemoteAgentMetadataRepository"),
+    import("./infrastructure/speechDictationComposition"),
   ]);
+  const remoteRunnerGateway = new TauriRemoteRunnerGateway();
 
   // Root-level boundary: ANY render/lifecycle crash anywhere in the app
   // (not just inside the git diff view) now renders a recoverable fallback
   // instead of unmounting the whole tree to a blank screen.
-  const remoteRunnerGateway = new TauriRemoteRunnerGateway();
   const appTree = React.createElement(ErrorBoundary, {
     title: "Codevo Editor hit an unexpected error",
     children: React.createElement(RemoteRunnerProvider, {
       gateway: remoteRunnerGateway,
+      speechDictation: createSpeechDictationPorts(remoteRunnerGateway),
       surfacesGateway: new TauriRemoteRunnerSurfacesGateway(),
       repositoryLookup: new TauriRepositoryLookupGateway(),
       metadataRepository: new BrowserRemoteAgentMetadataRepository(() => window.localStorage),

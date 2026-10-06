@@ -70,6 +70,20 @@ fn responses_always_enforce_isolation_including_not_found() {
     }
 }
 #[test]
+fn responses_always_deny_capture_devices_including_not_found() {
+    for body in [None, Some(Arc::from(&b"<script>1</script>"[..]))] {
+        let result = response(body);
+        let policy = result.headers()["permissions-policy"]
+            .to_str()
+            .expect("ascii policy");
+        let directives: Vec<&str> = policy.split(',').map(str::trim).collect();
+        assert!(directives.contains(&"microphone=()"));
+        assert!(directives.contains(&"camera=()"));
+        assert!(!policy.contains("self"));
+        assert!(!policy.contains('*'));
+    }
+}
+#[test]
 fn dead_frames_render_a_static_notice_instead_of_a_blank_body() {
     let state = ArtifactPreviewState::default();
     let now = Instant::now();

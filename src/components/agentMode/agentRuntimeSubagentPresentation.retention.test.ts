@@ -3,10 +3,7 @@ import {
   reconcileAgentRuntimeSubagents,
   summarizeAgentRuntimeSubagents,
 } from "../../domain/agentRuntimeSubagent";
-import {
-  retainAgentSubagentLifecycle,
-  type AgentSubagentLifecycle,
-} from "../../domain/agentSubagentLifecycle";
+import { retainAgentSubagentLifecycle, type AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentTurn, AgentTurnEvent } from "../../domain/agentThread";
 import {
   agentRuntimeSubagentActivityLine,

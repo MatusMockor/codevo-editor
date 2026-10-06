@@ -7,7 +7,7 @@ import {
 } from "../test/agentTurnEventStreams";
 import { MAX_AGENT_EVENTS_PER_TURN, mergeTurnEvents, type AgentTurnEvent } from "./agentThread";
 import { projectAgentBackgroundActivity } from "./agentBackgroundActivity";
-import { retainAgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { retainAgentSubagentLifecycle } from "@codevo/agent-events";
 import { MAX_PERSISTED_AGENT_EVENTS_PER_TURN, capTurnTail } from "./agentThreadTailCap";
 import { isAgentMainReply } from "./agentTurnTailSelection";
 import {

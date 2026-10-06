@@ -1,4 +1,3 @@
-import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
 import type { RemoteReplayGap } from "./remoteAgentReplayWindow";
 import {
   agentThreadAttention,
@@ -12,9 +11,10 @@ import {
 import { agentThreadAutoTitle } from "../domain/agentThreadAutoTitle";
 import {
   appendRemoteAgentTranscript,
+  type AgentSubagentLifecycle,
   createRemoteAgentTranscript,
   type RemoteAgentTranscript,
-} from "../domain/remoteAgentTranscript";
+} from "@codevo/agent-events";
 import type {
   RemoteRunnerEvent,
   RemoteRunnerProject,

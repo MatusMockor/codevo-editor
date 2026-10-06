@@ -1,6 +1,6 @@
 import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
 import { loadRemoteThreadMetadata } from "./remoteThreadMetadataInventory";
-import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import {
   droppedServerEvictedOutput,
   REMOTE_OUTPUT_DISCARDED_ERROR,

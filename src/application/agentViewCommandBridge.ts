@@ -14,6 +14,7 @@ export type AgentViewCommandId =
   | "agent.goToTurn"
   | "agent.runPreferredScript"
   | "agent.openCommitMenu"
+  | "agent.toggleDictation"
   | "panel.toggleMaximized"
   | "project.add"
   | `agent.jumpToThread.${AgentJumpSlot}`;
@@ -37,9 +38,16 @@ export interface AgentViewCommandHandlers {
   threadSelected(): boolean;
 }
 
+export interface AgentDictationCommandHandlers {
+  available(): boolean;
+  toggle(): void;
+}
+
 export interface AgentViewCommandBridge {
   bind(handlers: AgentViewCommandHandlers): () => void;
+  bindDictation(handlers: AgentDictationCommandHandlers): () => void;
   bound(): boolean;
+  dictationAvailable(): boolean;
   threadSelected(): boolean;
   threadFindFocused(): boolean;
   editorTextFocused(): boolean;
@@ -54,6 +62,7 @@ export function agentJumpCommandId(slot: AgentJumpSlot): `agent.jumpToThread.${A
 
 export function createAgentViewCommandBridge(): AgentViewCommandBridge {
   let current: AgentViewCommandHandlers | null = null;
+  let dictation: AgentDictationCommandHandlers | null = null;
 
   return {
     bind(handlers) {
@@ -63,7 +72,15 @@ export function createAgentViewCommandBridge(): AgentViewCommandBridge {
         current = null;
       };
     },
+    bindDictation(handlers) {
+      dictation = handlers;
+      return () => {
+        if (dictation !== handlers) return;
+        dictation = null;
+      };
+    },
     bound: () => current !== null,
+    dictationAvailable: () => current !== null && dictation?.available() === true,
     threadSelected: () => current?.threadSelected() ?? false,
     threadFindFocused: () => current?.threadFindFocused?.() ?? false,
     editorTextFocused: () => current?.editorTextFocused?.() ?? false,
@@ -72,6 +89,10 @@ export function createAgentViewCommandBridge(): AgentViewCommandBridge {
     run(commandId) {
       const handlers = current;
       if (handlers === null) return;
+      if (commandId === "agent.toggleDictation") {
+        if (dictation?.available() === true) dictation.toggle();
+        return;
+      }
       dispatch(handlers, commandId);
     },
   };
@@ -79,7 +100,10 @@ export function createAgentViewCommandBridge(): AgentViewCommandBridge {
 
 export const workbenchAgentViewCommandBridge = createAgentViewCommandBridge();
 
-function dispatch(handlers: AgentViewCommandHandlers, commandId: AgentViewCommandId): void {
+function dispatch(
+  handlers: AgentViewCommandHandlers,
+  commandId: Exclude<AgentViewCommandId, "agent.toggleDictation">,
+): void {
   switch (commandId) {
     case "agent.newThread":
       handlers.newThread();

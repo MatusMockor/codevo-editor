@@ -11,6 +11,7 @@ import {
   agentArtifactFailureRetryable,
   type AgentArtifactFailureReason,
 } from "../../domain/agentArtifactFailure";
+import { UNTRUSTED_PREVIEW_ALLOW, UNTRUSTED_PREVIEW_SANDBOX } from "../untrustedPreviewFrame";
 
 export interface AgentArtifactPreviewProps {
   readonly owner: AgentArtifactOwner;
@@ -53,8 +54,9 @@ export function AgentArtifactPreview({
         <p className="agent-artifacts__hint">Interactive preview · network access is disabled.</p>
         {state.frame === "pending" && <p className="agent-artifacts__status">Loading preview…</p>}
         <iframe
+          allow={UNTRUSTED_PREVIEW_ALLOW}
           onLoad={notifyFrameLoaded}
-          sandbox="allow-scripts"
+          sandbox={UNTRUSTED_PREVIEW_SANDBOX}
           src={state.url}
           title={`Preview of ${state.metadata.name}`}
         />

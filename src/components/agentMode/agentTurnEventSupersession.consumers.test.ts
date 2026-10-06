@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { projectAgentBackgroundActivity } from "../../domain/agentBackgroundActivity";
 import { agentContextWindow } from "../../domain/agentContextWindow";
-import { parseClaudeStreamJsonLine } from "../../domain/agentOutput/claudeStreamJson";
-import { retainAgentSubagentLifecycle } from "../../domain/agentSubagentLifecycle";
 import {
   MAX_AGENT_EVENT_BYTES_PER_TURN,
   MAX_AGENT_EVENTS_PER_TURN,
@@ -13,7 +11,11 @@ import {
   type AgentThread,
   type AgentTurnEvent,
 } from "../../domain/agentThread";
-import type { AgentTurnEventRetentionPolicy } from "../../domain/agentTurnEventRetention";
+import {
+  parseClaudeStreamJsonLine,
+  retainAgentSubagentLifecycle,
+  type AgentTurnEventRetentionPolicy,
+} from "@codevo/agent-events";
 import {
   canonicalJson,
   hostileAgentTurnStream,

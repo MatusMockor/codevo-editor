@@ -3,7 +3,11 @@ import {
   initialAgentWorkbenchLayout,
   type AgentWorkbenchLayout,
 } from "../domain/agentWorkbenchLayout";
-import { agentSurfaceHostPlacement, workbenchShellPlacement } from "./workbenchShellPlacement";
+import {
+  agentSurfaceHostPlacement,
+  rightPanelCoversThread,
+  workbenchShellPlacement,
+} from "./workbenchShellPlacement";
 
 function layoutOf(overrides: Partial<AgentWorkbenchLayout>): AgentWorkbenchLayout {
   return { ...initialAgentWorkbenchLayout, ...overrides };
@@ -32,6 +36,26 @@ describe("agentSurfaceHostPlacement", () => {
       ),
     ).toEqual({ mounted: true, hidden: false });
   });
+});
+
+describe("rightPanelCoversThread", () => {
+  it.each([
+    { rightPanel: "open", rightPanelMaximized: true, covered: true },
+    { rightPanel: "open", rightPanelMaximized: false, covered: false },
+    { rightPanel: "closed", rightPanelMaximized: true, covered: false },
+    { rightPanel: "closed", rightPanelMaximized: false, covered: false },
+  ] as const)(
+    "reports $covered for a $rightPanel panel with maximized=$rightPanelMaximized and matches the frame",
+    ({ covered, rightPanel, rightPanelMaximized }) => {
+      const layout = layoutOf({ rightPanel, rightPanelMaximized });
+
+      expect(rightPanelCoversThread(layout)).toBe(covered);
+      expect(
+        workbenchShellPlacement({ bottomPanelVisible: false, effectiveLayout: "agent", layout })
+          .rightPanelMaximized,
+      ).toBe(covered);
+    },
+  );
 });
 
 describe("workbenchShellPlacement", () => {

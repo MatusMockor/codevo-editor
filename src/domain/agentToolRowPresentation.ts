@@ -1,5 +1,5 @@
 import { MAX_AGENT_TOOL_SUMMARY_BYTES } from "./agentThread";
-import { boundedUtf8Text } from "./agentOutput/utf8Text";
+import { boundedUtf8Text } from "@codevo/agent-events";
 
 export type AgentToolRowKind = "command" | "read" | "edit" | "search" | "agent" | "web" | "other";
 

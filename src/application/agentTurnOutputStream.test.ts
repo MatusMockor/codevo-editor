@@ -3,7 +3,7 @@ import {
   createAgentOutputParserState,
   type AgentOutputFeedResult,
   type AgentOutputParserState,
-} from "../domain/agentOutput/agentOutputParser";
+} from "@codevo/agent-events";
 import type { AgentTaskOutputEvent } from "../domain/agentTask";
 import {
   MAX_AGENT_EVENTS_PER_TURN,

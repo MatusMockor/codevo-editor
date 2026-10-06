@@ -114,6 +114,7 @@ describe("settings registry", () => {
       "agents.healthCheckInterval",
       "agents.checkCliUpdates",
       "agents.threadNotifications",
+      "agents.dictationLanguage",
       "agents.workingSection",
     ]);
   });

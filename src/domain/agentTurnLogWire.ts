@@ -1,5 +1,5 @@
 import { agentRootOwnerId } from "./agentProject";
-import { parseAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle, type AgentSubagentLifecycle } from "@codevo/agent-events";
 import { AGENT_TASK_ID_PATTERN, MAX_AGENT_TASK_PATH_BYTES } from "./agentTask";
 import type { AgentTurnEvent } from "./agentThread";
 import { parseTurnEvent, serializeTurnEvent } from "./agentThreadWire";

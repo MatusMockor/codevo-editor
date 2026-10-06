@@ -13,6 +13,9 @@ import { unconfiguredAgentProviderManagement } from "../../test/agentProviderMan
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
 import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
+import { createAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
+import { AgentNewThreadDefaultsProvider } from "./AgentNewThreadDefaultsProvider";
+import { defaultAgentNewThreadDefaults } from "../../domain/agentNewThreadDefaults";
 import { AgentModeView } from "./AgentModeView";
 import { surfaceThreadView, SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
@@ -462,6 +465,99 @@ describe("original agent workbench with remote execution", () => {
     expect(host.querySelector(".agent-composer")).toBe(originalComposer);
     expect(gateway.createTask).not.toHaveBeenCalled();
   });
+  it.each(["shortcut", "sidebar", "slash"] as const)(
+    "resets the linked server draft via $0 and preserves the local model choice",
+    async (action) => {
+      saveRemoteProjectLink("remote:linux:runner:project", SURFACE_FIXTURE_ROOT);
+      const gateway = gatewayFixture();
+      const viewCommands = createAgentViewCommandBridge();
+      await act(async () =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway}>
+            <AgentNewThreadDefaultsProvider
+              settings={{
+                ...defaultAgentNewThreadDefaults(),
+                codex: { model: "default", effort: "high" },
+              }}
+            >
+              <AgentModeView
+                agents={{
+                  ...threadsSurfaceFixture({ agentCliKind: "codex" }),
+                  providerManagement: {
+                    ...unconfiguredAgentProviderManagement(),
+                    admissionAuthority: (provider) => ({
+                      provider,
+                      revision: 0,
+                      providerGeneration: 1,
+                      disposition: { kind: "ready" },
+                    }),
+                  },
+                }}
+                projects={[projectFixture()]}
+                workspaceRoot={SURFACE_FIXTURE_ROOT}
+                overflowRootPaths={[]}
+                providerEnabled={{ claudeCode: true, codex: true }}
+                chrome={chromeFixture()}
+                viewCommands={viewCommands}
+                onTrustProject={() => undefined}
+                onReleaseProject={() => undefined}
+                onOpenEnvironmentSettings={() => undefined}
+              />
+            </AgentNewThreadDefaultsProvider>
+          </RemoteRunnerProvider>,
+        ),
+      );
+      const pickModel = (model: string): void => {
+        click(host.querySelector("#agent-launch-model")!);
+        click(host.querySelector('[role="dialog"] button[data-provider="codex"]')!);
+        click(host.querySelector(`[role="option"][data-value="${model}"]`)!);
+      };
+      const model = (): string | undefined =>
+        host.querySelector<HTMLElement>("#agent-launch-model")?.dataset.value;
+      const chooseEnvironment = (label: string): void => {
+        click(host.querySelector('[aria-label^="Run on:"]')!);
+        click(
+          Array.from(document.querySelectorAll('[role="menuitemradio"]')).find((entry) =>
+            entry.textContent?.includes(label),
+          )!,
+        );
+      };
+      pickModel("gpt-6-astra");
+      chooseEnvironment("Linux server");
+      await waitForReact(() =>
+        expect(host.querySelector('[aria-label="New thread in app"]')).not.toBeNull(),
+      );
+      pickModel("gpt-6-luna");
+      expect(model()).toBe("gpt-6-luna");
+      if (action === "shortcut") {
+        act(() => viewCommands.run("agent.newThread"));
+      } else if (action === "sidebar") {
+        click(host.querySelector('[aria-label="New thread in app"]')!);
+      } else {
+        const textarea = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")!;
+        act(() => {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+            textarea,
+            "/new",
+          );
+          textarea.dispatchEvent(new Event("input", { bubbles: true }));
+          textarea.focus();
+        });
+        act(() =>
+          textarea.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+          ),
+        );
+      }
+      await waitForReact(() => expect(model()).toBe("gpt-6.1-sol"));
+      expect(host.querySelector('[aria-label="Reasoning effort"]')?.textContent).toBe("High");
+      expect(host.querySelector('[aria-label="Run on: Linux server"]')).not.toBeNull();
+      chooseEnvironment("This computer");
+      await waitForReact(() => expect(model()).toBe("gpt-6-astra"));
+      expect(gateway.createTask).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["codex", "claude"] as const)(
     "starts a %s server conversation through the linked project without replacing the sidebar",
     async (provider) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import wire from "../../contracts/agent-subagent-lifecycle-wire.json";
-import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
 
 function storedThread(subagentLifecycle: unknown): Record<string, unknown> {

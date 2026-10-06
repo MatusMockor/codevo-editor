@@ -91,6 +91,12 @@ describe("hotspot size ratchet", () => {
     expect(isProductionSource("src/application/useFeature.ts")).toBe(true);
     expect(isProductionSource("src/application/useFeature.test.ts")).toBe(false);
     expect(isProductionSource("src-tauri/src/lib.rs")).toBe(true);
+    expect(isProductionSource("packages/agent-events/src/index.ts")).toBe(true);
+    expect(isProductionSource("packages/agent-events/src/agentOutput/utf8Text.ts")).toBe(true);
+    expect(isProductionSource("packages/agent-events/src/packageBoundary.test.ts")).toBe(false);
+    expect(isProductionSource("packages/agent-events/dist/index.ts")).toBe(false);
+    expect(isProductionSource("packages/agent-events/src/view.tsx")).toBe(false);
+    expect(isProductionSource("packages/agent-events/index.ts")).toBe(false);
   });
 
   it("matches aggregate group globs across direct and nested files", () => {

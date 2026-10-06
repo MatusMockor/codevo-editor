@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import wire from "../../contracts/agent-subagent-lifecycle-wire.json";
-import {
-  parseAgentSubagentLifecycle,
-  type AgentSubagentLifecycle,
-} from "../domain/agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle, type AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentTurnEvent } from "../domain/agentThread";
 import {
   AgentTurnLogFailure,

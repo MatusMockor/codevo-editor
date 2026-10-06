@@ -897,6 +897,12 @@ export const keymapCommands = [
     label: "Commit Thread Changes",
   },
   {
+    category: "Agent",
+    defaultShortcut: "Cmd+Alt+V",
+    id: "agent.toggleDictation",
+    label: "Toggle Dictation",
+  },
+  {
     category: "Workbench",
     defaultShortcut: "",
     id: "project.add",

@@ -4,7 +4,7 @@ import {
   parseAgentSubagentLifecycle,
   retainAgentSubagentLifecycle,
   type AgentSubagentLifecycle,
-} from "./agentSubagentLifecycle";
+} from "@codevo/agent-events";
 import {
   LEGACY_SUBAGENT_LIFECYCLE_ENTRY_KEYS,
   agentSubagentLifecycleHasRetainedDetail,

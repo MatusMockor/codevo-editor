@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -11,7 +11,26 @@ const workflow = readFileSync(
   fileURLToPath(new URL("../.github/workflows/macos-release.yml", import.meta.url)),
   "utf8",
 );
+const tauriRoot = fileURLToPath(new URL("../src-tauri/", import.meta.url));
+const AUDIO_INPUT_ENTITLEMENT = "com.apple.security.device.audio-input";
 const workspaces = [];
+
+function plistEntries(xml) {
+  const dict = /<plist[^>]*>\s*<dict>([\s\S]*)<\/dict>\s*<\/plist>/.exec(xml);
+  const entries = [
+    ...(dict?.[1] ?? "").matchAll(
+      /<key>([^<]*)<\/key>\s*(?:<(true|false)\/>|<string>([^<]*)<\/string>)/g,
+    ),
+  ].map((match) => [match[1], match[3] ?? match[2] === "true"]);
+  expect(xml.match(/<key>/g) ?? [], "every plist key must be a plain top-level entry").toHaveLength(
+    entries.length,
+  );
+  return entries;
+}
+
+function tauriFile(name) {
+  return readFileSync(path.join(tauriRoot, name), "utf8");
+}
 
 function job(name) {
   const match = new RegExp(`^  ${name}:\\n([\\s\\S]*?)(?=^  [\\w-]+:|$(?![\\s\\S]))`, "m").exec(
@@ -153,6 +172,43 @@ describe("release quality gates", () => {
     expect(result.failures).toContain("missed.ts");
     const previousCommitOnly = await checkChangedFormat({ cwd: directory, base: "HEAD^" });
     expect(previousCommitOnly.failures).toEqual([]);
+  });
+});
+
+describe("macOS microphone permission", () => {
+  it("ships a usage description so macOS can ask for the microphone", () => {
+    const description = Object.fromEntries(
+      plistEntries(tauriFile("Info.plist")),
+    ).NSMicrophoneUsageDescription;
+    expect(typeof description).toBe("string");
+    expect(String(description).trim()).not.toBe("");
+  });
+
+  it("signs with an existing entitlements file that grants audio input and nothing else", () => {
+    const entitlements = JSON.parse(tauriFile("tauri.conf.json")).bundle?.macOS?.entitlements;
+    expect(typeof entitlements).toBe("string");
+    const file = path.resolve(tauriRoot, String(entitlements));
+    expect(file.startsWith(tauriRoot)).toBe(true);
+    expect(existsSync(file)).toBe(true);
+    expect(plistEntries(readFileSync(file, "utf8"))).toEqual([[AUDIO_INPUT_ENTITLEMENT, true]]);
+  });
+
+  it("reads every entitlement so an extra or disabled grant cannot pass", () => {
+    const plist = (body) => `<plist version="1.0">\n<dict>\n${body}\n</dict>\n</plist>`;
+    const audio = `<key>${AUDIO_INPUT_ENTITLEMENT}</key>\n<true/>`;
+    expect(plistEntries(plist(audio))).toEqual([[AUDIO_INPUT_ENTITLEMENT, true]]);
+    expect(plistEntries(plist(audio.replace("true", "false")))).toEqual([
+      [AUDIO_INPUT_ENTITLEMENT, false],
+    ]);
+    expect(
+      plistEntries(plist(`${audio}\n<key>com.apple.security.device.camera</key>\n<true/>`)),
+    ).toEqual([
+      [AUDIO_INPUT_ENTITLEMENT, true],
+      ["com.apple.security.device.camera", true],
+    ]);
+    expect(
+      plistEntries(plist("<key>NSMicrophoneUsageDescription</key>\n<string> </string>")),
+    ).toEqual([["NSMicrophoneUsageDescription", " "]]);
   });
 });
 

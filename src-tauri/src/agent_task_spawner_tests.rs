@@ -1029,8 +1029,9 @@ fn codex_argv_table_covers_every_model_mode_and_resume_combination() {
 fn the_claude_stdin_frame_matches_the_probe_fixture_byte_for_byte() {
     use base64::Engine;
 
-    const FIXTURE: &str =
-        include_str!("../../src/domain/agentOutput/fixtures/claude-image-turn.input.jsonl");
+    const FIXTURE: &str = include_str!(
+        "../../packages/agent-events/src/agentOutput/fixtures/claude-image-turn.input.jsonl"
+    );
 
     let line = FIXTURE.trim_end_matches('\n');
     let start = line.find("\"data\":\"").expect("fixture data field") + 8;

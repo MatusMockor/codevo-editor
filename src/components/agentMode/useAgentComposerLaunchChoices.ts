@@ -67,7 +67,16 @@ export function useAgentComposerLaunchChoices(
     },
     [scope.key, isDraft, environment],
   );
-  return { choice, change };
+  const resetDraft = useCallback((rootKey: string | null) => {
+    latestDraft.current = null;
+    const key = rootKey === null ? "draft" : `root:${rootKey}`;
+    setChoices((previous) => {
+      const scopes = new Map(previous.scopes);
+      scopes.delete(key);
+      return { scopes, lastDraft: null };
+    });
+  }, []);
+  return { choice, change, resetDraft };
 }
 
 function honoredChoice(

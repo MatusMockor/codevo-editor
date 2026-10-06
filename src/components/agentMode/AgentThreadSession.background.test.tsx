@@ -5,10 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
-import {
-  createAgentOutputParserState,
-  feedAgentOutput,
-} from "../../domain/agentOutput/agentOutputParser";
+import { createAgentOutputParserState, feedAgentOutput } from "@codevo/agent-events";
 import { AgentAgentsPanelProvider } from "./agents/agentAgentsPanelContext";
 import { AgentAgentsPanelSurface } from "./agents/AgentAgentsPanelSurface";
 import { AgentThreadSession } from "./AgentThreadSession";

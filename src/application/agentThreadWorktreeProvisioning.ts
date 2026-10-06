@@ -4,7 +4,7 @@ import {
   type AgentWorktreeReceipt,
   type GitWorktreeGateway,
 } from "../domain/gitWorktree";
-import { boundedUtf8Text, utf8ByteLength } from "../domain/agentOutput/utf8Text";
+import { boundedUtf8Text, utf8ByteLength } from "@codevo/agent-events";
 import {
   AGENT_TASKS_SOURCE,
   attempt,

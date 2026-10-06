@@ -1,5 +1,4 @@
-import type { AgentCliKind } from "../agentTask";
-import { boundedUtf8Text } from "./utf8Text";
+import { type AgentCliKind, boundedUtf8Text } from "@codevo/agent-events";
 
 export const MAX_AGENT_PROVIDER_ERROR_MESSAGE_BYTES = 4 * 1_024;
 export const MAX_AGENT_PROVIDER_ERROR_PAYLOAD_CHARS = 64 * 1_024;

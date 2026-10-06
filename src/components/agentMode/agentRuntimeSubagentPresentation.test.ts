@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   createAgentOutputParserState,
   feedAgentOutput,
-} from "../../domain/agentOutput/agentOutputParser";
+  retainAgentSubagentLifecycle,
+} from "@codevo/agent-events";
 import { summarizeAgentRuntimeSubagents } from "../../domain/agentRuntimeSubagent";
-import { retainAgentSubagentLifecycle } from "../../domain/agentSubagentLifecycle";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import {
@@ -123,7 +123,10 @@ const codexChild = (kind: string, id: string, path: string) => ({
 
 describe("agentTurnRuntimeSubagents from Claude stream-json", () => {
   it("titles the recorded fixture agent by its task description, not its type", () => {
-    const lines = readFileSync("src/domain/agentOutput/fixtures/claude-subagent-turn.jsonl", "utf8")
+    const lines = readFileSync(
+      "packages/agent-events/src/agentOutput/fixtures/claude-subagent-turn.jsonl",
+      "utf8",
+    )
       .trim()
       .split("\n");
     const result = model(parse("claudeCode", lines), SETTLED);

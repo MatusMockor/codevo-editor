@@ -121,6 +121,7 @@ describe("AgentsSettingsPage", () => {
       "Providers",
       "CLI updates",
       "Notifications",
+      "Dictation",
       "Sidebar",
     ]);
   });

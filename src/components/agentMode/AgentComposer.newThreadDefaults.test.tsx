@@ -7,6 +7,11 @@ import type { AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentNewThreadDefaults } from "../../domain/agentNewThreadDefaults";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
+  BUNDLED_CODEX_MODEL_CATALOG,
+  codexCatalogDefault,
+  type CodexModelCatalog,
+} from "../../domain/codexModelCatalog";
+import {
   BUNDLED_CLAUDE_MODEL_MANIFEST,
   type ClaudeModelManifest,
 } from "../../domain/claudeModelCatalog";
@@ -16,6 +21,7 @@ import { AgentNewThreadDefaultsProvider } from "./AgentNewThreadDefaultsProvider
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import { ClaudeModelCatalogContext } from "./useAgentClaudeModelCatalog";
 import { useAgentComposerState } from "./useAgentComposerState";
+import { CodexModelCatalogContext } from "./useAgentCodexModelCatalog";
 
 const ENABLED: Readonly<Record<AgentCliKind, boolean>> = { claudeCode: true, codex: true };
 const PROJECTS = [projectFixture()];
@@ -42,10 +48,21 @@ const CONFIGURED_CODEX: AgentLaunchOptions = {
   effort: "xhigh",
 };
 
+const LIVE_CODEX: CodexModelCatalog = {
+  ...BUNDLED_CODEX_MODEL_CATALOG,
+  source: "live",
+  revision: 1,
+  models: BUNDLED_CODEX_MODEL_CATALOG.models.map((model) => ({
+    ...model,
+    isDefault: model.id === "gpt-6-luna",
+  })),
+};
+
 interface RenderOptions {
   readonly settings: AgentNewThreadDefaults;
   readonly provider?: AgentCliKind;
   readonly claudeCatalog?: ClaudeModelManifest;
+  readonly codexCatalog?: CodexModelCatalog;
   readonly mismatchedLaunch?: AgentLaunchOptions;
   readonly localClaudeCliVersion?: string | null;
   readonly executionServerId?: string | null;
@@ -111,6 +128,7 @@ describe("composer launch controls with configured new-thread defaults", () => {
     settings,
     provider = "claudeCode",
     claudeCatalog = BUNDLED_CLAUDE_MODEL_MANIFEST,
+    codexCatalog = BUNDLED_CODEX_MODEL_CATALOG,
     mismatchedLaunch,
     localClaudeCliVersion = null,
     executionServerId = null,
@@ -118,16 +136,18 @@ describe("composer launch controls with configured new-thread defaults", () => {
     act(() =>
       root.render(
         <ClaudeModelCatalogContext.Provider value={claudeCatalog}>
-          <AgentNewThreadDefaultsProvider
-            settings={settings}
-            localClaudeCliVersion={localClaudeCliVersion}
-          >
-            <Harness
-              provider={provider}
-              mismatchedLaunch={mismatchedLaunch ?? null}
-              executionServerId={executionServerId}
-            />
-          </AgentNewThreadDefaultsProvider>
+          <CodexModelCatalogContext.Provider value={codexCatalog}>
+            <AgentNewThreadDefaultsProvider
+              settings={settings}
+              localClaudeCliVersion={localClaudeCliVersion}
+            >
+              <Harness
+                provider={provider}
+                mismatchedLaunch={mismatchedLaunch ?? null}
+                executionServerId={executionServerId}
+              />
+            </AgentNewThreadDefaultsProvider>
+          </CodexModelCatalogContext.Provider>
         </ClaudeModelCatalogContext.Provider>,
       ),
     );
@@ -177,6 +197,33 @@ describe("composer launch controls with configured new-thread defaults", () => {
 
     expect(composerLaunch()).toEqual(CONFIGURED_CLAUDE);
   });
+
+  it.each([BUNDLED_CODEX_MODEL_CATALOG, LIVE_CODEX])(
+    "keeps High when switching to the concrete Codex default from the $source catalog",
+    (codexCatalog) => {
+      render({
+        settings: { ...CONFIGURED, codex: { model: "default", effort: "high" } },
+        codexCatalog,
+      });
+
+      const model = codexCatalogDefault(codexCatalog).id;
+      pickModel("codex", model);
+
+      expect(composerLaunch()).toEqual({
+        provider: "codex",
+        model: "default",
+        mode: "dangerFullAccess",
+        effort: "high",
+      });
+      expect(host.querySelector('[aria-label="Reasoning effort"]')?.textContent).toBe("High");
+      expect(submittedLaunch()).toEqual({
+        provider: "codex",
+        model,
+        mode: "dangerFullAccess",
+        effort: "high",
+      });
+    },
+  );
 
   it("lets an explicitly picked model of the other provider win over its configured default", () => {
     render({ settings: CONFIGURED });

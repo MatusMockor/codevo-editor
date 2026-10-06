@@ -51,6 +51,9 @@ mod repository_lookup_commands;
 mod startup_metrics;
 #[path = "../startup_window_reveal.rs"]
 mod startup_window_reveal;
+#[cfg(target_os = "linux")]
+#[path = "../webview_media_linux.rs"]
+mod webview_media_linux;
 #[path = "../window_geometry.rs"]
 mod window_geometry;
 #[path = "workspace_facade.rs"]

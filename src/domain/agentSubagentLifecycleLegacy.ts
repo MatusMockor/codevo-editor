@@ -3,7 +3,7 @@ import {
   type AgentSubagentLifecycle,
   type AgentSubagentLifecycleEntry,
   type AgentSubagentLifecycleState,
-} from "./agentSubagentLifecycle";
+} from "@codevo/agent-events";
 
 export const LEGACY_SUBAGENT_LIFECYCLE_ROOT_KEYS: ReadonlyArray<string> = ["entries", "truncated"];
 

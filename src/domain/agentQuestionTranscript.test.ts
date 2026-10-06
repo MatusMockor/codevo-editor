@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_AGENT_TOOL_SUMMARY_BYTES } from "./agentThread";
-import { clipHeadTail, headTailOmissionMarker } from "./agentOutput/clipHeadTail";
+import { clipHeadTail, headTailOmissionMarker } from "@codevo/agent-events";
 import { agentQuestionToolOutcome, isAgentQuestionTool } from "./agentQuestionTranscript";
 
 const ID = "0123456789abcdef0123456789abcdef";

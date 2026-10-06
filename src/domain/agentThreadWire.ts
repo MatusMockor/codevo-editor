@@ -1,7 +1,10 @@
 import { validThreadOrganizationValue, validThreadSortOrder } from "./agentThreadOrganization";
-import { readAgentSubagentLifecycle, type AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import {
+  readAgentSubagentLifecycle,
+  type AgentSubagentLifecycle,
+  parseAgentSubagentSpawnFields,
+} from "@codevo/agent-events";
 import { persistedAgentSubagentLifecycle } from "./agentSubagentLifecycleLegacy";
-import { parseAgentSubagentSpawnFields } from "./agentSubagentSpawn";
 import {
   MAX_AGENT_ATTACHMENT_NAME_BYTES,
   MAX_AGENT_ATTACHMENT_PATH_BYTES,

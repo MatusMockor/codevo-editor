@@ -255,6 +255,9 @@ describe("AgentOutputArtifacts", () => {
     await click();
     const frame = host.querySelector("iframe")!;
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("allow")).toBe(
+      "microphone 'none'; camera 'none'; display-capture 'none'",
+    );
     expect(frame.hasAttribute("srcdoc")).toBe(false);
     expect(host.textContent).toContain("Loading preview…");
     await act(async () => {
