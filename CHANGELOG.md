@@ -7,6 +7,30 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.102] - 2026-10-06
+
+### Added
+
+- Dictate prompts into the agent composer using a connected server's speech
+  transcription. Choose the dictation language in Settings > Providers. Requires a
+  speech-enabled Codevo Runner.
+- The composer command menu lists installed Claude commands and Codex skills for
+  the current project. Server catalogs require an updated Codevo Runner; older
+  runners continue to show built-in commands.
+
+### Fixed
+
+- Editing a multi-line prompt keeps the conversation transcript still.
+- Server conversation changes update the sidebar immediately without reloading
+  every server's inventory or replacing unchanged rows.
+- Claude follow-up replies appear as live work and send one completion notification.
+- New conversations honor the configured provider, model and effort defaults,
+  and dismissed usage notices stay dismissed.
+- Server draft attachments survive workspace switches, and recorded changes can
+  be retried after a dropped connection.
+- Conversations already open in the rail no longer also appear in Saved
+  conversations, and a queued follow-up shows one Thinking row.
+
 ## [0.2.0-beta.101] - 2026-10-06
 
 ### Fixed
