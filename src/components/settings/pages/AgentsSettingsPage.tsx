@@ -23,6 +23,7 @@ import {
   withProviderReset,
   withToggledModelFavorite,
 } from "../agentProviderSettingsPersistence";
+import { AgentDictationSettingsRows } from "../AgentDictationSettingsRows";
 import { AgentSidebarSettingsRows } from "../AgentSidebarSettingsRows";
 import { AgentThreadDefaultsRows } from "../AgentThreadDefaultsRows";
 import { SettingsNumberField } from "../primitives/SettingsNumberField";
@@ -198,6 +199,13 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
           />
         </SettingsRow>
       </SettingsSectionHeading>
+
+      <AgentDictationSettingsRows
+        language={draft.appSettings.speechDictationLanguage}
+        onChangeLanguage={(speechDictationLanguage) =>
+          writeAppSettings({ ...appSettingsRef.current, speechDictationLanguage })
+        }
+      />
 
       <AgentSidebarSettingsRows
         workingSectionPreference={env.agentRailWorkingSectionPreference ?? null}

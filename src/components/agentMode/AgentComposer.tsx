@@ -70,6 +70,9 @@ import { formatAgentPromptBytes } from "./agentModePresentation";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { useCompactComposerControls } from "./useCompactComposerControls";
 import { AgentComposerSubmitControls } from "./AgentComposerSubmitControls";
+import { AgentComposerDictationControl } from "./dictation/AgentComposerDictationControl";
+import { AgentComposerDictationNotice } from "./dictation/AgentComposerDictationNotice";
+import { useAgentComposerDictation } from "./dictation/useAgentComposerDictation";
 import { useAgentComposerAutosize } from "./useAgentComposerAutosize";
 import { AgentComposerCompactionBanner } from "./AgentComposerCompactionBanner";
 import {
@@ -442,6 +445,14 @@ export function AgentComposer({
   const pickAttachments = (): void => {
     void attachmentIntake.open();
   };
+  const dictation = useAgentComposerDictation({
+    ownerKey: JSON.stringify([executionServerId, promptOwnerKey]),
+    prompt,
+    textareaRef,
+    blockedReason: targetReason,
+    suspended: interactionActive,
+    onPromptChange: changePrompt,
+  });
 
   const launchControls = useMemo(
     () => (
@@ -596,7 +607,7 @@ export function AgentComposer({
   };
 
   const submitGated = (consent: SessionRestartConsent = {}): void => {
-    if (interactionActive) return;
+    if (interactionActive || dictation.submitBlockedReason !== null) return;
     if (commands.interceptSubmit()) return;
     if (blocked) return;
     dispatch(false, consent);
@@ -623,6 +634,7 @@ export function AgentComposer({
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (commands.onKeyDown(event)) return;
     if (event.key === "Escape" && agentComposerPopoverOpen(composerRef.current)) return;
+    if (event.key === "Escape" && dictation.cancelOnEscape(event)) return;
     if (event.key === "Escape" && queuedEdit !== null) {
       event.preventDefault();
       event.stopPropagation();
@@ -638,7 +650,7 @@ export function AgentComposer({
     }
     if (event.key !== "Enter") return;
     if (event.shiftKey || event.altKey) return;
-    if (event.repeat) {
+    if (event.repeat || dictation.submitBlockedReason !== null) {
       event.preventDefault();
       return;
     }
@@ -777,6 +789,7 @@ export function AgentComposer({
               {unavailableAttachmentNotice}
             </p>
           )}
+          <AgentComposerDictationNotice dictation={dictation} />
           {modelFallbackNotice !== null && (
             <p className="agent-composer__caption" role="status">
               {modelFallbackNotice}
@@ -812,7 +825,9 @@ export function AgentComposer({
                 title={attachmentsEnabled ? "Attach files" : (targetReason ?? "Choose a project")}
               />
             )}
+            <AgentComposerDictationControl dictation={dictation} />
             <AgentComposerSubmitControls
+              blockedReason={dictation.submitBlockedReason}
               running={running}
               hasDraft={prompt.trim().length > 0 || (attachments?.drafts.length ?? 0) > 0}
               steering={steering}

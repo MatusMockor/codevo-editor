@@ -47,6 +47,7 @@ const VIEW_COMMAND_IDS = [
   "agent.goToTurn",
   "agent.runPreferredScript",
   "agent.openCommitMenu",
+  "agent.toggleDictation",
 ] as const;
 
 const LAYOUT_COMMAND_IDS = [
@@ -141,6 +142,7 @@ describe("workbenchAgentCommands", () => {
     ]);
 
     const unbind = bridge.bind({ ...handlers(), addProject: vi.fn() });
+    bridge.bindDictation({ available: () => true, toggle: vi.fn() });
 
     expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual(
       commands.map(() => true),
@@ -154,6 +156,29 @@ describe("workbenchAgentCommands", () => {
       ...SHELL_COMMAND_IDS.map(() => false),
       false,
     ]);
+  });
+
+  it("enables Toggle Dictation only while the composer reports dictation available", async () => {
+    const bridge = createAgentViewCommandBridge();
+    const commands = workbenchAgentCommands({ viewCommands: bridge });
+    const command = commands.find((entry) => entry.id === "agent.toggleDictation");
+    const state = { available: false };
+    const toggle = vi.fn();
+
+    expect(command).toMatchObject({ title: "Toggle Dictation", category: "Agents" });
+    bridge.bindDictation({ available: () => state.available, toggle });
+    expect(command?.isEnabled(enabledContext)).toBe(false);
+
+    bridge.bind(handlers());
+    expect(command?.isEnabled(enabledContext)).toBe(false);
+    await command?.run();
+    expect(toggle).not.toHaveBeenCalled();
+
+    state.available = true;
+    expect(command?.isEnabled(enabledContext)).toBe(true);
+    expect(command?.isEnabled(disabledContext)).toBe(false);
+    await command?.run();
+    expect(toggle).toHaveBeenCalledTimes(1);
   });
 
   it("registers project.add without requiring an open workspace", async () => {

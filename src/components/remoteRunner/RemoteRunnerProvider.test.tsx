@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import type { SpeechDictationPorts } from "../../application/speechDictationPorts";
 import { TauriRemoteRunnerGateway } from "../../infrastructure/tauriRemoteRunnerGateway";
 import { RemoteRunnerProvider } from "./RemoteRunnerProvider";
 import { useRemoteRunnerContext } from "./remoteRunnerContext";
@@ -61,6 +62,48 @@ describe("RemoteRunnerProvider", () => {
         "This computer",
       ]);
       expect(invoke).toHaveBeenCalledTimes(1);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  it("hands the composed dictation ports to consumers and defaults to none", async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    const gateway = new TauriRemoteRunnerGateway(vi.fn().mockResolvedValue([]));
+    const ports: SpeechDictationPorts = {
+      capture: {
+        isSupported: () => false,
+        start: () => ({
+          started: Promise.resolve({ kind: "failed", reason: "unsupported" }),
+          stop: () => undefined,
+        }),
+      },
+      transcriber: { transcribe: async () => ({ kind: "transcribed", text: "" }) },
+    };
+    const seen: (SpeechDictationPorts | null | undefined)[] = [];
+    function Probe() {
+      seen.push(useRemoteRunnerContext()?.speechDictation);
+      return null;
+    }
+    try {
+      await act(async () =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway}>
+            <Probe />
+          </RemoteRunnerProvider>,
+        ),
+      );
+      expect(seen[seen.length - 1]).toBeNull();
+      await act(async () =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway} speechDictation={ports}>
+            <Probe />
+          </RemoteRunnerProvider>,
+        ),
+      );
+      expect(seen[seen.length - 1]).toBe(ports);
     } finally {
       act(() => root.unmount());
     }

@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 const ERROR_BODY_LIMIT: usize = 1024;
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,speechTranscription";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -50,10 +50,11 @@ pub(super) fn prepare(
             reqwest::header::HeaderValue::from_str(&value).map_err(|_| "Invalid runner header.")?,
         );
     }
-    let body = if parsed
-        .get("content-type")
-        .is_some_and(|v| v.as_bytes().starts_with(b"image/") || v.as_bytes() == b"text/plain")
-    {
+    let body = if parsed.get("content-type").is_some_and(|v| {
+        v.as_bytes().starts_with(b"image/")
+            || v.as_bytes() == b"text/plain"
+            || v.as_bytes() == b"application/octet-stream"
+    }) {
         let encoded = body
             .as_ref()
             .and_then(|v| v.get("base64"))
@@ -95,6 +96,35 @@ async fn bounded_error_body(response: &mut reqwest::Response) -> Option<Vec<u8>>
     }
     Some(body)
 }
+fn speech_error_code(body: &[u8]) -> Option<&'static str> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ErrorBody {
+        error: String,
+    }
+    if body.len() > ERROR_BODY_LIMIT {
+        return None;
+    }
+    let body = serde_json::from_slice::<ErrorBody>(body).ok()?;
+    match body.error.as_str() {
+        "not_found" => Some("not_found"),
+        "invalid_input" => Some("invalid_input"),
+        "too_large" => Some("too_large"),
+        "unsupported_media" => Some("unsupported_media"),
+        "busy" => Some("busy"),
+        "speech_unavailable" => Some("speech_unavailable"),
+        _ => None,
+    }
+}
+fn request_timeout(method: &str, path: &str) -> Option<std::time::Duration> {
+    if crate::remote_runner::speech::is_route(method, path) {
+        return Some(std::time::Duration::from_secs(35));
+    }
+    if path.ends_with("/steer") {
+        return Some(std::time::Duration::from_secs(60));
+    }
+    None
+}
 async fn execute(
     client: &reqwest::Client,
     token: &str,
@@ -102,6 +132,8 @@ async fn execute(
     prepared: Prepared,
     limit: usize,
 ) -> Result<(Vec<u8>, Option<String>), String> {
+    let speech = crate::remote_runner::speech::is_route(prepared.method.as_str(), &prepared.path);
+    let timeout = request_timeout(prepared.method.as_str(), &prepared.path);
     let mut request = client
         .request(
             prepared.method,
@@ -114,8 +146,8 @@ async fn execute(
             reqwest::header::HeaderValue::from_static(CLIENT_CAPABILITIES),
         )
         .body(prepared.body);
-    if prepared.path.ends_with("/steer") {
-        request = request.timeout(std::time::Duration::from_secs(60));
+    if let Some(timeout) = timeout {
+        request = request.timeout(timeout);
     }
     if let Some(id) = expected {
         request = request.header("x-codevo-runner-id", id);
@@ -129,6 +161,21 @@ async fn execute(
     }
     if !response.status().is_success() {
         let status = response.status().as_u16();
+        if speech {
+            if status == 401 {
+                return Err("Runner request failed (HTTP 401).".into());
+            }
+            let error = bounded_error_body(&mut response)
+                .await
+                .as_deref()
+                .and_then(speech_error_code);
+            if let Some(error) = error {
+                return Err(format!(
+                    "Runner speech transcription failed: {error} (HTTP {status})."
+                ));
+            }
+            return Err(format!("Runner request failed (HTTP {status})."));
+        }
         if status == 400 {
             let fallback = "Runner request failed (HTTP 400).";
             let mut body = Vec::new();
@@ -177,6 +224,12 @@ async fn execute(
             return Err(git_sync_wire::GIT_OPERATION_UNKNOWN.into());
         }
         return Err(format!("Runner request failed (HTTP {status})."));
+    }
+    if speech && response.status().as_u16() != 200 {
+        return Err(format!(
+            "Runner request failed (HTTP {}).",
+            response.status().as_u16()
+        ));
     }
     let media = response
         .headers()
@@ -301,6 +354,103 @@ mod tests {
     }
 
     #[test]
+    fn octet_stream_upload_decodes_only_the_exact_media_type() {
+        let bytes = [0_u8, 128, 255, 127];
+        let body = json!({"base64": base64::engine::general_purpose::STANDARD.encode(bytes)});
+        let route = "/v1/speech/transcriptions?language=sk";
+        let prepared = prepare(
+            "POST",
+            route,
+            Some(body.clone()),
+            vec![("content-type".into(), "application/octet-stream".into())],
+        )
+        .unwrap();
+        assert_eq!(prepared.path, route);
+        assert_eq!(prepared.method, reqwest::Method::POST);
+        assert_eq!(prepared.body, bytes);
+        assert_eq!(
+            prepared.headers.get("content-type").unwrap(),
+            "application/octet-stream"
+        );
+        for media in [
+            "application/octet-stream; charset=utf-8",
+            "Application/octet-stream",
+            "audio/pcm",
+            "application/json",
+        ] {
+            let prepared = prepare(
+                "POST",
+                route,
+                Some(body.clone()),
+                vec![("content-type".into(), media.into())],
+            )
+            .unwrap();
+            assert_eq!(prepared.body, serde_json::to_vec(&body).unwrap());
+            assert_eq!(
+                prepared.headers.get("content-type").unwrap(),
+                "application/json"
+            );
+        }
+        assert!(prepare(
+            "POST",
+            route,
+            Some(json!({"base64":"not-base64"})),
+            vec![("content-type".into(), "application/octet-stream".into())]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn speech_http_timeout_is_scoped_to_exact_post_routes() {
+        for language in ["sk", "en", "cs"] {
+            let path = format!("/v1/speech/transcriptions?language={language}");
+            assert_eq!(
+                request_timeout("POST", &path),
+                Some(std::time::Duration::from_secs(35))
+            );
+            assert_eq!(request_timeout("GET", &path), None);
+        }
+        for path in [
+            "/v1/speech/transcriptions",
+            "/v1/speech/transcriptions?language=de",
+            "/v1/speech/transcriptions?language=sk&extra=1",
+            "/v1/tasks",
+        ] {
+            assert_eq!(request_timeout("POST", path), None);
+        }
+        assert_eq!(
+            request_timeout("POST", "/v1/tasks/id/steer"),
+            Some(std::time::Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn speech_errors_are_closed_strict_and_bounded() {
+        for code in [
+            "not_found",
+            "invalid_input",
+            "too_large",
+            "unsupported_media",
+            "busy",
+            "speech_unavailable",
+        ] {
+            let body = serde_json::to_vec(&json!({"error":code})).unwrap();
+            assert_eq!(speech_error_code(&body), Some(code));
+        }
+        for body in [
+            b"{}".as_slice(),
+            b"{\"error\":\"unknown\"}",
+            b"{\"error\":\"busy\",\"extra\":true}",
+            b"{\"error\":1}",
+            b"{\"error\":\"busy\",\"error\":\"busy\"}",
+        ] {
+            assert_eq!(speech_error_code(body), None);
+        }
+        let oversized = format!("{{\"error\":\"busy\"}}{}", " ".repeat(ERROR_BODY_LIMIT));
+        assert_eq!(speech_error_code(oversized.as_bytes()), None);
+    }
+
+    #[test]
     fn request_input_rejects_injection_and_unbounded_payloads() {
         for path in [
             "/v1/tasks\r\nx: y",
@@ -348,6 +498,7 @@ mod tests {
         assert!(tokens.contains(&"gitSync"));
         assert!(tokens.contains(&"portPreview"));
         assert!(tokens.contains(&"accountUsage"));
+        assert!(tokens.contains(&"speechTranscription"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);
@@ -512,6 +663,82 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /v1/runner "));
         assert_eq!(checks.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn speech_requests_pin_identity_and_preserve_scoped_error_codes() {
+        for (method, route, status, body, expected) in [
+            (
+                "POST",
+                "/v1/speech/transcriptions?language=sk",
+                409,
+                "{\"error\":\"busy\"}",
+                "Runner speech transcription failed: busy (HTTP 409).",
+            ),
+            (
+                "POST",
+                "/v1/speech/transcriptions?language=en",
+                503,
+                "{\"error\":\"speech_unavailable\"}",
+                "Runner speech transcription failed: speech_unavailable (HTTP 503).",
+            ),
+            (
+                "POST",
+                "/v1/speech/transcriptions?language=cs",
+                400,
+                "{\"error\":\"invalid_input\"}",
+                "Runner speech transcription failed: invalid_input (HTTP 400).",
+            ),
+            (
+                "POST",
+                "/v1/speech/transcriptions?language=sk",
+                409,
+                "{\"error\":\"busy\",\"extra\":1}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                "/v1/speech/transcriptions?language=sk",
+                409,
+                "{\"error\":\"busy\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "POST",
+                "/v1/tasks",
+                409,
+                "{\"error\":\"busy\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+        ] {
+            let (socket, server) = test_server(vec![
+                (200, "{\"protocolVersion\":1,\"runnerId\":\"expected\"}"),
+                (status, body),
+            ]);
+            let result = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(socket)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                request(
+                    &client,
+                    "private-token",
+                    Some("expected"),
+                    prepare(method, route, None, vec![]).unwrap(),
+                    32768,
+                )
+                .await
+            });
+            assert_eq!(result.unwrap_err(), expected);
+            let requests = server.join().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(requests[1].starts_with(&format!("{method} {route} ")));
+            assert!(requests
+                .iter()
+                .all(|request| request.contains("x-codevo-runner-id: expected")));
+        }
     }
 
     #[cfg(unix)]
@@ -727,6 +954,46 @@ mod tests {
         assert!(result.unwrap_err().contains("output limit"));
         server.join().unwrap();
     }
+    #[cfg(unix)]
+    #[test]
+    fn speech_response_has_a_small_transport_budget_and_exact_success_status() {
+        let large = format!("{{\"text\":\"{}\"}}", "x".repeat(32 * 1024));
+        for (status, body, expected) in [
+            (200, large.as_str(), "Runner response exceeds output limit."),
+            (
+                201,
+                "{\"text\":\"hello\"}",
+                "Runner request failed (HTTP 201).",
+            ),
+            (204, "", "Runner request failed (HTTP 204)."),
+            (
+                401,
+                "{\"error\":\"busy\"}",
+                "Runner request failed (HTTP 401).",
+            ),
+        ] {
+            let (socket, server) = test_server(vec![(status, body)]);
+            let result = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(socket)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                let route = "/v1/speech/transcriptions?language=sk";
+                request(
+                    &client,
+                    "private-token",
+                    None,
+                    prepare("POST", route, None, vec![]).unwrap(),
+                    super::super::super::response_limit("POST", route),
+                )
+                .await
+            });
+            assert_eq!(result.unwrap_err(), expected);
+            server.join().unwrap();
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn account_usage_response_has_its_own_small_transport_budget() {

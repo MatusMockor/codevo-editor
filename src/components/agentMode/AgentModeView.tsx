@@ -21,6 +21,7 @@ import type { WorkspaceTrustOrigin } from "../../domain/trust";
 import { AgentRemoteDraftProjectChooser } from "./AgentRemoteDraftProjectChooser";
 import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
+import type { SpeechLanguage } from "../../domain/speechDictation";
 import { useRemoteSurfaceContext } from "./useRemoteSurfaceContext";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
 import { useAgentPendingInteractionObservations } from "../../application/useAgentPendingInteractions";
@@ -139,6 +140,7 @@ import { useAgentRemoteFileLinks } from "./useAgentRemoteFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
+import { AgentDictationProvider } from "./dictation/AgentDictationProvider";
 import { agentComposerThreadLocation } from "./agentComposerThreadLocation";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
 import { useAgentQueuedFollowUpEdit } from "./useAgentQueuedFollowUpEdit";
@@ -171,6 +173,8 @@ const AGENTS_PANEL_SURFACE = <AgentAgentsPanelSurface />;
 export interface AgentModeViewProps {
   readonly monacoTheme?: MonacoAppTheme;
   readonly followUpBehavior?: AgentFollowUpBehavior;
+  readonly dictationLanguage?: SpeechLanguage;
+  readonly composerVisible?: boolean;
   readonly questionGateway?: AgentQuestionGateway | null;
   readonly artifactLoader?: AgentArtifactLoader | null;
   readonly artifactPreview?: AgentArtifactPreviewPort | null;
@@ -309,7 +313,7 @@ export function AgentModeView(props: AgentModeViewProps) {
     repositoryIdentity: REMOTE_PROJECT_IDENTITY_GATEWAY,
     externalUrlOpener: REMOTE_COMPARE_URL_OPENER,
   });
-  return (
+  const view = (
     <LocalAgentModeView
       {...props}
       key={navigationKey}
@@ -323,6 +327,17 @@ export function AgentModeView(props: AgentModeViewProps) {
       authoritativeRemoteProjectKeys={unified.authoritativeRemoteProjectKeys}
       cloneAttachments={unified.cloneAttachments}
     />
+  );
+  return (
+    <AgentDictationProvider
+      commands={props.viewCommands ?? null}
+      language={props.dictationLanguage}
+      ports={remote?.speechDictation ?? null}
+      serverIds={unified.speechServerIds}
+      visible={props.composerVisible !== false}
+    >
+      {view}
+    </AgentDictationProvider>
   );
 }
 

@@ -1,6 +1,6 @@
 use super::super::port_forward::{ForwardDestination, ForwardSet};
 use super::super::types::Server;
-use super::{response_limit, validate_destination, MAX_INPUT, TIMEOUT};
+use super::{request_timeout, response_limit, validate_destination, MAX_INPUT};
 use serde_json::Value;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -208,11 +208,7 @@ impl Session {
             request,
             server.runner_id.clone(),
             response_limit(method, path),
-            if path.ends_with("/steer") {
-                std::time::Duration::from_secs(60)
-            } else {
-                TIMEOUT
-            },
+            request_timeout(method, path),
         );
         if result
             .as_ref()

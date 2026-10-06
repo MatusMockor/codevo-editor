@@ -305,6 +305,13 @@ export const SETTINGS_ROW_TABLE = [
     ],
   ),
   row(
+    "agents.dictationLanguage",
+    "agents",
+    "Dictation language",
+    "Language spoken when dictating into the composer. Audio is transcribed on your connected server and is not stored.",
+    ["agent", "dictation", "voice", "speech", "microphone", "language", "transcription"],
+  ),
+  row(
     "agents.workingSection",
     "agents",
     "Working section",

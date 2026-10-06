@@ -30,6 +30,7 @@ import type {
 } from "./remoteRunnerInstructions";
 import type { AgentLaunchOptions } from "./agentLaunch";
 import type { RemoteStartBase } from "./remoteGitSyncWire";
+import type { SpeechLanguage } from "./speechDictation";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
 export type RemoteRunnerIsolation = "in-place" | "worktree";
@@ -72,6 +73,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     interactiveQuestions?: boolean;
     gitSync?: boolean;
     portPreview?: boolean;
+    speechTranscription?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
@@ -234,8 +236,15 @@ export type RemoteRunnerHistorySearchPage = Readonly<{
 export type RemoteRunnerAccountUsageRequest = RemoteRunnerServerRequest &
   Readonly<{ runnerId: string; provider: RemoteRunnerProvider }>;
 
+export type RemoteRunnerTranscribeSpeechRequest = RemoteRunnerServerRequest &
+  Readonly<{ language: SpeechLanguage; base64: string }>;
+export type RemoteRunnerSpeechTranscript = Readonly<{ text: string }>;
+
 export interface RemoteRunnerGateway {
   getAccountUsage?(request: RemoteRunnerAccountUsageRequest): Promise<AgentAccountUsageSnapshot>;
+  transcribeSpeech?(
+    request: RemoteRunnerTranscribeSpeechRequest,
+  ): Promise<RemoteRunnerSpeechTranscript>;
   listRepositoryHosts?(request: RemoteRunnerServerRequest): Promise<RepositoryHostsSnapshot>;
   lookupRepository?(
     request: RemoteRunnerServerRequest & Readonly<{ request: RepositoryLookupRequest }>,

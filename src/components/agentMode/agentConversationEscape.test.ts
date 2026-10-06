@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentConversationEscapeApplies } from "./agentConversationEscape";
+import { agentConversationEscapeApplies, agentEscapeIsUnclaimed } from "./agentConversationEscape";
 import { agentConversationEscapeAction } from "./useAgentConversationEscape";
 
 function conversation(markup = ""): HTMLElement {
@@ -164,5 +164,102 @@ describe("agentConversationEscapeAction", () => {
     ).toBeNull();
     agentConversationEscapeAction({ running: false, sessionTasksStoppable: true, onStop })?.();
     expect(onStop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("agentEscapeIsUnclaimed", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it("treats a plain Escape on ordinary content and on the page as unclaimed", () => {
+    const root = conversation("<button>Copy</button><span>text</span>");
+
+    expect(agentEscapeIsUnclaimed(escapeAt(root.querySelector("button") ?? root), document)).toBe(
+      true,
+    );
+    expect(agentEscapeIsUnclaimed(escapeAt(root.querySelector("span") ?? root), document)).toBe(
+      true,
+    );
+    expect(agentEscapeIsUnclaimed(escapeAt(document.body), document)).toBe(true);
+    expect(agentEscapeIsUnclaimed(escapeAt(document), document)).toBe(true);
+  });
+
+  it.each([
+    ["an input", "<input />", "input"],
+    ["a textarea", "<textarea></textarea>", "textarea"],
+    ["a menu", '<div role="menu"><button>item</button></div>', "button"],
+    ["a dialog", '<div role="dialog"><button>ok</button></div>', "button"],
+    ["a popover", '<div class="agent-popover"><button>ok</button></div>', "button"],
+    ["an editor", '<div class="monaco-editor"><span>x</span></div>', "span"],
+    ["a terminal", '<div class="xterm"><span>x</span></div>', "span"],
+  ])("leaves Escape to %s", (_name, markup, selector) => {
+    const root = conversation(markup);
+    const event = escapeAt(root.querySelector(selector) ?? root);
+
+    expect(agentEscapeIsUnclaimed(event, document)).toBe(false);
+  });
+
+  it("leaves Escape to an open popover whose trigger kept the focus", () => {
+    const root = conversation(
+      '<button aria-haspopup="menu" aria-expanded="true">Access</button><button>Copy</button>',
+    );
+    const trigger = root.querySelector<HTMLButtonElement>("button") ?? root;
+    trigger.focus();
+
+    expect(document.activeElement).toBe(trigger);
+    expect(agentEscapeIsUnclaimed(escapeAt(trigger), document)).toBe(false);
+    expect(
+      agentEscapeIsUnclaimed(escapeAt(root.querySelector("button + button") ?? root), document),
+    ).toBe(false);
+    expect(agentEscapeIsUnclaimed(escapeAt(document.body), document)).toBe(false);
+  });
+
+  it("takes Escape again once the popover has closed", () => {
+    const root = conversation(
+      '<button aria-haspopup="menu" aria-expanded="false">Access</button><button>Copy</button>',
+    );
+
+    expect(agentEscapeIsUnclaimed(escapeAt(root.querySelector("button") ?? root), document)).toBe(
+      true,
+    );
+  });
+
+  it("leaves Escape to a popover surface that is open elsewhere in the document", () => {
+    const root = conversation("<button>Copy</button>");
+    conversation('<div class="agent-popover"><button>item</button></div>');
+
+    expect(agentEscapeIsUnclaimed(escapeAt(root.querySelector("button") ?? root), document)).toBe(
+      false,
+    );
+  });
+
+  it("leaves Escape to an open modal anywhere in the document", () => {
+    const root = conversation("<button>Copy</button>");
+    conversation('<div aria-modal="true"></div>');
+
+    expect(agentEscapeIsUnclaimed(escapeAt(root.querySelector("button") ?? root), document)).toBe(
+      false,
+    );
+  });
+
+  it.each([
+    ["another key", { key: "Enter" }],
+    ["a modified Escape", { shiftKey: true }],
+    ["a composing Escape", { isComposing: true }],
+  ])("ignores %s", (_name, init) => {
+    const root = conversation("<button>Copy</button>");
+
+    expect(agentEscapeIsUnclaimed(escapeAt(root, init), document)).toBe(false);
+  });
+
+  it("ignores an Escape another handler already consumed", () => {
+    const root = conversation("<button>Copy</button>");
+    const consume = (event: Event): void => event.preventDefault();
+    root.addEventListener("keydown", consume, true);
+
+    expect(agentEscapeIsUnclaimed(escapeAt(root.querySelector("button") ?? root), document)).toBe(
+      false,
+    );
   });
 });

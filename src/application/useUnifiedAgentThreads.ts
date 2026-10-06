@@ -40,6 +40,7 @@ import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { useRemoteAgentShip } from "./useRemoteAgentShip";
 import { RemoteChangeSummaryViews } from "./remoteChangeSummaryViews";
 import { useRemoteAgentAccountUsage } from "./useRemoteAgentAccountUsage";
+import { speechDictationServerIds } from "./speechDictationServers";
 
 export interface UnifiedAgentThreadsOptions {
   readonly local: AgentThreadsSurface;
@@ -781,6 +782,11 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   );
   const stableAgents = useRemoteAgentStableSurface(agents);
   return {
+    speechServerIds: speechDictationServerIds({
+      threadServerId: effectiveServerId,
+      servers,
+      snapshots: inventory.snapshots,
+    }),
     agents: stableAgents,
     cloneAttachments: { local: local.attachments, remote: remoteAttachments.attachments },
     projects,

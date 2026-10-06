@@ -22,6 +22,9 @@ fn response_limit(method: &str, path: &str) -> usize {
     if method == "GET" && matches!(path, "/v1/account-usage/claude" | "/v1/account-usage/codex") {
         return 16 * 1024;
     }
+    if super::speech::is_route(method, path) {
+        return 32 * 1024;
+    }
     let attachment = path
         .strip_prefix("/v1/attachments/")
         .and_then(|value| value.strip_suffix("/content"));
@@ -33,6 +36,16 @@ fn response_limit(method: &str, path: &str) -> usize {
     } else {
         MAX_OUTPUT
     }
+}
+
+fn request_timeout(method: &str, path: &str) -> Duration {
+    if super::speech::is_route(method, path) {
+        return Duration::from_secs(65);
+    }
+    if path.ends_with("/steer") {
+        return Duration::from_secs(60);
+    }
+    TIMEOUT
 }
 
 fn validate_destination(host: &str, username: &str) -> Result<(), String> {
@@ -197,6 +210,30 @@ fn run_with_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speech_budgets_are_scoped_to_exact_post_routes() {
+        for language in ["sk", "en", "cs"] {
+            let path = format!("/v1/speech/transcriptions?language={language}");
+            assert_eq!(response_limit("POST", &path), 32 * 1024);
+            assert_eq!(request_timeout("POST", &path), Duration::from_secs(65));
+            assert_eq!(response_limit("GET", &path), MAX_OUTPUT);
+            assert_eq!(request_timeout("GET", &path), TIMEOUT);
+        }
+        for path in [
+            "/v1/speech/transcriptions",
+            "/v1/speech/transcriptions?language=de",
+            "/v1/speech/transcriptions?language=sk&extra=1",
+            "/v1/tasks",
+        ] {
+            assert_eq!(response_limit("POST", path), MAX_OUTPUT);
+            assert_eq!(request_timeout("POST", path), TIMEOUT);
+        }
+        assert_eq!(
+            request_timeout("POST", "/v1/tasks/id/steer"),
+            Duration::from_secs(60)
+        );
+    }
 
     #[test]
     fn only_image_content_reads_receive_the_larger_budget() {

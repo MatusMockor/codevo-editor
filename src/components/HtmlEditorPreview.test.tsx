@@ -53,6 +53,9 @@ describe("HTML editor preview", () => {
     expect(source?.closest("[hidden]")).not.toBeNull();
     const frame = ui.host.querySelector("iframe");
     expect(frame?.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame?.getAttribute("allow")).toBe(
+      "microphone 'none'; camera 'none'; display-capture 'none'",
+    );
     expect(frame?.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(frame?.getAttribute("src")).toBe(ready.url);
     await ui.click("Source");

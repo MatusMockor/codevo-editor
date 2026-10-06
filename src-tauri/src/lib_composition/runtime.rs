@@ -138,6 +138,8 @@ pub fn run() {
         .setup(move |app| {
             window_geometry::restore_main_window_geometry(app.handle());
             startup_window_reveal::schedule_startup_reveal_fallback(app.handle());
+            #[cfg(target_os = "linux")]
+            webview_media_linux::enable_main_webview_microphone(app.handle());
             crate::claude_model_manifest::initialize(app.handle().clone(), app.path().app_data_dir()?);
             app.manage(crate::remote_runner::RemoteRunnerState::new(app.path().app_data_dir()?)?);
             app.manage(Arc::new(crate::agent_turn_changes::AgentTurnChangesStore::new(app.path().app_data_dir()?)));
@@ -266,6 +268,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_remove_server,
             crate::remote_runner::remote_runner_get_runner,
             crate::remote_runner::remote_runner_get_account_usage,
+            crate::remote_runner::remote_runner_transcribe_speech,
             crate::remote_runner::remote_runner_list_projects,
             crate::remote_runner::remote_runner_clone_project,
             crate::remote_runner::remote_runner_repository_hosts,

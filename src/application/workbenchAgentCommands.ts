@@ -46,6 +46,8 @@ export function workbenchAgentCommands({
     inAgentMode(context) && viewCommands.threadSelected();
   const withFocusedThread = (context: CommandContext): boolean =>
     withThread(context) && viewCommands.threadFindFocused();
+  const withDictation = (context: CommandContext): boolean =>
+    inAgentMode(context) && viewCommands.dictationAvailable();
   const viewCommand = (
     id: AgentViewCommandId,
     title: string,
@@ -97,6 +99,7 @@ export function workbenchAgentCommands({
     viewCommand("agent.goToTurn", "Go to Turn", withThread),
     viewCommand("agent.runPreferredScript", "Run Thread Script", withThread),
     viewCommand("agent.openCommitMenu", "Commit Thread Changes", withThread),
+    viewCommand("agent.toggleDictation", "Toggle Dictation", withDictation),
     layoutCommand("agent.toggleRightPanel", "Toggle Right Panel", { kind: "toggleRightPanel" }),
     ...SURFACE_COMMANDS.map((surfaceCommand) =>
       layoutCommand(surfaceCommand.id, surfaceCommand.title, {

@@ -124,7 +124,7 @@ Preferred path: App Store Connect API credentials for CI, because they avoid sto
 
 ## Tauri Configuration Policy
 
-Current `src-tauri/tauri.conf.json` has no `bundle.macOS` block. The Tauri schema supports these macOS release fields:
+Current `src-tauri/tauri.conf.json` sets `bundle.macOS.entitlements` to `Entitlements.plist` for microphone capture. The Tauri schema supports these macOS release fields:
 
 - `bundle.macOS.signingIdentity`
 - `bundle.macOS.hardenedRuntime`
@@ -136,7 +136,7 @@ Policy:
 - Keep signing identity out of committed config until the final release identity is known.
 - Prefer `APPLE_SIGNING_IDENTITY` locally and in CI secrets.
 - Keep `hardenedRuntime` at the Tauri default, which is `true`.
-- Do not add an entitlements file until a concrete runtime requirement appears.
+- Keep the entitlements file limited to concrete runtime requirements.
 - Add `bundle.macOS.providerShortName` only if Apple account membership or notary provider selection requires it.
 - Prefer `APPLE_PROVIDER_SHORT_NAME` for provider selection in CI when possible.
 
@@ -144,18 +144,21 @@ This keeps the repository portable across local machines and CI accounts, while 
 
 ## Entitlements Review
 
-No macOS entitlements are required by the current app surface:
+Voice dictation in the agent composer requires microphone access:
 
-- file access is user-selected through app commands and Tauri plugins
-- terminal and PHPactor launches use host processes behind workspace trust
-- no camera, microphone, contacts, calendar, location, Apple Events, iCloud, push notification, or app sandbox scope is currently used
+- `src-tauri/Info.plist` supplies `NSMicrophoneUsageDescription`, which Tauri merges into the app bundle Info.plist.
+- `src-tauri/Entitlements.plist` enables `com.apple.security.device.audio-input` for hardened-runtime microphone capture.
+- `bundle.macOS.entitlements` in `src-tauri/tauri.conf.json` applies that entitlement to packaged builds.
+- File access is user-selected through app commands and Tauri plugins.
+- Terminal and PHPactor launches use host processes behind workspace trust.
+- No camera, contacts, calendar, location, Apple Events, iCloud, push notification, or app sandbox scope is currently used.
 
 Release rule:
 
 - Add entitlements only when a specific macOS capability requires them.
 - Do not enable App Sandbox without a separate design for terminal, host-tool discovery, and workspace filesystem access.
 - Do not ship `com.apple.security.get-task-allow` in release artifacts.
-- Re-run packaged smoke tests after any entitlement change.
+- Re-run packaged smoke tests after any entitlement change. Verify the bundled microphone usage description and signed audio-input entitlement, then test voice dictation with microphone permission granted and denied.
 - Re-check sidecar signing if PHP, PHPactor, Intelephense, Watchman, ripgrep, or helper binaries become bundled.
 
 ## Local Release Flow

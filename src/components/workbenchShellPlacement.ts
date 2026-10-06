@@ -67,6 +67,12 @@ export function agentSurfaceHostPlacement(
   return { mounted: !hidden || layout.openSurfaces.length > 0, hidden };
 }
 
+export function rightPanelCoversThread(
+  layout: Pick<AgentWorkbenchLayout, "rightPanel" | "rightPanelMaximized">,
+): boolean {
+  return layout.rightPanel === "open" && layout.rightPanelMaximized;
+}
+
 export function workbenchShellPlacement({
   bottomPanelVisible,
   effectiveLayout,
@@ -99,7 +105,7 @@ export function workbenchShellPlacement({
       agentSurfaceEditorSlot(LOCAL_AGENT_SURFACE_ACTIVATION, layout.activeSurface) === "none",
     rightPanelHidden,
     surfacesMounted: host.mounted,
-    rightPanelMaximized: !rightPanelHidden && layout.rightPanelMaximized,
+    rightPanelMaximized: rightPanelCoversThread(layout),
     responsiveMaximized: false,
     rightPanelOverlay: false,
     responsiveRestore: "none",
