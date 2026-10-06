@@ -21,6 +21,9 @@ import {
   installFakeBrowserAudio,
   type FakeBrowserAudio,
 } from "../../test/speechDictationTestSupport";
+import { installFakeAudioInputs } from "../../test/audioInputDevicesTestSupport";
+import { createSpeechDictationPorts } from "../../infrastructure/speechDictationComposition";
+import type { SpeechInputSetting } from "../../domain/speechDictationInputSetting";
 import { dictationUtterance } from "./dictation/agentComposerDictationTestSupport";
 import { dictationRemoteGateway } from "./dictation/dictationRemoteGatewayTestSupport";
 // @vitest-environment jsdom
@@ -1612,6 +1615,53 @@ describe("AgentWorkbenchScreen", () => {
     act(() => microphone()?.click());
     await act(() => flushAsync());
     expect(audio.getUserMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it("dictates from the microphone chosen in the app settings from the next start on", async () => {
+    const inputs = installFakeAudioInputs({ granted: true, sampleRate: 16000 });
+    dictationAudio = inputs.audio;
+    const gateway = dictationRemoteGateway(
+      [{ id: "speech", connected: true, speechTranscription: true }],
+      controlledInvoke(),
+    );
+    const ports = createSpeechDictationPorts(gateway);
+    const workbench = createWorkbench(ROOT_A);
+    const show = (speechDictationInput: SpeechInputSetting): void =>
+      act(() =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway} speechDictation={ports}>
+            <AgentWorkbenchScreen
+              {...defaultProps({
+                ...workbench,
+                appSettings: { ...workbench.appSettings, speechDictationInput },
+              })}
+            />
+          </RemoteRunnerProvider>,
+        ),
+      );
+    const microphone = (): HTMLButtonElement | null =>
+      host.querySelector<HTMLButtonElement>(".agent-dictation__button");
+    const toggle = async (): Promise<void> => {
+      act(() => microphone()?.click());
+      await act(() => flushAsync());
+    };
+    show({ kind: "device", id: "studio-1", label: "Studio Mic" });
+    await waitForReact(() =>
+      expect(microphone()?.getAttribute("aria-label")).toBe("Start dictation"),
+    );
+    await toggle();
+    expect(inputs.requestedDeviceIds()).toEqual(["studio-1"]);
+
+    show({ kind: "system-default" });
+
+    expect(inputs.audio.microphoneLive()).toBe(true);
+    expect(inputs.streams[0]?.tracks.every((track) => !track.stopped)).toBe(true);
+    expect(inputs.requestedDeviceIds()).toEqual(["studio-1"]);
+
+    await toggle();
+    expect(inputs.audio.microphoneLive()).toBe(false);
+    await toggle();
+    expect(inputs.requestedDeviceIds()).toEqual(["studio-1", null]);
   });
 
   function render(workbench: AgentWorkbenchScreenWorkbench): void {

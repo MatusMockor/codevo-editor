@@ -5,6 +5,10 @@
   gap: var(--cv-space-3);
 }
 
+.agent-dictation--announcer {
+  position: absolute;
+}
+
 .agent-dictation__button--live,
 .agent-dictation__button--live:hover:not(:disabled) {
   background: var(--cv-danger);
@@ -59,6 +63,12 @@
   color: var(--cv-fg-muted);
   font-size: var(--cv-t-xs);
   white-space: nowrap;
+}
+
+.cv-composer__foot[data-presentation="compact"] .agent-dictation__note[data-dictation-input] {
+  max-width: 10em;
+  line-height: 1.15;
+  white-space: normal;
 }
 
 @keyframes agent-dictation-pulse {

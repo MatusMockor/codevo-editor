@@ -57,52 +57,91 @@ describe("AgentComposer dictation control", () => {
     expect(regions[0]?.getAttribute("aria-live")).toBe("polite");
   });
 
-  it("stays reachable and explains itself when no connected server transcribes speech", () => {
-    const reason = "Dictation needs a connected server with speech transcription.";
+  it("shows no microphone and leaves no gap when no connected server transcribes speech", () => {
     const composer = mountDictationComposer({ serverIds: [] });
-    const microphone = composer.microphone();
+    const actions = composer.host.querySelector(".cv-composer__actions");
+    const control = composer.host.querySelector(".agent-dictation");
 
     expect(composer.state()).toBe("unavailable");
-    expect(microphone?.disabled).toBe(false);
-    expect(microphone?.getAttribute("aria-disabled")).toBe("true");
-    expect(microphone?.getAttribute("aria-label")).toBe("Dictation unavailable");
-    expect(microphone?.getAttribute("title")).toBe(reason);
-    expect(composer.microphoneDescription()).toBe(reason);
-    expect(microphone?.getAttribute("aria-pressed")).toBe("false");
+    expect(composer.microphone()).toBeNull();
+    expect(composer.button("Dictation unavailable")).toBeNull();
+    expect(composer.button("Start dictation")).toBeNull();
+    expect(Array.from(actions?.querySelectorAll("button") ?? [])).toEqual([
+      composer.button("Send follow-up"),
+    ]);
+    expect(actions?.lastElementChild).toBe(composer.button("Send follow-up"));
+    expect(control?.classList.contains("agent-dictation--announcer")).toBe(true);
+    expect(control?.children).toHaveLength(1);
+    expect(control?.firstElementChild?.classList.contains("agent-visually-hidden")).toBe(true);
+    expect(control?.textContent).toBe("");
+    expect(composer.host.querySelectorAll('.agent-dictation [role="status"]')).toHaveLength(1);
     expect(composer.notice()).toBeNull();
-
-    act(() => microphone?.focus());
-    expect(document.activeElement).toBe(microphone);
-    act(() => microphone?.click());
-
-    expect(composer.state()).toBe("unavailable");
-    expect(composer.audio?.getUserMedia).not.toHaveBeenCalled();
-    expect(composer.noticeKind()).toBe("unavailable");
-    expect(composer.notice()).toBe(reason);
-    expect(composer.status()).toBe(reason);
-
-    act(() => composer.button("Dismiss dictation message")?.click());
-    expect(composer.notice()).toBeNull();
-
-    composer.render({ serverIds: ["server-a"] });
-    expect(composer.state()).toBe("idle");
-    expect(composer.microphone()?.hasAttribute("aria-disabled")).toBe(false);
-    expect(composer.microphone()?.hasAttribute("aria-describedby")).toBe(false);
   });
 
-  it("stays reachable with the reason when the webview cannot capture audio", () => {
-    const reason = "Microphone capture is not available in this build.";
+  it("brings the microphone in when a speech server connects without moving focus or the draft", () => {
+    const composer = mountDictationComposer({ serverIds: [] });
+    const prompt = composer.prompt();
+    act(() => prompt.focus());
+    composer.type("half a thought");
+
+    composer.render({ serverIds: ["server-a"] });
+
+    expect(composer.state()).toBe("idle");
+    expect(composer.microphone()?.getAttribute("aria-label")).toBe("Start dictation");
+    expect(composer.microphone()?.hasAttribute("aria-disabled")).toBe(false);
+    expect(composer.microphone()?.hasAttribute("aria-describedby")).toBe(false);
+    expect(composer.microphone()?.closest(".agent-dictation")?.nextElementSibling).toBe(
+      composer.button("Send follow-up"),
+    );
+    expect(composer.prompt()).toBe(prompt);
+    expect(document.activeElement).toBe(prompt);
+    expect(prompt.value).toBe("half a thought");
+
+    composer.render({ serverIds: [] });
+
+    expect(composer.microphone()).toBeNull();
+    expect(composer.prompt()).toBe(prompt);
+    expect(document.activeElement).toBe(prompt);
+    expect(prompt.value).toBe("half a thought");
+    expect(composer.notice()).toBeNull();
+  });
+
+  it("shows no microphone when the webview cannot capture audio", () => {
     const composer = mountDictationComposer({ audio: false });
-    const microphone = composer.microphone();
 
     expect(composer.state()).toBe("unavailable");
-    expect(microphone?.disabled).toBe(false);
-    expect(microphone?.getAttribute("aria-disabled")).toBe("true");
-    expect(microphone?.getAttribute("title")).toBe(reason);
-    expect(composer.microphoneDescription()).toBe(reason);
+    expect(composer.microphone()).toBeNull();
+    expect(composer.notice()).toBeNull();
+  });
 
-    composer.clickMicrophone();
-    expect(composer.notice()).toBe(reason);
+  it("keeps the control and its message when the last speech server disconnects mid-recording", async () => {
+    const message =
+      "The server disconnected during dictation. Audio that was not transcribed yet was discarded.";
+    const composer = mountDictationComposer();
+    await composer.record();
+    composer.utter();
+    expect(composer.state()).toBe("recording");
+
+    composer.render({ serverIds: [] });
+
+    expect(composer.state()).toBe("unavailable");
+    expect(composer.audio?.microphoneLive()).toBe(false);
+    expect(composer.meterText()).toBeNull();
+    expect(composer.microphone()?.getAttribute("aria-label")).toBe("Dictation unavailable");
+    expect(composer.microphoneDescription()).toBe(
+      "Dictation needs a connected server with speech transcription.",
+    );
+    expect(composer.noticeKind()).toBe("failed");
+    expect(composer.notice()).toBe(message);
+    expect(composer.status()).toBe(message);
+    expect(composer.button("Send follow-up")?.getAttribute("aria-disabled")).not.toBe("true");
+    await composer.resolve(0, "late words");
+    expect(composer.prompt().value).toBe("");
+
+    act(() => composer.button("Dismiss dictation message")?.click());
+
+    expect(composer.notice()).toBeNull();
+    expect(composer.microphone()).toBeNull();
   });
 
   it("shows a busy toggle while the microphone starts and stops on a second click", async () => {

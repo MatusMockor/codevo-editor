@@ -129,10 +129,14 @@ describe("useSpeechDictation", () => {
     const { audio, ipc, transcripts, controller, record, utter, settle } = setup();
     expect(controller().state).toEqual({ kind: "idle" });
     await record();
-    expect(controller().state).toEqual({ kind: "recording" });
+    expect(controller().state).toEqual({ kind: "recording", input: "selected" });
     utter();
     act(() => controller().stop());
-    expect(controller().state).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(controller().state).toEqual({
+      kind: "finishing",
+      outcome: "completed",
+      input: "selected",
+    });
     expect(audio?.microphoneLive()).toBe(false);
     await act(async () => {
       ipc.calls[0]?.resolve({ text: " Ahoj " });
@@ -145,7 +149,7 @@ describe("useSpeechDictation", () => {
   it("works under StrictMode double effects", async () => {
     const { audio, ipc, transcripts, controller, record, utter } = setup({ strict: true });
     await record();
-    expect(controller().state).toEqual({ kind: "recording" });
+    expect(controller().state).toEqual({ kind: "recording", input: "selected" });
     expect(audio?.getUserMedia).toHaveBeenCalledTimes(1);
     utter();
     await act(async () => {
@@ -177,7 +181,7 @@ describe("useSpeechDictation", () => {
     await record();
     utter();
     render({ serverIds: ["server-b", "server-a"] });
-    expect(controller().state).toEqual({ kind: "recording" });
+    expect(controller().state).toEqual({ kind: "recording", input: "selected" });
     expect(audio?.microphoneLive()).toBe(true);
     await act(async () => {
       ipc.calls[0]?.resolve({ text: "same server" });

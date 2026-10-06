@@ -14,7 +14,12 @@ import {
 const run = (state: SpeechDictationState, ...events: SpeechDictationEvent[]) =>
   events.reduce(reduceSpeechDictation, state);
 const idle: SpeechDictationState = { kind: "idle" };
-const recording = run(idle, { type: "start" }, { type: "capture-ready" });
+const recording = run(idle, { type: "start" }, { type: "capture-ready", input: "selected" });
+const fallbackRecording = run(
+  idle,
+  { type: "start" },
+  { type: "capture-ready", input: "system-default" },
+);
 
 describe("speech language", () => {
   it.each(["sk", "en", "cs"])("parses the closed language %s", (language) => {
@@ -68,24 +73,99 @@ describe("speech dictation availability", () => {
 describe("speech dictation lifecycle", () => {
   it("walks the successful path", () => {
     expect(run(idle, { type: "start" })).toEqual({ kind: "starting" });
-    expect(recording).toEqual({ kind: "recording" });
+    expect(recording).toEqual({ kind: "recording", input: "selected" });
     const finishing = run(recording, { type: "capture-ended", outcome: "completed" });
-    expect(finishing).toEqual({ kind: "finishing", outcome: "completed" });
-    expect(run(finishing, { type: "drained" })).toEqual(idle);
+    expect(finishing).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
+    expect(run(finishing, { type: "drained", transcript: "delivered" })).toEqual(idle);
   });
-  it("keeps the limit outcome truthful until the remaining segments are delivered", () => {
-    const finishing = run(recording, { type: "capture-ended", outcome: "limit-reached" });
-    expect(finishing).toEqual({ kind: "finishing", outcome: "limit-reached" });
-    expect(run(finishing, { type: "drained" })).toEqual({
+  it("reports a completed session that never heard speech", () => {
+    const finishing = run(recording, { type: "capture-ended", outcome: "completed" });
+    expect(run(finishing, { type: "drained", transcript: "no-speech" })).toEqual({
       kind: "failed",
-      reason: "limit-reached",
+      reason: "no-speech-detected",
     });
   });
-  it("ends a lost microphone as a failure after draining", () => {
-    expect(
-      run(recording, { type: "capture-ended", outcome: "microphone-failed" }, { type: "drained" }),
-    ).toEqual({ kind: "failed", reason: "microphone-failed" });
+  it("records which input a live capture uses and keeps it while the transcript is pending", () => {
+    expect(fallbackRecording).toEqual({ kind: "recording", input: "system-default" });
+    expect(run(fallbackRecording, { type: "capture-ended", outcome: "completed" })).toEqual({
+      kind: "finishing",
+      outcome: "completed",
+      input: "system-default",
+    });
+    expect(run(fallbackRecording, { type: "capture-ended", outcome: "limit-reached" })).toEqual({
+      kind: "finishing",
+      outcome: "limit-reached",
+      input: "system-default",
+    });
   });
+  it("says the system default was used when a fallback session never heard speech", () => {
+    const finishing = run(fallbackRecording, { type: "capture-ended", outcome: "completed" });
+    expect(run(finishing, { type: "drained", transcript: "no-speech" })).toEqual({
+      kind: "failed",
+      reason: "no-speech-on-system-default",
+    });
+  });
+  it("settles a fallback session like any other once speech was heard", () => {
+    const finishing = run(fallbackRecording, { type: "capture-ended", outcome: "completed" });
+    expect(run(finishing, { type: "drained", transcript: "delivered" })).toEqual(idle);
+    expect(run(finishing, { type: "drained", transcript: "empty" })).toEqual({
+      kind: "failed",
+      reason: "transcript-empty",
+    });
+  });
+  it("does not carry the input of one session into the next", () => {
+    const settled = run(
+      fallbackRecording,
+      { type: "capture-ended", outcome: "completed" },
+      { type: "drained", transcript: "delivered" },
+    );
+    const next = run(settled, { type: "start" });
+    expect(next).toEqual({ kind: "starting" });
+    expect(run(next, { type: "capture-ready", input: "selected" })).toEqual({
+      kind: "recording",
+      input: "selected",
+    });
+    expect(
+      run(
+        fallbackRecording,
+        { type: "reset" },
+        { type: "start" },
+        { type: "capture-ready", input: "selected" },
+        { type: "capture-ended", outcome: "completed" },
+        { type: "drained", transcript: "no-speech" },
+      ),
+    ).toEqual({ kind: "failed", reason: "no-speech-detected" });
+  });
+  it("reports a completed session whose transcripts were all empty", () => {
+    const finishing = run(recording, { type: "capture-ended", outcome: "completed" });
+    expect(run(finishing, { type: "drained", transcript: "empty" })).toEqual({
+      kind: "failed",
+      reason: "transcript-empty",
+    });
+  });
+  it.each(["delivered", "no-speech", "empty"] as const)(
+    "keeps the limit outcome truthful until the remaining segments are delivered (%s)",
+    (transcript) => {
+      const finishing = run(recording, { type: "capture-ended", outcome: "limit-reached" });
+      expect(finishing).toEqual({ kind: "finishing", outcome: "limit-reached", input: "selected" });
+      expect(run(finishing, { type: "drained", transcript })).toEqual({
+        kind: "failed",
+        reason: "limit-reached",
+      });
+    },
+  );
+  it.each(["delivered", "no-speech", "empty"] as const)(
+    "ends a lost microphone as a failure after draining (%s)",
+    (transcript) => {
+      expect(
+        run(
+          recording,
+          { type: "capture-ended", outcome: "microphone-failed" },
+          { type: "drained", transcript },
+        ),
+      ).toEqual({ kind: "failed", reason: "microphone-failed" });
+    },
+  );
   it("returns to idle when stopped before the microphone opened", () => {
     expect(run(idle, { type: "start" }, { type: "capture-ended", outcome: "completed" })).toEqual(
       idle,
@@ -98,6 +178,9 @@ describe("speech dictation lifecycle", () => {
     "transcription-failed",
     "server-disconnected",
     "limit-reached",
+    "no-speech-detected",
+    "no-speech-on-system-default",
+    "transcript-empty",
   ] as const)("fails an active session with %s", (reason) => {
     expect(run(idle, { type: "start" }, { type: "fail", reason })).toEqual({
       kind: "failed",
@@ -112,13 +195,15 @@ describe("speech dictation lifecycle", () => {
     expect(run(failed, { type: "reset" })).toEqual(idle);
   });
   it("ignores events that do not belong to the current state", () => {
-    expect(run(idle, { type: "capture-ready" })).toBe(idle);
-    expect(run(idle, { type: "drained" })).toBe(idle);
+    expect(run(idle, { type: "capture-ready", input: "selected" })).toBe(idle);
+    expect(run(idle, { type: "drained", transcript: "delivered" })).toBe(idle);
+    expect(run(idle, { type: "drained", transcript: "no-speech" })).toBe(idle);
     expect(run(idle, { type: "fail", reason: "server-busy" })).toBe(idle);
     expect(run(idle, { type: "capture-ended", outcome: "limit-reached" })).toBe(idle);
     expect(run(recording, { type: "start" })).toBe(recording);
-    expect(run(recording, { type: "capture-ready" })).toBe(recording);
-    expect(run(recording, { type: "drained" })).toBe(recording);
+    expect(run(recording, { type: "capture-ready", input: "system-default" })).toBe(recording);
+    expect(run(recording, { type: "drained", transcript: "delivered" })).toBe(recording);
+    expect(run(recording, { type: "drained", transcript: "no-speech" })).toBe(recording);
   });
   it("moves every state to unavailable and only an unavailable state back to idle", () => {
     const unavailable = run(recording, {
@@ -145,7 +230,9 @@ describe("speech dictation lifecycle", () => {
     expect(isSpeechDictationActive(idle)).toBe(false);
     expect(isSpeechDictationActive({ kind: "starting" })).toBe(true);
     expect(isSpeechDictationActive(recording)).toBe(true);
-    expect(isSpeechDictationActive({ kind: "finishing", outcome: "completed" })).toBe(true);
+    expect(
+      isSpeechDictationActive({ kind: "finishing", outcome: "completed", input: "selected" }),
+    ).toBe(true);
     expect(isSpeechDictationActive({ kind: "failed", reason: "server-busy" })).toBe(false);
     expect(isSpeechDictationActive({ kind: "unavailable", reason: "no-speech-server" })).toBe(
       false,

@@ -4,7 +4,14 @@ import { expect, vi } from "vitest";
 import type { AgentViewCommandBridge } from "../../../application/agentViewCommandBridge";
 import { agentComposerDraftStore } from "../../../application/agentComposerDrafts";
 import type { SpeechDictationPorts } from "../../../application/speechDictationPorts";
+import type { SpeechInputSetting } from "../../../domain/speechDictationInputSetting";
+import { createSpeechDictationPorts } from "../../../infrastructure/speechDictationComposition";
 import { TauriRemoteRunnerGateway } from "../../../infrastructure/tauriRemoteRunnerGateway";
+import {
+  installFakeAudioInputs,
+  type FakeAudioInput,
+  type FakeAudioInputs,
+} from "../../../test/audioInputDevicesTestSupport";
 import {
   controlledInvoke,
   dictationTestPorts,
@@ -26,14 +33,21 @@ export type { DictationComposerScene } from "./AgentComposerDictationTestScene";
 
 const SAMPLE_RATE = 16000;
 
+export interface DictationComposerInputOptions {
+  readonly selected: SpeechInputSetting;
+  readonly devices?: readonly FakeAudioInput[];
+}
+
 export interface DictationComposerOptions extends Partial<DictationComposerScene> {
   readonly audio?: FakeBrowserAudioOptions | false;
+  readonly input?: DictationComposerInputOptions;
   readonly commands?: AgentViewCommandBridge | null;
 }
 
 export interface DictationComposerHarness {
   readonly host: HTMLDivElement;
   readonly audio: FakeBrowserAudio | null;
+  readonly inputs: FakeAudioInputs | null;
   readonly ipc: ControlledInvoke;
   readonly submit: ReturnType<typeof vi.fn<AgentComposerControllerProps["submit"]>>;
   readonly onStop: ReturnType<typeof vi.fn<() => void>>;
@@ -50,13 +64,15 @@ export interface DictationComposerHarness {
   noticeKind(): string | null;
   microphoneDescription(): string | null;
   meterText(): string | null;
+  inputNote(): string | null;
+  selectInput(setting: SpeechInputSetting): void;
   type(text: string): void;
   setCaret(start: number, end?: number): void;
   clickMicrophone(): void;
-  record(): Promise<void>;
+  record(turns?: number): Promise<void>;
   emit(samples: Float32Array): void;
   utter(): void;
-  settle(): Promise<void>;
+  settle(turns?: number): Promise<void>;
   resolve(call: number, text: string): Promise<void>;
   reject(call: number, message: string): Promise<void>;
   press(target: EventTarget, key: string, init?: KeyboardEventInit): KeyboardEvent;
@@ -82,12 +98,21 @@ export function mountDictationComposer(
 ): DictationComposerHarness {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   agentComposerDraftStore.reset();
-  const audio =
-    options.audio === false
+  const inputs =
+    options.input === undefined
       ? null
-      : installFakeBrowserAudio({ sampleRate: SAMPLE_RATE, ...options.audio });
+      : installFakeAudioInputs({ devices: options.input.devices, sampleRate: SAMPLE_RATE });
+  const audio = inputs?.audio ?? installedAudio(options.audio);
   const ipc = controlledInvoke();
-  const ports = createDictationTestPorts(ipc);
+  const ports =
+    options.input === undefined
+      ? createDictationTestPorts(ipc)
+      : createSpeechDictationPorts(new TauriRemoteRunnerGateway(ipc.invoke));
+  const selectInput = (setting: SpeechInputSetting): void => {
+    expect(ports.input).toBeDefined();
+    ports.input?.selection.select(setting);
+  };
+  if (options.input !== undefined) selectInput(options.input.selected);
   const submit = vi.fn<AgentComposerControllerProps["submit"]>(async () => true);
   const onStop = vi.fn<() => void>();
   const renders = { composer: 0 };
@@ -138,7 +163,7 @@ export function mountDictationComposer(
   };
   const microphone = (): HTMLButtonElement | null =>
     query<HTMLButtonElement>(".agent-dictation__button");
-  const settle = (): Promise<void> => act(() => flushAsync());
+  const settle = (turns?: number): Promise<void> => act(() => flushAsync(turns));
   const clickMicrophone = (): void => {
     const button = microphone();
     expect(button).not.toBeNull();
@@ -158,6 +183,7 @@ export function mountDictationComposer(
   return {
     host,
     audio,
+    inputs,
     ipc,
     submit,
     onStop,
@@ -178,12 +204,14 @@ export function mountDictationComposer(
       return document.getElementById(id)?.textContent ?? null;
     },
     meterText: () => query(".agent-dictation__elapsed")?.textContent ?? null,
+    inputNote: () => query("[data-dictation-input]")?.textContent ?? null,
+    selectInput,
     type: (text) => typeInto(prompt(), text),
     setCaret: (start, end = start) => act(() => prompt().setSelectionRange(start, end)),
     clickMicrophone,
-    record: async () => {
+    record: async (turns) => {
       clickMicrophone();
-      await settle();
+      await settle(turns);
     },
     emit,
     utter: () => emit(dictationUtterance()),
@@ -215,6 +243,13 @@ export function mountDictationComposer(
       return event;
     },
   };
+}
+
+function installedAudio(
+  options: FakeBrowserAudioOptions | false | undefined,
+): FakeBrowserAudio | null {
+  if (options === false) return null;
+  return installFakeBrowserAudio({ sampleRate: SAMPLE_RATE, ...options });
 }
 
 function orphanButton(): HTMLButtonElement {

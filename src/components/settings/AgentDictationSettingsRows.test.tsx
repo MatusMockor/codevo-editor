@@ -87,7 +87,10 @@ describe("dictation language setting", () => {
       "Language spoken when dictating into the composer. Audio is transcribed on your connected server and is not stored.",
     );
     expect(rows.indexOf("agents.dictationLanguage")).toBe(
-      rows.indexOf("agents.workingSection") - 1,
+      rows.indexOf("agents.dictationMicrophone") - 1,
+    );
+    expect(rows.indexOf("agents.dictationLanguage")).toBeLessThan(
+      rows.indexOf("agents.workingSection"),
     );
   });
 
@@ -97,6 +100,9 @@ describe("dictation language setting", () => {
         <AgentDictationSettingsRows
           language={undefined}
           locale="en-US"
+          input={undefined}
+          inputDevices={null}
+          onChangeInput={() => undefined}
           onChangeLanguage={() => undefined}
         />,
       ),
@@ -120,6 +126,9 @@ describe("dictation language setting", () => {
         <AgentDictationSettingsRows
           language={undefined}
           locale={locale}
+          input={undefined}
+          inputDevices={null}
+          onChangeInput={() => undefined}
           onChangeLanguage={() => undefined}
         />,
       ),
@@ -134,6 +143,9 @@ describe("dictation language setting", () => {
         <AgentDictationSettingsRows
           language="cs"
           locale="sk-SK"
+          input={undefined}
+          inputDevices={null}
+          onChangeInput={() => undefined}
           onChangeLanguage={() => undefined}
         />,
       ),

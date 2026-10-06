@@ -6,11 +6,20 @@ import {
   SPEECH_MAX_SESSION_MS,
   SPEECH_TRANSCRIPTION_TIMEOUT_MS,
 } from "../domain/speechDictation";
+import type { SpeechInputSetting } from "../domain/speechDictationInputSetting";
 import { SPEECH_MAX_SEGMENT_BYTES } from "../domain/speechPcm";
+import { BrowserAudioCapture } from "../infrastructure/browserAudioCapture";
 import { RemoteRunnerSpeechTranscriber } from "../infrastructure/remoteRunnerSpeechTranscriber";
 import { TauriRemoteRunnerGateway } from "../infrastructure/tauriRemoteRunnerGateway";
 import {
+  BUILT_IN_MICROPHONE,
+  STUDIO_MICROPHONE,
+  installFakeAudioInputs,
+  type FakeAudioInput,
+} from "../test/audioInputDevicesTestSupport";
+import {
   FakeMediaStream,
+  SPEECH_WORKLET_TEST_URL,
   controlledInvoke,
   decodedPcmBytes,
   deferred,
@@ -125,6 +134,7 @@ function setupWithPorts(
     binding,
     sinks,
     stopped,
+    outcomes,
     ipc,
     transcripts,
     record,
@@ -187,7 +197,7 @@ describe("speech dictation availability", () => {
       supported: () => supported,
     });
     await record();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     supported = false;
     coordinator.bind(binding);
     expect(state()).toEqual({ kind: "unavailable", reason: "capture-unsupported" });
@@ -209,11 +219,11 @@ describe("speech dictation session", () => {
     coordinator.start();
     expect(state()).toEqual({ kind: "starting" });
     await flushAsync();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     speak(1);
     expect(ipc.calls).toEqual([]);
     coordinator.stop();
-    expect(state()).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
     expect(requireAudio(audio).microphoneLive()).toBe(false);
     expect(ipc.calls.length).toBe(1);
     expect(ipc.calls[0]?.command).toBe("remote_runner_transcribe_speech");
@@ -225,7 +235,7 @@ describe("speech dictation session", () => {
     expect(transcripts).toEqual(["Ahoj svet."]);
     expect(state()).toEqual({ kind: "idle" });
     await record();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
   });
   it("captures the language and server at start", async () => {
     const { ipc, bind, record, utter } = setup();
@@ -246,17 +256,29 @@ describe("speech dictation session", () => {
     expect(bytes).toBeGreaterThanOrEqual((40000 + 9600) * 2);
     expect(bytes).toBeLessThanOrEqual((40000 + 11200) * 2);
   });
-  it("sends nothing for silence", async () => {
-    const { ipc, coordinator, transcripts, record, pause, state } = setup();
+  it("sends nothing for silence and says that no speech was detected", async () => {
+    const { audio, ipc, coordinator, transcripts, record, pause, state } = setup();
     await record();
     pause(20);
     coordinator.stop();
     await flushAsync();
     expect(ipc.calls).toEqual([]);
     expect(transcripts).toEqual([]);
-    expect(state()).toEqual({ kind: "idle" });
+    expect(state()).toEqual({ kind: "failed", reason: "no-speech-detected" });
+    expect(requireAudio(audio).microphoneLive()).toBe(false);
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
   });
-  it("does not deliver empty transcripts", async () => {
+  it("says that no speech was detected when stopped right after the microphone opened", async () => {
+    const { ipc, coordinator, transcripts, record, state } = setup();
+    await record();
+    coordinator.stop();
+    await flushAsync();
+    expect(ipc.calls).toEqual([]);
+    expect(transcripts).toEqual([]);
+    expect(state()).toEqual({ kind: "failed", reason: "no-speech-detected" });
+  });
+  it("does not deliver empty transcripts and says the transcript was empty", async () => {
     const { ipc, coordinator, transcripts, record, utter, state } = setup();
     await record();
     utter();
@@ -267,7 +289,59 @@ describe("speech dictation session", () => {
     ipc.calls[1]?.resolve({ text: " \n\t " });
     await flushAsync();
     expect(transcripts).toEqual([]);
+    expect(state()).toEqual({ kind: "failed", reason: "transcript-empty" });
+  });
+  it("returns to idle when at least one segment produced text", async () => {
+    const { ipc, coordinator, transcripts, record, utter, state } = setup();
+    await record();
+    utter();
+    utter();
+    coordinator.stop();
+    ipc.calls[0]?.resolve({ text: "" });
+    await flushAsync();
+    ipc.calls[1]?.resolve({ text: "only the second" });
+    await flushAsync();
+    expect(transcripts).toEqual(["only the second"]);
     expect(state()).toEqual({ kind: "idle" });
+  });
+  it("counts a transcript as delivered only when the consumer accepted it", async () => {
+    const { ipc, bind, coordinator, record, utter, state } = setup();
+    const accepted: string[] = [];
+    const sealed: readonly string[] = Object.freeze([]);
+    bind({
+      onTranscript: (text) => {
+        if (accepted.length === 0) {
+          accepted.push(text);
+          return;
+        }
+        (sealed as string[]).push(text);
+      },
+    });
+    await record();
+    utter();
+    utter();
+    coordinator.stop();
+    ipc.calls[0]?.resolve({ text: "first" });
+    await flushAsync();
+    ipc.calls[1]?.resolve({ text: "second" });
+    await flushAsync();
+    expect(accepted).toEqual(["first"]);
+    expect(state()).toEqual({ kind: "failed", reason: "transcription-failed" });
+  });
+  it("judges speech per session, not across sessions", async () => {
+    const { ipc, coordinator, transcripts, record, utter, pause, state } = setup();
+    await record();
+    utter();
+    coordinator.stop();
+    ipc.calls[0]?.resolve({ text: "first session" });
+    await flushAsync();
+    expect(state()).toEqual({ kind: "idle" });
+    await record();
+    pause(3);
+    coordinator.stop();
+    await flushAsync();
+    expect(transcripts).toEqual(["first session"]);
+    expect(state()).toEqual({ kind: "failed", reason: "no-speech-detected" });
   });
   it("ignores start while a session is active", async () => {
     const { audio, coordinator, record, state } = setup();
@@ -275,7 +349,149 @@ describe("speech dictation session", () => {
     coordinator.start();
     await flushAsync();
     expect(requireAudio(audio).getUserMedia).toHaveBeenCalledTimes(1);
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
+  });
+});
+
+describe("speech dictation input", () => {
+  const STUDIO: SpeechInputSetting = { kind: "device", id: "studio-1", label: "Studio Mic" };
+  const GONE: SpeechInputSetting = { kind: "device", id: "gone-1", label: "Gone Mic" };
+
+  function setupInputs(
+    selected: SpeechInputSetting,
+    devices: readonly FakeAudioInput[] = [BUILT_IN_MICROPHONE, STUDIO_MICROPHONE],
+  ) {
+    const inputs = installFakeAudioInputs({ devices, sampleRate: 16000 });
+    installed = inputs.audio;
+    const selection = { current: selected };
+    const ipc = controlledInvoke();
+    const coordinator = new SpeechDictationCoordinator({
+      capture: new BrowserAudioCapture(SPEECH_WORKLET_TEST_URL, {
+        selected: () => selection.current,
+        opened: () => undefined,
+      }),
+      transcriber: new RemoteRunnerSpeechTranscriber(new TauriRemoteRunnerGateway(ipc.invoke)),
+    });
+    const transcripts: string[] = [];
+    const binding: SpeechDictationBinding = {
+      ownerId: "draft-a",
+      serverIds: ["server-a"],
+      language: "sk",
+      onTranscript: (text) => transcripts.push(text),
+    };
+    const bind = (overrides: Partial<SpeechDictationBinding> = {}) =>
+      coordinator.bind({ ...binding, ...overrides });
+    bind();
+    const record = async () => {
+      coordinator.start();
+      await flushAsync(40);
+    };
+    const stop = async () => {
+      coordinator.stop();
+      await flushAsync();
+    };
+    const utter = () => {
+      inputs.audio.emit(tone(2, 16000));
+      inputs.audio.emit(silence(0.7, 16000));
+    };
+    const state = () => coordinator.getState();
+    return { inputs, selection, ipc, coordinator, transcripts, bind, record, stop, utter, state };
+  }
+
+  it("records from the selected device as the selected input", async () => {
+    const { inputs, record, state } = setupInputs(STUDIO);
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
+    expect(inputs.requestedDeviceIds()).toEqual(["studio-1"]);
+  });
+  it("treats a system default the user chose as the selected input", async () => {
+    const { inputs, record, state } = setupInputs({ kind: "system-default" });
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
+    expect(inputs.requestedDeviceIds()).toEqual([null]);
+  });
+  it("treats a device re-identified by its label as the selected input", async () => {
+    const { inputs, record, state } = setupInputs({
+      kind: "device",
+      id: "studio-old",
+      label: "Studio Mic",
+    });
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
+    expect(inputs.streams[inputs.streams.length - 1]?.deviceId).toBe("studio-1");
+  });
+  it("says the system default is in use when the saved device is gone", async () => {
+    const { inputs, coordinator, utter, state } = setupInputs(GONE, [BUILT_IN_MICROPHONE]);
+    coordinator.start();
+    expect(state()).toEqual({ kind: "starting" });
+    await flushAsync(40);
+    expect(state()).toEqual({ kind: "recording", input: "system-default" });
+    expect(inputs.requestedDeviceIds()).toEqual(["gone-1", null]);
+    utter();
+    coordinator.stop();
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "system-default" });
+  });
+  it("delivers what a fallback session heard and settles idle", async () => {
+    const { ipc, transcripts, record, stop, utter, state } = setupInputs(GONE, [
+      BUILT_IN_MICROPHONE,
+    ]);
+    await record();
+    utter();
+    await stop();
+    ipc.calls[0]?.resolve({ text: "heard on the built-in microphone" });
+    await flushAsync();
+    expect(transcripts).toEqual(["heard on the built-in microphone"]);
+    expect(state()).toEqual({ kind: "idle" });
+  });
+  it("says the system default was used when a fallback session heard no speech", async () => {
+    const { inputs, ipc, record, stop, state } = setupInputs(GONE, [BUILT_IN_MICROPHONE]);
+    await record();
+    inputs.audio.emit(silence(3, 16000));
+    await stop();
+    expect(ipc.calls).toEqual([]);
+    expect(state()).toEqual({ kind: "failed", reason: "no-speech-on-system-default" });
+    expect(inputs.audio.microphoneLive()).toBe(false);
+  });
+  it("judges the input per session once the saved device is back", async () => {
+    const { inputs, selection, record, stop, state } = setupInputs(GONE, [BUILT_IN_MICROPHONE]);
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "system-default" });
+    await stop();
+    expect(state()).toEqual({ kind: "failed", reason: "no-speech-on-system-default" });
+
+    inputs.setDevices([BUILT_IN_MICROPHONE, STUDIO_MICROPHONE]);
+    selection.current = STUDIO;
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
+    await stop();
+    expect(state()).toEqual({ kind: "failed", reason: "no-speech-detected" });
+
+    selection.current = GONE;
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "system-default" });
+  });
+  it("does not carry a fallback input over to another owner", async () => {
+    const { inputs, selection, bind, record, state } = setupInputs(GONE, [BUILT_IN_MICROPHONE]);
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "system-default" });
+
+    bind({ ownerId: "draft-b" });
+    expect(state()).toEqual({ kind: "idle" });
+    expect(inputs.audio.microphoneLive()).toBe(false);
+
+    selection.current = { kind: "system-default" };
+    await record();
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
+  });
+  it.each([
+    [{ kind: "started", inputFallback: "system-default" }, "system-default"],
+    [{ kind: "started" }, "selected"],
+  ] as const)("maps the capture start outcome %j to the %s input", async (outcome, input) => {
+    const { coordinator, outcomes, state } = setupWithPorts();
+    coordinator.start();
+    outcomes[0]?.resolve(outcome);
+    await flushAsync();
+    expect(state()).toEqual({ kind: "recording", input });
   });
 });
 
@@ -300,7 +516,7 @@ describe("speech dictation ordering", () => {
     await flushAsync();
     expect(ipc.calls.length).toBe(3);
     coordinator.stop();
-    expect(state()).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
     ipc.calls[2]?.resolve({ text: "three" });
     await flushAsync();
     expect(transcripts).toEqual(["one", "two", "three"]);
@@ -323,7 +539,7 @@ describe("speech dictation ordering", () => {
     speak(1);
     ipc.calls[0]?.resolve({ text: "one" });
     await flushAsync();
-    expect(state()).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
     expect(ipc.calls.length).toBe(2);
     ipc.calls[1]?.resolve({ text: "tail" });
     await flushAsync();
@@ -340,10 +556,10 @@ describe("speech dictation ordering", () => {
     expect(ipc.calls.length).toBe(1);
     coordinator.stop();
     coordinator.start();
-    expect(state()).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
     ipc.calls[0]?.resolve({ text: "first" });
     await flushAsync();
-    expect(state()).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
     expect(ipc.calls.length).toBe(2);
     ipc.calls[1]?.resolve({ text: "tail" });
     await flushAsync();
@@ -378,13 +594,13 @@ describe("speech dictation fencing", () => {
     ipc.calls[0]?.resolve({ text: "stale" });
     await flushAsync();
     expect(transcripts).toEqual([]);
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     ipc.calls[1]?.resolve({ text: "fresh" });
     await flushAsync();
     expect(transcripts).toEqual(["fresh"]);
     ipc.calls[0]?.reject("Server is not connected");
     await flushAsync();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
   });
   it("invalidates the session when the owner changes, including A to B to A", async () => {
     const { audio, ipc, bind, transcripts, record, utter, state } = setup();
@@ -422,7 +638,7 @@ describe("speech dictation fencing", () => {
     await record();
     utter();
     coordinator.stop();
-    expect(state()).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
     bind({ ownerId: "draft-b", onTranscript: (text) => foreign.push(text) });
     expect(state()).toEqual({ kind: "idle" });
     ipc.calls[0]?.resolve({ text: "for the first draft" });
@@ -548,7 +764,7 @@ describe("speech dictation fencing", () => {
     utter();
     utter();
     bind({ serverIds: ["server-b", "server-a"] });
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     expect(requireAudio(audio).microphoneLive()).toBe(true);
     ipc.calls[0]?.resolve({ text: "first" });
     await flushAsync();
@@ -572,11 +788,11 @@ describe("speech dictation fencing", () => {
     expect(state()).toEqual({ kind: "starting" });
     granted.resolve(new FakeMediaStream());
     await flushAsync();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     utter();
     coordinator.stop();
     bind({ serverIds: ["server-c", "server-b", "server-a"] });
-    expect(state()).toEqual({ kind: "finishing", outcome: "completed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "completed", input: "selected" });
     ipc.calls[0]?.resolve({ text: "kept" });
     await flushAsync();
     expect(ipc.calls[0]?.request.serverId).toBe("server-a");
@@ -636,12 +852,12 @@ describe("speech dictation fencing", () => {
     coordinator.cancel();
     coordinator.start();
     await flushAsync();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     const stale = new FakeMediaStream();
     first.resolve(stale);
     await flushAsync();
     expect(stale.tracks[0]?.stopped).toBe(true);
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     expect(requireAudio(audio).contexts.length).toBe(1);
   });
   it("ignores start, frame and failure events from a replaced capture", async () => {
@@ -678,10 +894,10 @@ describe("speech dictation fencing", () => {
     expect(coordinator.getState()).toEqual({ kind: "starting" });
     outcomes[1]?.resolve({ kind: "started" });
     await flushAsync();
-    expect(coordinator.getState()).toEqual({ kind: "recording" });
+    expect(coordinator.getState()).toEqual({ kind: "recording", input: "selected" });
     sinks[0]?.onFailure("failed");
     sinks[0]?.onFrame({ samples: tone(3, 16000).subarray(0, 2048), sampleRate: 16000 });
-    expect(coordinator.getState()).toEqual({ kind: "recording" });
+    expect(coordinator.getState()).toEqual({ kind: "recording", input: "selected" });
     expect(coordinator.meter.getSnapshot()).toEqual({ level: 0, elapsedMs: 0 });
     sinks[1]?.onFrame({ samples: new Float32Array(192001), sampleRate: 16000 });
     expect(coordinator.getState()).toEqual({ kind: "failed", reason: "microphone-failed" });
@@ -735,9 +951,9 @@ describe("speech dictation limits", () => {
     const { audio, ipc, coordinator, transcripts, record, utter, state } = setup();
     await record();
     for (let index = 0; index < SPEECH_MAX_QUEUED_SEGMENTS; index += 1) utter();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     utter();
-    expect(state()).toEqual({ kind: "finishing", outcome: "limit-reached" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "limit-reached", input: "selected" });
     expect(requireAudio(audio).microphoneLive()).toBe(false);
     utter();
     coordinator.stop();
@@ -778,7 +994,7 @@ describe("speech dictation limits", () => {
     await record();
     const eight = Array.from({ length: 8 }, () => [...utterance(8000)]).flat();
     frame(Float32Array.from(eight), 8000);
-    expect(state()).toEqual({ kind: "finishing", outcome: "limit-reached" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "limit-reached", input: "selected" });
     expect(stopped).toEqual([0]);
     for (let index = 0; index < SPEECH_MAX_QUEUED_SEGMENTS; index += 1) {
       ipc.calls[index]?.resolve({ text: `segment ${index}` });
@@ -796,7 +1012,7 @@ describe("speech dictation limits", () => {
       vi.advanceTimersByTime(4000);
       pause(0.01);
     }
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     vi.advanceTimersByTime(4000);
     expect(state()).toEqual({ kind: "failed", reason: "limit-reached" });
     expect(requireAudio(audio).microphoneLive()).toBe(false);
@@ -808,9 +1024,9 @@ describe("speech dictation limits", () => {
     await record();
     speak(1);
     vi.advanceTimersByTime(SPEECH_CAPTURE_STALL_MS);
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     vi.advanceTimersByTime(SPEECH_CAPTURE_STALL_MS);
-    expect(state()).toEqual({ kind: "finishing", outcome: "microphone-failed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "microphone-failed", input: "selected" });
     expect(requireAudio(audio).microphoneLive()).toBe(false);
     ipc.calls[0]?.resolve({ text: "before the stall" });
     await flushAsync();
@@ -822,7 +1038,7 @@ describe("speech dictation limits", () => {
     const { audio, record, state } = setup();
     await record();
     vi.advanceTimersByTime(SPEECH_CAPTURE_STALL_MS - 1);
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     vi.advanceTimersByTime(1);
     expect(state()).toEqual({ kind: "failed", reason: "microphone-failed" });
     expect(requireAudio(audio).microphoneLive()).toBe(false);
@@ -836,7 +1052,7 @@ describe("speech dictation limits", () => {
     await flushAsync();
     expect(vi.getTimerCount()).toBe(0);
     await record();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
     expect(vi.getTimerCount()).toBe(2);
     utter();
     expect(vi.getTimerCount()).toBe(3);
@@ -889,14 +1105,14 @@ describe("speech dictation failures", () => {
     expect(state()).toEqual({ kind: "failed", reason });
     expect(requireAudio(audio).microphoneLive()).toBe(false);
     await record();
-    expect(state()).toEqual({ kind: "recording" });
+    expect(state()).toEqual({ kind: "recording", input: "selected" });
   });
   it("delivers captured audio when the microphone fails mid-recording", async () => {
     const { audio, ipc, coordinator, transcripts, record, speak, state } = setup();
     await record();
     speak(1);
     requireAudio(audio).endTrack();
-    expect(state()).toEqual({ kind: "finishing", outcome: "microphone-failed" });
+    expect(state()).toEqual({ kind: "finishing", outcome: "microphone-failed", input: "selected" });
     expect(requireAudio(audio).microphoneLive()).toBe(false);
     ipc.calls[0]?.resolve({ text: "captured before the failure" });
     await flushAsync();
@@ -924,7 +1140,7 @@ describe("speech dictation failures", () => {
     for (const [attempt, delay] of SPEECH_BUSY_RETRY_DELAYS_MS.entries()) {
       ipc.calls[attempt]?.reject(message);
       await flushAsync();
-      expect(state()).toEqual({ kind: "recording" });
+      expect(state()).toEqual({ kind: "recording", input: "selected" });
       expect(ipc.calls.length).toBe(attempt + 1);
       vi.advanceTimersByTime(delay);
       await flushAsync();

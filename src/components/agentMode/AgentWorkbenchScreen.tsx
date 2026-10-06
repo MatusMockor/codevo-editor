@@ -36,6 +36,7 @@ import {
   type AgentPendingProjectOpen,
 } from "./useAgentWorkbenchProjectOpening";
 import { useAgentCloneDestinationPreference } from "./useAgentCloneDestinationPreference";
+import { useAgentDictationInput } from "./dictation/useAgentDictationInput";
 import { resolveTauriWorkspaceHome } from "../../infrastructure/tauriHomeDirectory";
 import { recentFolderEntries } from "../../domain/recentFolders";
 import {
@@ -279,6 +280,7 @@ export function AgentWorkbenchScreen({
   const workspaceTrusted = !!workbench.workspaceTrust?.trusted;
   const projects = workbench.agents.agentProjects;
   const { agentWorkbench, appSettings, nodePackageScripts, workspaceRoot } = workbench;
+  useAgentDictationInput(appSettings.speechDictationInput);
   const providerPreferences =
     appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
   const optimisticProviderEnabled = useMemo(
