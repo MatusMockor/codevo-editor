@@ -2,7 +2,7 @@ import type { AgentTurnEvent } from "../domain/agentThread";
 import type {
   AgentTurnEventRetentionPolicy,
   AgentTurnEventRetentionResult,
-} from "../domain/agentTurnEventRetention";
+} from "@codevo/agent-events";
 
 type Random = (bound: number) => number;
 type SubagentEvent = Extract<AgentTurnEvent, { kind: "subagent" }>;

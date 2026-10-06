@@ -1,4 +1,4 @@
-import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import {
   NO_AGENT_TURN_LOG_LOSS,
   type AgentTurnLogLoss,

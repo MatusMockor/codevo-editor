@@ -14,6 +14,8 @@ export interface AgentProjectThreadCommandsOptions {
   readonly groups: ReadonlyArray<AgentProjectGroup>;
   readonly composer: {
     clearSelection(): void;
+    resetDraftLaunch(projectRootKey: string | null): void;
+    resetProjectDraftLaunch(projectRootKey: string): void;
     clearDraftTarget(): void;
   };
   readonly picker: AgentNewThreadPicker | null;
@@ -49,6 +51,7 @@ export function useAgentProjectThreadCommands({
     const target = navigation.newThreadTarget();
     if (target === null) return;
     selectEnvironmentFor(target.projectRootKey);
+    composer.resetDraftLaunch(target.projectRootKey);
     composer.clearSelection();
   });
 
@@ -69,6 +72,7 @@ export function useAgentProjectThreadCommands({
     onBeforeProjectChange();
     if (!navigation.setProjectScope(projectRootKey)) return false;
     selectEnvironmentFor(projectRootKey);
+    composer.resetProjectDraftLaunch(projectRootKey);
     composer.clearSelection();
     return true;
   });

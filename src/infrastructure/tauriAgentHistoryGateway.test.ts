@@ -1,6 +1,6 @@
 import { serializeAgentHistoryThread } from "../domain/agentThreadWire";
 import lifecycleWire from "../../contracts/agent-subagent-lifecycle-wire.json";
-import { parseAgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { describe, expect, it, vi } from "vitest";
 import { agentRootOwnerId } from "../domain/agentProject";
 import { logThread, logTurn } from "../test/agentTurnLogStoreHarness";

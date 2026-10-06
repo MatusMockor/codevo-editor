@@ -1,3 +1,17 @@
+import {
+  AGENT_IMAGE_MIMES,
+  type AgentAttachment,
+  type AgentAttachmentKind,
+  type AgentImageMime,
+} from "@codevo/agent-events";
+
+export {
+  AGENT_IMAGE_MIMES,
+  type AgentAttachment,
+  type AgentAttachmentKind,
+  type AgentImageMime,
+} from "@codevo/agent-events";
+
 export const MAX_AGENT_TURN_ATTACHMENTS = 8;
 export const MAX_AGENT_ATTACHMENT_NAME_BYTES = 255;
 export const MAX_AGENT_ATTACHMENT_PATH_BYTES = 4_096;
@@ -12,47 +26,6 @@ export const MAX_AGENT_IMAGE_DIMENSION = 16_384;
 
 export const AGENT_ATTACHMENT_ID_PATTERN = /^[0-9a-f]{32}$/;
 export const AGENT_ATTACHMENT_NAME_FORBIDDEN_PATTERN = /[/\\"]/;
-
-export const AGENT_IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
-
-export type AgentImageMime = (typeof AGENT_IMAGE_MIMES)[number];
-
-export type AgentAttachment =
-  | ({
-      readonly kind: "image";
-      readonly attachmentId: string;
-      readonly name: string;
-      readonly mime: AgentImageMime;
-      readonly bytes: number;
-      readonly width: number;
-      readonly height: number;
-    } & (
-      | { readonly storedPath: string; readonly remote?: never }
-      | {
-          readonly storedPath?: never;
-          readonly remote: { readonly serverId: string; readonly attachmentId: string };
-        }
-    ))
-  | ({
-      readonly kind: "file";
-      readonly attachmentId: string;
-      readonly name: string;
-      readonly bytes: number;
-    } & (
-      | { readonly storedPath: string; readonly remote?: never }
-      | {
-          readonly storedPath?: never;
-          readonly remote: { readonly serverId: string; readonly attachmentId: string };
-        }
-    ))
-  | {
-      readonly kind: "reference";
-      readonly name: string;
-      readonly path: string;
-      readonly bytes: number;
-    };
-
-export type AgentAttachmentKind = AgentAttachment["kind"];
 
 export function isAgentAttachmentKind(value: unknown): value is AgentAttachmentKind {
   return value === "image" || value === "file" || value === "reference";

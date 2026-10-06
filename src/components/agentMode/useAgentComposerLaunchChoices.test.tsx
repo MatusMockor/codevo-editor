@@ -182,6 +182,23 @@ describe("composer model choices across execution environments", () => {
       codex,
     );
   });
+  it("resets only the requested draft and prevents its launch carrying to another environment", () => {
+    render("/local");
+    act(() => current.change(codex));
+    render("/other");
+    act(() => current.change(claude));
+    render("conversation", true);
+    act(() => current.change(codex));
+    act(() => current.resetDraft("/local"));
+    expect(current.choice?.launch).toEqual(codex);
+    render("remote:a:runner:project");
+    expect(current.choice).toBeNull();
+    render("/local");
+    expect(current.choice).toBeNull();
+    render("/other");
+    expect(current.choice?.launch).toEqual(claude);
+  });
+
   it("bounds retained choices and evicts oldest scope without transferring thread models", () => {
     for (let index = 0; index < 65; index += 1) {
       render(`conversation-${index}`, true);

@@ -15,7 +15,7 @@ import {
   agentSubagentLifecycleCapacityExhausted,
   isAgentSubagentSpawnToolName,
   retainAgentSubagentLifecycle,
-} from "../../domain/agentSubagentLifecycle";
+} from "@codevo/agent-events";
 import { appendAgentRuntimeSubagentActivity } from "../../domain/agentRuntimeSubagentActivity";
 import type { AgentTurn, AgentTurnEvent } from "../../domain/agentThread";
 import {

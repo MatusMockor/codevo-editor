@@ -1,4 +1,4 @@
-import type { AgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import { persistedAgentSubagentLifecycle } from "./agentSubagentLifecycleLegacy";
 
 export function compactPersistedAgentSubagentLifecycle(

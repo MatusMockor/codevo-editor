@@ -73,7 +73,12 @@ export function AgentLaunchControls({
   const launchWithModel = (model: AgentModelChoice, provider: AgentCliKind) => {
     if (provider === effectiveLaunch.provider) return withModel(effectiveLaunch, model);
     const configured = newThreadComposerLaunch(provider, newThreadDefaults);
-    return providerSwitchComposerLaunch(configured, withModel(configured, model));
+    return providerSwitchComposerLaunch(
+      configured,
+      withModel(configured, model),
+      configuredModelFor(provider),
+      codexCatalog,
+    );
   };
   const selectModel = (
     model: AgentModelChoice,

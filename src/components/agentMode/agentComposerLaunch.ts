@@ -8,9 +8,14 @@ import { isTerminalAgentTurnStatus, type AgentThread } from "../../domain/agentT
 import { latestPromptedAgentLaunch } from "../../domain/agentTurnOrigin";
 import type { AgentCliKind, AgentTaskIsolation } from "../../domain/agentTask";
 import type { ClaudeModelManifest } from "../../domain/claudeModelCatalog";
+import {
+  BUNDLED_CODEX_MODEL_CATALOG,
+  type CodexModelCatalog,
+} from "../../domain/codexModelCatalog";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { agentClaudeModelChoiceForVersion } from "./agentLaunchPresentation";
 import { lastAgentTurn } from "./agentModePresentation";
+import { codexEffectiveModel } from "./codexLaunchPresentation";
 
 export interface IsolationChoice {
   readonly repositoryRoot: string;
@@ -78,8 +83,19 @@ export function launchScopeExecutionTarget(scope: LaunchScope): AgentExecutionTa
 export function providerSwitchComposerLaunch(
   configured: AgentLaunchOptions,
   picked: AgentLaunchOptions,
+  configuredModel: string | null = null,
+  codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
 ): AgentLaunchOptions {
+  if (picked.provider !== configured.provider) return picked;
   if (picked.model === configured.model) return configured;
+  if (
+    configured.provider === "codex" &&
+    picked.provider === "codex" &&
+    codexEffectiveModel(configured.model, configuredModel, codexCatalog) ===
+      codexEffectiveModel(picked.model, configuredModel, codexCatalog)
+  ) {
+    return configured;
+  }
   return picked;
 }
 

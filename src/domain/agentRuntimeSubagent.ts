@@ -1,10 +1,11 @@
+import { MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS } from "@codevo/agent-events";
 import {
   boundedAgentRuntimeSubagentActivity,
   sameAgentRuntimeSubagentActivity,
 } from "./agentRuntimeSubagentActivity";
 
 export const MAX_RUNTIME_SUBAGENTS = 32;
-export const MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS = 120;
+
 export const MAX_RUNTIME_SUBAGENT_ROLE_CHARACTERS = 48;
 export const MAX_RUNTIME_SUBAGENT_MODEL_CHARACTERS = 64;
 export const MAX_RUNTIME_SUBAGENT_ACTIVITY_CHARACTERS = 2_000;

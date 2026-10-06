@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { utf8ByteLength } from "./agentOutput/utf8Text";
+import { utf8ByteLength } from "@codevo/agent-events";
 import {
   MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES,
   MAX_AGENT_SHIP_FAILURE_BYTES,

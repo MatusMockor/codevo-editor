@@ -22,7 +22,7 @@ import {
   isRemoteProjectDirectories,
   isRemoteProjectDirectoryPath,
 } from "./remoteProjectManagement";
-import { parseAgentSubagentLifecycle } from "./agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
 import { isRemoteStartBase } from "./remoteGitSyncWire";

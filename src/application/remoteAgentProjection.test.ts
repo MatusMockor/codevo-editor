@@ -10,7 +10,7 @@ import {
 import type { RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentTurn } from "../domain/agentThread";
 import { RUNTIME_SUBAGENT_LEGACY_BATCH_ID } from "../domain/agentRuntimeSubagent";
-import { parseAgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
 import { agentTurnRuntimeSubagents } from "../components/agentMode/agentRuntimeSubagentPresentation";
 const root: RemoteRunnerTask = {

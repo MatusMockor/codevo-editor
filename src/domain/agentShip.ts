@@ -1,4 +1,4 @@
-import { boundedUtf8Text } from "./agentOutput/utf8Text";
+import { boundedUtf8Text } from "@codevo/agent-events";
 import type { AgentThreadIntegration } from "./agentThread";
 import {
   MAX_GIT_INTEGRATION_CONFLICT_FILES,

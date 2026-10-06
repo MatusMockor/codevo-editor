@@ -1,4 +1,4 @@
-import { utf8ByteLength } from "./agentOutput/utf8Text";
+import { utf8ByteLength } from "@codevo/agent-events";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "./agentTask";
 
 export type AgentComposerDraftEntry = readonly [key: string, text: string];

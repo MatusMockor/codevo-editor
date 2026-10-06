@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { describe, expect, it } from "vitest";
-import type { AgentSubagentLifecycle } from "../domain/agentSubagentLifecycle";
+import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import { parseAgentThread, serializeAgentThread } from "../domain/agentThreadWire";
 import { validateSaveAgentThreadRequest } from "../infrastructure/tauriAgentThreadStoreIpcContract";
 import {

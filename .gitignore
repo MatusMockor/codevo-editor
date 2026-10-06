@@ -27,3 +27,6 @@ perf/results/
 *.njsproj
 *.sln
 *.sw?
+
+packages/*/dist
+*.tsbuildinfo

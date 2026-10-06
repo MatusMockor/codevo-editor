@@ -146,6 +146,7 @@ export interface AgentComposerState {
   dismissPendingSend(): void;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
+  resetDraftLaunch(projectRootKey: string | null): void;
   clearDraftTarget(): void;
 }
 
@@ -186,6 +187,7 @@ export interface AgentComposerControllerState {
   ): Promise<boolean>;
   startNewThread(projectRootKey: string, repositoryRoot: string): void;
   clearSelection(): void;
+  resetDraftLaunch(projectRootKey: string | null): void;
   clearDraftTarget(): void;
 }
 
@@ -207,6 +209,7 @@ export function useAgentComposerState({
     dismissPendingSend: controller.dismissPendingSend,
     startNewThread: controller.startNewThread,
     clearSelection: controller.clearSelection,
+    resetDraftLaunch: controller.resetDraftLaunch,
     clearDraftTarget: controller.clearDraftTarget,
   };
 }
@@ -400,10 +403,11 @@ export function useAgentComposerControllerState({
       newThreadDefaults,
     ],
   );
-  const { choice: launchChoice, change: changeLaunch } = useAgentComposerLaunchChoices(
-    launchScope,
-    carriedDraftLaunch,
-  );
+  const {
+    choice: launchChoice,
+    change: changeLaunch,
+    resetDraft: resetDraftLaunch,
+  } = useAgentComposerLaunchChoices(launchScope, carriedDraftLaunch);
   const selectedLaunchProvider =
     launchChoice !== null && launchChoice.key === launchScope?.key
       ? launchChoice.launch.provider
@@ -455,6 +459,7 @@ export function useAgentComposerControllerState({
 
   const startNewThread = useCallback(
     (projectRootKey: string, repositoryRoot: string) => {
+      resetDraftLaunch(projectRootKey);
       onClearSelectedThread();
       const project =
         composerProjects.find((candidate) => candidate.projectRootKey === projectRootKey) ?? null;
@@ -470,7 +475,7 @@ export function useAgentComposerControllerState({
             },
       );
     },
-    [composerProjects, onClearSelectedThread],
+    [composerProjects, onClearSelectedThread, resetDraftLaunch],
   );
 
   const recovery = useAgentComposerRecovery({
@@ -485,6 +490,11 @@ export function useAgentComposerControllerState({
     onClearSelectedThread();
     setSelection(null);
   }, [onClearSelectedThread]);
+
+  const newThread = useCallback(() => {
+    resetDraftLaunch(launchProjectRootKey);
+    clearSelection();
+  }, [clearSelection, launchProjectRootKey, resetDraftLaunch]);
 
   const attachmentTargetKey =
     selectedThread !== null
@@ -754,7 +764,7 @@ export function useAgentComposerControllerState({
     previousWorktree: previousWorktree.choice,
     onRefreshIsolation: refreshIsolation,
     onLaunchChange: changeLaunch,
-    onNewThread: clearSelection,
+    onNewThread: newThread,
     onSelectRepository: selectRepository,
     onStop: stop.onStop,
     onStopNow: stop.onStopNow,
@@ -780,6 +790,7 @@ export function useAgentComposerControllerState({
     submit,
     startNewThread,
     clearSelection,
+    resetDraftLaunch,
     clearDraftTarget,
   };
 }

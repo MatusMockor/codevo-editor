@@ -1,17 +1,45 @@
 import {
+  MAX_AGENT_EVENT_TEXT_BYTES,
+  mergeTurnEvents,
+  capPersistedTurnEvents,
+  agentTurnEventUtf8Bytes,
+  type AgentSessionFallback,
+  type AgentTurnEventsRetention,
+  type AgentTurnEvent,
+  retainAgentSubagentLifecycle,
+  type AgentSubagentLifecycle,
+} from "@codevo/agent-events";
+export {
+  mergeTurnEvents,
+  capPersistedTurnEvents,
+  agentTurnEventUtf8Bytes,
+  coalesceAgentTextEvents,
+  MAX_AGENT_EVENT_TEXT_BYTES,
+  MAX_AGENT_EVENTS_PER_TURN,
+  MAX_SUBAGENT_THREADS_PER_TURN,
+  MAX_AGENT_EVENT_BYTES_PER_TURN,
+  MAX_AGENT_TOOL_SUMMARY_BYTES,
+  MAX_AGENT_TOOL_ID_BYTES,
+  MAX_AGENT_TOOL_NAME_BYTES,
+  MAX_AGENT_TOOL_DESCRIPTION_BYTES,
+  type AgentSessionFallback,
+  type AgentTurnEventsRetention,
+  type AgentAppServerTokenBreakdown,
+  type AgentAppServerUsage,
+  type AgentTurnUsage,
+  type AgentSubagentEventStatus,
+  type AgentSubagentContentEvent,
+  type AgentTurnEvent,
+} from "@codevo/agent-events";
+import {
   updateAgentThreadOrganization,
   reorderAgentThread,
   type AgentThreadOrganizationPatch,
   type AgentThreadDropSection,
   type AgentThreadPlacement,
 } from "./agentThreadOrganization";
-import {
-  retainAgentSubagentLifecycle,
-  type AgentSubagentLifecycle,
-} from "./agentSubagentLifecycle";
 import type { AgentAttachment } from "./agentAttachment";
 import type { AgentLaunchOptions } from "./agentLaunch";
-import type { AgentSubagentSpawnEvent } from "./agentSubagentSpawn";
 import type { AgentTurnOrigin } from "./agentTurnOrigin";
 import {
   MAX_AGENT_STEERS_PER_TURN,
@@ -20,28 +48,16 @@ import {
   isTerminalAgentTaskStatus,
   type AgentCliKind,
   type AgentTaskIsolation,
-  type AgentTaskOutputStream,
   type AgentTaskStatus,
   type AgentTaskStatusEvent,
 } from "./agentTask";
 import type { GitIntegrationMode } from "./gitIntegration";
 import type { ExternalAgentSessionHistory } from "./externalAgentSession";
-import { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
+import { MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 import { recoverAgentTurnResultStatus } from "./agentTurnRestartRecovery";
 import { agentProviderSessionAfterReport } from "./agentSessionIdentity";
 import { restorableAgentTurnLifecycle } from "./agentTurnLifecycleRestore";
 import { requestAgentTurnHalt, type AgentTurnHaltRequest } from "./agentTurnHaltRequest";
-import {
-  capAgentTurnEvents,
-  retainAgentTurnEvents,
-  type AgentTurnEventRetentionPolicy,
-} from "./agentTurnEventRetention";
-
-export interface AgentSessionFallback {
-  readonly previousThreadId: string;
-  readonly threadId: string;
-}
-
 export {
   AGENT_ATTACHMENT_ID_PATTERN,
   AGENT_IMAGE_MIMES,
@@ -59,18 +75,11 @@ export {
 } from "./agentAttachment";
 export { AGENT_SESSION_ID_PATTERN, MAX_AGENT_SESSION_ID_BYTES } from "./agentTask";
 export { parseAgentThread, serializeAgentThread } from "./agentThreadWire";
-export { MAX_AGENT_EVENT_TEXT_BYTES, MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
+export { MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 
 export const MAX_AGENT_THREADS_PER_ROOT = 64;
 export const MAX_AGENT_TURNS_PER_THREAD = 64;
-export const MAX_AGENT_EVENTS_PER_TURN = 1_024;
-export const MAX_SUBAGENT_THREADS_PER_TURN = 32;
-export const MAX_AGENT_EVENT_BYTES_PER_TURN = 2 * 1_024 * 1_024;
 export const MAX_AGENT_STEER_BYTES_PER_TURN = 512 * 1_024;
-export const MAX_AGENT_TOOL_SUMMARY_BYTES = 512;
-export const MAX_AGENT_TOOL_ID_BYTES = 256;
-export const MAX_AGENT_TOOL_NAME_BYTES = 256;
-export const MAX_AGENT_TOOL_DESCRIPTION_BYTES = 200;
 export const MAX_AGENT_THREAD_TITLE_CHARS = 200;
 export const AGENT_THREAD_SCHEMA_VERSION = 1;
 export const UNTITLED_AGENT_THREAD_TITLE = "Untitled thread";
@@ -99,150 +108,10 @@ export type AgentThreadAttention = "running" | "attention" | "settled" | "archiv
 
 export type AgentTurnStatus = AgentTaskStatus | { readonly kind: "interrupted" };
 
-export type AgentTurnEventsRetention = "serverGap" | "clientWindow";
-
-export interface AgentAppServerTokenBreakdown {
-  readonly inputTokens: number;
-  readonly cachedInputTokens: number;
-  readonly cacheWriteInputTokens: number;
-  readonly outputTokens: number;
-  readonly reasoningOutputTokens: number;
-  readonly totalTokens: number;
-}
-
-export interface AgentAppServerUsage {
-  readonly last: AgentAppServerTokenBreakdown;
-  readonly total: AgentAppServerTokenBreakdown;
-  readonly contextWindow: number | null;
-}
-
-export interface AgentTurnUsage {
-  readonly scope?: "thread";
-  readonly appServerUsage?: AgentAppServerUsage;
-  readonly cachedInputTokens?: number | null;
-  readonly reasoningOutputTokens?: number | null;
-  readonly inputTokens: number;
-  readonly outputTokens: number;
-  /** Provider-reported API-equivalent cost for the turn, when available. */
-  readonly costUsd?: number | null;
-  /** Legacy provider metric: Codex occupancy; Claude cumulative processed input. */
-  readonly contextTokens: number | null;
-}
-
 export interface AgentTurnStreamMetrics {
   readonly receivedUtf8Bytes: number;
   readonly complete: boolean;
 }
-
-export type AgentSubagentEventStatus = "starting" | "running" | "completed" | "failed";
-
-export type AgentSubagentContentEvent = Extract<
-  AgentTurnEvent,
-  { kind: "assistantText" | "reasoning" | "toolCall" | "toolResult" }
->;
-
-export type AgentTurnEvent =
-  | {
-      readonly kind: "backgroundTask";
-      readonly taskId: string;
-      readonly status: "starting" | "running" | "completed" | "failed" | "stopped";
-      readonly taskType: "monitor" | "shell" | "agent" | "other";
-      readonly description?: string;
-    }
-  | {
-      readonly kind: "subagentActivity";
-      readonly agentThreadId: string;
-      readonly agentPath: string;
-      readonly activity: "started" | "interacted" | "interrupted" | "completed";
-    }
-  | {
-      readonly kind: "subagentEvent";
-      readonly agentThreadId: string;
-      readonly event: AgentSubagentContentEvent;
-    }
-  | AgentSubagentSpawnEvent
-  | {
-      readonly kind: "subagentUsage";
-      readonly agentThreadId: string;
-      readonly usage: AgentTurnUsage;
-    }
-  | {
-      readonly kind: "subagentTurnDone";
-      readonly agentThreadId: string;
-      readonly durationMs: number | null;
-      readonly isError: boolean;
-    }
-  | {
-      readonly kind: "queued";
-      readonly threadId: string;
-      readonly clientUserMessageId: string | null;
-    }
-  | { readonly kind: "assistantText"; readonly text: string; readonly parentToolId?: string }
-  | { readonly kind: "reasoning"; readonly text: string; readonly parentToolId?: string }
-  | {
-      readonly kind: "userMessage";
-      readonly remoteMessageId?: string;
-      readonly text: string;
-      readonly attachments?: ReadonlyArray<AgentAttachment>;
-    }
-  | {
-      readonly kind: "toolCall";
-      readonly toolId: string;
-      readonly name: string;
-      readonly inputSummary: string;
-      readonly description?: string;
-      readonly parentToolId?: string;
-    }
-  | {
-      readonly kind: "toolResult";
-      readonly toolId: string;
-      readonly outputSummary: string;
-      readonly isError: boolean;
-      readonly parentToolId?: string;
-    }
-  | {
-      readonly kind: "subagent";
-      readonly status: AgentSubagentEventStatus;
-      readonly toolId?: string;
-      readonly taskId?: string;
-      readonly subagentType?: string;
-      readonly description?: string;
-      readonly durationMs?: number;
-      readonly totalTokens?: number;
-      readonly toolUses?: number;
-      readonly lastToolName?: string;
-    }
-  | {
-      readonly kind: "result";
-      readonly durationMs?: number | null;
-      readonly text: string;
-      readonly isError: boolean;
-      readonly usage: AgentTurnUsage | null;
-    }
-  | {
-      readonly kind: "contextCompaction";
-      readonly beforeTokens: number | null;
-      readonly afterTokens: number | null;
-    }
-  | {
-      readonly kind: "contextCompactionStatus";
-      readonly status: "compacting" | "idle" | "failed";
-      readonly message: string | null;
-    }
-  | {
-      readonly kind: "contextUsage";
-      readonly observedAtEpochMs?: number;
-      readonly model: string;
-      readonly inputTokens: number | null;
-      readonly contextWindow: number | null;
-    }
-  | { readonly kind: "error"; readonly message: string }
-  | {
-      readonly kind: "unknownLine";
-      readonly stream: AgentTaskOutputStream;
-      readonly raw: string;
-      readonly clipped: boolean;
-    };
 
 export interface AgentTurn {
   readonly codexTransport?: "appServer" | "exec";
@@ -455,26 +324,8 @@ const UTF8_ENCODER = new TextEncoder();
 const UTF8_DECODER = new TextDecoder("utf-8");
 const UTF8_CONTINUATION_MASK = 0b1100_0000;
 const UTF8_CONTINUATION_MARKER = 0b1000_0000;
-const UTF16_HIGH_SURROGATE_START = 0xd800;
-const UTF16_HIGH_SURROGATE_END = 0xdbff;
-const UTF16_LOW_SURROGATE_START = 0xdc00;
-const UTF16_LOW_SURROGATE_END = 0xdfff;
 const TITLE_ELLIPSIS = "…";
 const TITLE_ELLIPSIS_BYTES = UTF8_ENCODER.encode(TITLE_ELLIPSIS).byteLength;
-const agentTextByteState = new WeakMap<AgentTurnEvent, AgentTextByteState>();
-const agentEventByteState = new WeakMap<AgentTurnEvent, AgentEventByteState>();
-
-interface AgentTextByteState {
-  readonly byteLength: number;
-  readonly text: string;
-  readonly trailingHighSurrogate: boolean;
-}
-
-interface AgentEventByteState {
-  readonly byteLength: number;
-  readonly values: ReadonlyArray<string>;
-}
-
 export function emptyAgentThreadsState(): AgentThreadsState {
   return { threads: new Map() };
 }
@@ -1036,136 +887,8 @@ function validStreamMetricBytes(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
-/** Retain a bounded recent window while continuing to accept live output after eviction. */
-export function mergeTurnEvents(
-  existing: ReadonlyArray<AgentTurnEvent>,
-  incoming: ReadonlyArray<AgentTurnEvent>,
-): { readonly events: ReadonlyArray<AgentTurnEvent>; readonly truncated: boolean } {
-  return retainAgentTurnEvents(existing, incoming, turnEventRetentionPolicy());
-}
-
-export function capPersistedTurnEvents(events: ReadonlyArray<AgentTurnEvent>): {
-  readonly events: ReadonlyArray<AgentTurnEvent>;
-  readonly truncated: boolean;
-} {
-  return capAgentTurnEvents(events, turnEventRetentionPolicy());
-}
-
-function turnEventRetentionPolicy(): AgentTurnEventRetentionPolicy {
-  return {
-    maxEvents: MAX_AGENT_EVENTS_PER_TURN,
-    maxBytes: MAX_AGENT_EVENT_BYTES_PER_TURN,
-    maxSubagentThreads: MAX_SUBAGENT_THREADS_PER_TURN,
-    eventBytes: agentTurnEventUtf8Bytes,
-    coalesceText: coalesceAgentTextEvents,
-  };
-}
-
-export function agentTurnEventUtf8Bytes(event: AgentTurnEvent): number {
-  if (event.kind === "assistantText" || event.kind === "reasoning" || event.kind === "result") {
-    return (
-      agentTextEventByteState(event).byteLength +
-      ((event.kind === "assistantText" || event.kind === "reasoning") &&
-      event.parentToolId !== undefined
-        ? UTF8_ENCODER.encode(event.parentToolId).byteLength
-        : 0)
-    );
-  }
-  const values = agentTurnEventStrings(event);
-  const cached = agentEventByteState.get(event);
-  if (cached !== undefined && sameStrings(cached.values, values)) return cached.byteLength;
-  const byteLength = values.reduce(
-    (total, value) => total + UTF8_ENCODER.encode(value).byteLength,
-    0,
-  );
-  agentEventByteState.set(event, { byteLength, values });
-  return byteLength;
-}
-
 function agentTurnEventsUtf8Bytes(events: ReadonlyArray<AgentTurnEvent>): number {
   return events.reduce((total, event) => total + agentTurnEventUtf8Bytes(event), 0);
-}
-
-function agentTurnEventStrings(event: AgentTurnEvent): ReadonlyArray<string> {
-  switch (event.kind) {
-    case "subagentActivity":
-      return [event.agentThreadId, event.agentPath, event.activity];
-    case "subagentEvent":
-      return [event.agentThreadId, ...agentTurnEventStrings(event.event)];
-    case "subagentUsage":
-    case "subagentTurnDone":
-      return [event.agentThreadId];
-    case "subagentSpawn":
-      return [
-        event.callId,
-        event.status,
-        event.taskTitle ?? "",
-        event.model ?? "",
-        event.reasoningEffort ?? "",
-        ...event.agentThreadIds,
-      ];
-    case "queued":
-      return [event.threadId, event.clientUserMessageId ?? ""];
-    case "toolCall":
-      return definedStrings([
-        event.toolId,
-        event.name,
-        event.inputSummary,
-        event.description,
-        event.parentToolId,
-      ]);
-    case "toolResult":
-      return definedStrings([event.toolId, event.outputSummary, event.parentToolId]);
-    case "backgroundTask":
-      return definedStrings([event.taskId, event.taskType, event.description]);
-    case "subagent":
-      return definedStrings([
-        event.toolId,
-        event.taskId,
-        event.subagentType,
-        event.description,
-        event.lastToolName,
-      ]);
-    case "error":
-      return [event.message];
-    case "unknownLine":
-      return [event.raw];
-    case "userMessage":
-      return [event.text, ...(event.attachments ?? []).flatMap(agentAttachmentStrings)];
-    case "contextUsage":
-      return [event.model];
-    case "contextCompactionStatus":
-      return event.message === null ? [] : [event.message];
-    case "contextCompaction":
-      return [];
-    case "assistantText":
-    case "reasoning":
-      return definedStrings([event.text, event.parentToolId]);
-    case "result":
-      return [event.text];
-    default:
-      return unsupportedTurnEvent(event);
-  }
-}
-
-function agentAttachmentStrings(attachment: AgentAttachment): ReadonlyArray<string> {
-  switch (attachment.kind) {
-    case "image":
-    case "file":
-      return definedStrings([attachment.name, attachment.storedPath]);
-    case "reference":
-      return definedStrings([attachment.name, attachment.path]);
-    default:
-      return unsupportedAttachment(attachment);
-  }
-}
-
-function definedStrings(values: ReadonlyArray<string | undefined>): ReadonlyArray<string> {
-  return values.filter((value): value is string => value !== undefined);
-}
-
-function sameStrings(left: ReadonlyArray<string>, right: ReadonlyArray<string>): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function boundAgentThreadEvents(thread: AgentThread): AgentThread {
@@ -1194,65 +917,6 @@ function boundAgentTurnEvents(turn: AgentTurn): AgentTurn {
     eventsTruncated: truncated,
     streamMetrics: turn.streamMetrics ?? null,
   };
-}
-
-export function coalesceAgentTextEvents(
-  last: AgentTurnEvent | undefined,
-  next: AgentTurnEvent,
-): AgentTurnEvent | null {
-  if (last === undefined) return null;
-  if (last.kind === "subagentEvent" && next.kind === "subagentEvent") {
-    if (last.agentThreadId !== next.agentThreadId) return null;
-    const event = coalesceAgentTextEvents(last.event, next.event);
-    return event !== null && (event.kind === "assistantText" || event.kind === "reasoning")
-      ? { kind: "subagentEvent", agentThreadId: next.agentThreadId, event }
-      : null;
-  }
-  if (next.kind !== "assistantText" && next.kind !== "reasoning") return null;
-  if (last.kind !== next.kind) return null;
-  if (
-    (last.kind === "assistantText" || last.kind === "reasoning") &&
-    (next.kind === "assistantText" || next.kind === "reasoning") &&
-    last.parentToolId !== next.parentToolId
-  )
-    return null;
-  const lastState = agentTextEventByteState(last);
-  const nextState = agentTextEventByteState(next);
-  const repairsSplitScalar = lastState.trailingHighSurrogate && startsWithLowSurrogate(next.text);
-  const byteLength = lastState.byteLength + nextState.byteLength - (repairsSplitScalar ? 2 : 0);
-  if (byteLength > MAX_AGENT_EVENT_TEXT_BYTES) return null;
-  const coalesced: AgentTurnEvent = { ...next, text: last.text + next.text };
-  agentTextByteState.set(coalesced, {
-    byteLength,
-    text: coalesced.text,
-    trailingHighSurrogate:
-      next.text.length === 0 ? lastState.trailingHighSurrogate : endsWithHighSurrogate(next.text),
-  });
-  return coalesced;
-}
-
-function agentTextEventByteState(event: Extract<AgentTurnEvent, { readonly text: string }>) {
-  const cached = agentTextByteState.get(event);
-  if (cached?.text === event.text) return cached;
-  const state = {
-    byteLength: UTF8_ENCODER.encode(event.text).byteLength,
-    text: event.text,
-    trailingHighSurrogate: endsWithHighSurrogate(event.text),
-  };
-  agentTextByteState.set(event, state);
-  return state;
-}
-
-function startsWithLowSurrogate(text: string): boolean {
-  if (text.length === 0) return false;
-  const codeUnit = text.charCodeAt(0);
-  return codeUnit >= UTF16_LOW_SURROGATE_START && codeUnit <= UTF16_LOW_SURROGATE_END;
-}
-
-function endsWithHighSurrogate(text: string): boolean {
-  if (text.length === 0) return false;
-  const codeUnit = text.charCodeAt(text.length - 1);
-  return codeUnit >= UTF16_HIGH_SURROGATE_START && codeUnit <= UTF16_HIGH_SURROGATE_END;
 }
 
 function interruptTurn(
@@ -1543,14 +1207,6 @@ function firstNonEmptyLine(prompt: string): string {
 
 function unsupportedTurnStatus(status: never): never {
   throw new TypeError(`Unsupported agent turn status: ${JSON.stringify(status)}.`);
-}
-
-function unsupportedAttachment(attachment: never): never {
-  throw new TypeError(`Unsupported agent attachment: ${JSON.stringify(attachment)}.`);
-}
-
-function unsupportedTurnEvent(event: never): never {
-  throw new TypeError(`Unsupported agent turn event: ${JSON.stringify(event)}.`);
 }
 
 function unsupportedAction(action: never): never {

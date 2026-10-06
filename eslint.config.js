@@ -6,10 +6,119 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["coverage/**", "dist/**", "node_modules/**", "src-tauri/**", "tmp/**"],
+    ignores: [
+      "coverage/**",
+      "dist/**",
+      "packages/*/dist/**",
+      "node_modules/**",
+      "src-tauri/**",
+      "tmp/**",
+    ],
+  },
+  {
+    files: ["packages/*/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["react", "react-dom", "react-native", "monaco-editor", "vitest"],
+          patterns: [
+            {
+              group: [
+                "react*",
+                "@tauri-apps/*",
+                "@monaco-editor/*",
+                "monaco*",
+                "node:*",
+                "fs",
+                "path",
+                "os",
+                "crypto",
+                "util",
+                "events",
+                "stream",
+                "buffer",
+                "child_process",
+                "url",
+                "**/src/**",
+                "../../../*",
+              ],
+            },
+          ],
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        "window",
+        "document",
+        "navigator",
+        "localStorage",
+        "fetch",
+        "setTimeout",
+        "setInterval",
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "process",
+        "Buffer",
+        "require",
+        "__dirname",
+        "globalThis",
+        "Intl",
+      ],
+    },
+  },
+  {
+    files: ["packages/*/src/**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: ["react", "react-dom", "react-native", "monaco-editor"],
+          patterns: [
+            {
+              group: [
+                "react*",
+                "@tauri-apps/*",
+                "@monaco-editor/*",
+                "monaco*",
+                "fs",
+                "path",
+                "os",
+                "crypto",
+                "util",
+                "events",
+                "stream",
+                "buffer",
+                "child_process",
+                "url",
+                "**/src/**",
+                "../../../*",
+                "node:*",
+                "!node:fs",
+                "!node:path",
+              ],
+            },
+          ],
+        },
+      ],
+      "no-restricted-globals": "off",
+    },
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ["packages/*/src/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          argsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
   {
     files: ["src/**/*.{ts,tsx}", "vite.config.ts"],
     languageOptions: {

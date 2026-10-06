@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clipHeadTail, headTailOmissionMarker } from "../../domain/agentOutput/clipHeadTail";
+import { clipHeadTail, headTailOmissionMarker } from "@codevo/agent-events";
 import { MAX_AGENT_TOOL_SUMMARY_BYTES } from "../../domain/agentThread";
 import { AgentQuestionToolRow } from "./AgentQuestionToolRow";
 import type { AgentTurnAttachmentImageViewer } from "./AgentTurnAttachments";

@@ -1,8 +1,8 @@
+import { MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS } from "@codevo/agent-events";
 import { describe, expect, it } from "vitest";
 import {
   MAX_RUNTIME_SUBAGENTS,
   MAX_RUNTIME_SUBAGENT_ACTIVITY_CHARACTERS,
-  MAX_RUNTIME_SUBAGENT_TITLE_CHARACTERS,
   RUNTIME_SUBAGENT_ENTRY_BATCH_PREFIX,
   RUNTIME_SUBAGENT_LEGACY_BATCH_ID,
   agentRuntimeSubagentStatus,

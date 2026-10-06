@@ -7,12 +7,13 @@ import type {
 } from "../domain/agentTask";
 import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
 import {
+  EMPTY_PENDING_LINE,
   createAgentOutputParserState,
   feedAgentOutput,
   finishAgentOutput,
   type AgentOutputFeedResult,
   type AgentOutputParserState,
-} from "../domain/agentOutput/agentOutputParser";
+} from "@codevo/agent-events";
 import type { AgentTaskStatusEvent } from "../domain/agentTask";
 import {
   agentTurnEventUtf8Bytes,
@@ -22,7 +23,6 @@ import {
   type AgentTurnEvent,
   type AgentSessionFallback,
 } from "../domain/agentThread";
-import { EMPTY_PENDING_LINE } from "../domain/agentOutput/lineSplitter";
 import { agentEventReportsSessionNotFound } from "../domain/agentSessionIdentity";
 import { warning } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
