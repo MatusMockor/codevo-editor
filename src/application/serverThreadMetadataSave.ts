@@ -1,9 +1,16 @@
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
-import type { RemoteThreadMetadataPatch } from "../domain/remoteThreadMetadata";
+import type {
+  RemoteThreadMetadata,
+  RemoteThreadMetadataPatch,
+} from "../domain/remoteThreadMetadata";
 import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import { viewedOnlyChange } from "./serverThreadMetadataLease";
 
 export type ServerThreadMetadataChange = Omit<RemoteThreadMetadataPatch, "expectedRevision">;
+export type ServerThreadMetadataSaveResult =
+  | { readonly kind: "saved"; readonly metadata: RemoteThreadMetadata }
+  | { readonly kind: "current" }
+  | { readonly kind: "stale" };
 const CONFLICT = "Runner request failed (HTTP 409).";
 const MAX_VIEWED_ATTEMPTS = 3;
 
@@ -23,15 +30,15 @@ export async function saveServerThreadMetadata({
   readonly change: ServerThreadMetadataChange;
   readonly legacyChange: () => ServerThreadMetadataChange;
   readonly active: () => boolean;
-}): Promise<"saved" | "current" | "stale"> {
+}): Promise<ServerThreadMetadataSaveResult> {
   const viewed = viewedOnlyChange(change);
   for (let attempt = 0; attempt < MAX_VIEWED_ATTEMPTS; attempt += 1) {
-    if (!active()) return "stale";
+    if (!active()) return { kind: "stale" };
     const current = await gateway.getThreadMetadata({ serverId, taskId });
-    if (!active()) return "stale";
-    if (viewed !== null && (current.viewedAtEpochMs ?? -1) >= viewed) return "current";
+    if (!active()) return { kind: "stale" };
+    if (viewed !== null && (current.viewedAtEpochMs ?? -1) >= viewed) return { kind: "current" };
     try {
-      await gateway.updateThreadMetadata({
+      const metadata = await gateway.updateThreadMetadata({
         serverId,
         taskId,
         patch: {
@@ -40,9 +47,9 @@ export async function saveServerThreadMetadata({
           expectedRevision: current.revision,
         },
       });
-      return active() ? "saved" : "stale";
+      return active() ? { kind: "saved", metadata } : { kind: "stale" };
     } catch (error) {
-      if (!active()) return "stale";
+      if (!active()) return { kind: "stale" };
       // Only an automatic, monotonic read marker may be rebased on another client's edit.
       // Explicit preferences keep CAS semantics; uncertain network writes are never replayed.
       if (
@@ -53,7 +60,7 @@ export async function saveServerThreadMetadata({
         throw error;
     }
   }
-  return "stale";
+  return { kind: "stale" };
 }
 
 export function serverThreadMetadataSaveError(error: unknown, viewed: boolean): string {

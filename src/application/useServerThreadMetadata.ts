@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
 import { normalizeAgentThreadTitle } from "../domain/agentThread";
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
+import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
 import type { AgentThreadView } from "./agentThreadPorts";
 import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
-import { presentRemoteAgentThread, remoteAgentThreadKey } from "./remoteAgentProjection";
+import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import {
   saveServerThreadMetadata,
   serverThreadMetadataSaveError,
@@ -21,6 +22,7 @@ import {
   takeRunnableViewed,
   viewedOnlyChange,
 } from "./serverThreadMetadataLease";
+import { ServerThreadMetadataViews } from "./serverThreadMetadataViews";
 
 interface Options {
   readonly gateway: RemoteRunnerGateway | null;
@@ -30,6 +32,7 @@ interface Options {
   readonly report: (message: string) => void;
   readonly reportThread?: (threadId: string, message: string) => void;
   readonly refresh: () => Promise<void>;
+  readonly publishThreadMetadata: (serverId: string, metadata: RemoteThreadMetadata) => boolean;
   readonly repository?: RemoteAgentMetadataRepository;
 }
 const LIMIT = 4096;
@@ -43,6 +46,7 @@ export function useServerThreadMetadata({
   report,
   reportThread,
   refresh,
+  publishThreadMetadata,
   repository,
 }: Options) {
   const legacy = useMemo(() => {
@@ -199,8 +203,12 @@ export function useServerThreadMetadata({
           active,
         });
         if (!active()) return false;
-        if (saved !== "saved") return saved === "current";
-        await refreshAfterSave();
+        if (saved.kind !== "saved") return saved.kind === "current";
+        if (
+          saved.metadata.taskId !== target.taskId ||
+          !publishThreadMetadata(target.snapshot.serverId, saved.metadata)
+        )
+          await refreshAfterSave();
         return active();
       } catch (error) {
         if (active()) {
@@ -215,7 +223,16 @@ export function useServerThreadMetadata({
             void save(pendingId, { viewedAtEpochMs: pendingViewed });
       }
     },
-    [eligible, gateway, captured, reportForThread, live, legacyChange, refreshAfterSave],
+    [
+      eligible,
+      gateway,
+      captured,
+      reportForThread,
+      live,
+      legacyChange,
+      refreshAfterSave,
+      publishThreadMetadata,
+    ],
   );
   const batch = useCallback(
     async <T>(work: () => Promise<T>): Promise<T> => {
@@ -433,6 +450,7 @@ export function useServerThreadMetadata({
       disposed = true;
     };
   }, [gateway, targets, legacy, captured, live, legacyChange, report, refresh]);
+  const [presented] = useState(() => new ServerThreadMetadataViews());
   const project = useCallback(
     (view: AgentThreadView): AgentThreadView | null => {
       const target = targets.get(view.thread.threadId);
@@ -442,25 +460,12 @@ export function useServerThreadMetadata({
       const metadata = stored ? canonical : (legacyRecord ?? canonical);
       if (metadata?.removed) return null;
       if (!metadata) return view;
-      const thread = {
-        ...view.thread,
-        snoozedUntil: metadata.snoozedUntil ?? null,
-        settledAt: metadata.settledAt ?? null,
-        sortOrder: metadata.sortOrder ?? null,
-        title: normalizeAgentThreadTitle(metadata.title ?? "") ?? view.thread.title,
-        pinned: metadata.pinned ?? view.thread.pinned,
-        archived: metadata.archived ?? view.thread.archived,
-        viewedAtEpochMs:
-          metadata.viewedAtEpochMs === undefined
-            ? view.thread.viewedAtEpochMs
-            : metadata.viewedAtEpochMs,
-      };
       const tracksViews =
         target?.snapshot.descriptor?.capabilities.threadManagement === true &&
         (stored || legacyRecord !== undefined);
-      return presentRemoteAgentThread(view, thread, tracksViews);
+      return presented.present(view, metadata, tracksViews);
     },
-    [targets, legacy],
+    [targets, legacy, presented],
   );
   return { project, update, reorder, batch, persistenceError: null };
 }

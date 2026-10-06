@@ -186,6 +186,16 @@ describe("thread action undo on server threads", () => {
       if (staleRefresh) return;
       setSnapshots([inventory(server.stored, connection.current)]);
     }, []);
+    const publishThreadMetadata = useCallback((_serverId: string, saved: RemoteThreadMetadata) => {
+      if (staleRefresh) return false;
+      setSnapshots((current) =>
+        current.map((snapshot) => ({
+          ...snapshot,
+          threadMetadata: new Map(snapshot.threadMetadata).set(saved.taskId, saved),
+        })),
+      );
+      return true;
+    }, []);
     const setConnected = useCallback((connected: boolean) => {
       connection.current = connected;
       setSnapshots([inventory(server.stored, connected)]);
@@ -201,6 +211,7 @@ describe("thread action undo on server threads", () => {
       valid,
       report,
       refresh,
+      publishThreadMetadata,
     });
     const project = metadata.project;
     const views = useMemo(

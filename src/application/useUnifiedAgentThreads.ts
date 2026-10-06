@@ -173,6 +173,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     report,
     reportThread,
     refresh: inventory.refresh,
+    publishThreadMetadata: inventory.publishThreadMetadata,
     repository: options.metadataRepository,
   });
   const projectTargets = useMemo(() => {

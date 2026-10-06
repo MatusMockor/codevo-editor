@@ -5,6 +5,7 @@ import type {
   RemoteRunnerServer,
   RemoteRunnerTask,
 } from "../domain/remoteRunner";
+import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
 import {
   emptyRemoteInventory,
   loadRemoteAgentInventory,
@@ -14,6 +15,10 @@ import {
 } from "./remoteAgentInventoryLoad";
 import { mergeRemoteTasks } from "./remoteRunnerTaskState";
 import { startRemoteInventoryRefresh } from "./remoteInventoryRefresh";
+import {
+  mergeLoadedThreadMetadata,
+  publishedRemoteThreadMetadata,
+} from "./remoteThreadMetadataInventory";
 export type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 interface Options {
   readonly gateway: RemoteRunnerGateway | null;
@@ -30,6 +35,7 @@ export interface RemoteAgentInventorySurface {
   refresh(): Promise<void>;
   publishTask(serverId: string, task: RemoteRunnerTask): void;
   publishPending(serverId: string, threadId: string, items: RemotePendingUpdate): void;
+  publishThreadMetadata(serverId: string, metadata: RemoteThreadMetadata): boolean;
 }
 /** Read-only remote inventory. Disposal revokes UI publication, never server work. */
 export function useRemoteAgentInventory({
@@ -61,6 +67,13 @@ export function useRemoteAgentInventory({
     snapshots: [],
   });
   if (cache.current.lease !== lease) cache.current = { lease, snapshots: [] };
+  const unconfirmed = useRef({
+    lease,
+    configuration,
+    servers: new Map<string, ReadonlyMap<string, RemoteThreadMetadata>>(),
+  });
+  if (unconfirmed.current.lease !== lease || unconfirmed.current.configuration !== configuration)
+    unconfirmed.current = { lease, configuration, servers: new Map() };
   const [state, setState] = useState(cache.current);
   const [loadingOwner, setLoadingOwner] = useState<object | null>(null);
   const active = useRef<{ owner: object; settled: Promise<void>; dirty: boolean } | null>(null);
@@ -134,10 +147,18 @@ export function useRemoteAgentInventory({
           try {
             result = await loadRemoteAgentInventory(gateway, previous, selectedThreadId, valid);
             if (!valid()) return;
+            const merged = mergeLoadedThreadMetadata(
+              result.threadMetadata,
+              unconfirmed.current.servers.get(server.id),
+            );
+            unconfirmed.current.servers.set(server.id, merged.unconfirmed);
+            result = { ...result, threadMetadata: merged.threadMetadata };
           } catch (error) {
             if (!valid() || error instanceof RemoteInventoryRevoked) return;
+            const cached = cache.current.snapshots.find((item) => item.serverId === server.id);
             result = {
               ...previous,
+              threadMetadata: (cached ?? previous).threadMetadata,
               connected: false,
               inventoryTruncated: false,
               error: error instanceof Error ? error.message : "Could not refresh remote tasks.",
@@ -215,8 +236,38 @@ export function useRemoteAgentInventory({
     },
     [valid, publish],
   );
+  const publishThreadMetadata = useCallback(
+    (serverId: string, metadata: RemoteThreadMetadata): boolean => {
+      if (!valid()) return false;
+      if (!serversRef.current.slice(0, 64).some((server) => server.id === serverId)) return false;
+      const previous = cache.current.snapshots.find((item) => item.serverId === serverId);
+      if (!previous) return false;
+      const outcome = publishedRemoteThreadMetadata(
+        previous,
+        unconfirmed.current.servers.get(serverId),
+        metadata,
+      );
+      switch (outcome.kind) {
+        case "unknown":
+        case "full":
+          return false;
+        case "current":
+          return true;
+        case "applied":
+          publish(
+            cache.current.snapshots.map((item) =>
+              item === previous ? { ...item, threadMetadata: outcome.threadMetadata } : item,
+            ),
+          );
+          unconfirmed.current.servers.set(serverId, outcome.unconfirmed);
+          return true;
+      }
+    },
+    [valid, publish],
+  );
   return {
     publishPending,
+    publishThreadMetadata,
     snapshots:
       state.lease === lease
         ? state.snapshots

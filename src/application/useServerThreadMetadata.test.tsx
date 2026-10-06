@@ -62,6 +62,9 @@ async function harness(options: Partial<Parameters<typeof useServerThreadMetadat
   };
   let owner = {};
   const refresh = vi.fn().mockResolvedValue(undefined);
+  const publish = vi
+    .fn<(serverId: string, metadata: RemoteThreadMetadata) => boolean>()
+    .mockReturnValue(true);
   const report = vi.fn();
   let props = {
     gateway: gateway as unknown as RemoteRunnerGateway,
@@ -70,6 +73,7 @@ async function harness(options: Partial<Parameters<typeof useServerThreadMetadat
     valid: (candidate: object) => candidate === owner,
     report,
     refresh,
+    publishThreadMetadata: publish,
     ...options,
   };
   let surface!: ReturnType<typeof useServerThreadMetadata>;
@@ -87,6 +91,7 @@ async function harness(options: Partial<Parameters<typeof useServerThreadMetadat
   return {
     gateway,
     refresh,
+    publish,
     report,
     current: () => surface,
     async snapshots(snapshots: typeof props.snapshots) {
@@ -149,17 +154,90 @@ it("reports the exact conversation source for disconnected metadata changes", as
   expect(h.report).not.toHaveBeenCalled();
   expect(h.gateway.getThreadMetadata).not.toHaveBeenCalled();
 });
-it("fetches the latest revision and only refreshes after successful persistence", async () => {
+it("fetches the latest revision and publishes the stored record without reloading", async () => {
   const h = await harness();
+  const stored = record({ revision: 8, pinned: true });
   h.gateway.getThreadMetadata.mockResolvedValue(record({ revision: 7 }));
-  await act(async () => h.current().update(view.thread.threadId, { pinned: true }));
+  h.gateway.updateThreadMetadata.mockResolvedValue(stored);
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { pinned: true })).toBe(true);
+  });
   expect(h.gateway.updateThreadMetadata).toHaveBeenCalledWith({
     serverId: "s",
     taskId: "t",
     patch: { pinned: true, expectedRevision: 7 },
   });
   expect(h.current().project(view)?.thread.pinned).toBe(false);
+  expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", stored);
+  expect(h.publish.mock.calls[0]?.[1]).toBe(stored);
+  expect(h.refresh).not.toHaveBeenCalled();
+});
+it("does not publish a record for another conversation and reloads instead", async () => {
+  const h = await harness();
+  h.gateway.updateThreadMetadata.mockResolvedValue(record({ taskId: "foreign", revision: 1 }));
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { pinned: true })).toBe(true);
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.report).not.toHaveBeenCalled();
   expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+it("reloads once when the inventory cannot apply the stored record", async () => {
+  const h = await harness();
+  const stored = record({ revision: 1, pinned: true });
+  h.gateway.updateThreadMetadata.mockResolvedValue(stored);
+  h.publish.mockReturnValue(false);
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { pinned: true })).toBe(true);
+  });
+  expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", stored);
+  expect(h.report).not.toHaveBeenCalled();
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.invocationCallOrder[0]).toBeLessThan(
+    h.refresh.mock.invocationCallOrder[0]!,
+  );
+
+  h.publish.mockReturnValue(true);
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { pinned: false })).toBe(true);
+  });
+  expect(h.publish).toHaveBeenCalledTimes(2);
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+it("still resolves the save when the fallback reload fails", async () => {
+  const h = await harness();
+  h.publish.mockReturnValue(false);
+  h.refresh.mockRejectedValue(new Error("disconnected"));
+  await act(async () => {
+    expect(await h.current().update(view.thread.threadId, { pinned: true })).toBe(true);
+  });
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+  expect(h.report).not.toHaveBeenCalled();
+});
+it("does not publish a save that lands after the runner was replaced", async () => {
+  const h = await harness();
+  let settle!: (value: RemoteThreadMetadata) => void;
+  h.gateway.updateThreadMetadata.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+  );
+  let pending!: Promise<boolean>;
+  await act(async () => {
+    pending = h.current().update(view.thread.threadId, { pinned: true });
+  });
+  const replacement = snapshot();
+  await h.snapshots([
+    { ...replacement, descriptor: { ...replacement.descriptor, runnerId: "replacement" } },
+  ]);
+  await h.snapshots([snapshot()]);
+  await act(async () => {
+    settle(record({ revision: 1, pinned: true }));
+    expect(await pending).toBe(false);
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.refresh).not.toHaveBeenCalled();
 });
 it("does not write after an owner A-B-A replacement while reading metadata", async () => {
   const h = await harness();
@@ -178,6 +256,7 @@ it("does not write after an owner A-B-A replacement while reading metadata", asy
     await pending;
   });
   expect(h.gateway.updateThreadMetadata).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
   expect(h.refresh).not.toHaveBeenCalled();
 });
 it("locks concurrent writes and ignores late persistence after owner revocation", async () => {
@@ -185,8 +264,8 @@ it("locks concurrent writes and ignores late persistence after owner revocation"
   let settle!: () => void;
   h.gateway.updateThreadMetadata.mockImplementation(
     () =>
-      new Promise<void>((resolve) => {
-        settle = resolve;
+      new Promise((resolve) => {
+        settle = () => resolve(record({ revision: 1, pinned: true }));
       }),
   );
   let pending!: Promise<boolean>;
@@ -198,8 +277,9 @@ it("locks concurrent writes and ignores late persistence after owner revocation"
   await h.replaceOwner();
   await act(async () => {
     settle();
-    await pending;
+    expect(await pending).toBe(false);
   });
+  expect(h.publish).not.toHaveBeenCalled();
   expect(h.refresh).not.toHaveBeenCalled();
 });
 it("reports a conflict and refreshes authoritative state without optimistic changes", async () => {
@@ -208,6 +288,7 @@ it("reports a conflict and refreshes authoritative state without optimistic chan
   await act(async () => h.current().update(view.thread.threadId, { archived: true }));
   expect(h.report).toHaveBeenCalledTimes(1);
   expect(h.refresh).toHaveBeenCalledTimes(1);
+  expect(h.publish).not.toHaveBeenCalled();
   expect(h.current().project(view)?.thread.archived).toBe(false);
 });
 it("does not reject to callers if saving and refreshing both fail", async () => {
@@ -265,6 +346,7 @@ it.each([false, true])(
       await pending;
     });
     expect(h.gateway.updateThreadMetadata).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
     expect(h.refresh).not.toHaveBeenCalled();
   },
 );
@@ -463,31 +545,91 @@ it("reconciles a saved section when the target moves while persistence is pendin
   expect(h.report).toHaveBeenCalledWith(expect.stringContaining("section was saved"));
   expect(h.refresh).toHaveBeenCalledTimes(1);
 });
-it("refreshes the inventory once after a batch of saves instead of after every save", async () => {
+it("publishes every save of a batch as it lands and never reloads when all of them succeed", async () => {
   const h = await harness();
+  const archived = record({ revision: 1, archived: true });
+  const pinned = record({ revision: 2, archived: true, pinned: true });
+  h.gateway.updateThreadMetadata.mockResolvedValueOnce(archived).mockResolvedValueOnce(pinned);
   let outcomes: ReadonlyArray<boolean> = [];
   await act(async () => {
     outcomes = await h.current().batch(async () => {
       const first = await h.current().update(view.thread.threadId, { archived: true });
+      expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", archived);
       const second = await h.current().update(view.thread.threadId, { pinned: true });
-      expect(h.refresh).not.toHaveBeenCalled();
       return [first, second];
     });
   });
   expect(outcomes).toEqual([true, true]);
   expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(2);
+  expect(h.publish.mock.calls).toEqual([
+    ["s", archived],
+    ["s", pinned],
+  ]);
+  expect(h.refresh).not.toHaveBeenCalled();
+});
+it("refreshes the inventory once after a batch with failed saves instead of after every failure", async () => {
+  const h = await harness();
+  h.gateway.updateThreadMetadata
+    .mockRejectedValueOnce(new Error("revision conflict"))
+    .mockRejectedValueOnce(new Error("revision conflict"));
+  let outcomes: ReadonlyArray<boolean> = [];
+  await act(async () => {
+    outcomes = await h.current().batch(async () => {
+      const first = await h.current().update(view.thread.threadId, { archived: true });
+      const second = await h.current().update(view.thread.threadId, { pinned: true });
+      const third = await h.current().update(view.thread.threadId, { pinned: true });
+      expect(h.refresh).not.toHaveBeenCalled();
+      return [first, second, third];
+    });
+  });
+  expect(outcomes).toEqual([false, false, true]);
+  expect(h.report).toHaveBeenCalledTimes(2);
+  expect(h.publish).toHaveBeenCalledTimes(1);
   expect(h.refresh).toHaveBeenCalledTimes(1);
+  h.gateway.updateThreadMetadata.mockRejectedValueOnce(new Error("revision conflict"));
   await act(async () => h.current().update(view.thread.threadId, { pinned: false }));
   expect(h.refresh).toHaveBeenCalledTimes(2);
 });
-it("skips the deferred batch refresh when the owner changed during the batch", async () => {
+it("defers the reload for a foreign record to the end of the batch", async () => {
   const h = await harness();
+  h.gateway.updateThreadMetadata.mockResolvedValue(record({ taskId: "foreign", revision: 1 }));
   await act(async () => {
     await h.current().batch(async () => {
-      await h.current().update(view.thread.threadId, { archived: true });
+      expect(await h.current().update(view.thread.threadId, { archived: true })).toBe(true);
+      expect(h.refresh).not.toHaveBeenCalled();
+    });
+  });
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+it("defers the reload for records the inventory cannot apply to the end of the batch", async () => {
+  const h = await harness();
+  h.publish.mockReturnValueOnce(false).mockReturnValueOnce(true).mockReturnValueOnce(false);
+  let outcomes: ReadonlyArray<boolean> = [];
+  await act(async () => {
+    outcomes = await h.current().batch(async () => {
+      const first = await h.current().update(view.thread.threadId, { archived: true });
+      const second = await h.current().update(view.thread.threadId, { pinned: true });
+      const third = await h.current().update(view.thread.threadId, { pinned: false });
+      expect(h.refresh).not.toHaveBeenCalled();
+      return [first, second, third];
+    });
+  });
+  expect(outcomes).toEqual([true, true, true]);
+  expect(h.publish).toHaveBeenCalledTimes(3);
+  expect(h.report).not.toHaveBeenCalled();
+  expect(h.refresh).toHaveBeenCalledTimes(1);
+});
+it("skips the deferred batch refresh when the owner changed during the batch", async () => {
+  const h = await harness();
+  h.gateway.updateThreadMetadata.mockRejectedValue(new Error("revision conflict"));
+  await act(async () => {
+    await h.current().batch(async () => {
+      expect(await h.current().update(view.thread.threadId, { archived: true })).toBe(false);
       await h.replaceOwner();
     });
   });
+  expect(h.report).toHaveBeenCalledTimes(1);
   expect(h.refresh).not.toHaveBeenCalled();
 });
 it("reports unread only for threads with a stored view marker on a capable server", async () => {
@@ -570,9 +712,9 @@ it("makes a save wait for a free slot instead of failing when the budget is exha
   const h = await harness({ snapshots: [many] });
   const releases: Array<() => void> = [];
   h.gateway.updateThreadMetadata.mockImplementation(
-    () =>
+    ({ taskId }: { taskId: string }) =>
       new Promise((resolve) => {
-        releases.push(() => resolve(record({ revision: 1 })));
+        releases.push(() => resolve(record({ taskId, revision: 1, archived: true })));
       }),
   );
   const key = (id: string) => remoteAgentThreadKey("s", "r", id);
@@ -589,6 +731,10 @@ it("makes a save wait for a free slot instead of failing when the budget is exha
   });
   expect(await Promise.all(saves)).toEqual([true, true, true, true, true]);
   expect(h.report).not.toHaveBeenCalled();
+  expect(h.publish.mock.calls.map(([serverId, saved]) => [serverId, saved.taskId]).sort()).toEqual(
+    ids.map((id) => ["s", id]),
+  );
+  expect(h.refresh).not.toHaveBeenCalled();
 });
 
 it("rebases an automatic read marker on the latest server revision after a conflict", async () => {
@@ -596,7 +742,10 @@ it("rebases an automatic read marker on the latest server revision after a confl
   h.gateway.getThreadMetadata
     .mockResolvedValueOnce(record({ revision: 7 }))
     .mockResolvedValueOnce(record({ revision: 8, pinned: true, title: "Other device" }));
-  h.gateway.updateThreadMetadata.mockRejectedValueOnce("Runner request failed (HTTP 409).");
+  const rebased = record({ revision: 9, pinned: true, title: "Other device", viewedAtEpochMs: 40 });
+  h.gateway.updateThreadMetadata
+    .mockRejectedValueOnce("Runner request failed (HTTP 409).")
+    .mockResolvedValueOnce(rebased);
   await act(async () => {
     expect(await h.current().update(view.thread.threadId, { viewedAtEpochMs: 40 })).toBe(true);
   });
@@ -605,7 +754,8 @@ it("rebases an automatic read marker on the latest server revision after a confl
     { expectedRevision: 8, viewedAtEpochMs: 40 },
   ]);
   expect(h.report).not.toHaveBeenCalled();
-  expect(h.refresh).toHaveBeenCalledTimes(1);
+  expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", rebased);
+  expect(h.refresh).not.toHaveBeenCalled();
 });
 
 it("accepts a newer read marker saved by another device without replaying the write", async () => {
@@ -621,6 +771,7 @@ it("accepts a newer read marker saved by another device without replaying the wr
   });
   expect(h.gateway.updateThreadMetadata).toHaveBeenCalledTimes(1);
   expect(h.report).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
   expect(h.refresh).not.toHaveBeenCalled();
 });
 
@@ -730,4 +881,59 @@ it("updates a continuation through its conversation root", async () => {
     taskId: "t",
     patch: { expectedRevision: 0, viewedAtEpochMs: 10 },
   });
+  expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", record({ revision: 1 }));
+});
+
+it("keeps a presented row identical across publishes that leave its metadata unchanged", async () => {
+  const other = { ...task, id: "other", sequence: 2 };
+  const views = projectRemoteAgentThreads({
+    serverId: "s",
+    runnerId: "r",
+    projects: [{ id: "p", name: "Project" }],
+    tasks: [task, other],
+    replays: new Map(),
+    resumes: new Map(),
+  });
+  const otherId = remoteAgentThreadKey("s", "r", "other");
+  const otherView = views.find((candidate) => candidate.thread.threadId === otherId)!;
+  const firstView = views.find((candidate) => candidate.thread.threadId !== otherId)!;
+  const inventory = (first: RemoteThreadMetadata, second: RemoteThreadMetadata) => ({
+    ...snapshot(),
+    tasks: [task, other],
+    threadMetadata: new Map([
+      ["t", first],
+      ["other", second],
+    ]),
+  });
+  const untouched = () => record({ taskId: "other", revision: 2, title: "Kept" });
+  const h = await harness({ snapshots: [inventory(record({ revision: 1 }), untouched())] });
+  const before = h.current().project(otherView);
+  expect(before?.thread.title).toBe("Kept");
+  expect(h.current().project(otherView)).toBe(before);
+
+  await h.snapshots([inventory(record({ revision: 2, pinned: true }), untouched())]);
+  expect(h.current().project(firstView)?.thread.pinned).toBe(true);
+  expect(h.current().project(otherView)).toBe(before);
+
+  await h.snapshots([
+    inventory(record({ revision: 2, pinned: true }), { ...untouched(), revision: 3, title: "New" }),
+  ]);
+  const renamed = h.current().project(otherView);
+  expect(renamed).not.toBe(before);
+  expect(renamed?.thread.title).toBe("New");
+
+  const rebuilt = { ...otherView, repositoryLabel: "Renamed project" };
+  const represented = h.current().project(rebuilt);
+  expect(represented).not.toBe(renamed);
+  expect(represented?.repositoryLabel).toBe("Renamed project");
+  expect(represented?.thread.title).toBe("New");
+
+  await h.snapshots([
+    inventory(record({ revision: 2, pinned: true }), {
+      ...untouched(),
+      revision: 4,
+      removed: true,
+    }),
+  ]);
+  expect(h.current().project(otherView)).toBeNull();
 });
