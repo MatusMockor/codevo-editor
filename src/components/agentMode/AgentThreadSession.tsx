@@ -605,6 +605,7 @@ function AgentThreadSessionBody({
                 <AgentPendingUserMessage
                   onDismiss={onDismissPendingSend ?? ignorePendingSendDismissal}
                   openExternalLink={openExternalLink}
+                  provider={record.provider.kind}
                   send={pendingSend}
                   textClipboard={textClipboard}
                 />

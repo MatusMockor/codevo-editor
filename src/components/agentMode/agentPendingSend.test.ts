@@ -4,6 +4,7 @@ import {
   MAX_AGENT_PENDING_SENDS,
   agentPendingSendAttachments,
   agentPendingSendFor,
+  agentPendingSendProvider,
   reduceAgentPendingSends,
   type AgentPendingSend,
   type AgentPendingSends,
@@ -62,7 +63,7 @@ describe("agent pending sends", () => {
   it("shows a new-thread send only on the empty composer of the same project", () => {
     const state = reduceAgentPendingSends([], {
       kind: "begin",
-      send: send(1, { kind: "new", projectRootKey: "/app" }),
+      send: send(1, { kind: "new", projectRootKey: "/app", provider: "claudeCode" }),
     });
     expect(agentPendingSendFor(state, { kind: "new", projectRootKey: "/app" })?.id).toBe(1);
     expect(agentPendingSendFor(state, { kind: "new", projectRootKey: "/other" })).toBeNull();
@@ -136,5 +137,17 @@ describe("agent pending sends", () => {
       { view: { kind: "chip", key: "d3", name: "log.txt", glyph: "file" }, previewUrl: null },
       { view: { kind: "chip", key: "d4", name: "big.mov", glyph: "reference" }, previewUrl: null },
     ]);
+  });
+});
+
+describe("agentPendingSendProvider", () => {
+  it("reads the provider a new thread was launched with", () => {
+    expect(
+      agentPendingSendProvider(send(1, { kind: "new", projectRootKey: "/app", provider: "codex" })),
+    ).toBe("codex");
+  });
+
+  it("leaves a follow-up's provider to its thread", () => {
+    expect(agentPendingSendProvider(send(1, followUp("agt-1")))).toBeNull();
   });
 });

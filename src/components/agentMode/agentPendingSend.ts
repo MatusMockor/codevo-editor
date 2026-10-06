@@ -1,11 +1,12 @@
 import type { AgentComposerAttachmentDraft } from "../../application/useAgentComposerAttachments";
+import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentTurnAttachmentView } from "./agentTurnAttachmentPresentation";
 
 export const MAX_AGENT_PENDING_SENDS = 16;
 
 export type AgentPendingSendTarget =
   | { readonly kind: "followUp"; readonly threadId: string; readonly baseTurnId: string | null }
-  | { readonly kind: "new"; readonly projectRootKey: string };
+  | { readonly kind: "new"; readonly projectRootKey: string; readonly provider: AgentCliKind };
 
 export interface AgentPendingSendAttachment {
   readonly view: AgentTurnAttachmentView;
@@ -69,6 +70,11 @@ export function agentPendingSendFor(
     const entry = state[index];
     if (entry !== undefined && pendingSendMatches(entry.target, selection)) return entry;
   }
+  return null;
+}
+
+export function agentPendingSendProvider(send: AgentPendingSend): AgentCliKind | null {
+  if (send.target.kind === "new") return send.target.provider;
   return null;
 }
 

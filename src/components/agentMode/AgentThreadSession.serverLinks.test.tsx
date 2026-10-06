@@ -164,7 +164,7 @@ describe("AgentThreadSession localhost links", () => {
     const openLoopback = vi.fn(async () => undefined);
     const start = (projectRootKey: string) => ({
       id: 2,
-      target: { kind: "new" as const, projectRootKey },
+      target: { kind: "new" as const, projectRootKey, provider: "claudeCode" as const },
       prompt: "start http://localhost:3000/",
       attachments: [],
       sentAtEpochMs: NOW,

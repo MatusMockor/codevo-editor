@@ -18,9 +18,10 @@ import {
   type AgentComposerSessionStopPort,
   type AgentComposerStopSurface,
 } from "./useAgentComposerStop";
-import type { AgentPendingSend } from "./agentPendingSend";
+import type { AgentPendingSend, AgentPendingSendOutcome } from "./agentPendingSend";
 import {
   agentPendingSendSelection,
+  composerPendingSendTarget,
   holdComposerAttachments,
   pendingSendOutcome,
   prepareComposerAttachmentSend,
@@ -33,6 +34,14 @@ import {
   type AgentComposerDraftStore,
 } from "../../application/agentComposerDrafts";
 import { agentDraftDispatchKey } from "../../application/agentDispatchKeys";
+import {
+  openAgentComposerPromptDraft,
+  retainForeignAgentComposerDraft,
+  retargetAgentComposerPromptDraft,
+  settleAgentComposerPromptDraft,
+} from "../../application/agentComposerPromptDraft";
+import { useAgentComposerDraftLineage } from "../../application/useAgentComposerDraftLineage";
+import type { AgentComposerDraftCarry } from "../../domain/agentComposerDraftLineage";
 import { mergeRestoredPrompt } from "../../application/agentQueuedMessageEdit";
 import type { AgentComposerQueuedEdit } from "./agentComposerQueuedEdit";
 import { useAgentComposerQueuedEditPrompt } from "./useAgentComposerQueuedEditPrompt";
@@ -168,6 +177,7 @@ export type AgentComposerControllerProps = Omit<
 > & {
   readonly recovery?: AgentComposerRecovery | null;
   readonly draftKey: string | null;
+  readonly draftCarry?: AgentComposerDraftCarry | null;
   readonly previousWorktree?: AgentComposerPreviousWorktreeChoice | null;
   readonly commandCatalogProject?: AgentCommandCatalogServerProject | null;
 };
@@ -233,6 +243,7 @@ export function useAgentComposerControllerState({
   sessionStop,
 }: AgentComposerStateOptions): AgentComposerControllerState {
   const [selection, setSelection] = useState<ComposerSelection | null>(null);
+  const [draftNavigation, setDraftNavigation] = useState(0);
   const { preferences, rememberRepository } = useAgentComposerRepositoryPreference(
     repositoryPreferenceStorage,
   );
@@ -465,6 +476,7 @@ export function useAgentComposerControllerState({
     (projectRootKey: string, repositoryRoot: string) => {
       resetDraftLaunch(projectRootKey);
       onClearSelectedThread();
+      setDraftNavigation(nextDraftNavigation);
       const project =
         composerProjects.find((candidate) => candidate.projectRootKey === projectRootKey) ?? null;
       setSelection(
@@ -489,9 +501,13 @@ export function useAgentComposerControllerState({
     selectEnvironment: onSelectProjectEnvironment,
   });
 
-  const clearDraftTarget = useCallback(() => setSelection(null), []);
+  const clearDraftTarget = useCallback(() => {
+    setDraftNavigation(nextDraftNavigation);
+    setSelection(null);
+  }, []);
   const clearSelection = useCallback(() => {
     onClearSelectedThread();
+    setDraftNavigation(nextDraftNavigation);
     setSelection(null);
   }, [onClearSelectedThread]);
 
@@ -504,14 +520,21 @@ export function useAgentComposerControllerState({
     selectedThread !== null
       ? selectedThread.thread.owner.rootKey
       : (target?.projectRootKey ?? null);
-  const attachmentDraftKey = agentComposerDraftKey(selectedThread, target);
-  const attachmentsSurface =
-    attachmentDraftKey === null
-      ? agents.attachments
-      : (agents.attachments.forDraft?.(attachmentDraftKey) ?? agents.attachments);
+  const draftLineage = useAgentComposerDraftLineage({
+    threadId: selectedThread?.thread.threadId ?? null,
+    projectRootKey: target?.projectRootKey ?? null,
+    requestedRootKey: selection?.projectRootKey ?? railScope?.projectRootKey ?? null,
+    navigation: draftNavigation,
+    attachments: agents.attachments,
+  });
+  const attachmentsSurface = draftLineage.attachments;
+  const draftHeld = draftLineage.held;
   const attachments = useMemo(
-    () => composerAttachmentsForTarget(attachmentsSurface, attachmentTargetKey),
-    [attachmentsSurface, attachmentTargetKey],
+    () =>
+      draftHeld
+        ? attachmentsSurface
+        : composerAttachmentsForTarget(attachmentsSurface, attachmentTargetKey),
+    [attachmentsSurface, attachmentTargetKey, draftHeld],
   );
   const sendFollowUp = agents.sendFollowUp;
   const startThread = agents.startThread;
@@ -564,11 +587,30 @@ export function useAgentComposerControllerState({
         pendingAttachments && attachments !== null
           ? prepareComposerAttachmentSend(attachments, attachmentTargetKey, isCurrent)
           : null;
-      const prepared = attachmentSend === null ? {} : await attachmentSend.prepared;
-      if (prepared === null) return false;
       const hold = attachmentSend?.hold ?? holdComposerAttachments(null, []);
+      const pendingTarget = composerPendingSendTarget(authority, {
+        queuedEditThreadId: threadQueuedEdit?.threadId ?? null,
+        baseTurnId: selectedLastTurnId,
+        provider: submission.launch.provider,
+      });
+      const pendingId =
+        pendingTarget === null ? null : pendingSends.begin(pendingTarget, prompt, hold.drafts);
+      const settlePendingSend = (outcome: AgentPendingSendOutcome): void => {
+        if (pendingId !== null) pendingSends.settle(pendingId, outcome);
+      };
+      const withdrawPendingSend = (error: unknown): never => {
+        settlePendingSend("withdrawn");
+        throw error;
+      };
+      const prepared =
+        attachmentSend === null ? {} : await attachmentSend.prepared.catch(withdrawPendingSend);
+      if (prepared === null) {
+        settlePendingSend("withdrawn");
+        return false;
+      }
       if (!isCurrent() || !hold.isCurrent()) {
         hold.settle(false);
+        settlePendingSend("withdrawn");
         return false;
       }
       if (authority.kind === "followUp" && threadQueuedEdit?.threadId === authority.threadId) {
@@ -601,11 +643,6 @@ export function useAgentComposerControllerState({
               if (mountedRef.current) setSteering(false);
             }
           }
-          const pendingId = pendingSends.begin(
-            { kind: "followUp", threadId: authority.threadId, baseTurnId: selectedLastTurnId },
-            prompt,
-            hold.drafts,
-          );
           let sent = false;
           try {
             sent = await sendFollowUp(
@@ -621,8 +658,7 @@ export function useAgentComposerControllerState({
             );
           } finally {
             hold.settle(sent);
-            pendingSends.settle(
-              pendingId,
+            settlePendingSend(
               pendingSendOutcome(
                 sent,
                 !sent && followUpNeedsSessionRestart?.(authority.threadId) === true,
@@ -637,11 +673,6 @@ export function useAgentComposerControllerState({
           return sent;
         }
         case "new": {
-          const pendingId = pendingSends.begin(
-            { kind: "new", projectRootKey: authority.projectRootKey },
-            prompt,
-            hold.drafts,
-          );
           let started: AgentThreadStartResult | null = null;
           try {
             started = await startThread({
@@ -658,7 +689,7 @@ export function useAgentComposerControllerState({
             });
           } finally {
             hold.settle(started !== null);
-            pendingSends.settle(pendingId, pendingSendOutcome(started !== null, false));
+            settlePendingSend(pendingSendOutcome(started !== null, false));
           }
           if (started === null) return false;
           if (!isCurrent()) return false;
@@ -750,7 +781,8 @@ export function useAgentComposerControllerState({
       !agentThreadIsSteerable(selectedThread.thread)
         ? "This session supports queued messages only. Use the Codex app-server transport to send now."
         : null,
-    draftKey: agentComposerDraftKey(selectedThread, target),
+    draftKey: draftLineage.draftKey,
+    draftCarry: draftLineage.carry,
     queuedEdit: threadQueuedEdit,
     promptOwnerKey: JSON.stringify([
       selectedThread?.thread.threadId ?? null,
@@ -805,6 +837,10 @@ export function useAgentComposerControllerState({
 }
 
 const SAFE_GUARD = { kind: "safe" } as const;
+
+function nextDraftNavigation(current: number): number {
+  return current + 1;
+}
 
 function steerKeptThePrompt(outcome: AgentSteerOutcome): boolean {
   return outcome === "kept";
@@ -894,6 +930,7 @@ export function useAgentComposerPromptState(
 ): AgentComposerPromptProps {
   const {
     draftKey,
+    draftCarry = null,
     recovery,
     commandCatalogProject: _commandCatalogProject,
     ...composerProps
@@ -901,17 +938,12 @@ export function useAgentComposerPromptState(
   const queuedEdit = composerProps.queuedEdit ?? null;
   const [ownDrafts] = useState(createAgentComposerDraftStore);
   const drafts = controller.drafts ?? ownDrafts;
-  const [draft, setDraft] = useState(() => ({
-    key: draftKey,
-    text: readComposerDraft(drafts, draftKey),
-  }));
+  const [draft, setDraft] = useState(() => openAgentComposerPromptDraft(drafts, draftKey));
   if (draft.key !== draftKey) {
-    setDraft({ key: draftKey, text: seedComposerPrompt(drafts, draft.key, draftKey, draft.text) });
+    setDraft(retargetAgentComposerPromptDraft(drafts, draft, draftKey, draftCarry));
   }
   const prompt = draft.text;
-  useEffect(() => {
-    writeComposerDraft(drafts, draft.key, draft.text);
-  }, [draft, drafts]);
+  useEffect(() => settleAgentComposerPromptDraft(drafts, draft), [draft, drafts]);
   const ownerKey = composerProps.promptOwnerKey;
   const promptOwnerRef = useRef({ key: ownerKey, generation: 0 });
   if (promptOwnerRef.current.key !== ownerKey) {
@@ -970,7 +1002,7 @@ export function useAgentComposerPromptState(
       setDraft({ key: submittedDraftKey, text: "" });
       const restore = (): void => {
         if (promptOwnerRef.current !== submittedOwner) {
-          retainForeignComposerDraft(drafts, submittedDraftKey, submittedPrompt);
+          retainForeignAgentComposerDraft(drafts, submittedDraftKey, submittedPrompt);
           return;
         }
         const untouched = promptRevisionRef.current === clearedRevision;
@@ -1052,43 +1084,6 @@ export function agentComposerDraftKey(
   if (selectedThread !== null) return selectedThread.thread.threadId;
   if (target === null) return null;
   return agentDraftDispatchKey(target.projectRootKey);
-}
-
-function readComposerDraft(drafts: AgentComposerDraftStore, key: string | null): string {
-  if (key === null) return "";
-  return drafts.readDraft(key);
-}
-
-function seedComposerPrompt(
-  drafts: AgentComposerDraftStore,
-  previousKey: string | null,
-  nextKey: string | null,
-  current: string,
-): string {
-  if (nextKey === null) return current;
-  const stored = drafts.readDraft(nextKey);
-  if (stored !== "") return stored;
-  if (previousKey === null) return current;
-  return "";
-}
-
-function retainForeignComposerDraft(
-  drafts: AgentComposerDraftStore,
-  key: string | null,
-  text: string,
-): void {
-  if (key === null) return;
-  if (drafts.readDraft(key) !== "") return;
-  drafts.writeDraft(key, text);
-}
-
-function writeComposerDraft(
-  drafts: AgentComposerDraftStore,
-  key: string | null,
-  text: string,
-): void {
-  if (key === null) return;
-  drafts.writeDraft(key, text);
 }
 
 type ComposerSubmissionAuthority =

@@ -8,7 +8,6 @@ import {
   AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE,
   admitAgentAttachmentCount,
   admitAgentAttachmentToTurn,
-  agentAttachmentPromptLine,
   agentPasteClaim,
   planAgentAttachmentIntake,
   type AgentAttachmentCandidate,
@@ -22,18 +21,60 @@ import {
   type AgentImageSurfacePort,
 } from "../domain/agentImageShrink";
 import type { AgentAttachmentGateway, StagedAgentAttachment } from "./agentAttachmentPorts";
+import {
+  issueAgentAttachmentCarry,
+  redeemAgentAttachmentCarry,
+  type AgentAttachmentCarry,
+  type AgentAttachmentCarrySource,
+} from "./agentAttachmentCarry";
+import { carryItems, importCarriedDrafts } from "./agentAttachmentCarriedIntake";
+import {
+  AGENT_ATTACHMENT_UNREADABLE_REFUSAL,
+  agentAttachmentDuplicateRefusal,
+  appendDraft,
+  blankDraft,
+  composerDrafts,
+  countedDrafts,
+  defaultDraftId,
+  discardDraft,
+  DRAFT_STORAGE_FULL,
+  duplicatePathDraft,
+  failed,
+  failedDraft,
+  forgetDraft,
+  forgetDrafts,
+  MAX_RETAINED_DRAFT_BYTES,
+  MAX_RETAINED_DRAFTS,
+  otherDrafts,
+  referenceDraft,
+  releaseDraft,
+  replaceDraft,
+  sameOwner,
+  settleDraft,
+  stagedDraft,
+  type AttachmentDraft,
+  type DraftCoordinator,
+  type DraftStore,
+} from "./agentAttachmentDraftStore";
+import {
+  AGENT_ATTACHMENT_INTAKE_BUSY_REFUSAL,
+  AGENT_ATTACHMENT_INTAKE_UNAVAILABLE_REFUSAL,
+  agentAttachmentIntakeTicketIsOpen,
+  MAX_PENDING_AGENT_ATTACHMENT_INTAKES,
+  openAgentAttachmentIntakeTicket,
+  type AgentAttachmentIntakeTicket,
+} from "./agentAttachmentIntakeTickets";
 import { describeAgentAttachmentSource } from "./agentAttachmentPathIntake";
 import { AGENT_TASKS_SOURCE, attempt, errorMessageOf } from "./agentProjectAuthority";
 import type { AgentTurnAttachmentIntent } from "./agentThreadPorts";
 import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 
-export const AGENT_ATTACHMENT_UNREADABLE_REFUSAL = "The image could not be read.";
+export {
+  AGENT_ATTACHMENT_UNREADABLE_REFUSAL,
+  agentAttachmentDuplicateRefusal,
+} from "./agentAttachmentDraftStore";
 export const AGENT_ATTACHMENT_STAGE_FAILURE_PREFIX = "Unable to save the attachment: ";
 export const AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE = "This path is no longer available";
-
-export function agentAttachmentDuplicateRefusal(name: string): string {
-  return `${name} is already attached.`;
-}
 
 export interface AgentAttachmentOwner {
   readonly projectRootKey: string;
@@ -106,6 +147,15 @@ export interface AgentComposerAttachmentsSurface {
   refuse(reason: string): void;
   dismissRefusal(): void;
   prepareTurn(projectRootKey: string): Promise<AgentComposerTurnAttachments | null>;
+  releaseForCarry?(): AgentAttachmentCarry | null;
+  acceptCarry?(projectRootKey: string, take: () => AgentAttachmentCarry | null): boolean;
+  readonly pendingIntake?: boolean;
+  openIntake?(projectRootKey: string): AgentAttachmentIntakeTicket | null;
+  holdsIntake?(ticket: AgentAttachmentIntakeTicket): boolean;
+  continueIntake?(
+    ticket: AgentAttachmentIntakeTicket,
+    isCurrent: () => boolean,
+  ): ((sources: ReadonlyArray<AgentAttachmentSource>) => Promise<void>) | null;
 }
 
 export interface AgentComposerAttachmentsDependencies {
@@ -121,38 +171,10 @@ export interface AgentComposerAttachmentsDependencies {
 }
 
 export interface AgentAttachmentPreviewUrls {
-  readonly issue: (bytes: ArrayBuffer, mime: AgentImageMime) => string;
+  readonly issue: (blob: Blob) => string;
   readonly revoke: (url: string | null) => void;
   readonly revokeAll: () => void;
 }
-
-interface AttachmentDraft extends AgentComposerAttachmentDraft {
-  readonly owner: AgentAttachmentOwner;
-}
-
-interface DraftStore {
-  projectRootKey: string | null;
-  readonly drafts: Map<string, AttachmentDraft>;
-  readonly held: Map<string, { readonly anchor: AttachmentDraft; readonly draft: AttachmentDraft }>;
-}
-
-interface DraftCoordinator {
-  readonly deps: () => AgentComposerAttachmentsDependencies;
-  readonly gateway: AgentAttachmentGateway;
-  readonly store: DraftStore;
-  readonly previews: AgentAttachmentPreviewUrls;
-  readonly publish: () => void;
-  readonly setRefusal: (reason: string | null) => void;
-  readonly ownerIsCurrent: (owner: AgentAttachmentOwner) => boolean;
-  readonly storeIsCurrent: () => boolean;
-  readonly retainedDrafts: () => ReadonlyArray<AgentComposerAttachmentDraft>;
-}
-
-const UTF8_ENCODER = new TextEncoder();
-const DRAFT_STORAGE_FULL =
-  "Attachment draft storage is full. Remove attachments from another conversation first.";
-const MAX_RETAINED_DRAFT_BYTES = 40 * 1024 * 1024;
-const MAX_RETAINED_DRAFTS = 32;
 
 export function useAgentComposerAttachments(
   dependencies: AgentComposerAttachmentsDependencies,
@@ -228,7 +250,15 @@ function createDraftScope(
   publish: () => void,
   retainedDrafts: () => ReadonlyArray<AgentComposerAttachmentDraft>,
 ) {
-  const store: DraftStore = { projectRootKey: null, drafts: new Map(), held: new Map() };
+  const store: DraftStore = {
+    projectRootKey: null,
+    drafts: new Map(),
+    held: new Map(),
+    sources: new Map(),
+    carried: new Set(),
+    queued: new Set(),
+    tickets: new Map(),
+  };
   let disposed = false;
   let epoch = 0;
   let lastGateway = deps().gateway;
@@ -284,19 +314,55 @@ function createDraftScope(
     return async (sources: ReadonlyArray<AgentAttachmentSource>): Promise<void> => {
       if (!context.ownerIsCurrent(owner)) return;
       retarget(context, target);
-      for (const source of sources) {
-        if (!context.ownerIsCurrent(owner)) return;
-        const admitted = await intakeAgentAttachmentSource(context, owner, source);
-        if (admitted === "refused-count") return;
+      for (const source of sources) store.queued.add(source);
+      try {
+        for (const source of sources) {
+          if (!context.ownerIsCurrent(owner)) return;
+          const admitted = await intakeAgentAttachmentSource(context, owner, source);
+          store.queued.delete(source);
+          if (admitted === "refused-count") return;
+        }
+      } finally {
+        for (const source of sources) store.queued.delete(source);
       }
     };
+  };
+  const holdsIntake = (ticket: AgentAttachmentIntakeTicket): boolean => {
+    const owner = store.tickets.get(ticket);
+    if (disposed || owner === undefined || !agentAttachmentIntakeTicketIsOpen(ticket)) return false;
+    const live = deps().resolveOwner(owner.projectRootKey);
+    return live !== null && sameOwner(live, owner);
+  };
+  const pendingTickets = (): ReadonlyArray<AgentAttachmentIntakeTicket> => {
+    for (const ticket of [...store.tickets.keys()]) {
+      if (!agentAttachmentIntakeTicketIsOpen(ticket)) store.tickets.delete(ticket);
+    }
+    return [...store.tickets.keys()];
+  };
+  const openIntake = (target: string): AgentAttachmentIntakeTicket | null => {
+    const owner = deps().resolveOwner(target);
+    if (coordinator() === null || owner === null) {
+      setRefusal(AGENT_ATTACHMENT_INTAKE_UNAVAILABLE_REFUSAL);
+      return null;
+    }
+    if (pendingTickets().length >= MAX_PENDING_AGENT_ATTACHMENT_INTAKES) {
+      setRefusal(AGENT_ATTACHMENT_INTAKE_BUSY_REFUSAL);
+      return null;
+    }
+    const ticket = openAgentAttachmentIntakeTicket();
+    store.tickets.set(ticket, owner);
+    return ticket;
+  };
+  const continueIntake = (ticket: AgentAttachmentIntakeTicket, isCurrent: () => boolean) => {
+    const owner = store.tickets.get(ticket);
+    if (owner === undefined || !holdsIntake(ticket)) return null;
+    return captureIntake(owner.projectRootKey, () => holdsIntake(ticket) && isCurrent());
   };
   const remove = (draftId: string): void => {
     const context = coordinator();
     if (context === null) return;
     const draft = store.drafts.get(draftId);
-    store.drafts.delete(draftId);
-    store.held.delete(draftId);
+    forgetDraft(store, draftId);
     publish();
     if (draft !== undefined) void releaseDraft(context, draft);
   };
@@ -315,10 +381,53 @@ function createDraftScope(
           .catch((error: unknown) => deps().reportError(AGENT_TASKS_SOURCE, error));
       }
     }
-    store.drafts.clear();
-    store.held.clear();
+    forgetDrafts(store);
+    store.queued.clear();
+    store.tickets.clear();
     store.projectRootKey = null;
     publish();
+  };
+  const discard = (): void => {
+    const previousRefusal = refusal;
+    const discarded = store.drafts.size > 0;
+    clear();
+    setRefusal(discarded ? AGENT_ATTACHMENTS_DISCARDED_NOTICE : previousRefusal);
+  };
+  const prune = (): void => {
+    const currentOwner =
+      intakeOwner === null ? null : deps().resolveOwner(intakeOwner.projectRootKey);
+    if (
+      deps().gateway !== lastGateway ||
+      (intakeOwner !== null && (currentOwner === null || !sameOwner(intakeOwner, currentOwner))) ||
+      [...store.drafts.values()].some((draft) => {
+        const owner = deps().resolveOwner(draft.owner.projectRootKey);
+        return owner === null || !sameOwner(owner, draft.owner) || deps().gateway !== lastGateway;
+      })
+    ) {
+      discard();
+      lastGateway = deps().gateway;
+    }
+  };
+  const releaseForCarry = (): AgentAttachmentCarry | null => {
+    prune();
+    if (disposed || store.held.size > 0) return null;
+    const carry = issueAgentAttachmentCarry(carryItems(store), pendingTickets());
+    if (carry !== null) clear();
+    return carry;
+  };
+  const acceptCarry = (target: string, take: () => AgentAttachmentCarry | null): boolean => {
+    prune();
+    if (coordinator() === null || deps().resolveOwner(target) === null) return false;
+    const { items, tickets } = redeemAgentAttachmentCarry(take());
+    const captured = coordinator();
+    const owner = deps().resolveOwner(target);
+    if (captured === null || owner === null) return false;
+    for (const ticket of tickets) store.tickets.set(ticket, owner);
+    if (items.length === 0) return true;
+    intakeOwner = owner;
+    retarget(captured, target);
+    void importCarriedDrafts(captured, owner, items, CARRIED_STAGING);
+    return true;
   };
   const markSent = (draftIds: ReadonlyArray<string>): void => {
     const context = coordinator();
@@ -329,8 +438,7 @@ function createDraftScope(
       if (draft === undefined) continue;
       if (deps().sentAttachmentDisposition === "release") void releaseDraft(context, draft);
       else previews.revoke(draft.previewUrl);
-      store.drafts.delete(draftId);
-      store.held.delete(draftId);
+      forgetDraft(store, draftId);
     }
     if (store.drafts.size === 0) store.projectRootKey = null;
     publish();
@@ -408,35 +516,20 @@ function createDraftScope(
       refuse: setRefusal,
       dismissRefusal,
       prepareTurn,
+      releaseForCarry,
+      acceptCarry,
+      pendingIntake: store.queued.size > 0 || pendingTickets().length > 0,
+      openIntake,
+      holdsIntake,
+      continueIntake,
     };
-  };
-  const discard = (): void => {
-    const previousRefusal = refusal;
-    const discarded = store.drafts.size > 0;
-    clear();
-    setRefusal(discarded ? AGENT_ATTACHMENTS_DISCARDED_NOTICE : previousRefusal);
   };
   return {
     snapshot,
     retained: (): ReadonlyArray<AgentComposerAttachmentDraft> => [...store.drafts.values()],
     clear,
     discard,
-    prune: () => {
-      const currentOwner =
-        intakeOwner === null ? null : deps().resolveOwner(intakeOwner.projectRootKey);
-      if (
-        deps().gateway !== lastGateway ||
-        (intakeOwner !== null &&
-          (currentOwner === null || !sameOwner(intakeOwner, currentOwner))) ||
-        [...store.drafts.values()].some((draft) => {
-          const owner = deps().resolveOwner(draft.owner.projectRootKey);
-          return owner === null || !sameOwner(owner, draft.owner) || deps().gateway !== lastGateway;
-        })
-      ) {
-        discard();
-        lastGateway = deps().gateway;
-      }
-    },
+    prune,
     dispose: () => {
       disposed = true;
     },
@@ -493,6 +586,7 @@ async function intakeAgentAttachmentSource(
     (error) => context.deps().reportError(AGENT_TASKS_SOURCE, error),
   );
   if (!context.ownerIsCurrent(owner)) return "settled";
+  context.store.queued.delete(rawSource);
   if (described === null) {
     appendDraft(context, failedDraft(draftId, owner, AGENT_ATTACHMENT_PATH_REFUSAL));
     return "settled";
@@ -521,6 +615,7 @@ async function intakeAgentAttachmentSource(
         source.path,
         candidate.mime === "inode/directory" ? "Folder path" : plan.notice,
       ),
+      source,
     );
     return "settled";
   }
@@ -528,7 +623,7 @@ async function intakeAgentAttachmentSource(
     ...blankDraft(draftId, owner, plan.kind, candidate.name),
     path: source.kind === "path" ? source.path : null,
   };
-  appendDraft(context, pending);
+  appendDraft(context, pending, source);
   if (plan.kind === "file") {
     await stageFileDraft(context, pending, candidate, source);
     return "settled";
@@ -537,21 +632,7 @@ async function intakeAgentAttachmentSource(
   return "settled";
 }
 
-function countedDrafts(context: DraftCoordinator): ReadonlyArray<AttachmentDraft> {
-  return [...context.store.drafts.values()].filter((draft) => draft.state !== "failed");
-}
-
-function composerDrafts(store: DraftStore): AttachmentDraft[] {
-  return [...store.drafts.values()].filter((draft) => !store.held.has(draft.draftId));
-}
-
-function duplicatePathDraft(
-  context: DraftCoordinator,
-  source: AgentAttachmentSource,
-): AttachmentDraft | null {
-  if (source.kind !== "path") return null;
-  return countedDrafts(context).find((draft) => draft.path === source.path) ?? null;
-}
+const CARRIED_STAGING = { file: stageFileDraft, image: stageImageDraft };
 
 async function stageFileDraft(
   context: DraftCoordinator,
@@ -574,7 +655,7 @@ async function stageFileDraft(
       bytes: source.bytes,
     }),
   );
-  settleStaged(context, pending, staged, "file");
+  settleStaged(context, pending, staged, "file", null);
 }
 
 async function stageImageDraft(
@@ -619,11 +700,17 @@ async function stageImageDraft(
     }),
   );
   if (!staged.ok) {
-    settleStaged(context, { ...pending, name: shrunk.name }, staged, "image");
+    settleStaged(context, { ...pending, name: shrunk.name }, staged, "image", null);
     return;
   }
-  const previewUrl = context.previews.issue(shrunk.bytes, shrunk.mime);
-  settleStaged(context, { ...pending, name: shrunk.name, previewUrl }, staged, "image");
+  const blob = new Blob([shrunk.bytes], { type: shrunk.mime });
+  const previewUrl = context.previews.issue(blob);
+  settleStaged(context, { ...pending, name: shrunk.name, previewUrl }, staged, "image", {
+    kind: "blob",
+    name: shrunk.name,
+    mime: shrunk.mime,
+    blob,
+  });
 }
 
 async function prepareAgentTurnAttachments(
@@ -696,20 +783,6 @@ async function readImageBytes(
   return null;
 }
 
-async function releaseDraft(context: DraftCoordinator, draft: AttachmentDraft): Promise<void> {
-  context.previews.revoke(draft.previewUrl);
-  const attachmentId = draft.attachmentId;
-  if (attachmentId === null) return;
-  const released = await attempt(() =>
-    context.gateway.releaseAgentAttachment({
-      workspaceId: draft.owner.workspaceId,
-      attachmentId,
-    }),
-  );
-  if (released.ok) return;
-  context.deps().reportError(AGENT_TASKS_SOURCE, released.error);
-}
-
 function settleStaged(
   context: DraftCoordinator,
   pending: AttachmentDraft,
@@ -717,6 +790,7 @@ function settleStaged(
     | { readonly ok: true; readonly value: StagedAgentAttachment }
     | { readonly ok: false; readonly error: unknown },
   kind: "image" | "file",
+  source: AgentAttachmentCarrySource | null,
 ): void {
   if (!context.ownerIsCurrent(pending.owner)) {
     if (staged.ok) void releaseDraft(context, stagedDraft(pending, staged.value, kind));
@@ -730,19 +804,15 @@ function settleStaged(
       .filter((draft) => draft.draftId !== settled.draftId && draft.kind !== "reference")
       .reduce((sum, draft) => sum + draft.bytes, 0);
     if (retainedBytes + settled.bytes > MAX_RETAINED_DRAFT_BYTES) {
-      context.setRefusal(DRAFT_STORAGE_FULL);
-      void releaseDraft(context, settled);
-      discardDraft(context, settled.draftId);
+      refuseStaged(context, settled, DRAFT_STORAGE_FULL);
       return;
     }
     const admission = admitAgentAttachmentToTurn(otherDrafts(context, settled.draftId), settled);
     if (admission.kind === "refused") {
-      context.setRefusal(admission.reason);
-      void releaseDraft(context, settled);
-      discardDraft(context, settled.draftId);
+      refuseStaged(context, settled, admission.reason);
       return;
     }
-    settleDraft(context, pending, settled);
+    settleDraft(context, pending, settled, source);
     return;
   }
   context.deps().reportError(AGENT_TASKS_SOURCE, staged.error);
@@ -753,20 +823,14 @@ function settleStaged(
   );
 }
 
-function otherDrafts(context: DraftCoordinator, draftId: string): ReadonlyArray<AttachmentDraft> {
-  return [...context.store.drafts.values()].filter(
-    (draft) => draft.draftId !== draftId && draft.state !== "failed",
-  );
-}
-
-function settleDraft(
-  context: DraftCoordinator,
-  pending: AttachmentDraft,
-  settled: AttachmentDraft,
-): void {
-  if (context.ownerIsCurrent(pending.owner) && replaceDraft(context, settled)) return;
+function refuseStaged(context: DraftCoordinator, settled: AttachmentDraft, reason: string): void {
   void releaseDraft(context, settled);
-  discardDraft(context, pending.draftId);
+  if (context.store.carried.has(settled.draftId)) {
+    replaceDraft(context, failed({ ...settled, attachmentId: null, previewUrl: null }, reason));
+    return;
+  }
+  context.setRefusal(reason);
+  discardDraft(context, settled.draftId);
 }
 
 function retarget(context: DraftCoordinator, projectRootKey: string): void {
@@ -778,32 +842,7 @@ function retarget(context: DraftCoordinator, projectRootKey: string): void {
 
 function releaseAll(context: DraftCoordinator): void {
   for (const draft of [...context.store.drafts.values()]) void releaseDraft(context, draft);
-  context.store.drafts.clear();
-  context.store.held.clear();
-}
-
-function appendDraft(context: DraftCoordinator, draft: AttachmentDraft): void {
-  if (context.store.projectRootKey !== draft.owner.projectRootKey) return;
-  if (context.retainedDrafts().length >= MAX_RETAINED_DRAFTS) {
-    context.setRefusal(DRAFT_STORAGE_FULL);
-    return;
-  }
-  context.store.drafts.set(draft.draftId, draft);
-  context.publish();
-}
-
-function replaceDraft(context: DraftCoordinator, draft: AttachmentDraft): boolean {
-  if (context.store.projectRootKey !== draft.owner.projectRootKey) return false;
-  if (!context.store.drafts.has(draft.draftId)) return false;
-  context.store.drafts.set(draft.draftId, draft);
-  context.publish();
-  return true;
-}
-
-function discardDraft(context: DraftCoordinator, draftId: string): void {
-  context.store.held.delete(draftId);
-  if (!context.store.drafts.delete(draftId)) return;
-  context.publish();
+  forgetDrafts(context.store);
 }
 
 function markReferenceMissing(context: DraftCoordinator, draftId: string, missing: boolean): void {
@@ -866,92 +905,6 @@ function unsupportedImageRefusal(reason: never): never {
   throw new TypeError(`Unsupported image refusal: ${String(reason)}.`);
 }
 
-function referenceDraft(
-  pending: AttachmentDraft,
-  bytes: number,
-  path: string,
-  notice: string | null,
-): AttachmentDraft {
-  return {
-    ...pending,
-    kind: "reference",
-    state: "ready",
-    bytes,
-    path,
-    previewUrl: null,
-    attachmentId: null,
-    mime: null,
-    width: null,
-    height: null,
-    failure: null,
-    notice,
-    promptLineBytesMax: promptLineBytes({
-      kind: "reference",
-      name: pending.name,
-      path,
-      bytes,
-    }),
-  };
-}
-
-function stagedDraft(
-  pending: AttachmentDraft,
-  staged: StagedAgentAttachment,
-  kind: "image" | "file",
-): AttachmentDraft {
-  return {
-    ...pending,
-    kind,
-    state: "ready",
-    name: staged.name,
-    bytes: staged.bytes,
-    mime: staged.mime,
-    width: staged.width,
-    height: staged.height,
-    attachmentId: staged.attachmentId,
-    failure: null,
-    promptLineBytesMax: staged.promptLineBytesMax,
-  };
-}
-
-function failed(pending: AttachmentDraft, failure: string): AttachmentDraft {
-  return { ...pending, state: "failed", failure };
-}
-
-function failedDraft(
-  draftId: string,
-  owner: AgentAttachmentOwner,
-  failure: string,
-): AttachmentDraft {
-  return failed(blankDraft(draftId, owner, "reference", "attachment"), failure);
-}
-
-function blankDraft(
-  draftId: string,
-  owner: AgentAttachmentOwner,
-  kind: AgentAttachmentKind,
-  name: string,
-): AttachmentDraft {
-  return {
-    draftId,
-    owner,
-    kind,
-    state: "staging",
-    name,
-    bytes: 0,
-    mime: null,
-    width: null,
-    height: null,
-    attachmentId: null,
-    path: null,
-    previewUrl: null,
-    failure: null,
-    notice: null,
-    missing: false,
-    promptLineBytesMax: 0,
-  };
-}
-
 function turnAttachmentIntent(draft: AttachmentDraft): AgentTurnAttachmentIntent {
   if (draft.kind === "reference") {
     return { kind: "reference", name: draft.name, path: draft.path ?? "", bytes: draft.bytes };
@@ -974,24 +927,6 @@ function promptLineBytesOf(drafts: ReadonlyArray<AgentComposerAttachmentDraft>):
   return lines.reduce((total, draft) => total + draft.promptLineBytesMax, separators);
 }
 
-function promptLineBytes(attachment: {
-  readonly kind: "reference";
-  readonly name: string;
-  readonly path: string;
-  readonly bytes: number;
-}): number {
-  return UTF8_ENCODER.encode(agentAttachmentPromptLine(attachment)).byteLength;
-}
-
-function sameOwner(left: AgentAttachmentOwner, right: AgentAttachmentOwner): boolean {
-  return (
-    left.projectRootKey === right.projectRootKey &&
-    left.ownerId === right.ownerId &&
-    left.generation === right.generation &&
-    left.workspaceId === right.workspaceId
-  );
-}
-
 function createAgentAttachmentPreviewUrls(
   deps: () => AgentComposerAttachmentsDependencies,
 ): AgentAttachmentPreviewUrls {
@@ -1004,9 +939,9 @@ function createAgentAttachmentPreviewUrls(
   }
 
   return {
-    issue: (bytes, mime) => {
+    issue: (blob) => {
       const createObjectUrl = deps().createObjectUrl ?? defaultCreateObjectUrl;
-      const url = createObjectUrl(new Blob([bytes], { type: mime }));
+      const url = createObjectUrl(blob);
       issued.add(url);
       return url;
     },
@@ -1023,10 +958,4 @@ function defaultCreateObjectUrl(blob: Blob): string {
 
 function defaultRevokeObjectUrl(url: string): void {
   URL.revokeObjectURL(url);
-}
-
-function defaultDraftId(): string {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

@@ -4,6 +4,7 @@ import type {
   AgentComposerAttachmentDraft,
   AgentComposerAttachmentsSurface,
 } from "../../application/useAgentComposerAttachments";
+import { normalizeAgentCliKind } from "../../domain/agentSettings";
 import {
   agentPendingSendAttachments,
   agentPendingSendFor,
@@ -148,6 +149,32 @@ export function prepareComposerAttachmentSend(
     }
   })();
   return { hold, prepared };
+}
+
+export type ComposerSendRoute =
+  | { readonly kind: "followUp"; readonly threadId: string; readonly steer: boolean }
+  | { readonly kind: "new"; readonly projectRootKey: string };
+
+export interface ComposerSendContext {
+  readonly queuedEditThreadId: string | null;
+  readonly baseTurnId: string | null;
+  readonly provider: unknown;
+}
+
+export function composerPendingSendTarget(
+  route: ComposerSendRoute,
+  context: ComposerSendContext,
+): AgentPendingSendTarget | null {
+  if (route.kind === "new") {
+    return {
+      kind: "new",
+      projectRootKey: route.projectRootKey,
+      provider: normalizeAgentCliKind(context.provider),
+    };
+  }
+  if (route.steer) return null;
+  if (context.queuedEditThreadId === route.threadId) return null;
+  return { kind: "followUp", threadId: route.threadId, baseTurnId: context.baseTurnId };
 }
 
 export function pendingSendOutcome(
