@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.103] - 2026-10-06
+
+### Fixed
+
+- A new conversation's draft keeps its text and attachments when you change where
+  it runs, including an image that is still being added.
+- A sent message shows that work has started right away, including messages with
+  attachments and new Codex conversations.
+
 ## [0.2.0-beta.102] - 2026-10-06
 
 ### Added
