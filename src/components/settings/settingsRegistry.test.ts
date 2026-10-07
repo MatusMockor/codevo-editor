@@ -20,6 +20,7 @@ describe("settings registry", () => {
       ["general", "General"],
       ["agents", "Providers"],
       ["environments", "Environments"],
+      ["mcp", "MCP servers"],
       ["keymap", "Keybindings"],
       ["index", "Index & languages"],
       ["snippets", "Snippets"],
@@ -36,6 +37,7 @@ describe("settings registry", () => {
     });
     expect(resolveSettingsRoute("usage")).toEqual({ section: "usage", row: null });
     expect(resolveSettingsRoute("archive")).toEqual({ section: "archive", row: null });
+    expect(resolveSettingsRoute("mcp")).toEqual({ section: "mcp", row: null });
   });
 
   it("files every appearance row and the single updates row under General", () => {
@@ -60,6 +62,7 @@ describe("settings registry", () => {
       "usage.localActivity",
     ]);
     expect(settingsRowsForSection("archive").map((row) => row.id)).toEqual(["archive.threads"]);
+    expect(settingsRowsForSection("mcp").map((row) => row.id)).toEqual(["mcp.servers"]);
   });
 
   it("gives every section at least one row and only rows of that section", () => {
@@ -93,6 +96,18 @@ describe("settings registry", () => {
       section: "index",
       row: "index.gitDirectoryMappings",
     });
+  });
+
+  it("describes the MCP servers section and its always-available row", () => {
+    const section = settingsSectionDescriptor("mcp");
+    const row = settingsRowDescriptor("mcp.servers");
+
+    expect(section.label).toBe("MCP servers");
+    expect(section.description).toBe("Servers your agent providers can reach, and their status.");
+    expect(row.availability).toBe("always");
+    expect(row.keywords).toEqual(
+      expect.arrayContaining(["mcp", "server", "tool", "connector", "auth"]),
+    );
   });
 
   it("looks descriptors up by id", () => {

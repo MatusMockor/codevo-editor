@@ -1095,6 +1095,25 @@ describe("AgentComposer", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("opens MCP servers for /mcp and clears the prompt, even while a turn dispatches", () => {
+    const onOpenMcpServers = vi.fn();
+    const onPromptChange = vi.fn();
+    const onSubmit = vi.fn();
+    render({
+      dispatching: true,
+      prompt: "/mcp",
+      submitBlocked: true,
+      onOpenMcpServers,
+      onPromptChange,
+      onSubmit,
+    });
+
+    expect(pressEnter().defaultPrevented).toBe(true);
+    expect(onOpenMcpServers).toHaveBeenCalledTimes(1);
+    expect(onPromptChange).toHaveBeenLastCalledWith("");
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   it("sends on Enter in every mode and keeps Shift+Enter and IME input multiline", () => {
     const modes: ReadonlyArray<AgentComposerProps["mode"]> = [
       { kind: "new" },

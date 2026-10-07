@@ -17,7 +17,16 @@ import {
   rankAgentComposerMenu,
 } from "./agentComposerCommandMenu";
 
-const CLAUDE_BUILTINS = ["model", "permissions", "reasoning", "plan", "new", "settings", "usage"];
+const CLAUDE_BUILTINS = [
+  "model",
+  "permissions",
+  "reasoning",
+  "plan",
+  "new",
+  "settings",
+  "usage",
+  "mcp",
+];
 const claudeFixture = parseAgentCommandCatalog(wireContract.catalogs[0]?.value);
 const codexFixture = parseAgentCommandCatalog(wireContract.catalogs[1]?.value);
 
@@ -64,6 +73,7 @@ describe("composer menu merge", () => {
       "new",
       "settings",
       "usage",
+      "mcp",
       "skill:work-pets:create-pet",
       "skill:skill-creator",
     ]);
@@ -74,6 +84,7 @@ describe("composer menu merge", () => {
     expect(keys(catalog, "", false)).toEqual([...CLAUDE_BUILTINS, "command:compact", "command:pr"]);
     expect(keys(catalog, "", true)).toEqual([...CLAUDE_BUILTINS, "compact", "command:pr"]);
     expect(keys(catalog, "model")).toEqual(["model"]);
+    expect(keys(claude([command("mcp")]), "mcp")).toEqual(["mcp"]);
   });
 
   it("keeps a provider entry whose built-in namesake is not offered for that provider", () => {
@@ -236,8 +247,8 @@ describe("composer menu cap and truthful truncation", () => {
 
   it("says nothing when every match is shown", () => {
     const view = rankAgentComposerMenu(agentComposerMenu("claudeCode", false, many(10)), typed(""));
-    expect(view.rows).toHaveLength(17);
-    expect(view.matched).toBe(17);
+    expect(view.rows).toHaveLength(18);
+    expect(view.matched).toBe(18);
     expect(agentComposerMenuNotice(view)).toBeNull();
   });
 
@@ -246,10 +257,10 @@ describe("composer menu cap and truthful truncation", () => {
     const view = rankAgentComposerMenu(menu, typed(""));
     expect(MAX_AGENT_COMPOSER_MENU_ROWS).toBe(50);
     expect(view.rows).toHaveLength(50);
-    expect(view.matched).toBe(212);
-    expect(agentComposerMenuNotice(view)).toBe("Showing 50 of 212. Keep typing to narrow.");
-    expect(view.rows.slice(0, 7).map(agentComposerMenuItemKey)).toEqual(CLAUDE_BUILTINS);
-    expect(view.rows.slice(7).map(agentComposerInvocation)[0]).toBe("/cmd-000");
+    expect(view.matched).toBe(213);
+    expect(agentComposerMenuNotice(view)).toBe("Showing 50 of 213. Keep typing to narrow.");
+    expect(view.rows.slice(0, 8).map(agentComposerMenuItemKey)).toEqual(CLAUDE_BUILTINS);
+    expect(view.rows.slice(8).map(agentComposerInvocation)[0]).toBe("/cmd-000");
   });
 
   it("drops the notice once typing narrows the matches under the cap", () => {
@@ -280,7 +291,7 @@ describe("composer menu cap and truthful truncation", () => {
   it("reports a lower bound when both the cap and the backend hide matches", () => {
     const menu = agentComposerMenu("claudeCode", false, many(205, true));
     const view = rankAgentComposerMenu(menu, typed(""));
-    expect(agentComposerMenuNotice(view)).toBe("Showing 50 of 212 or more. Keep typing to narrow.");
+    expect(agentComposerMenuNotice(view)).toBe("Showing 50 of 213 or more. Keep typing to narrow.");
   });
 
   it("honors the contract's truncated fixture and a custom cap", () => {
@@ -288,8 +299,8 @@ describe("composer menu cap and truthful truncation", () => {
     const menu = agentComposerMenu("claudeCode", false, fixture);
     const view = rankAgentComposerMenu(menu, typed(""), 3);
     expect(view.rows.map(agentComposerMenuItemKey)).toEqual(["model", "permissions", "reasoning"]);
-    expect(view.matched).toBe(8);
-    expect(agentComposerMenuNotice(view)).toBe("Showing 3 of 8 or more. Keep typing to narrow.");
+    expect(view.matched).toBe(9);
+    expect(agentComposerMenuNotice(view)).toBe("Showing 3 of 9 or more. Keep typing to narrow.");
     expect(rankAgentComposerMenu(menu, typed(""), 0).rows).toEqual([]);
   });
 

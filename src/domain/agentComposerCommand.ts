@@ -2,7 +2,7 @@ import { AGENT_COMMAND_CATALOG_LIMITS, type AgentCommandCatalogEntry } from "./a
 import type { AgentCliKind } from "./agentTask";
 
 export type AgentComposerCommandId =
-  "model" | "permissions" | "reasoning" | "plan" | "new" | "settings" | "usage" | "compact";
+  "model" | "permissions" | "reasoning" | "plan" | "new" | "settings" | "usage" | "mcp" | "compact";
 
 export interface AgentComposerCommand {
   readonly kind: "builtin";
@@ -31,6 +31,7 @@ const COMMANDS: ReadonlyArray<AgentComposerCommand> = [
   builtin("new", "New thread", "Start a fresh conversation in this project."),
   builtin("settings", "Provider settings", "Manage your agent providers."),
   builtin("usage", "Usage limits", "Show plan limits for Claude Code and Codex."),
+  builtin("mcp", "MCP servers", "Show MCP servers and their connection status."),
   builtin("compact", "Compact context", "Summarize this Claude conversation to free up context."),
 ];
 
@@ -50,6 +51,7 @@ export function agentComposerCommands(
       case "new":
       case "settings":
       case "usage":
+      case "mcp":
         return true;
       default: {
         const unreachable: never = command.id;

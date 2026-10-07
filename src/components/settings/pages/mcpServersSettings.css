@@ -1,0 +1,63 @@
+.settings-mcp-project__path {
+  overflow-wrap: anywhere;
+  font-family: var(--cv-font-mono);
+  font-size: var(--cv-t-xs);
+}
+
+.settings-mcp-summary {
+  display: flex;
+  align-items: center;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-md);
+  gap: var(--cv-space-4);
+}
+
+.settings-mcp-summary[data-tone="problem"] {
+  color: var(--cv-danger);
+}
+
+.settings-mcp-server .settings-row__title,
+.settings-mcp-server .settings-row__description {
+  overflow-wrap: anywhere;
+}
+
+.settings-mcp-server__detail {
+  color: var(--cv-danger);
+}
+
+.settings-mcp-signin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cv-space-3);
+}
+
+.settings-mcp-signin code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-mcp-status {
+  display: inline-flex;
+  align-items: center;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  gap: var(--cv-space-3);
+  white-space: nowrap;
+}
+
+.settings-mcp-status[data-tone="ok"] {
+  color: var(--cv-ok);
+}
+
+.settings-mcp-status[data-tone="attention"] {
+  color: var(--cv-warn);
+}
+
+.settings-mcp-status[data-tone="danger"] {
+  color: var(--cv-danger);
+}
+
+.settings-mcp-status[data-tone="muted"] {
+  color: var(--cv-fg-subtle);
+}

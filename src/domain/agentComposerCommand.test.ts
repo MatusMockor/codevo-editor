@@ -22,6 +22,7 @@ describe("composer command discovery", () => {
       "new",
       "settings",
       "usage",
+      "mcp",
     ]);
     expect(agentComposerCommands("claudeCode", false).map(({ id }) => id)).not.toContain("compact");
     expect(agentComposerCommands("claudeCode", true).map(({ id }) => id)).toEqual([
@@ -32,6 +33,7 @@ describe("composer command discovery", () => {
       "new",
       "settings",
       "usage",
+      "mcp",
       "compact",
     ]);
     expect(agentComposerCommands("claudeCode", true).every(({ kind }) => kind === "builtin")).toBe(
@@ -44,6 +46,19 @@ describe("composer command discovery", () => {
     expect(agentComposerCommands("claudeCode", true).map((command) => command.id)).toContain(
       "usage",
     );
+  });
+
+  it("offers /mcp for both providers in new and follow-up composers", () => {
+    for (const provider of ["claudeCode", "codex"] as const) {
+      for (const followUp of [false, true]) {
+        expect(agentComposerCommands(provider, followUp)).toContainEqual({
+          kind: "builtin",
+          id: "mcp",
+          label: "MCP servers",
+          description: "Show MCP servers and their connection status.",
+        });
+      }
+    }
   });
 
   it.each([

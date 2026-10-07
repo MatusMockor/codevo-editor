@@ -134,4 +134,19 @@ describe("searchSettingsRows", () => {
       expect(hit?.matchedIn).toBe("keywords");
     }
   });
+
+  it("finds the MCP servers page by every keyword a user would try", () => {
+    for (const query of ["mcp", "server", "tool", "connector", "auth", "mcp servers"]) {
+      const hit = searchSettingsRows(query, SETTINGS_ROWS, false).find(
+        (candidate) => candidate.row.id === "mcp.servers",
+      );
+
+      expect(hit?.row.section, query).toBe("mcp");
+    }
+
+    const [first] = searchSettingsRows("mcp servers", SETTINGS_ROWS, false);
+
+    expect(first?.row.id).toBe("mcp.servers");
+    expect(first?.matchedIn).toBe("title");
+  });
 });

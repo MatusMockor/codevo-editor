@@ -5,6 +5,7 @@ import type { AgentProviderManagementSurface } from "../application/useAgentProv
 import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import type { SystemFontGateway } from "../domain/systemFonts";
 import { SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE } from "./agentMode/sharedAgentRailWorkingSectionPreference";
+import { useAgentMcpServersSurface } from "./agentMode/useAgentMcpServersSurface";
 import { settingsEnvironment } from "./settings/settingsEnvironment";
 import type { SettingsSaveInput } from "./settings/settingsPageProps";
 import { WorkbenchSettingsScreen } from "./settings/WorkbenchSettingsScreen";
@@ -27,9 +28,11 @@ export function WorkbenchSettingsHost({
   systemFontGateway,
   workbench,
 }: WorkbenchSettingsHostProps) {
+  const agentMcpServers = useAgentMcpServersSurface();
   const env = useMemo(
     () =>
       settingsEnvironment({
+        agentMcpServers,
         agentRailWorkingSectionPreference: SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE,
         agentThreadOpener: workbenchAgentThreadOpener,
         appUpdater,
@@ -37,7 +40,7 @@ export function WorkbenchSettingsHost({
         systemFontGateway,
         workbench,
       }),
-    [appUpdater, providerManagement, systemFontGateway, workbench],
+    [agentMcpServers, appUpdater, providerManagement, systemFontGateway, workbench],
   );
   const { saveWorkbenchSettings, setSettingsOpen } = workbench;
   const save = useCallback(

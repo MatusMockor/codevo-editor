@@ -211,6 +211,21 @@ describe("AgentWorkbenchScreen", () => {
     expect(document.querySelector('[role="dialog"][aria-label="Usage details"]')).toBeNull();
   });
 
+  it("opens Settings > MCP servers when /mcp is run from the composer", () => {
+    const openSettingsSection = vi.fn();
+    render(createWorkbench(ROOT_A, { openSettingsSection }));
+
+    typeInto(prompt(), "/mcp");
+    act(() => {
+      prompt().dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }),
+      );
+    });
+
+    expect(openSettingsSection).toHaveBeenCalledExactlyOnceWith("mcp");
+    expect(prompt().value).toBe("");
+  });
+
   it("keeps provider runtime UI on persisted authority until registration succeeds", () => {
     const preferences = defaultAgentProviderPreferences();
     const initialPreferences = {

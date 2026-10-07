@@ -8,14 +8,14 @@ use crate::agent_command_catalog_service::{
 };
 use crate::agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry;
 use crate::agent_task_spawner::AgentCliInvocation;
-use crate::run_blocking_command;
-use crate::trust::{WorkspaceTrustLaunchLease, WorkspaceTrustService, WorkspaceTrustSnapshot};
-use crate::workspace_registry::{
-    opened_root_path, ManagedWorkspaceDescriptor, WorkspaceId, WorkspaceRegistry,
+use crate::agent_workspace_probe_authority::{
+    WorkspaceProbeAuthority, WorkspaceProbeAuthorityErrors,
 };
+use crate::run_blocking_command;
+use crate::trust::WorkspaceTrustService;
+use crate::workspace_registry::WorkspaceRegistry;
 use std::{
-    fs::File,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex, OnceLock,
@@ -56,176 +56,24 @@ impl Drop for ProbePermit {
     }
 }
 
-struct WorkspaceCatalogAuthority {
-    descriptor: ManagedWorkspaceDescriptor,
-    repository_root: PathBuf,
-    repository_authority: Arc<File>,
-    trust: WorkspaceTrustSnapshot,
+struct CatalogAuthorityErrors;
+
+impl WorkspaceProbeAuthorityErrors for CatalogAuthorityErrors {
+    const UNKNOWN_WORKSPACE: &'static str = UNKNOWN_CATALOG_WORKSPACE_ERROR;
+    const UNTRUSTED_WORKSPACE: &'static str = UNTRUSTED_CATALOG_WORKSPACE_ERROR;
+    const TRUST_BUSY: &'static str = CATALOG_TRUST_BUSY_ERROR;
+    const UNAVAILABLE: &'static str = AGENT_COMMAND_CATALOG_UNAVAILABLE_ERROR;
 }
 
-fn registered_ancestor(
-    registry: &WorkspaceRegistry,
-    canonical_root: &Path,
-) -> Result<ManagedWorkspaceDescriptor, String> {
-    canonical_root
-        .ancestors()
-        .find_map(|ancestor| registry.descriptor_for_registered_path(ancestor).ok())
-        .ok_or_else(|| UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string())
-}
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn open_descendant_directory(
-    registry: &WorkspaceRegistry,
-    workspace_id: &WorkspaceId,
-    relative_path: &Path,
-) -> Result<File, String> {
-    registry
-        .open_directory_descendant(workspace_id, relative_path)
-        .map_err(|_| UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string())
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn open_descendant_directory(
-    _registry: &WorkspaceRegistry,
-    _workspace_id: &WorkspaceId,
-    _relative_path: &Path,
-) -> Result<File, String> {
-    Err(UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string())
-}
-
-fn open_repository_authority(
-    registry: &WorkspaceRegistry,
-    descriptor: &ManagedWorkspaceDescriptor,
-    canonical_root: &Path,
-) -> Result<File, String> {
-    let relative_path = canonical_root
-        .strip_prefix(&descriptor.canonical_root_path)
-        .map_err(|_| UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string())?;
-    if relative_path.as_os_str().is_empty() {
-        return registry
-            .clone_root(&descriptor.workspace_id)
-            .map_err(|_| UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string());
-    }
-    open_descendant_directory(registry, &descriptor.workspace_id, relative_path)
-}
-
-#[cfg(unix)]
-fn retained_directory_matches_path(retained: &File, path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-
-    match (retained.metadata(), path.metadata()) {
-        (Ok(retained_metadata), Ok(path_metadata)) => {
-            retained_metadata.dev() == path_metadata.dev()
-                && retained_metadata.ino() == path_metadata.ino()
-        }
-        _ => false,
-    }
-}
-
-#[cfg(not(unix))]
-fn retained_directory_matches_path(_retained: &File, _path: &Path) -> bool {
-    false
-}
-
-fn trust_snapshot(
-    trust: &Mutex<WorkspaceTrustService>,
-    descriptor: &ManagedWorkspaceDescriptor,
-) -> Result<WorkspaceTrustSnapshot, String> {
-    Ok(trust
-        .lock()
-        .map_err(|_| AGENT_COMMAND_CATALOG_UNAVAILABLE_ERROR.to_string())?
-        .snapshot_canonical(&descriptor.canonical_root_path.to_string_lossy()))
-}
+type WorkspaceCatalogAuthority = WorkspaceProbeAuthority<CatalogAuthorityErrors>;
 
 impl WorkspaceCatalogAuthority {
-    fn capture(
-        registry: &WorkspaceRegistry,
-        trust: &Mutex<WorkspaceTrustService>,
-        repository_root: &str,
-    ) -> Result<Self, String> {
-        let canonical_root = crate::canonicalize_workspace_root(repository_root)
-            .map_err(|_| UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string())?;
-        let descriptor = registered_ancestor(registry, &canonical_root)?;
-        let repository_authority =
-            open_repository_authority(registry, &descriptor, &canonical_root)?;
-        let opened_root = opened_root_path(&repository_authority)
-            .map_err(|_| UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string())?;
-        if opened_root != canonical_root
-            || !retained_directory_matches_path(&repository_authority, &canonical_root)
-        {
-            return Err(UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string());
-        }
-        let trust = trust_snapshot(trust, &descriptor)?;
-        if !trust.trusted {
-            return Err(UNTRUSTED_CATALOG_WORKSPACE_ERROR.to_string());
-        }
-        Ok(Self {
-            descriptor,
-            repository_root: canonical_root,
-            repository_authority: Arc::new(repository_authority),
-            trust,
-        })
-    }
-
     fn owner(&self, provider: AgentCliInvocation) -> CatalogOwner<'_> {
         CatalogOwner {
             workspace_root: &self.repository_root,
             workspace_id: self.descriptor.workspace_id.as_str(),
             provider,
         }
-    }
-
-    fn reserve_trust(
-        &self,
-        trust: &Mutex<WorkspaceTrustService>,
-    ) -> Result<WorkspaceTrustLaunchLease, String> {
-        trust
-            .lock()
-            .map_err(|_| AGENT_COMMAND_CATALOG_UNAVAILABLE_ERROR.to_string())?
-            .reserve_launch(&self.trust)
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::PermissionDenied {
-                    return UNTRUSTED_CATALOG_WORKSPACE_ERROR.to_string();
-                }
-                CATALOG_TRUST_BUSY_ERROR.to_string()
-            })
-    }
-
-    fn revalidate(
-        &self,
-        registry: &WorkspaceRegistry,
-        trust: &Mutex<WorkspaceTrustService>,
-    ) -> Result<(), String> {
-        let current = Self::capture(registry, trust, &self.repository_root.to_string_lossy())?;
-        let unchanged = current.descriptor == self.descriptor
-            && current.repository_root == self.repository_root
-            && current.trust == self.trust
-            && retained_directory_matches_path(&self.repository_authority, &current.repository_root);
-        if !unchanged {
-            return Err(UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string());
-        }
-        Ok(())
-    }
-
-    fn revalidate_registration(
-        &self,
-        registry: &WorkspaceRegistry,
-        trust: &Mutex<WorkspaceTrustService>,
-    ) -> Result<(), String> {
-        let descriptor = registry
-            .descriptor(&self.descriptor.workspace_id)
-            .map_err(|_| UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string())?;
-        if descriptor != self.descriptor {
-            return Err(UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string());
-        }
-        let trust = trust_snapshot(trust, &self.descriptor)?;
-        if !trust.trusted {
-            return Err(UNTRUSTED_CATALOG_WORKSPACE_ERROR.to_string());
-        }
-        if trust != self.trust {
-            return Err(UNKNOWN_CATALOG_WORKSPACE_ERROR.to_string());
-        }
-        Ok(())
     }
 }
 
@@ -391,5 +239,8 @@ pub async fn get_agent_command_catalog(
 }
 
 #[cfg(all(test, unix))]
-#[path = "agent_command_catalog_tests.rs"]
-mod tests;
+mod tests {
+    use crate::workspace_registry::ManagedWorkspaceDescriptor;
+    use std::path::PathBuf;
+    include!("agent_command_catalog_tests.rs");
+}

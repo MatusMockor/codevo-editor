@@ -327,6 +327,9 @@ export function AgentWorkbenchScreen({
   const openUsageSettings = useCallback(() => {
     openSettingsSection?.("usage");
   }, [openSettingsSection]);
+  const openMcpSettings = useCallback(() => {
+    openSettingsSection?.("mcp");
+  }, [openSettingsSection]);
   const activateProjectWorkspace = useCallback(
     async (rootPath: string) => {
       const { outcome, isCurrent } = await openWorkspaceRootWithReceipt(rootPath);
@@ -814,6 +817,7 @@ export function AgentWorkbenchScreen({
               openSettingsSection === undefined ? undefined : openEnvironmentSettings
             }
             onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
+            onOpenMcpSettings={openSettingsSection === undefined ? undefined : openMcpSettings}
             onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
             onActivateWorkspaceTab={activateWorkspaceTab}
             onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}

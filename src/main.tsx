@@ -89,6 +89,8 @@ async function bootstrap(): Promise<void> {
     { TauriCodexModelCatalogGateway },
     { AgentCommandCatalogProvider },
     { TauriAgentCommandCatalogGateway },
+    { AgentMcpServersProvider },
+    { TauriAgentMcpServersGateway },
     { ModelNewnessProvider },
     { BrowserModelFirstSeenRepository },
     { TauriRemoteRunnerGateway },
@@ -110,6 +112,8 @@ async function bootstrap(): Promise<void> {
     import("./infrastructure/tauriCodexModelCatalogGateway"),
     import("./components/agentMode/AgentCommandCatalogProvider"),
     import("./infrastructure/tauriAgentCommandCatalogGateway"),
+    import("./components/agentMode/AgentMcpServersProvider"),
+    import("./infrastructure/tauriAgentMcpServersGateway"),
     import("./components/agentMode/ModelNewnessProvider"),
     import("./infrastructure/browserModelFirstSeenRepository"),
     import("./infrastructure/tauriRemoteRunnerGateway"),
@@ -138,9 +142,12 @@ async function bootstrap(): Promise<void> {
           children: React.createElement(AgentCommandCatalogProvider, {
             gateway: new TauriAgentCommandCatalogGateway(),
             remoteGateway: remoteRunnerGateway,
-            children: React.createElement(ModelNewnessProvider, {
-              repository: new BrowserModelFirstSeenRepository(),
-              children: React.createElement(App),
+            children: React.createElement(AgentMcpServersProvider, {
+              gateway: new TauriAgentMcpServersGateway(),
+              children: React.createElement(ModelNewnessProvider, {
+                repository: new BrowserModelFirstSeenRepository(),
+                children: React.createElement(App),
+              }),
             }),
           }),
         }),

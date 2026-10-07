@@ -39,6 +39,7 @@ describe("WorkbenchSettingsScreen", () => {
       "General",
       "Providers",
       "Environments",
+      "MCP servers",
       "Keybindings",
       "Index & languages",
       "Snippets",
@@ -114,7 +115,7 @@ describe("WorkbenchSettingsScreen", () => {
   it("selects a section by click and labels the panel with it", () => {
     render();
 
-    click(tabs()[3]);
+    click(tabs()[4]);
 
     expect(selectedTab()?.textContent).toBe("Keybindings");
     expect(panel()?.getAttribute("aria-labelledby")).toBe(selectedTab()?.id);

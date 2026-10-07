@@ -7,6 +7,7 @@ import {
   Keyboard,
   Layers,
   Monitor,
+  Plug,
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
@@ -17,6 +18,7 @@ export type SettingsSectionId =
   | "general"
   | "agents"
   | "environments"
+  | "mcp"
   | "keymap"
   | "index"
   | "snippets"
@@ -69,6 +71,12 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDescriptor> = [
     label: "Environments",
     icon: Monitor,
     description: "Where your agent threads run.",
+  },
+  {
+    id: "mcp",
+    label: "MCP servers",
+    icon: Plug,
+    description: "Servers your agent providers can reach, and their status.",
   },
   {
     id: "keymap",
@@ -144,6 +152,7 @@ export function resolveSettingsRoute(section: SettingsSection): SettingsRoute {
     case "general":
     case "agents":
     case "environments":
+    case "mcp":
     case "keymap":
     case "index":
     case "php":

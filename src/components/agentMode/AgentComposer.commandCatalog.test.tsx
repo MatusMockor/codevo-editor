@@ -165,7 +165,7 @@ describe("composer provider command catalog", () => {
     expect(gateway.requests()).toEqual([
       { repositoryRoot: "/workspace/app", provider: "claudeCode" },
     ]);
-    expect(options()).toHaveLength(7);
+    expect(options()).toHaveLength(8);
     await answer(claudeCommands);
     expect(options().map((row) => row.id)).toEqual([
       "agent-composer-command-model",
@@ -175,6 +175,7 @@ describe("composer provider command catalog", () => {
       "agent-composer-command-new",
       "agent-composer-command-settings",
       "agent-composer-command-usage",
+      "agent-composer-command-mcp",
       "agent-composer-command-command:design-login",
       "agent-composer-command-command:superpowers:brainstorming",
       "agent-composer-command-command:code-review",
@@ -299,7 +300,7 @@ describe("composer provider command catalog", () => {
       ]),
     );
     expect(menu()?.textContent).not.toContain("Provider model command.");
-    expect(options()).toHaveLength(7);
+    expect(options()).toHaveLength(8);
     type("/model");
     key("Enter");
     expect(host.querySelector('[role="dialog"][aria-label="Agent model"]')).not.toBeNull();
@@ -331,7 +332,7 @@ describe("composer provider command catalog", () => {
     mount("/", { executionServerId: SERVER });
     expect(gateway.reads).toHaveLength(0);
     expect(remote.reads).toHaveLength(0);
-    expect(options()).toHaveLength(7);
+    expect(options()).toHaveLength(8);
     type("/des");
     expect(menu()).toBeNull();
     expect(gateway.reads).toHaveLength(0);
@@ -378,7 +379,7 @@ describe("composer provider command catalog", () => {
     props = { ...props, executionServerId: SERVER };
     render();
     await answer(claudeCommands, 0);
-    expect(options()).toHaveLength(7);
+    expect(options()).toHaveLength(8);
     await act(async () =>
       remote.reads[0]?.resolve(agentCommandCatalogFixture("claudeCode", [{ name: "runner-only" }])),
     );
@@ -403,7 +404,7 @@ describe("composer provider command catalog", () => {
     props = { ...props, prompt: "/" };
     act(() => root.render(<Controlled current={props} />));
     act(() => textarea().focus());
-    expect(options()).toHaveLength(7);
+    expect(options()).toHaveLength(8);
   });
 
   it("never shows a late catalog of the previous workspace or provider", async () => {
@@ -415,7 +416,7 @@ describe("composer provider command catalog", () => {
       "/workspace/other",
     ]);
     await answer(claudeCommands, 0);
-    expect(options()).toHaveLength(7);
+    expect(options()).toHaveLength(8);
     await answer(agentCommandCatalogFixture("claudeCode", [{ name: "other-only" }]), 1);
     expect(options().map((row) => row.id)).toContain("agent-composer-command-command:other-only");
     expect(menu()?.textContent).not.toContain("/design-login");
@@ -436,7 +437,7 @@ describe("composer provider command catalog", () => {
     );
     expect(options()).toHaveLength(50);
     const notice = document.getElementById("agent-composer-commands-notice");
-    expect(notice?.textContent).toBe("Showing 50 of 212. Keep typing to narrow.");
+    expect(notice?.textContent).toBe("Showing 50 of 213. Keep typing to narrow.");
     expect(notice?.closest('[role="listbox"]')).toBeNull();
     expect(notice?.getAttribute("role")).toBeNull();
     expect(menu()?.getAttribute("aria-describedby")).toBe("agent-composer-commands-notice");
@@ -457,7 +458,7 @@ describe("composer provider command catalog", () => {
   it("keeps the built-in menu usable when the catalog read fails", async () => {
     mount("/");
     await act(async () => gateway.reads[0]?.reject("claude is not installed"));
-    expect(options()).toHaveLength(7);
+    expect(options()).toHaveLength(8);
     expect(host.querySelector('[role="alert"]')).toBeNull();
     type("/plan");
     key("Tab");

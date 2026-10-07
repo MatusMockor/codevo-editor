@@ -2,6 +2,7 @@ import { RefreshCw, RotateCcw } from "lucide-react";
 import { Button } from "../../ui/foundation/Button";
 import { AGENT_PROVIDERS } from "./agentProviderSettingsPersistence";
 import { restoreGeneralAppDefaults } from "./pages/generalDefaults";
+import { McpServersPageActions } from "./pages/McpServersSettingsPage";
 import { UsagePageActions } from "./pages/UsageSettingsPage";
 import type { SettingsPageProps } from "./settingsPageProps";
 import type { SettingsSectionId } from "./settingsRegistry";
@@ -39,6 +40,8 @@ export function SettingsPageActions({ actions, draft, env, section }: SettingsPa
       );
     case "usage":
       return <UsagePageActions env={env} />;
+    case "mcp":
+      return <McpServersPageActions env={env} />;
     case "environments":
     case "keymap":
     case "index":

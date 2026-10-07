@@ -1,4 +1,5 @@
 import type { AgentAccountUsageRefreshOutcome } from "../../application/agentAccountUsageRefresh";
+import type { AgentMcpServersSurface } from "../../application/agentMcpServersSurface";
 import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
@@ -43,6 +44,7 @@ export interface SettingsAgentActivity {
 
 export interface SettingsEnvironment {
   readonly agentActivity?: SettingsAgentActivity | null;
+  readonly agentMcpServers?: AgentMcpServersSurface | null;
   readonly agentProjects?: readonly AgentProjectDescriptor[];
   readonly agentRailWorkingSectionPreference?: AgentRailWorkingSectionPreferencePort | null;
   readonly appUpdater: AppUpdaterSurface | null;

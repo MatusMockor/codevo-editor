@@ -45,6 +45,7 @@ export interface AgentComposerControllerProps {
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
   onShowUsageLimits?(): void;
+  onOpenMcpServers?(): void;
   readonly banners?: ReactNode;
   readonly endSessionConfirmation?: AgentEndSessionConfirmationView | null;
   readonly renderDrawerEnd?: (context: AgentComposerDrawerContext) => ReactNode;
@@ -60,6 +61,7 @@ export const AgentComposerController = memo(function AgentComposerController({
   onOpenProviderSettings,
   onOpenEnvironmentSettings,
   onShowUsageLimits,
+  onOpenMcpServers,
   providerManagement,
   providerEnabled,
   submissionBlocked,
@@ -111,6 +113,7 @@ export const AgentComposerController = memo(function AgentComposerController({
           onOpenProviderSettings={onOpenProviderSettings}
           onOpenEnvironmentSettings={onOpenEnvironmentSettings}
           onShowUsageLimits={onShowUsageLimits}
+          onOpenMcpServers={onOpenMcpServers}
           onCompactContext={compactContext}
           providerEnabled={providerEnabled}
           providerManagement={providerManagement}
@@ -141,6 +144,7 @@ function agentComposerControllerPropsEqual(
     left.onOpenProviderSettings === right.onOpenProviderSettings &&
     left.onOpenEnvironmentSettings === right.onOpenEnvironmentSettings &&
     left.onShowUsageLimits === right.onShowUsageLimits &&
+    left.onOpenMcpServers === right.onOpenMcpServers &&
     left.providerManagement === right.providerManagement &&
     left.providerEnabled === right.providerEnabled &&
     left.submissionBlocked === right.submissionBlocked &&

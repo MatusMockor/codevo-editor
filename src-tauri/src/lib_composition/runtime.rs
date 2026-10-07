@@ -257,6 +257,7 @@ pub fn run() {
             crate::claude_model_manifest::get_claude_model_manifest,
             crate::codex_model_catalog::get_codex_model_catalog,
             crate::agent_command_catalog::get_agent_command_catalog,
+            crate::agent_mcp_servers::get_agent_mcp_servers,
             crate::artifact_preview::artifact_preview_create,
             crate::artifact_preview::workspace_html_preview::workspace_html_preview_create,
             crate::artifact_preview::artifact_preview_revoke,

@@ -65,7 +65,10 @@ pub struct AgentCommandCatalogRequest {
 }
 
 pub fn validate_request(request: &AgentCommandCatalogRequest) -> Result<(), String> {
-    let root = request.repository_root.as_str();
+    validate_repository_root(&request.repository_root)
+}
+
+pub fn validate_repository_root(root: &str) -> Result<(), String> {
     if root.is_empty()
         || root.len() > MAX_REPOSITORY_ROOT_BYTES
         || root.chars().any(char::is_control)

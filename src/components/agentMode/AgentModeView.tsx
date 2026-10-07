@@ -206,6 +206,7 @@ export interface AgentModeViewProps {
   onOpenSourceControl?(): void;
   onOpenEnvironmentSettings?(): void;
   onOpenUsageSettings?(): void;
+  onOpenMcpSettings?(): void;
   onTrustProject(projectRootKey: string, origin?: WorkspaceTrustOrigin): void;
   onCloseProject?(rootPath: string): void;
   onActivateWorkspaceTab?(rootPath: string): Promise<boolean>;
@@ -352,6 +353,7 @@ function LocalAgentModeView({
   onOpenSourceControl = NOOP_OPEN_SOURCE_CONTROL,
   onOpenEnvironmentSettings,
   onOpenUsageSettings,
+  onOpenMcpSettings,
   onCloseProject = NOOP_CLOSE_PROJECT,
   onActivateWorkspaceTab,
   onReleaseProject,
@@ -1478,6 +1480,7 @@ function LocalAgentModeView({
                     banners={composerExtras.banners}
                     endSessionConfirmation={menu.endSessionConfirmation}
                     onShowUsageLimits={composerExtras.onShowUsageLimits}
+                    onOpenMcpServers={onOpenMcpSettings}
                     renderDrawerEnd={composerExtras.renderDrawerEnd}
                   />
                 </AgentQuestionAttachmentsContext.Provider>

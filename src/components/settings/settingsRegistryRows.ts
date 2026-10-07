@@ -346,6 +346,13 @@ export const SETTINGS_ROW_TABLE = [
     ],
   ),
   row(
+    "mcp.servers",
+    "mcp",
+    "MCP servers",
+    "Servers Claude Code and Codex can reach for a project, and their status.",
+    ["mcp", "server", "tool", "connector", "auth", "sign in", "claude", "codex"],
+  ),
+  row(
     "keymap.bindings",
     "keymap",
     "Keyboard shortcuts",

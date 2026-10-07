@@ -168,14 +168,14 @@ describe("composer controller command catalog project", () => {
     expect(remote.reads).toHaveLength(3);
     render(withProject(null));
     expect(optionIds()).not.toContain("agent-composer-command-command:deploy");
-    expect(optionIds()).toHaveLength(7);
+    expect(optionIds()).toHaveLength(8);
     expect(remote.reads).toHaveLength(3);
   });
 
   it("asks nobody while the server composer has no resolved project", () => {
     render(controllerProps(SERVER, null));
     type("/");
-    expect(optionIds()).toHaveLength(7);
+    expect(optionIds()).toHaveLength(8);
     expect(remote.reads).toHaveLength(0);
     expect(gateway.reads).toHaveLength(0);
   });

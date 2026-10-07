@@ -3,10 +3,13 @@ use super::{
     ResolvedProviderExecutableRef, AGENT_PROVIDER_DISABLED_ERROR,
     AGENT_PROVIDER_SIGN_IN_ACTIVE_ERROR, AGENT_PROVIDER_STALE_ERROR, AGENT_PROVIDER_UPDATING_ERROR,
 };
+use crate::agent_mcp_servers_domain::AgentMcpServers;
+use crate::agent_mcp_servers_protocol::McpServersProbeFailure;
 use crate::agent_task_spawner::agent_provider::process::{
-    command_catalog_plan::CommandCatalogProbe, execute_agent_provider_maintenance_plan_cancellable,
-    execute_agent_provider_plan_cancellable, AgentProviderProcessIntent, AgentProviderProcessPlan,
-    ExecutableIdentity,
+    command_catalog_plan::CommandCatalogProbe,
+    execute_agent_provider_maintenance_plan_cancellable, execute_agent_provider_plan_cancellable,
+    mcp_servers_plan::{execute_mcp_servers_plan, McpServersProbe},
+    AgentProviderProcessIntent, AgentProviderProcessPlan, ExecutableIdentity,
 };
 use crate::agent_task_spawner::AgentCliInvocation;
 use std::{fs, path::Path, sync::Arc};
@@ -131,6 +134,31 @@ impl AgentProviderRuntimeRegistry {
         probe
             .take_result()
             .ok_or_else(|| COMMAND_CATALOG_PROBE_FAILED.to_string())
+    }
+
+    pub fn probe_mcp_servers(
+        &self,
+        lease: &ProviderCatalogProbeLease,
+        workspace_root: &Path,
+        cwd_authority: Arc<fs::File>,
+    ) -> Result<AgentMcpServers, McpServersProbeFailure> {
+        self.revalidate_catalog_probe(lease)
+            .map_err(|_| McpServersProbeFailure::Unavailable)?;
+        let probe = McpServersProbe::new(lease.provider);
+        let plan = AgentProviderProcessPlan::mcp_servers_with_effective_path(
+            lease.cli_identity.clone(),
+            lease.provider,
+            workspace_root,
+            cwd_authority,
+            &lease.effective_path,
+            Arc::clone(&probe),
+        )
+        .map_err(|_| McpServersProbeFailure::Unavailable)?;
+        let servers =
+            execute_mcp_servers_plan(&plan, &probe, || self.catalog_probe_cancelled(lease))?;
+        self.revalidate_catalog_probe(lease)
+            .map_err(|_| McpServersProbeFailure::Unavailable)?;
+        Ok(servers)
     }
 }
 

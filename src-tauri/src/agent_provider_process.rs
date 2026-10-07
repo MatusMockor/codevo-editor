@@ -41,6 +41,8 @@ mod interactive_probe;
 use interactive_probe::InteractiveProbe;
 #[path = "agent_provider_command_catalog_plan.rs"]
 pub(crate) mod command_catalog_plan;
+#[path = "agent_provider_mcp_servers_plan.rs"]
+pub(crate) mod mcp_servers_plan;
 const CODEX_MODEL_LIST_REQUEST: &str =
     "{\"method\":\"model/list\",\"id\":1,\"params\":{\"includeHidden\":true,\"limit\":128}}\n";
 const CODEX_APP_SERVER_RESPONSE_MARKER: &[u8] = b"\"id\":1,\"result\"";

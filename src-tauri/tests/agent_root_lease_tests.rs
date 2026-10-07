@@ -5,6 +5,10 @@
 mod agent_command_catalog_domain;
 #[path = "../src/agent_command_catalog_protocol.rs"]
 mod agent_command_catalog_protocol;
+#[path = "../src/agent_mcp_servers_domain.rs"]
+mod agent_mcp_servers_domain;
+#[path = "../src/agent_mcp_servers_protocol.rs"]
+mod agent_mcp_servers_protocol;
 #[path = "../src/claude_model_manifest.rs"]
 mod claude_model_manifest;
 #[path = "../src/claude_model_manifest_domain.rs"]

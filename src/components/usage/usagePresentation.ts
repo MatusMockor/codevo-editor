@@ -150,14 +150,18 @@ export function usageProviderLabel(provider: UsageProviderKind): string {
   return provider === "claudeCode" ? "Claude Code" : "Codex";
 }
 
-export function updatedLabel(observedAtEpochMs: number, nowEpochMs: number): string {
+export function elapsedLabel(observedAtEpochMs: number, nowEpochMs: number): string {
   const elapsedMs = Math.max(0, nowEpochMs - observedAtEpochMs);
-  if (elapsedMs < 60_000) return "Updated just now";
+  if (elapsedMs < 60_000) return "just now";
   const minutes = Math.floor(elapsedMs / 60_000);
-  if (minutes < 60) return `Updated ${minutes}m ago`;
+  if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `Updated ${hours}h ago`;
-  return `Updated ${Math.floor(hours / 24)}d ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+export function updatedLabel(observedAtEpochMs: number, nowEpochMs: number): string {
+  return `Updated ${elapsedLabel(observedAtEpochMs, nowEpochMs)}`;
 }
 
 export function formatInteger(value: number): string {

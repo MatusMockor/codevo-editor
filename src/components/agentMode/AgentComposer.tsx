@@ -174,6 +174,7 @@ export interface AgentComposerProps {
   onOpenProviderSettings(): void;
   onOpenEnvironmentSettings?(): void;
   onShowUsageLimits?(): void;
+  onOpenMcpServers?(): void;
   onStop?(): void;
   onStopNow?(): void;
   readonly stopConfirmation?: AgentStopConfirmationView | null;
@@ -222,6 +223,7 @@ export function AgentComposer({
   onOpenProviderSettings,
   onOpenEnvironmentSettings,
   onShowUsageLimits,
+  onOpenMcpServers,
   onPromptChange,
   onSelectRepository,
   onStop,
@@ -554,6 +556,11 @@ export function AgentComposer({
       onShowUsageLimits?.();
       return;
     }
+    if (command === "mcp") {
+      changePrompt("");
+      onOpenMcpServers?.();
+      return;
+    }
     if (dispatching) return;
     if (command === "new") {
       changePrompt("");
@@ -588,6 +595,7 @@ export function AgentComposer({
   const localCommandAvailable =
     commands.exactCommand === "settings" ||
     commands.exactCommand === "usage" ||
+    commands.exactCommand === "mcp" ||
     (!dispatching &&
       commands.exactCommand !== null &&
       commands.exactCommand !== "compact" &&

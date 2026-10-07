@@ -1,3 +1,4 @@
+import type { AgentMcpServersSurface } from "../../application/agentMcpServersSurface";
 import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import type { AgentThreadOpenerSource } from "../../application/agentThreadOpener";
 import { settleAgentThreadMutation } from "../../application/agentThreadMutationOutcome";
@@ -9,6 +10,7 @@ import type { SettingsAgentActivity, SettingsEnvironment } from "./settingsPageP
 import type { WorkbenchSettingsModel } from "./workbenchSettingsModel";
 
 export interface SettingsEnvironmentInput {
+  readonly agentMcpServers?: AgentMcpServersSurface | null;
   readonly agentRailWorkingSectionPreference?: AgentRailWorkingSectionPreferencePort | null;
   readonly agentThreadOpener?: AgentThreadOpenerSource | null;
   readonly appUpdater: AppUpdaterSurface | null;
@@ -18,6 +20,7 @@ export interface SettingsEnvironmentInput {
 }
 
 export function settingsEnvironment({
+  agentMcpServers = null,
   agentRailWorkingSectionPreference = null,
   agentThreadOpener = null,
   appUpdater,
@@ -27,6 +30,7 @@ export function settingsEnvironment({
 }: SettingsEnvironmentInput): SettingsEnvironment {
   return {
     agentActivity: settingsAgentActivity(workbench, agentThreadOpener),
+    agentMcpServers,
     agentProjects: workbench.agents?.agentProjects?.projects ?? [],
     agentRailWorkingSectionPreference,
     appUpdater,

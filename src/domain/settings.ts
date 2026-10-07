@@ -86,6 +86,7 @@ export type SettingsSection =
   | "appearance"
   | "agents"
   | "environments"
+  | "mcp"
   | "usage"
   | "archive";
 

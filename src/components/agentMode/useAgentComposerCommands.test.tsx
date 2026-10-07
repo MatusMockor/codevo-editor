@@ -219,10 +219,11 @@ describe("composer command keyboard ownership", () => {
       "new",
       "settings",
       "usage",
+      "mcp",
       "compact",
     ]);
     await load("claudeCode", [{ name: "superpowers:brainstorming" }, { name: "design-login" }]);
-    expect(listed().slice(8)).toEqual([
+    expect(listed().slice(9)).toEqual([
       "command:design-login",
       "command:superpowers:brainstorming",
     ]);
@@ -306,13 +307,13 @@ describe("composer command keyboard ownership", () => {
     render("/", { executionServerId: SERVER });
     expect(gateway.reads).toHaveLength(0);
     expect(remote.reads).toHaveLength(0);
-    expect(listed()).toHaveLength(8);
+    expect(listed()).toHaveLength(9);
   });
   it("offers only built-ins when the resolved project belongs to another server", () => {
     render("/", { executionServerId: "unavailable" }, PROJECT);
     expect(gateway.reads).toHaveLength(0);
     expect(remote.reads).toHaveLength(0);
-    expect(listed()).toHaveLength(8);
+    expect(listed()).toHaveLength(9);
   });
   it("ignores a resolved server project while the composer targets this machine", () => {
     render("/", {}, PROJECT);
@@ -330,7 +331,7 @@ describe("composer command keyboard ownership", () => {
         agentCommandCatalogFixture("claudeCode", [{ name: "deploy:staging" }]),
       ),
     );
-    expect(listed().slice(8)).toEqual(["command:deploy:staging"]);
+    expect(listed().slice(9)).toEqual(["command:deploy:staging"]);
     type("/stag");
     expect(key("Enter").defaultPrevented).toBe(true);
     expect(textarea().value).toBe("/deploy:staging ");
@@ -344,24 +345,24 @@ describe("composer command keyboard ownership", () => {
     );
     expect(listed()).toContain("command:deploy");
     render("/", { executionServerId: SERVER }, { ...PROJECT, runnerId: "runner-replaced" });
-    expect(listed()).toHaveLength(8);
+    expect(listed()).toHaveLength(9);
     expect(remote.requests().map((request) => request.runnerId)).toEqual([
       "runner-home",
       "runner-replaced",
     ]);
     render("/", { executionServerId: SERVER }, null);
-    expect(listed()).toHaveLength(8);
+    expect(listed()).toHaveLength(9);
     expect(remote.reads).toHaveLength(2);
   });
   it("offers only built-ins and never asks the backend without a workspace root", () => {
     render("/", { repositoryRoot: null });
     expect(gateway.reads).toHaveLength(0);
-    expect(listed()).toHaveLength(8);
+    expect(listed()).toHaveLength(9);
   });
   it("keeps working with built-ins when the catalog cannot be read", async () => {
     render("/");
     await act(async () => gateway.reads[0]?.reject("no provider CLI"));
-    expect(listed()).toHaveLength(8);
+    expect(listed()).toHaveLength(9);
     expect(host.querySelector("p")?.textContent).toBe("");
     key("Enter");
     expect(choose).toHaveBeenCalledExactlyOnceWith("model", false);
@@ -373,7 +374,7 @@ describe("composer command keyboard ownership", () => {
       Array.from({ length: 204 }, (_, index) => ({ name: `cmd-${index}` })),
     );
     expect(listed()).toHaveLength(50);
-    expect(host.querySelector("p")?.textContent).toBe("Showing 50 of 212. Keep typing to narrow.");
+    expect(host.querySelector("p")?.textContent).toBe("Showing 50 of 213. Keep typing to narrow.");
     type("/cmd-20");
     expect(listed()).toHaveLength(5);
     expect(host.querySelector("p")?.textContent).toBe("");

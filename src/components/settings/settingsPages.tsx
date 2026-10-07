@@ -4,6 +4,7 @@ import { EnvironmentsSettingsPage } from "./pages/EnvironmentsSettingsPage";
 import { GeneralSettingsPage } from "./pages/GeneralSettingsPage";
 import { IndexLanguagesSettingsPage } from "./pages/IndexLanguagesSettingsPage";
 import { KeybindingsSettingsPage } from "./pages/KeybindingsSettingsPage";
+import { McpServersSettingsPage } from "./pages/McpServersSettingsPage";
 import { PhpSettingsPage } from "./pages/PhpSettingsPage";
 import { SnippetsSettingsPage } from "./pages/SnippetsSettingsPage";
 import { UsageSettingsPage } from "./pages/UsageSettingsPage";
@@ -22,6 +23,8 @@ export function SettingsPageHost({ section, ...props }: SettingsPageHostProps) {
       return <AgentsSettingsPage {...props} />;
     case "environments":
       return <EnvironmentsSettingsPage projects={props.env.agentProjects} />;
+    case "mcp":
+      return <McpServersSettingsPage {...props} />;
     case "keymap":
       return <KeybindingsSettingsPage {...props} />;
     case "index":

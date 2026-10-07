@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentAccountUsageWindow } from "../../domain/agentAccountUsage";
 import {
+  elapsedLabel,
   latestUsageFetch,
   updatedLabel,
   usageLimitBarModel,
@@ -293,5 +294,23 @@ describe("usage freshness", () => {
     expect(updatedLabel(NOW - 2 * 60_000, NOW)).toBe("Updated 2m ago");
     expect(updatedLabel(NOW, NOW)).toBe("Updated just now");
     expect(updatedLabel(NOW + 60_000, NOW)).toBe("Updated just now");
+  });
+
+  it("words elapsed time once for every label built on it", () => {
+    const cases = [
+      [0, "just now"],
+      [59_999, "just now"],
+      [60_000, "1m ago"],
+      [59 * 60_000 + 59_999, "59m ago"],
+      [60 * 60_000, "1h ago"],
+      [23 * 3_600_000 + 59 * 60_000, "23h ago"],
+      [24 * 3_600_000, "1d ago"],
+      [9 * 86_400_000, "9d ago"],
+    ] as const;
+    for (const [elapsedMs, label] of cases) {
+      expect(elapsedLabel(NOW - elapsedMs, NOW)).toBe(label);
+      expect(updatedLabel(NOW - elapsedMs, NOW)).toBe(`Updated ${label}`);
+    }
+    expect(elapsedLabel(NOW + 60_000, NOW)).toBe("just now");
   });
 });

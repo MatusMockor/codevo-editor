@@ -3,12 +3,17 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createAgentMcpServersSurface } from "../../application/agentMcpServersSurface";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import {
   defaultAppSettings,
   defaultWorkspaceSettings,
   type AppSettings,
 } from "../../domain/settings";
+import {
+  DeferredAgentMcpServersGateway,
+  agentMcpServersFixture,
+} from "../../test/agentMcpServersTestSupport";
 import { SettingsPageActions } from "./SettingsPageActions";
 import type { SettingsDraft, SettingsDraftActions, SettingsEnvironment } from "./settingsPageProps";
 import type { SettingsSectionId } from "./settingsRegistry";
@@ -78,6 +83,48 @@ describe("SettingsPageActions", () => {
       renderActions(section, {});
       expect(host.textContent).toBe("");
     }
+  });
+
+  it("renders no MCP check without the status surface or without a local project", () => {
+    renderActions("mcp", {});
+    expect(host.textContent).toBe("");
+    expect(host.querySelector("button")).toBeNull();
+
+    const gateway = new DeferredAgentMcpServersGateway();
+    renderActions("mcp", {
+      env: {
+        ...environment(),
+        agentMcpServers: createAgentMcpServersSurface(gateway),
+        hasWorkspace: false,
+        workspaceRoot: null,
+      },
+    });
+    expect(host.querySelector("button")).toBeNull();
+    expect(gateway.requests()).toEqual([]);
+  });
+
+  it("checks MCP servers for both providers only when the top bar action is pressed", async () => {
+    const gateway = new DeferredAgentMcpServersGateway();
+    const env = { ...environment(), agentMcpServers: createAgentMcpServersSurface(gateway) };
+    renderActions("mcp", { env });
+    const check = host.querySelector<HTMLButtonElement>('button[aria-label="Check MCP servers"]');
+
+    expect(gateway.requests()).toEqual([]);
+    expect(check?.disabled).toBe(false);
+    act(() => check?.click());
+    expect(gateway.requests()).toEqual([
+      { repositoryRoot: "/workspace", provider: "claudeCode" },
+      { repositoryRoot: "/workspace", provider: "codex" },
+    ]);
+    expect(check?.disabled).toBe(true);
+    act(() => check?.click());
+    expect(gateway.requests()).toHaveLength(2);
+
+    await act(async () => {
+      gateway.checks[0]?.resolve(agentMcpServersFixture("claudeCode", []));
+      gateway.checks[1]?.reject("Agent MCP server status check timed out.");
+    });
+    expect(check?.disabled).toBe(false);
   });
 
   function renderActions(
