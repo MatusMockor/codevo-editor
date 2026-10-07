@@ -1,12 +1,13 @@
-use super::MAX_INPUT;
+use super::{is_mcp_servers_route, MAX_INPUT, MCP_SERVERS_TIMEOUT};
 use crate::remote_runner::git_sync_wire;
+use crate::remote_runner::mcp_servers;
 use base64::Engine;
 use serde_json::{json, Value};
 
 const ERROR_BODY_LIMIT: usize = 1024;
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -123,6 +124,9 @@ fn request_timeout(method: &str, path: &str) -> Option<std::time::Duration> {
     if path.ends_with("/steer") {
         return Some(std::time::Duration::from_secs(60));
     }
+    if is_mcp_servers_route(method, path) {
+        return Some(MCP_SERVERS_TIMEOUT);
+    }
     None
 }
 async fn execute(
@@ -133,6 +137,7 @@ async fn execute(
     limit: usize,
 ) -> Result<(Vec<u8>, Option<String>), String> {
     let speech = crate::remote_runner::speech::is_route(prepared.method.as_str(), &prepared.path);
+    let mcp_status = is_mcp_servers_route(prepared.method.as_str(), &prepared.path);
     let timeout = request_timeout(prepared.method.as_str(), &prepared.path);
     let mut request = client
         .request(
@@ -222,6 +227,15 @@ async fn execute(
         }
         if status == 404 && git_sync_wire::operation_route(&prepared.path) {
             return Err(git_sync_wire::GIT_OPERATION_UNKNOWN.into());
+        }
+        if mcp_status && status != 401 {
+            if let Some(refusal) = bounded_error_body(&mut response)
+                .await
+                .as_deref()
+                .and_then(mcp_servers::RunnerRefusal::from_body)
+            {
+                return Err(refusal.message().into());
+            }
         }
         return Err(format!("Runner request failed (HTTP {status})."));
     }
@@ -425,6 +439,24 @@ mod tests {
     }
 
     #[test]
+    fn mcp_server_status_http_timeout_is_scoped_to_exact_get_routes() {
+        for provider in ["claude", "codex"] {
+            let path = format!("/v1/projects/codevo-editor/mcp-servers/{provider}");
+            assert_eq!(request_timeout("GET", &path), Some(MCP_SERVERS_TIMEOUT));
+            assert_eq!(request_timeout("POST", &path), None);
+            assert_eq!(request_timeout("GET", &format!("{path}?x=1")), None);
+        }
+        for path in [
+            "/v1/projects/codevo-editor/mcp-servers/gemini",
+            "/v1/projects/a/b/mcp-servers/codex",
+            "/v1/projects/codevo-editor/command-catalog/codex",
+            "/v1/runner",
+        ] {
+            assert_eq!(request_timeout("GET", path), None, "{path}");
+        }
+    }
+
+    #[test]
     fn speech_errors_are_closed_strict_and_bounded() {
         for code in [
             "not_found",
@@ -500,6 +532,7 @@ mod tests {
         assert!(tokens.contains(&"accountUsage"));
         assert!(tokens.contains(&"commandCatalog"));
         assert!(tokens.contains(&"speechTranscription"));
+        assert!(tokens.contains(&"mcpServers"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);

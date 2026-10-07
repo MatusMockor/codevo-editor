@@ -28,32 +28,43 @@ import { IconButton } from "../../../ui/foundation/IconButton";
 import { useNowMs } from "../../../ui/foundation/useNowMs";
 import { AgentProviderGlyph } from "../../agentMode/AgentProviderGlyph";
 import { agentProviderLabel } from "../../agentMode/agentSidebarPresentation";
-import { useRemoteRunnerContext } from "../../remoteRunner/remoteRunnerContext";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 import { SettingsSelect } from "../primitives/SettingsSelect";
 import type { SettingsEnvironment, SettingsPageProps } from "../settingsPageProps";
 import { useSettingsRowTarget } from "../settingsTargetContext";
 import {
-  MCP_CHECK_NOTICE,
+  selectedMcpProjectKey,
+  type McpProjectNote,
+  type McpProjectOption,
+} from "./mcpProjectOptions";
+import {
   MCP_NO_PROJECT_NOTICE,
   MCP_PROVIDERS,
   MCP_REFRESH_LABEL,
-  MCP_SERVER_PROJECTS_NOTICE,
   MCP_TRUNCATED_NOTICE,
   MCP_UNAVAILABLE_NOTICE,
+  mcpAddServerLead,
+  mcpCheckNotice,
   mcpCheckedLabel,
   mcpCopySignInLabel,
   mcpProviderSummary,
   mcpServerSecondaryText,
   mcpServerStatusLabel,
   mcpServerStatusTone,
+  mcpSignInLead,
   orderedMcpServers,
+  type McpProjectPlace,
   type McpProviderSummary,
 } from "./mcpServersPresentation";
-import { useMcpServersProject, type McpServersProject } from "./useMcpServersProject";
+import {
+  useMcpServerProjectsLoad,
+  useMcpServersProject,
+  type McpServersProject,
+} from "./useMcpServersProject";
 import "./mcpServersSettings.css";
 
 const NO_SERVERS: ReadonlyArray<AgentMcpServer> = [];
+const NO_NOTES: ReadonlyArray<McpProjectNote> = [];
 
 export function McpServersSettingsPage({ env }: SettingsPageProps) {
   const rowRef = useSettingsRowTarget("mcp.servers");
@@ -65,17 +76,21 @@ export function McpServersSettingsPage({ env }: SettingsPageProps) {
 }
 
 export function McpServersPageActions({ env }: { readonly env: SettingsEnvironment }) {
-  const store = env.agentMcpServers?.store ?? null;
-  const { selectedRoot } = useMcpServersProject(env);
-  const claudeTarget = useAgentMcpServersTarget(selectedRoot, "claudeCode");
-  const codexTarget = useAgentMcpServersTarget(selectedRoot, "codex");
+  const surface = env.agentMcpServers ?? null;
+  const store = surface?.store ?? null;
+  const project = useMcpServersProject(env);
+  const projectKey = selectedMcpProjectKey(project.selection);
+  const claudeTarget = useAgentMcpServersTarget(projectKey, "claudeCode");
+  const codexTarget = useAgentMcpServersTarget(projectKey, "codex");
   const claude = useAgentMcpServersState(store, claudeTarget);
   const codex = useAgentMcpServersState(store, codexTarget);
-  if (store === null || claudeTarget === null || codexTarget === null) return null;
+  if (surface === null || store === null) return null;
+  const targets = [claudeTarget, codexTarget].flatMap((target) => target ?? []);
+  if (targets.length === 0 && !project.serversKnown) return null;
   const checking = claude.kind === "loading" || codex.kind === "loading";
   const refresh = () => {
-    store.refresh(claudeTarget);
-    store.refresh(codexTarget);
+    surface.serverProjects.load();
+    for (const target of targets) store.refresh(target);
   };
   return (
     <span className="settings-page-actions">
@@ -93,54 +108,81 @@ function McpServersContent({ env }: { readonly env: SettingsEnvironment }) {
   const store = env.agentMcpServers?.store ?? null;
   const project = useMcpServersProject(env);
   const nowMs = useNowMs();
-  const remote = useRemoteRunnerContext();
-  const serverProjectsNote = (remote?.servers.length ?? 0) > 0 ? MCP_SERVER_PROJECTS_NOTICE : null;
-  if (store === null) return <McpNotice note={null} text={MCP_UNAVAILABLE_NOTICE} />;
-  const repositoryRoot = project.selectedRoot;
-  if (repositoryRoot === null)
-    return <McpNotice note={serverProjectsNote} text={MCP_NO_PROJECT_NOTICE} />;
-  return (
-    <>
-      <McpProjectSection
-        note={serverProjectsNote}
-        project={project}
-        selectedRoot={repositoryRoot}
-      />
-      {MCP_PROVIDERS.map((provider) => (
-        <McpProviderGroup
-          key={provider}
-          nowMs={nowMs}
-          onCopy={env.onCopyInstallCommand}
-          provider={provider}
-          repositoryRoot={repositoryRoot}
-          store={store}
-        />
-      ))}
-    </>
-  );
+  useMcpServerProjectsLoad(env.agentMcpServers?.serverProjects ?? null);
+  if (store === null) return <McpNotice notes={NO_NOTES} text={MCP_UNAVAILABLE_NOTICE} />;
+  const selection = project.selection;
+  switch (selection.kind) {
+    case "none":
+      return <McpNotice notes={project.notes} text={MCP_NO_PROJECT_NOTICE} />;
+    case "waiting":
+      return <McpNotice notes={project.notes} text={null} />;
+    case "selected":
+      return (
+        <>
+          <McpProjectSection project={project} selected={selection.option} />
+          {MCP_PROVIDERS.map((provider) => (
+            <McpProviderGroup
+              key={provider}
+              nowMs={nowMs}
+              onCopy={env.onCopyInstallCommand}
+              place={selection.option.project.kind}
+              projectKey={selection.option.key}
+              provider={provider}
+              store={store}
+            />
+          ))}
+        </>
+      );
+    default: {
+      const unreachable: never = selection;
+      return unreachable;
+    }
+  }
 }
 
-function McpNotice({ note, text }: { readonly note: string | null; readonly text: string }) {
+function McpNotice({
+  notes,
+  text,
+}: {
+  readonly notes: ReadonlyArray<McpProjectNote>;
+  readonly text: string | null;
+}) {
   return (
     <SettingsSectionHeading title="MCP servers">
-      <p className="settings-empty">{text}</p>
-      {note === null ? null : <p className="settings-empty">{note}</p>}
+      {text === null ? null : <p className="settings-empty">{text}</p>}
+      <McpProjectNotes className="settings-empty" notes={notes} />
     </SettingsSectionHeading>
   );
 }
 
-function McpProjectSection({
-  note,
-  project,
-  selectedRoot,
+function McpProjectNotes({
+  className,
+  notes,
 }: {
-  readonly note: string | null;
-  readonly project: McpServersProject;
-  readonly selectedRoot: string;
+  readonly className: string;
+  readonly notes: ReadonlyArray<McpProjectNote>;
 }) {
-  const selected = project.options.find((option) => option.repositoryRoot === selectedRoot);
+  return notes.map((note) => (
+    <p
+      className={className}
+      data-mcp-project-note={note.tone}
+      key={note.serverId === null ? "list" : `server:${note.serverId}`}
+      role={note.tone === "problem" ? "alert" : "status"}
+    >
+      {note.text}
+    </p>
+  ));
+}
+
+function McpProjectSection({
+  project,
+  selected,
+}: {
+  readonly project: McpServersProject;
+  readonly selected: McpProjectOption;
+}) {
   const options = useMemo(
-    () => project.options.map(({ label, repositoryRoot }) => ({ label, value: repositoryRoot })),
+    () => project.options.map(({ key, label }) => ({ label, value: key })),
     [project.options],
   );
   return (
@@ -148,9 +190,14 @@ function McpProjectSection({
       <div className="settings-row">
         <div className="settings-row__text">
           <div className="settings-row__head">
-            <h3 className="settings-row__title">{selected?.label ?? selectedRoot}</h3>
+            <h3 className="settings-row__title">{selected.name}</h3>
           </div>
-          <p className="settings-row__description settings-mcp-project__path">{selectedRoot}</p>
+          <p
+            className="settings-row__description settings-mcp-project__location"
+            data-place={selected.project.kind}
+          >
+            {selected.location}
+          </p>
         </div>
         {options.length < 2 ? null : (
           <div className="settings-row__control">
@@ -158,15 +205,15 @@ function McpProjectSection({
               label="Project"
               onChange={project.select}
               options={options}
-              value={selectedRoot}
+              value={selected.key}
               width="md"
             />
           </div>
         )}
       </div>
       <div className="settings-row" data-layout="stacked">
-        <p className="settings-row__description">{MCP_CHECK_NOTICE}</p>
-        {note === null ? null : <p className="settings-row__description">{note}</p>}
+        <p className="settings-row__description">{mcpCheckNotice(selected.project.kind)}</p>
+        <McpProjectNotes className="settings-row__description" notes={project.notes} />
       </div>
     </SettingsSectionHeading>
   );
@@ -175,17 +222,19 @@ function McpProjectSection({
 function McpProviderGroup({
   nowMs,
   onCopy,
+  place,
+  projectKey,
   provider,
-  repositoryRoot,
   store,
 }: {
   readonly nowMs: number;
+  readonly place: McpProjectPlace;
+  readonly projectKey: string;
   readonly provider: AgentCliKind;
-  readonly repositoryRoot: string;
   readonly store: AgentMcpServersStore;
   onCopy(command: string): void;
 }) {
-  const target = useAgentMcpServersTarget(repositoryRoot, provider);
+  const target = useAgentMcpServersTarget(projectKey, provider);
   const state = useAgentMcpServersState(store, target);
   useEffect(() => {
     if (target === null) return;
@@ -214,9 +263,19 @@ function McpProviderGroup({
         className="settings-group"
         data-mcp-provider={provider}
       >
-        <McpProviderSummaryRow provider={provider} summary={mcpProviderSummary(state, provider)} />
+        <McpProviderSummaryRow
+          place={place}
+          provider={provider}
+          summary={mcpProviderSummary(state, provider)}
+        />
         {servers.map((server) => (
-          <McpServerRow key={server.name} onCopy={onCopy} provider={provider} server={server} />
+          <McpServerRow
+            key={server.name}
+            onCopy={onCopy}
+            place={place}
+            provider={provider}
+            server={server}
+          />
         ))}
         {snapshot?.result.truncated === true ? (
           <p className="settings-empty">{MCP_TRUNCATED_NOTICE}</p>
@@ -227,9 +286,11 @@ function McpProviderGroup({
 }
 
 function McpProviderSummaryRow({
+  place,
   provider,
   summary,
 }: {
+  readonly place: McpProjectPlace;
   readonly provider: AgentCliKind;
   readonly summary: McpProviderSummary;
 }) {
@@ -241,7 +302,7 @@ function McpProviderSummaryRow({
       </span>
       {summary.hintCommand === null ? null : (
         <p className="settings-row__description">
-          Add one with <code>{summary.hintCommand}</code>, then check again.
+          {mcpAddServerLead(place)} <code>{summary.hintCommand}</code>, then check again.
         </p>
       )}
     </div>
@@ -250,9 +311,11 @@ function McpProviderSummaryRow({
 
 function McpServerRow({
   onCopy,
+  place,
   provider,
   server,
 }: {
+  readonly place: McpProjectPlace;
   readonly provider: AgentCliKind;
   readonly server: AgentMcpServer;
   onCopy(command: string): void;
@@ -271,7 +334,12 @@ function McpServerRow({
           <p className="settings-row__description settings-mcp-server__detail">{server.detail}</p>
         )}
         {signInCommand === null ? null : (
-          <McpSignInHint command={signInCommand} name={server.name} onCopy={onCopy} />
+          <McpSignInHint
+            command={signInCommand}
+            lead={mcpSignInLead(place)}
+            name={server.name}
+            onCopy={onCopy}
+          />
         )}
       </div>
       <div className="settings-row__control">
@@ -286,16 +354,18 @@ function McpServerRow({
 
 function McpSignInHint({
   command,
+  lead,
   name,
   onCopy,
 }: {
   readonly command: string;
+  readonly lead: string;
   readonly name: string;
   onCopy(command: string): void;
 }) {
   return (
     <p className="settings-row__description settings-mcp-signin">
-      <span>To sign in, run</span>
+      <span>{lead}</span>
       <code>{command}</code>
       <IconButton
         icon={<Copy aria-hidden="true" size={12} />}

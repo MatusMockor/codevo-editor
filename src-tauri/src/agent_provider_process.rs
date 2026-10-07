@@ -53,7 +53,7 @@ pub(crate) fn parse_provider_probe_json(output: &[u8]) -> Option<serde_json::Val
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const READER_GRACE: Duration = Duration::from_millis(250);
 const UPDATE_OUTPUT_BYTES: usize = 1024 * 1024;
-const MAX_PROVIDER_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PROVIDER_EXECUTABLE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PROVIDER_ENV_VALUE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug)]

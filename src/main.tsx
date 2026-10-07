@@ -144,6 +144,7 @@ async function bootstrap(): Promise<void> {
             remoteGateway: remoteRunnerGateway,
             children: React.createElement(AgentMcpServersProvider, {
               gateway: new TauriAgentMcpServersGateway(),
+              remoteGateway: remoteRunnerGateway,
               children: React.createElement(ModelNewnessProvider, {
                 repository: new BrowserModelFirstSeenRepository(),
                 children: React.createElement(App),

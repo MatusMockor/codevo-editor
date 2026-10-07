@@ -1,5 +1,6 @@
 import { parseAgentAccountUsageSnapshot } from "./agentAccountUsage";
 import { parseAgentCommandCatalog } from "./agentCommandCatalog";
+import { parseAgentMcpServers } from "./agentMcpServers";
 import {
   parseAgentTurnChangeSummary,
   parseAgentTurnFileDiff,
@@ -335,6 +336,15 @@ export const remoteRunnerChecks = {
     }),
     response: accepts(parseAgentCommandCatalog),
   },
+  getMcpServers: {
+    request: object({
+      ...serverRequest,
+      runnerId: runnerIdentity,
+      projectId: identifier,
+      provider: choice("claude", "codex"),
+    }),
+    response: accepts(parseAgentMcpServers),
+  },
   transcribeSpeech: {
     request: object({
       ...serverRequest,
@@ -361,6 +371,7 @@ export const remoteRunnerChecks = {
       capabilities: object({
         accountUsage: optional(boolean),
         commandCatalog: optional(boolean),
+        mcpServers: optional(boolean),
         taskExecution: boolean,
         eventReplay: boolean,
         taskDrafts: optional(boolean),

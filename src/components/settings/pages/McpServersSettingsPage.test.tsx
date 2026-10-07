@@ -3,6 +3,8 @@ import { StrictMode, act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import wireContract from "../../../../contracts/agent-mcp-servers-wire.json";
+import { AgentMcpServerProjectsStore } from "../../../application/agentMcpServerProjects";
+import { agentMcpServersSource } from "../../../application/agentMcpServersGateway";
 import { AgentMcpServersProjectChoiceStore } from "../../../application/agentMcpServersProjectChoice";
 import { AgentMcpServersStatusStore } from "../../../application/agentMcpServersStore";
 import type { AgentMcpServersSurface } from "../../../application/agentMcpServersSurface";
@@ -12,18 +14,14 @@ import {
   type AgentMcpServers,
   type AgentMcpServersRequest,
 } from "../../../domain/agentMcpServers";
+import { agentMcpServersProjectKey } from "../../../domain/agentMcpServersTarget";
 import type { AgentProjectDescriptor } from "../../../domain/agentProject";
-import type { RemoteRunnerGateway } from "../../../domain/remoteRunner";
 import type { AgentCliKind } from "../../../domain/agentTask";
 import {
   DeferredAgentMcpServersGateway,
   agentMcpServersFixture,
 } from "../../../test/agentMcpServersTestSupport";
 import { waitForReact } from "../../../test/reactTestLifecycle";
-import {
-  RemoteRunnerContext,
-  type RemoteRunnerContextValue,
-} from "../../remoteRunner/remoteRunnerContext";
 import { SettingsPageActions } from "../SettingsPageActions";
 import type { SettingsEnvironment } from "../settingsPageProps";
 import { SettingsPageHost } from "../settingsPages";
@@ -45,26 +43,8 @@ function request(repositoryRoot: string, provider: AgentCliKind): AgentMcpServer
   return { repositoryRoot, provider };
 }
 
-function remoteContext(serverCount: number): RemoteRunnerContextValue {
-  return {
-    gateway: {} as RemoteRunnerGateway,
-    servers: Array.from({ length: serverCount }, (_, index) => ({
-      id: `server-${index}`,
-      name: `Linux ${index}`,
-      host: "linux.example",
-      username: "dev",
-      port: 22,
-      connected: true,
-    })),
-    status: "ready",
-    error: null,
-    refresh: async () => undefined,
-    connect: async () => null,
-    disconnect: async () => undefined,
-    remove: async () => undefined,
-    selectedServerId: null,
-    selectServer: () => undefined,
-  };
+function projectKey(repositoryRoot: string): string {
+  return agentMcpServersProjectKey({ kind: "local", repositoryRoot });
 }
 
 describe("McpServersSettingsPage", () => {
@@ -80,9 +60,15 @@ describe("McpServersSettingsPage", () => {
     root = createRoot(host);
     gateway = new DeferredAgentMcpServersGateway();
     checkedAgoMs = 0;
+    const serverProjects = new AgentMcpServerProjectsStore(null);
     surface = {
-      store: new AgentMcpServersStatusStore(gateway, undefined, () => Date.now() - checkedAgoMs),
+      store: new AgentMcpServersStatusStore(
+        agentMcpServersSource(gateway, null, serverProjects),
+        undefined,
+        () => Date.now() - checkedAgoMs,
+      ),
       projectChoice: new AgentMcpServersProjectChoiceStore(),
+      serverProjects,
     };
   });
 
@@ -190,7 +176,7 @@ describe("McpServersSettingsPage", () => {
     expect(select).not.toBeNull();
     act(() => {
       if (select === null) return;
-      select.value = repositoryRoot;
+      select.value = projectKey(repositoryRoot);
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
   }
@@ -482,7 +468,7 @@ describe("McpServersSettingsPage", () => {
   it("defaults to the open workspace and checks another project only once it is chosen", async () => {
     show(environment({ agentProjects: [project(API, "api"), project(APP, "App")] }));
 
-    expect(projectSelect()?.value).toBe(APP);
+    expect(projectSelect()?.value).toBe(projectKey(APP));
     expect([...(projectSelect()?.options ?? [])].map((option) => option.textContent)).toEqual([
       "App",
       "api",
@@ -491,7 +477,7 @@ describe("McpServersSettingsPage", () => {
     await answerBoth(APP);
 
     chooseProject(API);
-    expect(projectSelect()?.value).toBe(API);
+    expect(projectSelect()?.value).toBe(projectKey(API));
     expect(gateway.requests().slice(2)).toEqual([
       request(API, "claudeCode"),
       request(API, "codex"),
@@ -541,7 +527,7 @@ describe("McpServersSettingsPage", () => {
         workspaceRoot: null,
       }),
     );
-    expect(projectSelect()?.value).toBe(API);
+    expect(projectSelect()?.value).toBe(projectKey(API));
     expect(gateway.requests()).toEqual([request(API, "claudeCode"), request(API, "codex")]);
   });
 
@@ -549,16 +535,16 @@ describe("McpServersSettingsPage", () => {
     const projects = [project(API, "api"), project(APP, "App"), project("/work/web", "web")];
     show(environment({ agentProjects: projects }));
     chooseProject("/work/web");
-    expect(projectSelect()?.value).toBe("/work/web");
+    expect(projectSelect()?.value).toBe(projectKey("/work/web"));
 
     show(environment({ agentProjects: projects, workspaceRoot: API }));
-    expect(projectSelect()?.value).toBe(API);
+    expect(projectSelect()?.value).toBe(projectKey(API));
 
     show(environment({ agentProjects: projects, workspaceRoot: APP }));
-    expect(projectSelect()?.value).toBe("/work/web");
+    expect(projectSelect()?.value).toBe(projectKey("/work/web"));
 
     show(environment({ agentProjects: projects.slice(0, 2), workspaceRoot: APP }));
-    expect(projectSelect()?.value).toBe(APP);
+    expect(projectSelect()?.value).toBe(projectKey(APP));
   });
 
   it("asks to open a project when there is no local project and checks nothing", () => {
@@ -571,34 +557,6 @@ describe("McpServersSettingsPage", () => {
     );
     expect(refreshButton()).toBeNull();
     expect(gateway.requests()).toEqual([]);
-    expect(host.textContent).not.toContain("Projects on servers are not checked yet.");
-  });
-
-  it("says once that server projects are not checked when a server is connected", async () => {
-    const withServers = (children: ReactNode) => (
-      <RemoteRunnerContext.Provider value={remoteContext(2)}>
-        {children}
-      </RemoteRunnerContext.Provider>
-    );
-    show(environment(), "mcp", withServers);
-    expect(host.textContent?.split("Projects on servers are not checked yet.")).toHaveLength(2);
-    expect(gateway.requests()).toEqual([request(APP, "claudeCode"), request(APP, "codex")]);
-
-    show(
-      environment({ agentProjects: [], hasWorkspace: false, workspaceRoot: null }),
-      "mcp",
-      withServers,
-    );
-    expect(host.textContent?.split("Projects on servers are not checked yet.")).toHaveLength(2);
-    expect(host.textContent).toContain("Open a project to see its MCP servers.");
-  });
-
-  it("omits the server note when no server is configured", () => {
-    show(environment(), "mcp", (children) => (
-      <RemoteRunnerContext.Provider value={remoteContext(0)}>
-        {children}
-      </RemoteRunnerContext.Provider>
-    ));
     expect(host.textContent).not.toContain("Projects on servers are not checked yet.");
   });
 

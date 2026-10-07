@@ -146,6 +146,8 @@ fn contract_errors_match_the_error_constants() {
             "busy": AGENT_MCP_SERVERS_BUSY_ERROR,
             "timedOut": AGENT_MCP_SERVERS_TIMED_OUT_ERROR,
             "unavailable": AGENT_MCP_SERVERS_UNAVAILABLE_ERROR,
+            "unsupportedRunner": AGENT_MCP_SERVERS_UNSUPPORTED_RUNNER_ERROR,
+            "serverUnavailable": AGENT_MCP_SERVERS_SERVER_UNAVAILABLE_ERROR,
         })
     );
 }
@@ -724,7 +726,7 @@ fn sensitive_words_inside_failure_details_are_redacted() {
             "bad key sk_live_MARKER_SECRET_0123456789 used",
             "bad key [redacted] used",
         ),
-        ("sixteen abcdefghijklmnop", "sixteen [redacted]"),
+        ("sixteen abcdefghijklmno1", "sixteen [redacted]"),
         (
             "args: --api-key MARKER_SECRET -p MARKER_SECRET done",
             "args: [redacted] done",
@@ -742,7 +744,7 @@ fn sensitive_words_inside_failure_details_are_redacted() {
             "[redacted] kept",
         ),
         ("Connection\u{202e} closed\u{2066}", "Connection closed"),
-        ("split abcdefgh\u{200e}ijklmnop run", "split [redacted] run"),
+        ("split abcdefg1\u{200e}ijklmnop run", "split [redacted] run"),
         ("\u{200f}/opt/MARKER_SECRET\u{202a}", "[redacted]"),
     ] {
         let claude = claude(json!([{"name": "docs", "status": "failed", "error": message}]));
@@ -760,6 +762,49 @@ fn sensitive_words_inside_failure_details_are_redacted() {
         );
         assert_eq!(validate_servers(&codex), Ok(()));
     }
+}
+
+#[test]
+fn long_token_runs_are_redacted_only_with_a_digit_or_from_32_characters() {
+    let detail = |word: &str| {
+        let message = format!("server {word} reported");
+        let claude = claude(json!([{"name": "docs", "status": "failed", "error": message}]));
+        let codex = codex(json!([codex_with("docs", json!({"toolsError": message}))]));
+        assert_eq!(claude.servers[0].detail, codex.servers[0].detail, "{word}");
+        assert_eq!(validate_servers(&codex), Ok(()));
+        codex.servers[0].detail.clone().expect("detail")
+    };
+    let letters_31 = "abcdefghijklmnopqrstuvwxyzABCDE";
+    let letters_32 = "abcdefghijklmnopqrstuvwxyzABCDEF";
+    assert_eq!((letters_31.len(), letters_32.len()), (31, 32));
+    for word in [
+        "misconfiguration",
+        "authenticationRequired",
+        "abcdefghijklmnop",
+        "initialize_response_closed",
+        "connection-closed-early",
+        "abcdefghijklmn1",
+        "30000ms",
+        letters_31,
+    ] {
+        assert_eq!(detail(word), format!("server {word} reported"), "{word}");
+    }
+    for token in [
+        "ghp_abcdefghij0123456789",
+        "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+        "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+        "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMTIzNDU2Nzg5MA",
+        "abcdefghijklmno1",
+        "sk-proj-abcdefghij1",
+        "MARKER_SECRET_0123456789",
+        letters_32,
+    ] {
+        assert_eq!(detail(token), "server [redacted] reported", "{token}");
+    }
+    assert_eq!(
+        detail("misconfiguration.da39a3ee5e6b4b0d3255bfef95601890afd80709"),
+        "server [redacted] reported"
+    );
 }
 
 #[test]
@@ -792,7 +837,7 @@ fn non_url_secrets_in_error_text_never_reach_the_serialized_snapshot() {
         format!("failed to spawn \"/opt/{MARKER}/server\" \"--api-key\" \"{MARKER}\""),
         format!("failed to spawn `server --key={MARKER}`"),
         format!("invalid key sk_live_{MARKER}_0123456789abcdef"),
-        format!("invalid key ({MARKER}{MARKER}),"),
+        format!("invalid key ({MARKER}{MARKER}{MARKER}),"),
     ] {
         let claude = claude(json!([{"name": "docs", "status": "failed", "error": message}]));
         let codex = codex(json!([codex_with("docs", json!({"toolsError": message}))]));
@@ -832,6 +877,50 @@ fn bidi_control_characters_are_rejected_in_wire_names() {
         assert!(!is_valid_server_name(name), "{name:?}");
     }
     assert!(is_valid_server_name("claude.ai Gmail"));
+}
+
+#[test]
+fn bidi_control_characters_are_rejected_in_wire_details() {
+    let wire = |detail: &str| {
+        json!({
+            "version": 1,
+            "provider": "codex",
+            "truncated": false,
+            "servers": [{
+                "name": "docs",
+                "status": "failed",
+                "scope": "unknown",
+                "transport": "stdio",
+                "endpointOrigin": null,
+                "toolCount": null,
+                "detail": detail,
+            }],
+        })
+    };
+    assert!(parse_mcp_servers(wire("Connection closed")).is_ok());
+    for detail in [
+        "Connection\u{202e}desolc",
+        "\u{2066}Connection closed",
+        "Connection closed\u{2069}",
+        "Connection\u{200e} closed",
+        "Connection \u{200f}closed",
+        "Connection\u{202a}closed",
+    ] {
+        let snapshot: AgentMcpServers = serde_json::from_value(wire(detail)).unwrap();
+        assert_eq!(
+            validate_servers(&snapshot).err().as_deref(),
+            Some(INVALID_SERVER_ERROR),
+            "{detail:?}"
+        );
+        assert!(parse_mcp_servers(wire(detail)).is_err(), "{detail:?}");
+    }
+    let stripped =
+        claude(json!([{"name": "docs", "status": "failed", "error": "Connection\u{202e} closed"}]));
+    assert_eq!(
+        stripped.servers[0].detail.as_deref(),
+        Some("Connection closed")
+    );
+    assert_eq!(validate_servers(&stripped), Ok(()));
 }
 
 #[test]
@@ -1041,4 +1130,101 @@ fn provider_secrets_never_reach_the_serialized_snapshot() {
             }],
         })
     );
+}
+
+#[test]
+fn codex_servers_disabled_in_the_config_are_reported_as_disabled_without_leaking_it() {
+    let secret_entry = |enabled: Value| {
+        json!({
+            "command": format!("/opt/{MARKER}/server"),
+            "args": ["--api-key", MARKER],
+            "env": {"API_TOKEN": MARKER},
+            "url": format!("https://user:{MARKER}@mcp.example.com/{MARKER}?token={MARKER}"),
+            "http_headers": {"Authorization": format!("Bearer {MARKER}")},
+            "bearer_token_env_var": MARKER,
+            "environment_id": "local",
+            "enabled": enabled,
+            "tool_timeout_sec": null,
+        })
+    };
+    let config = json!({
+        "config": {
+            "model": MARKER,
+            "mcp_servers": {
+                "off": secret_entry(json!(false)),
+                "on": secret_entry(json!(true)),
+                "needs-login": secret_entry(json!(false)),
+                "broken": secret_entry(json!(false)),
+                "live": secret_entry(json!(false)),
+                "starting": secret_entry(json!(false)),
+                "mistyped": secret_entry(json!("false")),
+                "zero": secret_entry(json!(0)),
+                "null-flag": secret_entry(json!(null)),
+                "flagless": {"command": MARKER},
+                "not-listed": secret_entry(json!(false)),
+                MARKER: secret_entry(json!(false)),
+            },
+        },
+        "origins": {"mcp_servers.off.enabled": {"name": {"type": "user", "file": MARKER}}},
+    });
+    let mut snapshot = codex(json!([
+        codex_entry("off"),
+        codex_entry("on"),
+        codex_entry("absent"),
+        codex_with("needs-login", json!({"authStatus": "notLoggedIn"})),
+        codex_with("broken", json!({"toolsError": "Connection closed"})),
+        codex_with("live", json!({"serverInfo": {"name": "live"}})),
+        codex_with("starting", json!({"runtimeStatus": "starting"})),
+        codex_entry("mistyped"),
+        codex_entry("zero"),
+        codex_entry("null-flag"),
+        codex_entry("flagless"),
+    ]));
+    assert_eq!(
+        server(&snapshot, "broken").detail.as_deref(),
+        Some("Connection closed")
+    );
+    mark_codex_disabled_servers(&mut snapshot, &config);
+    use AgentMcpServerStatus::*;
+    for (name, status) in [
+        ("off", Disabled),
+        ("on", Unknown),
+        ("absent", Unknown),
+        ("needs-login", Disabled),
+        ("broken", Disabled),
+        ("live", Connected),
+        ("starting", Connecting),
+        ("mistyped", Unknown),
+        ("zero", Unknown),
+        ("null-flag", Unknown),
+        ("flagless", Unknown),
+    ] {
+        assert_eq!(server(&snapshot, name).status, status, "{name}");
+    }
+    assert_eq!(server(&snapshot, "broken").detail, None);
+    assert_eq!(snapshot.servers.len(), 11);
+    assert_eq!(validate_servers(&snapshot), Ok(()));
+    assert!(!serde_json::to_string(&snapshot).unwrap().contains(MARKER));
+}
+
+#[test]
+fn a_malformed_codex_config_changes_nothing() {
+    let original = codex(json!([codex_entry("off")]));
+    for config in [
+        json!(null),
+        json!("config"),
+        json!({}),
+        json!({"config": null}),
+        json!({"config": {"mcp_servers": null}}),
+        json!({"config": {"mcp_servers": [{"name": "off", "enabled": false}]}}),
+        json!({"config": {"mcp_servers": {"off": false}}}),
+        json!({"config": {"mcp_servers": {"off": {"enabled": "false"}}}}),
+        json!({"config": {"mcp_servers": {"OFF": {"enabled": false}}}}),
+        json!({"mcp_servers": {"off": {"enabled": false}}}),
+        json!({"config": {"off": {"enabled": false}}}),
+    ] {
+        let mut snapshot = original.clone();
+        mark_codex_disabled_servers(&mut snapshot, &config);
+        assert_eq!(snapshot, original, "{config}");
+    }
 }

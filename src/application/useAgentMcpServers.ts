@@ -1,6 +1,18 @@
-import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { agentMcpServersRequest, type AgentMcpServersRequest } from "../domain/agentMcpServers";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
+import {
+  agentMcpServersProjectOfKey,
+  agentMcpServersTarget,
+  type AgentMcpServersProject,
+  type AgentMcpServersTarget,
+} from "../domain/agentMcpServersTarget";
 import type { AgentCliKind } from "../domain/agentTask";
+import type { RemoteRunnerServer } from "../domain/remoteRunner";
+import {
+  NO_AGENT_MCP_SERVER_HOSTS,
+  type AgentMcpConnectedServer,
+  type AgentMcpServerHosts,
+  type AgentMcpServerProjects,
+} from "./agentMcpServerProjects";
 import type { AgentMcpServersProjectChoice } from "./agentMcpServersProjectChoice";
 import {
   IDLE_AGENT_MCP_SERVERS_STATE,
@@ -8,19 +20,25 @@ import {
   type AgentMcpServersStore,
 } from "./agentMcpServersStore";
 
+type ConnectableServer = Pick<RemoteRunnerServer, "id" | "name" | "connected">;
+
 export function useAgentMcpServersTarget(
-  repositoryRoot: string | null,
+  projectKey: string | null,
   provider: AgentCliKind,
-): AgentMcpServersRequest | null {
+): AgentMcpServersTarget | null {
   return useMemo(
-    () => agentMcpServersRequest(repositoryRoot, provider),
-    [repositoryRoot, provider],
+    () =>
+      agentMcpServersTarget(
+        projectKey === null ? null : agentMcpServersProjectOfKey(projectKey),
+        provider,
+      ),
+    [projectKey, provider],
   );
 }
 
 export function useAgentMcpServersState(
   store: AgentMcpServersStore | null,
-  target: AgentMcpServersRequest | null,
+  target: AgentMcpServersTarget | null,
 ): AgentMcpServersState {
   const subscribe = useCallback(
     (listener: () => void) =>
@@ -37,7 +55,7 @@ export function useAgentMcpServersState(
 export function useAgentMcpServersChosenProject(
   choice: AgentMcpServersProjectChoice | null,
   scope: string | null,
-): string | null {
+): AgentMcpServersProject | null {
   const subscribe = useCallback(
     (listener: () => void) => (choice === null ? ignoreSubscription() : choice.subscribe(listener)),
     [choice],
@@ -47,6 +65,40 @@ export function useAgentMcpServersChosenProject(
     [choice, scope],
   );
   return useSyncExternalStore(subscribe, snapshot);
+}
+
+export function useAgentMcpServerHosts(
+  serverProjects: AgentMcpServerProjects | null,
+): AgentMcpServerHosts {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      serverProjects === null ? ignoreSubscription() : serverProjects.subscribe(listener),
+    [serverProjects],
+  );
+  const snapshot = useCallback(
+    () => (serverProjects === null ? NO_AGENT_MCP_SERVER_HOSTS : serverProjects.state()),
+    [serverProjects],
+  );
+  return useSyncExternalStore(subscribe, snapshot);
+}
+
+export function useAgentMcpConnectedServers(
+  serverProjects: AgentMcpServerProjects,
+  servers: ReadonlyArray<ConnectableServer>,
+): void {
+  const connected = useMemo(() => connectedAgentMcpServers(servers), [servers]);
+  useEffect(() => {
+    serverProjects.connect(connected);
+  }, [serverProjects, connected]);
+  useEffect(() => () => serverProjects.connect([]), [serverProjects]);
+}
+
+export function connectedAgentMcpServers(
+  servers: ReadonlyArray<ConnectableServer>,
+): ReadonlyArray<AgentMcpConnectedServer> {
+  return servers
+    .filter((server) => server.connected)
+    .map((server) => ({ id: server.id, name: server.name, connection: server }));
 }
 
 function ignoreSubscription(): () => void {

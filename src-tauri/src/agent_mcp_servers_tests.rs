@@ -160,6 +160,7 @@ while IFS= read -r line; do
     *'"method":"mcpServerStatus/list"'*)
       while [ ! -e "$(dirname "$0")/release" ]; do sleep 0.05; done
       printf '{"id":1,"result":{"data":[{"name":"%s","runtimeStatus":null,"pluginId":null,"httpOrigin":"https://docs.example","serverInfo":{"name":"docs"},"tools":{"search":{}},"toolsError":null,"authStatus":"bearerToken"}],"nextCursor":null}}\n' "$(basename "$PWD")";;
+    *'"method":"config/read"'*) printf '{"id":2,"error":{"code":-32600,"message":"unsupported"}}\n';;
   esac
 done
 "#;

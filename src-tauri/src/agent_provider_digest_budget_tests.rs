@@ -178,3 +178,27 @@ fn deadline_reached_during_wait_stops_validation() {
     .is_err());
     assert_eq!(clock.waits.borrow().as_slice(), &[CANCELLATION_POLL]);
 }
+
+#[cfg(unix)]
+#[test]
+fn an_executable_is_fingerprinted_at_the_size_cap_and_rejected_above_it_without_hashing() {
+    assert_eq!(MAX_PROVIDER_EXECUTABLE_BYTES, 512 * 1024 * 1024);
+    let fixture = Fixture::new();
+    let path = fixture.0.to_str().unwrap();
+    let file = fs::File::options().write(true).open(&fixture.0).unwrap();
+    file.set_len(MAX_PROVIDER_EXECUTABLE_BYTES).unwrap();
+    take_executable_digest_work();
+    let identity = executable_identity(path).unwrap();
+    assert_eq!(identity.size_bytes, MAX_PROVIDER_EXECUTABLE_BYTES);
+    assert_eq!(
+        take_executable_digest_work(),
+        (1, MAX_PROVIDER_EXECUTABLE_BYTES)
+    );
+    file.set_len(MAX_PROVIDER_EXECUTABLE_BYTES + 1).unwrap();
+    assert_eq!(
+        executable_identity(path).err().as_deref(),
+        Some("Provider executable is too large.")
+    );
+    assert_eq!(take_executable_digest_work(), (0, 0));
+    assert!(!identity.is_current_for_spawn());
+}

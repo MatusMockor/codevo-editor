@@ -5,6 +5,8 @@ pub use account_usage::*;
 mod artifacts;
 mod command_catalog;
 pub use command_catalog::*;
+mod mcp_servers;
+pub use mcp_servers::*;
 mod attachments;
 mod commands;
 mod continuation;

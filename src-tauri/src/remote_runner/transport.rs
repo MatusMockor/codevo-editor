@@ -19,13 +19,26 @@ const MAX_OUTPUT: usize = 4 * 1024 * 1024;
 const MAX_IMAGE_OUTPUT: usize = (8 * 1024 * 1024_usize).div_ceil(3) * 4 + 1024;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_COMMAND_CATALOG_OUTPUT: usize = 2 * 1024 * 1024;
-fn is_command_catalog_path(path: &str) -> bool {
+const MAX_MCP_SERVERS_OUTPUT: usize = 256 * 1024;
+const MCP_SERVERS_TIMEOUT: Duration = Duration::from_secs(40);
+fn project_route(path: &str) -> Option<&str> {
     path.strip_prefix("/v1/projects/")
         .and_then(|rest| rest.split_once('/'))
-        .is_some_and(|(project, route)| {
-            super::types::id(project).is_ok()
-                && matches!(route, "command-catalog/claude" | "command-catalog/codex")
-        })
+        .filter(|(project, _)| super::types::id(project).is_ok())
+        .map(|(_, route)| route)
+}
+fn is_command_catalog_path(path: &str) -> bool {
+    matches!(
+        project_route(path),
+        Some("command-catalog/claude" | "command-catalog/codex")
+    )
+}
+pub(super) fn is_mcp_servers_route(method: &str, path: &str) -> bool {
+    method == "GET"
+        && matches!(
+            project_route(path),
+            Some("mcp-servers/claude" | "mcp-servers/codex")
+        )
 }
 fn response_limit(method: &str, path: &str) -> usize {
     if method == "GET" && matches!(path, "/v1/account-usage/claude" | "/v1/account-usage/codex") {
@@ -33,6 +46,9 @@ fn response_limit(method: &str, path: &str) -> usize {
     }
     if method == "GET" && is_command_catalog_path(path) {
         return MAX_COMMAND_CATALOG_OUTPUT;
+    }
+    if is_mcp_servers_route(method, path) {
+        return MAX_MCP_SERVERS_OUTPUT;
     }
     if super::speech::is_route(method, path) {
         return 32 * 1024;
@@ -56,6 +72,9 @@ fn request_timeout(method: &str, path: &str) -> Duration {
     }
     if path.ends_with("/steer") {
         return Duration::from_secs(60);
+    }
+    if is_mcp_servers_route(method, path) {
+        return MCP_SERVERS_TIMEOUT;
     }
     TIMEOUT
 }
@@ -285,6 +304,50 @@ mod tests {
             response_limit("GET", &format!("{artifact}?token=x")),
             MAX_OUTPUT
         );
+    }
+
+    #[test]
+    fn mcp_server_status_reads_receive_their_own_budget_on_exact_routes_only() {
+        assert_eq!(MAX_MCP_SERVERS_OUTPUT, 256 * 1024);
+        assert_eq!(MCP_SERVERS_TIMEOUT, Duration::from_secs(40));
+        for provider in ["claude", "codex"] {
+            let route = format!("/v1/projects/codevo-editor/mcp-servers/{provider}");
+            assert!(is_mcp_servers_route("GET", &route));
+            assert_eq!(response_limit("GET", &route), MAX_MCP_SERVERS_OUTPUT);
+            assert_eq!(request_timeout("GET", &route), MCP_SERVERS_TIMEOUT);
+            for method in ["POST", "PUT", "DELETE"] {
+                assert!(!is_mcp_servers_route(method, &route));
+                assert_eq!(response_limit(method, &route), MAX_OUTPUT);
+                assert_eq!(request_timeout(method, &route), TIMEOUT);
+            }
+        }
+        for path in [
+            "/v1/projects/codevo-editor/mcp-servers/codex?x=1",
+            "/v1/projects/codevo-editor/mcp-servers/codex/",
+            "/v1/projects/codevo-editor/mcp-servers/gemini",
+            "/v1/projects/codevo-editor/mcp-servers/claudeCode",
+            "/v1/projects/codevo-editor/mcp-servers",
+            "/v1/projects/a/b/mcp-servers/codex",
+            "/v1/projects//mcp-servers/codex",
+            "/v1/projects/../mcp-servers/codex",
+            "/v1/mcp-servers/codex",
+            "/v1/projects/codevo-editor/command-catalog/codex",
+            "/v1/tasks",
+            "/v1/runner",
+        ] {
+            assert!(!is_mcp_servers_route("GET", path), "{path}");
+            assert_eq!(request_timeout("GET", path), TIMEOUT, "{path}");
+            assert_ne!(
+                response_limit("GET", path),
+                MAX_MCP_SERVERS_OUTPUT,
+                "{path}"
+            );
+        }
+        for provider in ["claude", "codex"] {
+            let catalog = format!("/v1/projects/codevo-editor/command-catalog/{provider}");
+            assert_eq!(response_limit("GET", &catalog), MAX_COMMAND_CATALOG_OUTPUT);
+            assert_eq!(request_timeout("GET", &catalog), TIMEOUT);
+        }
     }
 
     #[cfg(unix)]

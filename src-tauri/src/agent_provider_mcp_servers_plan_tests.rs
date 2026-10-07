@@ -59,8 +59,22 @@ while IFS= read -r line; do
   case "$line" in
     *'"method":"initialize"'*) printf '{"id":0,"result":{"userAgent":"codevo_editor"}}\n{"method":"remoteControl/status/changed","params":{"status":"disabled"}}\n';;
     *'"method":"mcpServerStatus/list"'*) status;;
+    *'"method":"config/read"'*) config;;
   esac
 done
+"#;
+
+const CODEX_CONFIG_UNSUPPORTED: &str = r#"
+config() {
+  printf '{"error":{"code":-32600,"message":"Invalid request: unknown variant `config/read`"},"id":2}\n'
+  sleep 30
+}
+"#;
+
+const CODEX_STATUS_OFF: &str = r#"
+status() {
+  printf '{"id":1,"result":{"data":[{"name":"off","runtimeStatus":null,"pluginId":null,"httpOrigin":null,"serverInfo":null,"tools":{},"toolsError":null,"authStatus":"unsupported"}],"nextCursor":null}}\n'
+}
 "#;
 
 struct Fixture {
@@ -93,7 +107,11 @@ impl Fixture {
     }
 
     fn codex(label: &str, functions: &str) -> Self {
-        Self::create(label, "codex", &format!("{functions}\n{CODEX_READ_LOOP}"))
+        Self::create(
+            label,
+            "codex",
+            &format!("{CODEX_CONFIG_UNSUPPORTED}\n{functions}\n{CODEX_READ_LOOP}"),
+        )
     }
 
     fn plan(
@@ -114,7 +132,11 @@ impl Fixture {
         let effective_path = env::var("PATH").expect("test PATH");
         let identity = executable_identity_path_with_effective_path(&self.cli, &effective_path)?;
         let authority = Arc::new(fs::File::open(&self.workspace).expect("workspace authority"));
-        let probe = McpServersProbe::with_timing(provider, timing);
+        let probe = McpServersProbe::with_timing(
+            provider,
+            timing,
+            workspace_root.to_str().expect("workspace root"),
+        );
         let plan = AgentProviderProcessPlan::mcp_servers_with_effective_path(
             identity,
             provider,
@@ -273,6 +295,15 @@ fn codex_plan_sends_only_the_handshake_up_front_without_config_overrides() {
     assert_eq!(probe.advance(None, Instant::now()), Ok(false));
     probe.observe(b"{\"id\":0,\"result\":{}}\n");
     assert!(probe.advance(None, Instant::now()).is_err());
+    assert!(!probe.is_complete());
+    assert!(probe.take_snapshot().is_none());
+    probe.observe(b"{\"id\":1,\"result\":{\"data\":[{\"name\":\"docs\"}]}}\n");
+    assert!(probe.is_complete());
+    assert_eq!(probe.advance(None, Instant::now()), Ok(true));
+    assert_eq!(
+        statuses(&probe.take_snapshot().expect("snapshot")),
+        [("docs", AgentMcpServerStatus::Unknown)]
+    );
     assert!(fixture
         .plan_in(
             AgentCliInvocation::CodexExec,
@@ -490,10 +521,16 @@ fn codex_probe_reads_one_status_list_between_unrelated_notifications() {
         "codex-list",
         r#"status() {
   printf '{"method":"account/updated","params":{"authMode":"chatgpt"}}\n'
-  printf '{"id":2,"result":{"data":[{"name":"decoy"}]}}\n'
-  printf '{"id":1,"result":{"data":[{"name":"codex_apps","runtimeStatus":null,"pluginId":null,"httpOrigin":"https://chatgpt.com","serverInfo":{"name":"codex-apps"},"tools":{"search":{"name":"search","description":"MARKER_SECRET","inputSchema":{"type":"object"}},"fetch":{"name":"fetch"}},"toolsError":null,"authStatus":"bearerToken"},'
+  printf '{"id":2,"result":{"data":[{"name":"decoy"}],"config":{"mcp_servers":{"codex_apps":{"enabled":false},"broken":{"enabled":false}}}}}\n'
+  printf '{"id":1,"result":{"data":[{"name":"off","runtimeStatus":null,"pluginId":null,"httpOrigin":null,"serverInfo":null,"tools":{},"toolsError":null,"authStatus":"unsupported"},{"name":"on","runtimeStatus":null,"pluginId":null,"httpOrigin":null,"serverInfo":null,"tools":{},"toolsError":null,"authStatus":"unsupported"},{"name":"codex_apps","runtimeStatus":null,"pluginId":null,"httpOrigin":"https://chatgpt.com","serverInfo":{"name":"codex-apps"},"tools":{"search":{"name":"search","description":"MARKER_SECRET","inputSchema":{"type":"object"}},"fetch":{"name":"fetch"}},"toolsError":null,"authStatus":"bearerToken"},'
   sleep 0.1
   printf '{"name":"broken","runtimeStatus":null,"pluginId":null,"httpOrigin":"http://127.0.0.1:9","serverInfo":null,"tools":{},"toolsError":"request failed for url (http://127.0.0.1:9/mcp/path?token=MARKER_SECRET)","authStatus":"unknown"}],"nextCursor":"2"}}\n'
+}
+config() {
+  printf '{"method":"account/updated","params":{"authMode":"chatgpt"}}\n'
+  printf '{"id":2,"result":{"config":{"model":"MARKER_SECRET","mcp_servers":{"off":{"command":"/opt/MARKER_SECRET/server","args":["--api-key","MARKER_SECRET"],"env":{"API_TOKEN":"MARKER_SECRET"},"environment_id":"local","enabled":false,"tool_timeout_sec":null},'
+  sleep 0.1
+  printf '"on":{"url":"https://mcp.example.com/MARKER_SECRET?token=MARKER_SECRET","http_headers":{"Authorization":"Bearer MARKER_SECRET"},"bearer_token_env_var":"MARKER_SECRET","enabled":true},"MARKER_SECRET":{"command":"MARKER_SECRET","enabled":false}}},"origins":{"mcp_servers.off.command":{"name":{"type":"user","file":"/home/MARKER_SECRET/config.toml"}}}}}\n'
   sleep 30
 }"#,
     );
@@ -509,6 +546,8 @@ fn codex_probe_reads_one_status_list_between_unrelated_notifications() {
         [
             ("broken", AgentMcpServerStatus::Failed),
             ("codex_apps", AgentMcpServerStatus::Connected),
+            ("off", AgentMcpServerStatus::Disabled),
+            ("on", AgentMcpServerStatus::Unknown),
         ]
     );
     assert_eq!(
@@ -520,6 +559,7 @@ fn codex_probe_reads_one_status_list_between_unrelated_notifications() {
         Some("https://chatgpt.com")
     );
     assert_eq!(snapshot.servers[1].tool_count, Some(2));
+    assert_eq!(snapshot.servers[2].detail, None);
     assert!(!serde_json::to_string(&snapshot)
         .unwrap()
         .contains("MARKER_SECRET"));
@@ -535,13 +575,70 @@ fn codex_probe_reads_one_status_list_between_unrelated_notifications() {
         .collect();
     assert_eq!(
         methods,
-        ["initialize", "initialized", "mcpServerStatus/list"]
+        [
+            "initialize",
+            "initialized",
+            "mcpServerStatus/list",
+            "config/read"
+        ]
     );
     assert_eq!(
         messages[2]["params"],
         serde_json::json!({"detail": "toolsAndAuthOnly", "limit": 128})
     );
+    assert_eq!(
+        messages[3],
+        serde_json::json!({
+            "method": "config/read",
+            "id": 2,
+            "params": {"cwd": fixture.workspace.to_str().unwrap(), "includeLayers": false},
+        })
+    );
     fixture.assert_process_group_terminated();
+}
+
+#[test]
+fn codex_probe_keeps_the_status_list_when_the_config_read_is_unsupported_silent_or_fatal() {
+    let unsupported = Fixture::codex("codex-config-unsupported", CODEX_STATUS_OFF);
+    let started = Instant::now();
+    let snapshot = unsupported
+        .run(AgentCliInvocation::CodexExec, McpStatusTiming::PRODUCTION)
+        .expect("snapshot");
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert_eq!(
+        statuses(&snapshot),
+        [("off", AgentMcpServerStatus::Unknown)]
+    );
+    assert_eq!(unsupported.stdin_messages().len(), 4);
+    unsupported.assert_process_group_terminated();
+
+    let silent = Fixture::codex(
+        "codex-config-silent",
+        &format!("{CODEX_STATUS_OFF}\nconfig() {{ :; }}"),
+    );
+    let (mut plan, probe) = silent.plan(AgentCliInvocation::CodexExec, McpStatusTiming::PRODUCTION);
+    plan.timeout = Duration::from_millis(1_500);
+    let snapshot = execute_mcp_servers_plan(&plan, &probe, || false).expect("snapshot");
+    assert_eq!(
+        statuses(&snapshot),
+        [("off", AgentMcpServerStatus::Unknown)]
+    );
+    silent.assert_process_group_terminated();
+
+    let fatal = Fixture::codex(
+        "codex-config-fatal",
+        &format!("{CODEX_STATUS_OFF}\nconfig() {{ exit 3; }}"),
+    );
+    let started = Instant::now();
+    let snapshot = fatal
+        .run(AgentCliInvocation::CodexExec, McpStatusTiming::PRODUCTION)
+        .expect("snapshot");
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert_eq!(
+        statuses(&snapshot),
+        [("off", AgentMcpServerStatus::Unknown)]
+    );
+    fatal.assert_process_group_terminated();
 }
 
 #[test]
@@ -591,4 +688,51 @@ fn codex_probe_fails_closed_on_errors_oversized_lines_and_silence() {
     ]
     .contains(&message["method"].as_str().unwrap_or_default())));
     silent.assert_process_group_terminated();
+}
+
+#[test]
+fn codex_probe_keeps_a_captured_status_list_when_output_floods_past_the_stream_cap() {
+    let flood = format!(
+        r#"flood() {{
+  line=$(head -c 1023 /dev/zero | tr '\0' 'x')
+  yes "$line" | head -c {}
+  sleep 30
+}}"#,
+        MAX_CODEX_MCP_STATUS_STREAM_BYTES + 1024 * 1024
+    );
+    let after_status = Fixture::codex(
+        "codex-flood-after-status",
+        &format!(
+            r#"{CODEX_STATUS_OFF}
+{flood}
+config() {{
+  flood
+  printf '{{"id":2,"result":{{"config":{{"mcp_servers":{{"off":{{"enabled":false}}}}}}}}}}\n'
+}}"#
+        ),
+    );
+    let started = Instant::now();
+    let snapshot = after_status
+        .run(AgentCliInvocation::CodexExec, McpStatusTiming::PRODUCTION)
+        .expect("snapshot");
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert_eq!(
+        statuses(&snapshot),
+        [("off", AgentMcpServerStatus::Unknown)]
+    );
+    assert_eq!(after_status.stdin_messages().len(), 4);
+    after_status.assert_process_group_terminated();
+
+    let before_status = Fixture::codex(
+        "codex-flood-before-status",
+        &format!("{flood}\nstatus() {{ flood; }}"),
+    );
+    let started = Instant::now();
+    assert_eq!(
+        before_status.run(AgentCliInvocation::CodexExec, McpStatusTiming::PRODUCTION),
+        Err(McpServersProbeFailure::Unavailable)
+    );
+    assert!(started.elapsed() < Duration::from_secs(15));
+    assert_eq!(before_status.stdin_messages().len(), 3);
+    before_status.assert_process_group_terminated();
 }

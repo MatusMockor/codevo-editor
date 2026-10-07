@@ -4,37 +4,26 @@ import type {
 } from "../../../application/agentMcpServersStore";
 import {
   agentMcpProviderProgram,
-  isAgentMcpRepositoryRoot,
   type AgentMcpServer,
   type AgentMcpServerScope,
   type AgentMcpServerStatus,
   type AgentMcpServerTransport,
   type AgentMcpServersErrorKind,
 } from "../../../domain/agentMcpServers";
-import { MAX_AGENT_PROJECT_ROOTS, type AgentProjectDescriptor } from "../../../domain/agentProject";
+import type { AgentMcpServersProject } from "../../../domain/agentMcpServersTarget";
 import type { AgentCliKind } from "../../../domain/agentTask";
-import { normalizedWorkspaceRootKey, workspaceDisplayName } from "../../../domain/workspaceRootKey";
 import { agentProviderLabel } from "../../agentMode/agentSidebarPresentation";
 import { elapsedLabel } from "../../usage/usagePresentation";
 
 export const MCP_PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
-export const MAX_MCP_PROJECT_OPTIONS = MAX_AGENT_PROJECT_ROOTS + 1;
-export const MCP_CHECK_NOTICE =
-  "Checking starts each configured server once, the same way an agent session does.";
-export const MCP_SERVER_PROJECTS_NOTICE = "Projects on servers are not checked yet.";
 export const MCP_NO_PROJECT_NOTICE = "Open a project to see its MCP servers.";
 export const MCP_UNAVAILABLE_NOTICE = "MCP server status is not available in this window.";
 export const MCP_TRUNCATED_NOTICE = "Some servers are not shown.";
 export const MCP_REFRESH_LABEL = "Check MCP servers";
 
-export type McpProjectSource = Pick<AgentProjectDescriptor, "rootPath" | "label">;
+export type McpProjectPlace = AgentMcpServersProject["kind"];
 export type McpServerStatusTone = "ok" | "pending" | "attention" | "danger" | "muted";
 export type McpProviderSummaryTone = "neutral" | "problem";
-
-export interface McpProjectOption {
-  readonly repositoryRoot: string;
-  readonly label: string;
-}
 
 export interface McpProviderSummary {
   readonly text: string;
@@ -51,27 +40,43 @@ const STATUS_RANK: Readonly<Record<AgentMcpServerStatus, number>> = {
   unknown: 5,
 };
 
-export function mcpProjectOptions(
-  workspaceRoot: string | null,
-  projects: ReadonlyArray<McpProjectSource>,
-): ReadonlyArray<McpProjectOption> {
-  const options = new Map<string, McpProjectOption>();
-  for (const candidate of projectCandidates(workspaceRoot, projects)) {
-    if (options.size >= MAX_MCP_PROJECT_OPTIONS) break;
-    if (!isAgentMcpRepositoryRoot(candidate.repositoryRoot)) continue;
-    const key = normalizedWorkspaceRootKey(candidate.repositoryRoot);
-    if (options.has(key)) continue;
-    options.set(key, candidate);
+export function mcpCheckNotice(place: McpProjectPlace): string {
+  switch (place) {
+    case "local":
+      return "Checking starts each configured server once, the same way an agent session does.";
+    case "server":
+      return "Checking starts each configured server once on the server, the same way an agent session does.";
+    default: {
+      const unreachable: never = place;
+      return unreachable;
+    }
   }
-  return withDistinctLabels([...options.values()]);
 }
 
-export function selectedMcpProjectRoot(
-  options: ReadonlyArray<McpProjectOption>,
-  chosen: string | null,
-): string | null {
-  const match = options.find((option) => option.repositoryRoot === chosen);
-  return match?.repositoryRoot ?? options[0]?.repositoryRoot ?? null;
+export function mcpSignInLead(place: McpProjectPlace): string {
+  switch (place) {
+    case "local":
+      return "To sign in, run";
+    case "server":
+      return "On the server, run";
+    default: {
+      const unreachable: never = place;
+      return unreachable;
+    }
+  }
+}
+
+export function mcpAddServerLead(place: McpProjectPlace): string {
+  switch (place) {
+    case "local":
+      return "Add one with";
+    case "server":
+      return "On the server, add one with";
+    default: {
+      const unreachable: never = place;
+      return unreachable;
+    }
+  }
 }
 
 export function orderedMcpServers(
@@ -154,6 +159,10 @@ export function mcpErrorMessage(error: AgentMcpServersErrorKind, provider: Agent
       return `${label} did not answer in time. Check again.`;
     case "unavailable":
       return `Could not read MCP servers from ${label}.`;
+    case "unsupportedRunner":
+      return "This server's runner does not support MCP checks yet. Update the runner on the server.";
+    case "serverUnavailable":
+      return "Could not reach the server. Check the connection, then check again.";
     default: {
       const unreachable: never = error;
       return unreachable;
@@ -187,34 +196,6 @@ export function mcpCheckedLabel(checkedAtMs: number, nowMs: number): string {
 
 export function mcpCopySignInLabel(serverName: string): string {
   return `Copy sign-in command for ${serverName}`;
-}
-
-function projectCandidates(
-  workspaceRoot: string | null,
-  projects: ReadonlyArray<McpProjectSource>,
-): ReadonlyArray<McpProjectOption> {
-  const listed = projects.map((project) => ({
-    repositoryRoot: project.rootPath,
-    label: project.label,
-  }));
-  if (workspaceRoot === null) return listed;
-  const workspaceKey = normalizedWorkspaceRootKey(workspaceRoot);
-  const own = listed.find(
-    (candidate) => normalizedWorkspaceRootKey(candidate.repositoryRoot) === workspaceKey,
-  );
-  const label = own?.label ?? workspaceDisplayName(workspaceRoot);
-  return [{ repositoryRoot: workspaceRoot, label }, ...listed];
-}
-
-function withDistinctLabels(
-  options: ReadonlyArray<McpProjectOption>,
-): ReadonlyArray<McpProjectOption> {
-  const counts = new Map<string, number>();
-  for (const option of options) counts.set(option.label, (counts.get(option.label) ?? 0) + 1);
-  return options.map((option) => {
-    if ((counts.get(option.label) ?? 0) < 2) return option;
-    return { ...option, label: `${option.label} (${option.repositoryRoot})` };
-  });
 }
 
 function compareNames(left: string, right: string): number {

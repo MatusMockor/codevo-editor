@@ -1,6 +1,7 @@
 use crate::agent_mcp_servers_domain::{
-    claude_mcp_servers, codex_mcp_servers, AgentMcpServerStatus, AgentMcpServers,
-    AGENT_MCP_SERVERS_TIMED_OUT_ERROR, AGENT_MCP_SERVERS_UNAVAILABLE_ERROR, MAX_MCP_SERVERS,
+    claude_mcp_servers, codex_mcp_servers, mark_codex_disabled_servers, AgentMcpServerStatus,
+    AgentMcpServers, AGENT_MCP_SERVERS_TIMED_OUT_ERROR, AGENT_MCP_SERVERS_UNAVAILABLE_ERROR,
+    MAX_MCP_SERVERS,
 };
 use serde_json::Value;
 use std::time::{Duration, Instant};
@@ -13,6 +14,8 @@ pub const MAX_CODEX_MCP_STATUS_STREAM_BYTES: usize = 2 * MAX_CODEX_MCP_STATUS_LI
 pub const CLAUDE_MCP_INITIALIZE_REQUEST_ID: &str = "codevo-mcp-servers-initialize";
 pub const CLAUDE_MCP_INITIALIZE_REQUEST: &str = "{\"type\":\"control_request\",\"request_id\":\"codevo-mcp-servers-initialize\",\"request\":{\"subtype\":\"initialize\"}}\n";
 pub const CODEX_MCP_STATUS_REQUEST_ID: u64 = 1;
+pub const CODEX_MCP_CONFIG_REQUEST_ID: u64 = 2;
+pub const CODEX_MCP_CONFIG_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const CODEX_HANDSHAKE_REQUEST_ID: u64 = 0;
 const LINE_LIMIT_ERROR: &str = "Provider MCP server status response line exceeds size limit.";
 const HANDSHAKE_ERROR: &str = "Provider MCP server status handshake failed.";
@@ -118,6 +121,17 @@ pub fn codex_mcp_status_request() -> Vec<u8> {
         "method": "mcpServerStatus/list",
         "id": CODEX_MCP_STATUS_REQUEST_ID,
         "params": { "detail": "toolsAndAuthOnly", "limit": MAX_MCP_SERVERS },
+    })
+    .to_string();
+    request.push('\n');
+    request.into_bytes()
+}
+
+pub fn codex_mcp_config_request(workspace_root: &str) -> Vec<u8> {
+    let mut request = serde_json::json!({
+        "method": "config/read",
+        "id": CODEX_MCP_CONFIG_REQUEST_ID,
+        "params": { "cwd": workspace_root, "includeLayers": false },
     })
     .to_string();
     request.push('\n');
@@ -278,44 +292,61 @@ impl ClaudeMcpStatusPoll {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodexConfigRead {
+    Pending,
+    Requested(Instant),
+    Settled,
+}
+
 #[derive(Debug)]
 pub struct CodexMcpStatusRequest {
+    workspace_root: String,
     lines: BoundedLines,
     handshake_completed: bool,
     requested: bool,
     latest: Option<AgentMcpServers>,
+    config: CodexConfigRead,
     failure: Option<String>,
 }
 
-impl Default for CodexMcpStatusRequest {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CodexMcpStatusRequest {
-    pub fn new() -> Self {
+    pub fn new(workspace_root: &str) -> Self {
         Self {
+            workspace_root: workspace_root.to_string(),
             lines: BoundedLines::new(MAX_CODEX_MCP_STATUS_LINE_BYTES),
             handshake_completed: false,
             requested: false,
             latest: None,
+            config: CodexConfigRead::Pending,
             failure: None,
         }
     }
 
+    fn is_settled(&self) -> bool {
+        self.failure.is_some() || (self.latest.is_some() && self.config == CodexConfigRead::Settled)
+    }
+
     pub fn observe(&mut self, bytes: &[u8]) {
-        if self.latest.is_some() || self.failure.is_some() {
+        if self.is_settled() {
             return;
         }
         match self.lines.push(bytes) {
             Ok(lines) => lines.iter().for_each(|line| self.observe_line(line)),
-            Err(error) => self.failure = Some(error),
+            Err(error) => self.observe_overflow(error),
         }
     }
 
+    fn observe_overflow(&mut self, error: String) {
+        if self.latest.is_some() {
+            self.config = CodexConfigRead::Settled;
+            return;
+        }
+        self.failure = Some(error);
+    }
+
     fn observe_line(&mut self, line: &[u8]) {
-        if self.latest.is_some() || self.failure.is_some() {
+        if self.is_settled() {
             return;
         }
         let Ok(value) = serde_json::from_slice::<Value>(line) else {
@@ -327,6 +358,10 @@ impl CodexMcpStatusRequest {
         let Some(id) = value.get("id").and_then(Value::as_u64) else {
             return;
         };
+        if self.latest.is_some() {
+            self.observe_config(id, &value);
+            return;
+        }
         if id == CODEX_HANDSHAKE_REQUEST_ID {
             self.observe_handshake(&value);
             return;
@@ -354,12 +389,49 @@ impl CodexMcpStatusRequest {
         }
     }
 
-    pub fn step(&mut self) -> McpProbeStep {
+    fn observe_config(&mut self, id: u64, value: &Value) {
+        if id != CODEX_MCP_CONFIG_REQUEST_ID
+            || !matches!(self.config, CodexConfigRead::Requested(_))
+        {
+            return;
+        }
+        self.config = CodexConfigRead::Settled;
+        if value.get("error").is_some() {
+            return;
+        }
+        let Some((snapshot, config)) = self.latest.as_mut().zip(value.get("result")) else {
+            return;
+        };
+        mark_codex_disabled_servers(snapshot, config);
+    }
+
+    fn is_config_read_expired(requested_at: Instant, now: Instant) -> bool {
+        now.saturating_duration_since(requested_at) >= CODEX_MCP_CONFIG_READ_TIMEOUT
+    }
+
+    fn config_step(&mut self, now: Instant) -> McpProbeStep {
+        match self.config {
+            CodexConfigRead::Settled => McpProbeStep::Done,
+            CodexConfigRead::Requested(at) if !Self::is_config_read_expired(at, now) => {
+                McpProbeStep::Wait
+            }
+            CodexConfigRead::Requested(_) => {
+                self.config = CodexConfigRead::Settled;
+                McpProbeStep::Done
+            }
+            CodexConfigRead::Pending => {
+                self.config = CodexConfigRead::Requested(now);
+                McpProbeStep::Write(codex_mcp_config_request(&self.workspace_root))
+            }
+        }
+    }
+
+    pub fn step(&mut self, now: Instant) -> McpProbeStep {
         if let Some(failure) = &self.failure {
             return McpProbeStep::Failed(failure.clone());
         }
         if self.latest.is_some() {
-            return McpProbeStep::Done;
+            return self.config_step(now);
         }
         if !self.handshake_completed || self.requested {
             return McpProbeStep::Wait;

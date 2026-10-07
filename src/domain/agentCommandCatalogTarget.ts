@@ -1,6 +1,7 @@
 import { agentCommandCatalogRequest, type AgentCommandCatalogRequest } from "./agentCommandCatalog";
 import type { AgentCliKind } from "./agentTask";
-import type { RemoteRunnerCommandCatalogRequest, RemoteRunnerProvider } from "./remoteRunner";
+import type { RemoteRunnerCommandCatalogRequest } from "./remoteRunner";
+import { remoteRunnerProviderOf } from "./remoteRunnerProvider";
 import { remoteRunnerChecks } from "./remoteRunnerValidation";
 
 export interface AgentCommandCatalogServerProject {
@@ -57,7 +58,7 @@ export function remoteCommandCatalogRequest(
     serverId: target.serverId,
     runnerId: target.runnerId,
     projectId: target.projectId,
-    provider: remoteCommandCatalogProvider(target.provider),
+    provider: remoteRunnerProviderOf(target.provider),
   };
 }
 
@@ -107,17 +108,4 @@ function keyParts(key: string): ReadonlyArray<unknown> | null {
 
 function isProvider(value: unknown): value is AgentCliKind {
   return PROVIDERS.includes(value);
-}
-
-function remoteCommandCatalogProvider(provider: AgentCliKind): RemoteRunnerProvider {
-  switch (provider) {
-    case "claudeCode":
-      return "claude";
-    case "codex":
-      return "codex";
-    default: {
-      const unreachable: never = provider;
-      return unreachable;
-    }
-  }
 }

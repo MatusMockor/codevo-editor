@@ -18,11 +18,16 @@ pub const AGENT_MCP_SERVERS_PROVIDER_DISABLED_ERROR: &str =
 pub const AGENT_MCP_SERVERS_BUSY_ERROR: &str = "Agent MCP server status check is already running.";
 pub const AGENT_MCP_SERVERS_TIMED_OUT_ERROR: &str = "Agent MCP server status check timed out.";
 pub const AGENT_MCP_SERVERS_UNAVAILABLE_ERROR: &str = "Agent MCP server status is unavailable.";
+pub const AGENT_MCP_SERVERS_UNSUPPORTED_RUNNER_ERROR: &str =
+    "The server runner does not support MCP server status. Update the runner on the server.";
+pub const AGENT_MCP_SERVERS_SERVER_UNAVAILABLE_ERROR: &str =
+    "Server MCP server status could not be loaded. Check the connection and try again.";
 pub const INVALID_REQUEST_ERROR: &str =
     "Agent MCP server status requests need a bounded normalized absolute repository root.";
 const MCP_SERVERS_VERSION: u32 = 1;
 const MAX_RAW_DETAIL_BYTES: usize = 4096;
 const MIN_REDACTED_TOKEN_RUN: usize = 16;
+const MIN_REDACTED_LETTER_RUN: usize = 32;
 const REDACTED: &str = "[redacted]";
 const INVALID_ENVELOPE_ERROR: &str = "Unsupported agent MCP server status envelope.";
 const INVALID_SERVER_ERROR: &str = "Invalid agent MCP server status entry.";
@@ -193,10 +198,14 @@ fn is_valid_endpoint(server: &AgentMcpServer) -> bool {
     }
 }
 
+fn is_valid_detail_text(detail: &str) -> bool {
+    bounded_text(detail, MAX_MCP_DETAIL_BYTES) && !detail.chars().any(is_bidi_control)
+}
+
 fn is_valid_detail(server: &AgentMcpServer) -> bool {
     match (&server.detail, server.status) {
         (None, _) => true,
-        (Some(detail), AgentMcpServerStatus::Failed) => bounded_text(detail, MAX_MCP_DETAIL_BYTES),
+        (Some(detail), AgentMcpServerStatus::Failed) => is_valid_detail_text(detail),
         (Some(_), _) => false,
     }
 }
@@ -292,11 +301,18 @@ fn is_wrapping_punctuation(character: char) -> bool {
     )
 }
 
+fn is_sensitive_run(run: &str) -> bool {
+    if run.len() < MIN_REDACTED_TOKEN_RUN {
+        return false;
+    }
+    run.len() >= MIN_REDACTED_LETTER_RUN || run.bytes().any(|byte| byte.is_ascii_digit())
+}
+
 fn is_sensitive_text(text: &str) -> bool {
     text.contains(['/', '\\', '=', '@'])
         || text
             .split(|character: char| !is_token_character(character))
-            .any(|run| run.len() >= MIN_REDACTED_TOKEN_RUN)
+            .any(is_sensitive_run)
 }
 
 fn is_negative_number(word: &str) -> bool {
@@ -574,6 +590,35 @@ pub fn codex_mcp_servers(result: &Value) -> Result<AgentMcpServers, String> {
         data.iter().map(codex_server),
         incomplete,
     )
+}
+
+fn is_disabled_in_codex_config(config: &Value, name: &str) -> bool {
+    config
+        .get("config")
+        .and_then(|config| config.get("mcp_servers"))
+        .and_then(|servers| servers.get(name))
+        .and_then(|server| server.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(false)
+}
+
+fn has_live_codex_status(server: &AgentMcpServer) -> bool {
+    matches!(
+        server.status,
+        AgentMcpServerStatus::Connected | AgentMcpServerStatus::Connecting
+    )
+}
+
+pub fn mark_codex_disabled_servers(snapshot: &mut AgentMcpServers, config: &Value) {
+    snapshot
+        .servers
+        .iter_mut()
+        .filter(|server| !has_live_codex_status(server))
+        .filter(|server| is_disabled_in_codex_config(config, &server.name))
+        .for_each(|server| {
+            server.status = AgentMcpServerStatus::Disabled;
+            server.detail = None;
+        });
 }
 
 #[cfg(test)]

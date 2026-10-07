@@ -50,16 +50,22 @@ pub struct McpServersProbe {
 }
 
 impl McpServersProbe {
-    pub fn new(provider: AgentCliInvocation) -> Arc<Self> {
-        Self::with_timing(provider, McpStatusTiming::PRODUCTION)
+    pub fn new(provider: AgentCliInvocation, workspace_root: &str) -> Arc<Self> {
+        Self::with_timing(provider, McpStatusTiming::PRODUCTION, workspace_root)
     }
 
-    fn with_timing(provider: AgentCliInvocation, timing: McpStatusTiming) -> Arc<Self> {
+    fn with_timing(
+        provider: AgentCliInvocation,
+        timing: McpStatusTiming,
+        workspace_root: &str,
+    ) -> Arc<Self> {
         let protocol = match provider {
             AgentCliInvocation::ClaudeCode => {
                 McpStatusProtocol::Claude(ClaudeMcpStatusPoll::new(timing))
             }
-            AgentCliInvocation::CodexExec => McpStatusProtocol::Codex(CodexMcpStatusRequest::new()),
+            AgentCliInvocation::CodexExec => {
+                McpStatusProtocol::Codex(CodexMcpStatusRequest::new(workspace_root))
+            }
         };
         Arc::new(Self {
             protocol: Mutex::new(protocol),
@@ -79,6 +85,20 @@ impl McpServersProbe {
             McpStatusProtocol::Codex(request) => request.take_snapshot(),
         }
     }
+
+    fn write(&self, stdin: Option<&mut ChildStdin>, request: &[u8]) -> Result<bool, String> {
+        let written = stdin
+            .ok_or_else(|| "Provider input pipe was unavailable.".to_string())
+            .and_then(|stdin| {
+                stdin
+                    .write_all(request)
+                    .map_err(|_| "Provider input pipe could not be written.".to_string())
+            });
+        if written.is_err() && self.is_complete() {
+            return Ok(true);
+        }
+        written.map(|()| false)
+    }
 }
 
 impl InteractiveProbe for McpServersProbe {
@@ -96,20 +116,14 @@ impl InteractiveProbe for McpServersProbe {
         let mut protocol = self.protocol()?;
         let step = match &mut *protocol {
             McpStatusProtocol::Claude(poll) => poll.step(now),
-            McpStatusProtocol::Codex(request) => request.step(),
+            McpStatusProtocol::Codex(request) => request.step(now),
         };
         drop(protocol);
         match step {
             McpProbeStep::Wait => Ok(false),
             McpProbeStep::Done => Ok(true),
             McpProbeStep::Failed(error) => Err(error),
-            McpProbeStep::Write(request) => {
-                stdin
-                    .ok_or_else(|| "Provider input pipe was unavailable.".to_string())?
-                    .write_all(&request)
-                    .map_err(|_| "Provider input pipe could not be written.".to_string())?;
-                Ok(false)
-            }
+            McpProbeStep::Write(request) => self.write(stdin, &request),
         }
     }
 
@@ -177,7 +191,9 @@ pub fn execute_mcp_servers_plan(
     cancelled: impl Fn() -> bool,
 ) -> Result<AgentMcpServers, McpServersProbeFailure> {
     let missing = match execute_agent_provider_plan_cancellable(plan, cancelled) {
-        Ok(_) => McpServersProbeFailure::Unavailable,
+        Ok(_) | Err(AgentProviderProcessFailure::OutputLimitExceeded { .. }) => {
+            McpServersProbeFailure::Unavailable
+        }
         Err(AgentProviderProcessFailure::TimedOut { .. }) => McpServersProbeFailure::TimedOut,
         Err(_) => return Err(McpServersProbeFailure::Unavailable),
     };

@@ -2,6 +2,7 @@ use super::{git_sync_wire::StartBody, service::RemoteRunnerState, types::*};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+pub(super) const OPERATIONS_BUSY: &str = "Runner is busy; retry shortly";
 static OPERATIONS: AtomicUsize = AtomicUsize::new(0);
 struct OperationPermit;
 impl OperationPermit {
@@ -10,7 +11,7 @@ impl OperationPermit {
             .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < 8).then_some(count + 1)
             })
-            .map_err(|_| "Runner is busy; retry shortly")?;
+            .map_err(|_| OPERATIONS_BUSY)?;
         Ok(Self)
     }
 }

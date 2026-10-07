@@ -5,26 +5,21 @@ import {
   AGENT_MCP_SERVER_STATUSES,
   type AgentMcpServer,
 } from "../../../domain/agentMcpServers";
-import { MAX_AGENT_PROJECT_ROOTS } from "../../../domain/agentProject";
 import { agentMcpServersFixture } from "../../../test/agentMcpServersTestSupport";
 import {
-  MAX_MCP_PROJECT_OPTIONS,
+  mcpAddServerLead,
+  mcpCheckNotice,
   mcpCheckedLabel,
   mcpCopySignInLabel,
   mcpErrorMessage,
-  mcpProjectOptions,
   mcpProviderSummary,
   mcpServerNeedsAttention,
   mcpServerSecondaryText,
   mcpServerStatusLabel,
   mcpServerStatusTone,
+  mcpSignInLead,
   orderedMcpServers,
-  selectedMcpProjectRoot,
 } from "./mcpServersPresentation";
-
-function project(rootPath: string, label: string) {
-  return { rootPath, label };
-}
 
 function server(overrides: Partial<AgentMcpServer> & { readonly name: string }): AgentMcpServer {
   const [parsed] = agentMcpServersFixture("claudeCode", [overrides]).servers;
@@ -38,81 +33,6 @@ function loaded(servers: ReadonlyArray<Partial<AgentMcpServer> & { readonly name
     snapshot: { result: agentMcpServersFixture("claudeCode", servers), checkedAtMs: 0 },
   } satisfies AgentMcpServersState;
 }
-
-describe("MCP project options", () => {
-  it("puts the open workspace first and then the other local projects", () => {
-    expect(
-      mcpProjectOptions("/work/app", [project("/work/api", "api"), project("/work/app", "App")]),
-    ).toEqual([
-      { repositoryRoot: "/work/app", label: "App" },
-      { repositoryRoot: "/work/api", label: "api" },
-    ]);
-  });
-
-  it("names a workspace that is not an agent project after its folder", () => {
-    expect(mcpProjectOptions("/work/solo/", [])).toEqual([
-      { repositoryRoot: "/work/solo/", label: "solo" },
-    ]);
-  });
-
-  it("lists projects in their given order without a workspace", () => {
-    const options = mcpProjectOptions(null, [project("/work/b", "b"), project("/work/a", "a")]);
-    expect(options.map((option) => option.repositoryRoot)).toEqual(["/work/b", "/work/a"]);
-  });
-
-  it("drops duplicate roots, including a trailing-separator alias", () => {
-    const options = mcpProjectOptions("/work/app", [
-      project("/work/app/", "App"),
-      project("/work/api", "api"),
-      project("/work/api", "api again"),
-    ]);
-    expect(options.map((option) => option.repositoryRoot)).toEqual(["/work/app", "/work/api"]);
-  });
-
-  it("excludes roots the backend contract cannot address", () => {
-    const options = mcpProjectOptions("relative/root", [
-      project("", "empty"),
-      project("remote:linux:runner:project", "server project"),
-      project("/work/a\nb", "control"),
-      project("/work/ok", "ok"),
-    ]);
-    expect(options).toEqual([{ repositoryRoot: "/work/ok", label: "ok" }]);
-  });
-
-  it("tells same-named projects apart by their path", () => {
-    const options = mcpProjectOptions(null, [
-      project("/work/one/api", "api"),
-      project("/work/two/api", "api"),
-      project("/work/web", "web"),
-    ]);
-    expect(options.map((option) => option.label)).toEqual([
-      "api (/work/one/api)",
-      "api (/work/two/api)",
-      "web",
-    ]);
-  });
-
-  it("bounds the options at the workspace plus every possible agent project", () => {
-    const projects = Array.from({ length: MAX_AGENT_PROJECT_ROOTS + 20 }, (_, index) =>
-      project(`/work/project-${index}`, `project-${index}`),
-    );
-    const options = mcpProjectOptions("/work/app", projects);
-    expect(MAX_MCP_PROJECT_OPTIONS).toBe(MAX_AGENT_PROJECT_ROOTS + 1);
-    expect(options).toHaveLength(MAX_MCP_PROJECT_OPTIONS);
-    expect(options[0]?.repositoryRoot).toBe("/work/app");
-    expect(options[options.length - 1]?.repositoryRoot).toBe(
-      `/work/project-${MAX_AGENT_PROJECT_ROOTS - 1}`,
-    );
-  });
-
-  it("selects the choice when it is still offered, else the first option, else nothing", () => {
-    const options = mcpProjectOptions("/work/app", [project("/work/api", "api")]);
-    expect(selectedMcpProjectRoot(options, "/work/api")).toBe("/work/api");
-    expect(selectedMcpProjectRoot(options, "/work/gone")).toBe("/work/app");
-    expect(selectedMcpProjectRoot(options, null)).toBe("/work/app");
-    expect(selectedMcpProjectRoot([], "/work/api")).toBeNull();
-  });
-});
 
 describe("MCP server ordering and labels", () => {
   it("lists servers needing attention first, then by status, then by name", () => {
@@ -220,7 +140,12 @@ describe("MCP provider summary", () => {
       "A check is already running for this project. Try again in a moment.",
       "Codex did not answer in time. Check again.",
       "Could not read MCP servers from Codex.",
+      "This server's runner does not support MCP checks yet. Update the runner on the server.",
+      "Could not reach the server. Check the connection, then check again.",
     ]);
+    expect(mcpErrorMessage("unsupportedRunner", "claudeCode")).toBe(
+      mcpErrorMessage("unsupportedRunner", "codex"),
+    );
     expect(mcpErrorMessage("providerDisabled", "claudeCode")).toBe(
       "Claude Code is turned off in Providers settings.",
     );
@@ -285,6 +210,22 @@ describe("MCP labels", () => {
     expect(mcpCheckedLabel(0, 3 * 3_600_000)).toBe("Checked 3h ago");
     expect(mcpCheckedLabel(0, 2 * 86_400_000)).toBe("Checked 2d ago");
     expect(mcpCheckedLabel(9_000, 1_000)).toBe("Checked just now");
+  });
+
+  it("says where a command has to be run for a local and for a server project", () => {
+    expect(mcpSignInLead("local")).toBe("To sign in, run");
+    expect(mcpSignInLead("server")).toBe("On the server, run");
+    expect(mcpAddServerLead("local")).toBe("Add one with");
+    expect(mcpAddServerLead("server")).toBe("On the server, add one with");
+  });
+
+  it("is honest that a check starts the configured servers, and where", () => {
+    expect(mcpCheckNotice("local")).toBe(
+      "Checking starts each configured server once, the same way an agent session does.",
+    );
+    expect(mcpCheckNotice("server")).toBe(
+      "Checking starts each configured server once on the server, the same way an agent session does.",
+    );
   });
 
   it("names the server in the copy action", () => {

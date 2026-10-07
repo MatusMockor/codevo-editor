@@ -271,6 +271,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_get_runner,
             crate::remote_runner::remote_runner_get_account_usage,
             crate::remote_runner::remote_runner_get_command_catalog,
+            crate::remote_runner::remote_runner_get_mcp_servers,
             crate::remote_runner::remote_runner_transcribe_speech,
             crate::remote_runner::remote_runner_list_projects,
             crate::remote_runner::remote_runner_clone_project,

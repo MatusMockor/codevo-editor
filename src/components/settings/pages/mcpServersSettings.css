@@ -1,5 +1,8 @@
-.settings-mcp-project__path {
+.settings-mcp-project__location {
   overflow-wrap: anywhere;
+}
+
+.settings-mcp-project__location[data-place="local"] {
   font-family: var(--cv-font-mono);
   font-size: var(--cv-t-xs);
 }

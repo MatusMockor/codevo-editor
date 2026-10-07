@@ -11,6 +11,7 @@ export type {
 } from "@codevo/agent-events";
 import type { AgentAccountUsageSnapshot } from "./agentAccountUsage";
 import type { AgentCommandCatalog } from "./agentCommandCatalog";
+import type { AgentMcpServers } from "./agentMcpServers";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "./agentTurnChanges";
 import type {
   RepositoryHostsSnapshot,
@@ -53,6 +54,7 @@ export type RemoteRunnerDescriptor = Readonly<{
   capabilities: Readonly<{
     accountUsage?: boolean;
     commandCatalog?: boolean;
+    mcpServers?: boolean;
     taskExecution: boolean;
     eventReplay: boolean;
     taskDrafts?: boolean;
@@ -240,6 +242,8 @@ export type RemoteRunnerAccountUsageRequest = RemoteRunnerServerRequest &
 
 export type RemoteRunnerCommandCatalogRequest = RemoteRunnerServerRequest &
   Readonly<{ runnerId: string; projectId: string; provider: RemoteRunnerProvider }>;
+export type RemoteRunnerMcpServersRequest = RemoteRunnerServerRequest &
+  Readonly<{ runnerId: string; projectId: string; provider: RemoteRunnerProvider }>;
 export type RemoteRunnerTranscribeSpeechRequest = RemoteRunnerServerRequest &
   Readonly<{ language: SpeechLanguage; base64: string }>;
 export type RemoteRunnerSpeechTranscript = Readonly<{ text: string }>;
@@ -247,6 +251,7 @@ export type RemoteRunnerSpeechTranscript = Readonly<{ text: string }>;
 export interface RemoteRunnerGateway {
   getAccountUsage?(request: RemoteRunnerAccountUsageRequest): Promise<AgentAccountUsageSnapshot>;
   getCommandCatalog?(request: RemoteRunnerCommandCatalogRequest): Promise<AgentCommandCatalog>;
+  getMcpServers?(request: RemoteRunnerMcpServersRequest): Promise<AgentMcpServers>;
   transcribeSpeech?(
     request: RemoteRunnerTranscribeSpeechRequest,
   ): Promise<RemoteRunnerSpeechTranscript>;

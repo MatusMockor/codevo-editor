@@ -25,6 +25,8 @@ export const AGENT_MCP_SERVERS_ERROR_KINDS = [
   "busy",
   "timedOut",
   "unavailable",
+  "unsupportedRunner",
+  "serverUnavailable",
 ] as const;
 
 export type AgentMcpServerStatus = (typeof AGENT_MCP_SERVER_STATUSES)[number];
@@ -72,6 +74,10 @@ export const AGENT_MCP_SERVERS_ERRORS: Readonly<Record<AgentMcpServersErrorKind,
     busy: "Agent MCP server status check is already running.",
     timedOut: "Agent MCP server status check timed out.",
     unavailable: "Agent MCP server status is unavailable.",
+    unsupportedRunner:
+      "The server runner does not support MCP server status. Update the runner on the server.",
+    serverUnavailable:
+      "Server MCP server status could not be loaded. Check the connection and try again.",
   });
 
 const PROVIDERS = ["claudeCode", "codex"] as const satisfies ReadonlyArray<AgentCliKind>;

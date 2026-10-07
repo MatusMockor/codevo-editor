@@ -1,23 +1,39 @@
 import { describe, expect, it, vi } from "vitest";
 import wireContract from "../../contracts/agent-mcp-servers-wire.json";
-import type { AgentMcpServersErrorKind, AgentMcpServersRequest } from "../domain/agentMcpServers";
+import {
+  AGENT_MCP_SERVERS_ERROR_KINDS,
+  type AgentMcpServersErrorKind,
+  type AgentMcpServersRequest,
+} from "../domain/agentMcpServers";
+import type {
+  AgentMcpServersLocalTarget,
+  AgentMcpServersTarget,
+} from "../domain/agentMcpServersTarget";
+import { TauriRemoteRunnerGateway } from "../infrastructure/tauriRemoteRunnerGateway";
 import {
   DeferredAgentMcpServersGateway,
+  DeferredRunnerTunnel,
   agentMcpServersFixture,
+  mcpRunnerFixture,
 } from "../test/agentMcpServersTestSupport";
-import type { AgentMcpServersGateway } from "./agentMcpServersGateway";
+import { AgentMcpServerProjectsStore } from "./agentMcpServerProjects";
+import { agentMcpServersSource, type AgentMcpServersGateway } from "./agentMcpServersGateway";
 import {
   AgentMcpServersStatusStore,
   IDLE_AGENT_MCP_SERVERS_STATE,
   MAX_AGENT_MCP_SERVERS_KEYS,
   agentMcpServersFailureKeepsSnapshot,
   agentMcpServersSnapshot,
-  agentMcpServersTargetKey,
 } from "./agentMcpServersStore";
 
-const A: AgentMcpServersRequest = { repositoryRoot: "/work/a", provider: "claudeCode" };
-const B: AgentMcpServersRequest = { repositoryRoot: "/work/b", provider: "claudeCode" };
-const A_CODEX: AgentMcpServersRequest = { repositoryRoot: "/work/a", provider: "codex" };
+const A: AgentMcpServersLocalTarget = {
+  kind: "local",
+  repositoryRoot: "/work/a",
+  provider: "claudeCode",
+};
+const B: AgentMcpServersLocalTarget = { ...A, repositoryRoot: "/work/b" };
+const A_CODEX: AgentMcpServersLocalTarget = { ...A, provider: "codex" };
+const NO_RUNNERS = new AgentMcpServerProjectsStore(null);
 const first = agentMcpServersFixture("claudeCode", [{ name: "first" }]);
 const second = agentMcpServersFixture("claudeCode", [{ name: "second" }]);
 const other = agentMcpServersFixture("claudeCode", [{ name: "other" }]);
@@ -26,8 +42,12 @@ const forCodex = agentMcpServersFixture("codex", [{ name: "codex-docs" }]);
 function setup(maxKeys?: number) {
   const gateway = new DeferredAgentMcpServersGateway();
   const clock = { now: 1_000 };
-  const store = new AgentMcpServersStatusStore(gateway, maxKeys, () => clock.now);
-  const watch = (target: AgentMcpServersRequest) => {
+  const store = new AgentMcpServersStatusStore(
+    agentMcpServersSource(gateway, null, NO_RUNNERS),
+    maxKeys,
+    () => clock.now,
+  );
+  const watch = (target: AgentMcpServersTarget) => {
     const published = vi.fn();
     return { published, unsubscribe: store.subscribe(target, published) };
   };
@@ -35,11 +55,17 @@ function setup(maxKeys?: number) {
 }
 
 async function settle(): Promise<void> {
-  for (let turn = 0; turn < 4; turn += 1) await Promise.resolve();
+  for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
 }
 
-function target(index: number): AgentMcpServersRequest {
-  return { repositoryRoot: `/work/project-${index}`, provider: "claudeCode" };
+function target(index: number): AgentMcpServersLocalTarget {
+  return { kind: "local", repositoryRoot: `/work/project-${index}`, provider: "claudeCode" };
+}
+
+function requestsFor(
+  ...targets: ReadonlyArray<AgentMcpServersLocalTarget>
+): ReadonlyArray<AgentMcpServersRequest> {
+  return targets.map(({ repositoryRoot, provider }) => ({ repositoryRoot, provider }));
 }
 
 describe("AgentMcpServersStatusStore", () => {
@@ -62,7 +88,7 @@ describe("AgentMcpServersStatusStore", () => {
     const { clock, gateway, store, watch } = setup();
     const { published } = watch(A);
     store.refresh(A);
-    expect(gateway.requests()).toEqual([A]);
+    expect(gateway.requests()).toEqual(requestsFor(A));
     expect(store.state(A)).toEqual({ kind: "loading", previous: null });
     expect(published).toHaveBeenCalledTimes(1);
     clock.now = 4_000;
@@ -91,12 +117,12 @@ describe("AgentMcpServersStatusStore", () => {
     store.refresh(A);
     store.refresh(A);
     store.refresh({ ...A });
-    expect(gateway.requests()).toEqual([A]);
+    expect(gateway.requests()).toEqual(requestsFor(A));
     expect(published).toHaveBeenCalledTimes(1);
     gateway.checks[0]?.resolve(first);
     await settle();
     store.refresh(A);
-    expect(gateway.requests()).toEqual([A, A]);
+    expect(gateway.requests()).toEqual(requestsFor(A, A));
   });
 
   it("keeps showing the previous snapshot while a new check runs", async () => {
@@ -123,7 +149,7 @@ describe("AgentMcpServersStatusStore", () => {
     const codex = watch(A_CODEX);
     store.refresh(A);
     store.refresh(A_CODEX);
-    expect(gateway.requests()).toEqual([A, A_CODEX]);
+    expect(gateway.requests()).toEqual(requestsFor(A, A_CODEX));
     gateway.checks[0]?.reject(wireContract.errors.timedOut);
     await settle();
     expect(store.state(A)).toEqual({ kind: "failed", error: "timedOut", previous: null });
@@ -150,7 +176,7 @@ describe("AgentMcpServersStatusStore", () => {
     expect(store.state(A)).toEqual({ kind: "loading", previous: null });
     expect(a.published).toHaveBeenCalledTimes(1);
     store.refresh(A);
-    expect(gateway.requests()).toEqual([A, B]);
+    expect(gateway.requests()).toEqual(requestsFor(A, B));
     gateway.checks[0]?.resolve(first);
     await settle();
     expect(agentMcpServersSnapshot(store.state(A))?.result).toBe(first);
@@ -163,7 +189,7 @@ describe("AgentMcpServersStatusStore", () => {
     store.refresh(B);
     expect(store.state(A)).toBe(IDLE_AGENT_MCP_SERVERS_STATE);
     store.refresh(A);
-    expect(gateway.requests()).toEqual([A, B, A]);
+    expect(gateway.requests()).toEqual(requestsFor(A, B, A));
     gateway.checks[2]?.resolve(second);
     await settle();
     gateway.checks[0]?.resolve(first);
@@ -210,7 +236,7 @@ describe("AgentMcpServersStatusStore", () => {
     },
   );
 
-  it.each(["busy", "timedOut", "unavailable"] as const)(
+  it.each(["busy", "timedOut", "unavailable", "serverUnavailable"] as const)(
     "keeps the last snapshot when a later check fails with the passing %s error",
     async (kind) => {
       const { gateway, store } = setup();
@@ -234,7 +260,12 @@ describe("AgentMcpServersStatusStore", () => {
     },
   );
 
-  it.each(["unknownWorkspace", "untrustedWorkspace", "providerDisabled"] as const)(
+  it.each([
+    "unknownWorkspace",
+    "untrustedWorkspace",
+    "providerDisabled",
+    "unsupportedRunner",
+  ] as const)(
     "forgets the last snapshot when the %s refusal revokes the right to show it",
     async (kind) => {
       const { gateway, store } = setup();
@@ -267,7 +298,7 @@ describe("AgentMcpServersStatusStore", () => {
         throw wireContract.errors.providerDisabled;
       },
     };
-    const store = new AgentMcpServersStatusStore(gateway);
+    const store = new AgentMcpServersStatusStore(agentMcpServersSource(gateway, null, NO_RUNNERS));
     store.refresh(A);
     await settle();
     expect(store.state(A)).toEqual({ kind: "failed", error: "providerDisabled", previous: null });
@@ -284,7 +315,7 @@ describe("AgentMcpServersStatusStore", () => {
     store.refresh(A);
     gateway.checks[0]?.reject(wireContract.errors.busy);
     await settle();
-    expect(gateway.requests()).toEqual([A, A]);
+    expect(gateway.requests()).toEqual(requestsFor(A, A));
     expect(store.state(A)).toEqual({ kind: "loading", previous: null });
   });
 
@@ -330,16 +361,176 @@ describe("AgentMcpServersStatusStore", () => {
     expect(store.state(A)).toBe(IDLE_AGENT_MCP_SERVERS_STATE);
     expect(store.state(B)).toEqual({ kind: "loading", previous: null });
   });
+});
 
-  it("keys by the exact root and provider without separator collisions", () => {
-    const keys = [
-      A,
-      B,
-      A_CODEX,
-      { repositoryRoot: "/work/a/", provider: "claudeCode" },
-      { repositoryRoot: '/work/a","codex', provider: "claudeCode" },
-    ].map((item) => agentMcpServersTargetKey(item as AgentMcpServersRequest));
-    expect(new Set(keys).size).toBe(keys.length);
-    expect(agentMcpServersTargetKey({ ...A })).toBe(agentMcpServersTargetKey(A));
+describe("AgentMcpServersStatusStore with server projects", () => {
+  const LINUX = { id: "linux", name: "Linux box", connection: {} };
+  const projects = [{ id: "app", name: "app" }];
+  const HOME: AgentMcpServersTarget = {
+    kind: "server",
+    serverId: "linux",
+    runnerId: "runner-home",
+    projectId: "app",
+    provider: "claudeCode",
+  };
+  const REPLACED: AgentMcpServersTarget = { ...HOME, runnerId: "runner-replaced" };
+  const LOCAL_TWIN: AgentMcpServersLocalTarget = {
+    kind: "local",
+    repositoryRoot: "/linux/runner-home/app",
+    provider: "claudeCode",
+  };
+  const answer = wireContract.responses[0].value;
+
+  function serverSetup() {
+    const gateway = new DeferredAgentMcpServersGateway();
+    const tunnel = new DeferredRunnerTunnel();
+    const remote = new TauriRemoteRunnerGateway(tunnel.invoke);
+    const runners = new AgentMcpServerProjectsStore(remote);
+    const store = new AgentMcpServersStatusStore(
+      agentMcpServersSource(gateway, remote, runners),
+      undefined,
+      () => 1_000,
+    );
+    const connect = async (runner = mcpRunnerFixture("runner-home")) => {
+      runners.connect([LINUX]);
+      runners.load();
+      tunnel.serve("linux", runner, projects);
+      await settle();
+    };
+    return { connect, gateway, runners, store, tunnel };
+  }
+
+  it("checks a server project through the runner and a local one through the local gateway", async () => {
+    const { connect, gateway, store, tunnel } = serverSetup();
+    await connect();
+    store.refresh(HOME);
+    store.refresh(LOCAL_TWIN);
+    await settle();
+    expect(tunnel.checks()).toEqual([
+      { serverId: "linux", runnerId: "runner-home", projectId: "app", provider: "claude" },
+    ]);
+    expect(gateway.requests()).toEqual(requestsFor(LOCAL_TWIN));
+
+    tunnel.pendingChecks("linux")[0]?.resolve(answer);
+    await settle();
+    expect(agentMcpServersSnapshot(store.state(HOME))?.result).toEqual(answer);
+    expect(store.state(LOCAL_TWIN)).toEqual({ kind: "loading", previous: null });
+
+    gateway.checks[0]?.resolve(first);
+    await settle();
+    expect(agentMcpServersSnapshot(store.state(LOCAL_TWIN))?.result).toBe(first);
+    expect(agentMcpServersSnapshot(store.state(HOME))?.result).toEqual(answer);
+  });
+
+  it("runs one check per server key and keeps each provider independent", async () => {
+    const { connect, store, tunnel } = serverSetup();
+    await connect();
+    store.refresh(HOME);
+    store.refresh({ ...HOME });
+    store.refresh({ ...HOME, provider: "codex" });
+    await settle();
+    expect(tunnel.checks()).toHaveLength(2);
+    tunnel.pendingChecks("linux")[1]?.reject(wireContract.errors.timedOut);
+    await settle();
+    expect(store.state({ ...HOME, provider: "codex" })).toEqual({
+      kind: "failed",
+      error: "timedOut",
+      previous: null,
+    });
+    expect(store.state(HOME)).toEqual({ kind: "loading", previous: null });
+  });
+
+  it("refuses a runner without the capability, calls nothing, and drops what it showed", async () => {
+    const { connect, runners, store, tunnel } = serverSetup();
+    await connect();
+    store.refresh(HOME);
+    await settle();
+    tunnel.pendingChecks("linux")[0]?.resolve(answer);
+    await settle();
+    expect(store.state(HOME).kind).toBe("loaded");
+
+    runners.load();
+    tunnel.serve("linux", mcpRunnerFixture("runner-home", "absent"), projects);
+    await settle();
+    const calls = tunnel.calls.length;
+    store.refresh(HOME);
+    await settle();
+    expect(store.state(HOME)).toEqual({
+      kind: "failed",
+      error: "unsupportedRunner",
+      previous: null,
+    });
+    expect(tunnel.calls).toHaveLength(calls);
+  });
+
+  it("keeps the last snapshot when the server cannot be reached", async () => {
+    const { connect, runners, store, tunnel } = serverSetup();
+    await connect();
+    store.refresh(HOME);
+    await settle();
+    tunnel.pendingChecks("linux")[0]?.resolve(answer);
+    await settle();
+    const previous = agentMcpServersSnapshot(store.state(HOME));
+
+    runners.connect([]);
+    store.refresh(HOME);
+    await settle();
+    expect(store.state(HOME)).toEqual({ kind: "failed", error: "serverUnavailable", previous });
+    expect(previous?.result).toEqual(answer);
+    expect(tunnel.checks()).toHaveLength(1);
+  });
+
+  it("reports a missing remote gateway as an unreachable server", async () => {
+    const gateway = new DeferredAgentMcpServersGateway();
+    const store = new AgentMcpServersStatusStore(agentMcpServersSource(gateway, null, NO_RUNNERS));
+    store.refresh(HOME);
+    await settle();
+    expect(store.state(HOME)).toEqual({
+      kind: "failed",
+      error: "serverUnavailable",
+      previous: null,
+    });
+    expect(gateway.requests()).toEqual([]);
+  });
+
+  it("never publishes a late answer under the runner the server reconnected to", async () => {
+    const { connect, runners, store, tunnel } = serverSetup();
+    await connect();
+    const replaced = vi.fn();
+    store.subscribe(REPLACED, replaced);
+    store.refresh(HOME);
+    await settle();
+    const [late] = tunnel.pendingChecks("linux");
+
+    runners.connect([]);
+    await connect(mcpRunnerFixture("runner-replaced"));
+    late?.resolve(answer);
+    await settle();
+
+    expect(store.state(HOME)).toEqual({
+      kind: "failed",
+      error: "serverUnavailable",
+      previous: null,
+    });
+    expect(store.state(REPLACED)).toBe(IDLE_AGENT_MCP_SERVERS_STATE);
+    expect(replaced).not.toHaveBeenCalled();
+
+    store.refresh(REPLACED);
+    await settle();
+    expect(tunnel.checks()[1]).toEqual({
+      serverId: "linux",
+      runnerId: "runner-replaced",
+      projectId: "app",
+      provider: "claude",
+    });
+  });
+
+  it("classifies every error kind as either keeping or dropping the snapshot", () => {
+    expect(AGENT_MCP_SERVERS_ERROR_KINDS.filter(agentMcpServersFailureKeepsSnapshot)).toEqual([
+      "busy",
+      "timedOut",
+      "unavailable",
+      "serverUnavailable",
+    ]);
   });
 });

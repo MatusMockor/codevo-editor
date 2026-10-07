@@ -2,9 +2,12 @@ import {
   agentMcpServersErrorKind,
   type AgentMcpServers,
   type AgentMcpServersErrorKind,
-  type AgentMcpServersRequest,
 } from "../domain/agentMcpServers";
-import type { AgentMcpServersGateway } from "./agentMcpServersGateway";
+import {
+  agentMcpServersTargetKey,
+  type AgentMcpServersTarget,
+} from "../domain/agentMcpServersTarget";
+import type { AgentMcpServersSource } from "./agentMcpServersGateway";
 
 export const MAX_AGENT_MCP_SERVERS_KEYS = 16;
 
@@ -24,9 +27,9 @@ export type AgentMcpServersState =
     };
 
 export interface AgentMcpServersStore {
-  state(target: AgentMcpServersRequest): AgentMcpServersState;
-  refresh(target: AgentMcpServersRequest): void;
-  subscribe(target: AgentMcpServersRequest, listener: () => void): () => void;
+  state(target: AgentMcpServersTarget): AgentMcpServersState;
+  refresh(target: AgentMcpServersTarget): void;
+  subscribe(target: AgentMcpServersTarget, listener: () => void): () => void;
 }
 
 type CheckOutcome =
@@ -39,10 +42,6 @@ interface Slot {
 }
 
 export const IDLE_AGENT_MCP_SERVERS_STATE: AgentMcpServersState = Object.freeze({ kind: "idle" });
-
-export function agentMcpServersTargetKey(target: AgentMcpServersRequest): string {
-  return JSON.stringify([target.provider, target.repositoryRoot]);
-}
 
 export function agentMcpServersSnapshot(
   state: AgentMcpServersState,
@@ -67,10 +66,12 @@ export function agentMcpServersFailureKeepsSnapshot(error: AgentMcpServersErrorK
     case "busy":
     case "timedOut":
     case "unavailable":
+    case "serverUnavailable":
       return true;
     case "unknownWorkspace":
     case "untrustedWorkspace":
     case "providerDisabled":
+    case "unsupportedRunner":
       return false;
     default: {
       const unreachable: never = error;
@@ -80,7 +81,7 @@ export function agentMcpServersFailureKeepsSnapshot(error: AgentMcpServersErrorK
 }
 
 export class AgentMcpServersStatusStore implements AgentMcpServersStore {
-  private readonly gateway: AgentMcpServersGateway;
+  private readonly source: AgentMcpServersSource;
   private readonly maxKeys: number;
   private readonly now: () => number;
   private readonly slots = new Map<string, Slot>();
@@ -88,20 +89,20 @@ export class AgentMcpServersStatusStore implements AgentMcpServersStore {
   private generation = 0;
 
   constructor(
-    gateway: AgentMcpServersGateway,
+    source: AgentMcpServersSource,
     maxKeys = MAX_AGENT_MCP_SERVERS_KEYS,
     now: () => number = Date.now,
   ) {
-    this.gateway = gateway;
+    this.source = source;
     this.maxKeys = Math.max(1, maxKeys);
     this.now = now;
   }
 
-  state(target: AgentMcpServersRequest): AgentMcpServersState {
+  state(target: AgentMcpServersTarget): AgentMcpServersState {
     return this.slots.get(agentMcpServersTargetKey(target))?.state ?? IDLE_AGENT_MCP_SERVERS_STATE;
   }
 
-  refresh(target: AgentMcpServersRequest): void {
+  refresh(target: AgentMcpServersTarget): void {
     const key = agentMcpServersTargetKey(target);
     const slot = this.claim(key);
     if (slot.pending !== null) return;
@@ -112,12 +113,11 @@ export class AgentMcpServersStatusStore implements AgentMcpServersStore {
       kind: "loading",
       previous: agentMcpServersSnapshot(slot.state),
     });
-    const request = { repositoryRoot: target.repositoryRoot, provider: target.provider };
-    void this.check(key, slot, request, generation);
+    void this.check(key, slot, Object.freeze({ ...target }), generation);
     this.notify(key);
   }
 
-  subscribe(target: AgentMcpServersRequest, listener: () => void): () => void {
+  subscribe(target: AgentMcpServersTarget, listener: () => void): () => void {
     const key = agentMcpServersTargetKey(target);
     const listeners = this.watchers.get(key) ?? new Set();
     listeners.add(listener);
@@ -149,10 +149,10 @@ export class AgentMcpServersStatusStore implements AgentMcpServersStore {
   private async check(
     key: string,
     slot: Slot,
-    request: AgentMcpServersRequest,
+    target: AgentMcpServersTarget,
     generation: number,
   ): Promise<void> {
-    const outcome = await this.attempt(request);
+    const outcome = await this.attempt(target);
     if (this.slots.get(key) !== slot || slot.pending !== generation) return;
     slot.pending = null;
     slot.state = Object.freeze(
@@ -161,10 +161,10 @@ export class AgentMcpServersStatusStore implements AgentMcpServersStore {
     this.notify(key);
   }
 
-  private async attempt(request: AgentMcpServersRequest): Promise<CheckOutcome> {
+  private async attempt(target: AgentMcpServersTarget): Promise<CheckOutcome> {
     try {
-      const result = await this.gateway.check(request);
-      if (result.provider !== request.provider) return { kind: "failed", error: "unavailable" };
+      const result = await this.source.check(target);
+      if (result.provider !== target.provider) return { kind: "failed", error: "unavailable" };
       return { kind: "checked", result };
     } catch (error) {
       return { kind: "failed", error: agentMcpServersErrorKind(error) };

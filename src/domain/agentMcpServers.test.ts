@@ -54,6 +54,16 @@ describe("agent MCP servers wire contract", () => {
     expect([...AGENT_MCP_SERVER_TRANSPORTS]).toEqual(wireContract.transports);
     expect({ ...AGENT_MCP_SERVERS_ERRORS }).toEqual(wireContract.errors);
     expect([...AGENT_MCP_SERVERS_ERROR_KINDS]).toEqual(Object.keys(wireContract.errors));
+    expect(AGENT_MCP_SERVERS_ERROR_KINDS.slice(-2)).toEqual([
+      "unsupportedRunner",
+      "serverUnavailable",
+    ]);
+    expect(AGENT_MCP_SERVERS_ERRORS.unsupportedRunner).toBe(
+      "The server runner does not support MCP server status. Update the runner on the server.",
+    );
+    expect(AGENT_MCP_SERVERS_ERRORS.serverUnavailable).toBe(
+      "Server MCP server status could not be loaded. Check the connection and try again.",
+    );
   });
 
   it.each(wireContract.responses)("accepts the $name fixture unchanged", ({ value }) => {

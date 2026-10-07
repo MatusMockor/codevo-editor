@@ -160,4 +160,17 @@ mod tests {
         dispatch.close();
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn a_dispatch_deadline_is_an_mcp_server_status_time_out_and_a_closed_tunnel_is_not() {
+        use crate::agent_mcp_servers_domain::{
+            AGENT_MCP_SERVERS_SERVER_UNAVAILABLE_ERROR, AGENT_MCP_SERVERS_TIMED_OUT_ERROR,
+        };
+        use crate::remote_runner::mcp_servers::contract_error;
+        assert_eq!(contract_error(TIMED_OUT), AGENT_MCP_SERVERS_TIMED_OUT_ERROR);
+        assert_eq!(
+            contract_error(CLOSED),
+            AGENT_MCP_SERVERS_SERVER_UNAVAILABLE_ERROR
+        );
+    }
 }

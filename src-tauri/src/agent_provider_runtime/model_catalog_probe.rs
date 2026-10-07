@@ -144,7 +144,10 @@ impl AgentProviderRuntimeRegistry {
     ) -> Result<AgentMcpServers, McpServersProbeFailure> {
         self.revalidate_catalog_probe(lease)
             .map_err(|_| McpServersProbeFailure::Unavailable)?;
-        let probe = McpServersProbe::new(lease.provider);
+        let root = workspace_root
+            .to_str()
+            .ok_or(McpServersProbeFailure::Unavailable)?;
+        let probe = McpServersProbe::new(lease.provider, root);
         let plan = AgentProviderProcessPlan::mcp_servers_with_effective_path(
             lease.cli_identity.clone(),
             lease.provider,

@@ -1,7 +1,9 @@
 import type { RemoteRunnerCollectInstructionsRequest } from "../domain/remoteRunnerInstructions";
 import { invoke, type Channel } from "@tauri-apps/api/core";
+import { parseAgentMcpServers } from "../domain/agentMcpServers";
 import type * as R from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
+import { agentCliKindOfRemoteRunnerProvider } from "../domain/remoteRunnerProvider";
 import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
 import { watchRemoteRunnerInventory } from "./watchRemoteRunnerInventory";
 import { validateRemoteHistorySearchPage } from "../domain/remoteRunnerHistorySearch";
@@ -22,6 +24,7 @@ export const REMOTE_RUNNER_COMMANDS = {
   getRunner: "remote_runner_get_runner",
   getAccountUsage: "remote_runner_get_account_usage",
   getCommandCatalog: "remote_runner_get_command_catalog",
+  getMcpServers: "remote_runner_get_mcp_servers",
   transcribeSpeech: "remote_runner_transcribe_speech",
   listProjects: "remote_runner_list_projects",
   listRepositoryHosts: "remote_runner_repository_hosts",
@@ -116,7 +119,7 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
     return this.call("removeServer", request);
   }
   async getAccountUsage(request: R.RemoteRunnerAccountUsageRequest) {
-    const expectedProvider = request.provider === "claude" ? "claudeCode" : "codex";
+    const expectedProvider = agentCliKindOfRemoteRunnerProvider(request.provider);
     const snapshot = await this.call("getAccountUsage", request);
     if (snapshot.provider !== expectedProvider) {
       throw new TypeError("Invalid remote runner account usage provider.");
@@ -124,12 +127,20 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
     return snapshot;
   }
   async getCommandCatalog(request: R.RemoteRunnerCommandCatalogRequest) {
-    const expectedProvider = request.provider === "claude" ? "claudeCode" : "codex";
+    const expectedProvider = agentCliKindOfRemoteRunnerProvider(request.provider);
     const catalog = await this.call("getCommandCatalog", request);
     if (catalog.provider !== expectedProvider) {
       throw new TypeError("Invalid remote runner command catalog provider.");
     }
     return catalog;
+  }
+  async getMcpServers(request: R.RemoteRunnerMcpServersRequest) {
+    const expectedProvider = agentCliKindOfRemoteRunnerProvider(request.provider);
+    const servers = parseAgentMcpServers(await this.call("getMcpServers", request));
+    if (servers.provider !== expectedProvider) {
+      throw new TypeError("Invalid remote runner MCP servers provider.");
+    }
+    return servers;
   }
   transcribeSpeech(request: R.RemoteRunnerTranscribeSpeechRequest) {
     return this.call("transcribeSpeech", request);

@@ -4,6 +4,8 @@ use crate::agent_task_spawner::AgentCliInvocation;
 use serde_json::json;
 
 const TIMING: McpStatusTiming = McpStatusTiming::PRODUCTION;
+const ROOT: &str = "/work/project";
+const MARKER: &str = "MARKER_SECRET";
 
 fn at(base: Instant, milliseconds: u64) -> Instant {
     base + Duration::from_millis(milliseconds)
@@ -101,11 +103,59 @@ fn codex_entry(name: &str) -> Value {
 }
 
 fn requested_codex() -> CodexMcpStatusRequest {
-    let mut request = CodexMcpStatusRequest::new();
-    assert_eq!(request.step(), McpProbeStep::Wait);
+    let mut request = CodexMcpStatusRequest::new(ROOT);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
     request.observe(b"{\"id\":0,\"result\":{\"userAgent\":\"codevo_editor\"}}\n");
-    assert!(matches!(request.step(), McpProbeStep::Write(_)));
+    assert!(matches!(
+        request.step(Instant::now()),
+        McpProbeStep::Write(_)
+    ));
     request
+}
+
+fn listed_codex(names: &[&str]) -> CodexMcpStatusRequest {
+    let mut request = requested_codex();
+    let data: Vec<Value> = names
+        .iter()
+        .map(|name| {
+            let mut entry = codex_entry(name);
+            entry["serverInfo"] = Value::Null;
+            entry
+        })
+        .collect();
+    request.observe(&line(
+        json!({"id": 1, "result": {"data": data, "nextCursor": null}}),
+    ));
+    request
+}
+
+fn request_config(request: &mut CodexMcpStatusRequest) {
+    let McpProbeStep::Write(written) = request.step(Instant::now()) else {
+        panic!("expected the config request");
+    };
+    assert_eq!(written.last(), Some(&b'\n'));
+    assert_eq!(written.iter().filter(|byte| **byte == b'\n').count(), 1);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&written).unwrap(),
+        json!({
+            "method": "config/read",
+            "id": CODEX_MCP_CONFIG_REQUEST_ID,
+            "params": {"cwd": ROOT, "includeLayers": false},
+        })
+    );
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
+}
+
+fn settle_without_config(request: &mut CodexMcpStatusRequest) {
+    request_config(request);
+    request.observe(
+        b"{\"error\":{\"code\":-32600,\"message\":\"Invalid request: unknown variant `config/read`\"},\"id\":2}\n",
+    );
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Done);
+}
+
+fn config_response(servers: Value) -> Vec<u8> {
+    line(json!({"id": 2, "result": {"config": {"mcp_servers": servers}, "origins": {}}}))
 }
 
 #[test]
@@ -568,14 +618,14 @@ fn a_line_at_the_limit_is_accepted_and_the_limit_resets_per_line() {
 
 #[test]
 fn codex_requests_the_status_list_once_after_the_handshake() {
-    let mut request = CodexMcpStatusRequest::new();
-    assert_eq!(request.step(), McpProbeStep::Wait);
+    let mut request = CodexMcpStatusRequest::new(ROOT);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
     request.observe(
         b"{\"method\":\"remoteControl/status/changed\",\"params\":{\"status\":\"disabled\"}}\n",
     );
-    assert_eq!(request.step(), McpProbeStep::Wait);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
     request.observe(b"{\"id\":0,\"result\":{\"userAgent\":\"codevo_editor\"}}\n");
-    let McpProbeStep::Write(written) = request.step() else {
+    let McpProbeStep::Write(written) = request.step(Instant::now()) else {
         panic!("expected the status request");
     };
     assert_eq!(written.last(), Some(&b'\n'));
@@ -588,20 +638,23 @@ fn codex_requests_the_status_list_once_after_the_handshake() {
             "params": {"detail": "toolsAndAuthOnly", "limit": MAX_MCP_SERVERS},
         })
     );
-    assert_eq!(request.step(), McpProbeStep::Wait);
-    assert_eq!(request.step(), McpProbeStep::Wait);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
     assert!(!request.is_done());
     assert_eq!(request.take_snapshot(), None);
 }
 
 #[test]
 fn codex_ignores_interleaved_notifications_and_decoys_then_completes() {
-    let mut request = CodexMcpStatusRequest::new();
+    let mut request = CodexMcpStatusRequest::new(ROOT);
     request.observe(&line(
         json!({"id": 1, "result": {"data": [codex_entry("early-decoy")]}}),
     ));
     request.observe(b"{\"id\":0,\"result\":{}}\n");
-    assert!(matches!(request.step(), McpProbeStep::Write(_)));
+    assert!(matches!(
+        request.step(Instant::now()),
+        McpProbeStep::Write(_)
+    ));
     request.observe(b"not json\n");
     request.observe(&line(
         json!({"method": "account/updated", "params": {"authMode": "chatgpt"}}),
@@ -617,7 +670,7 @@ fn codex_ignores_interleaved_notifications_and_decoys_then_completes() {
     request.observe(&line(
         json!({"id": 0, "result": {"data": [codex_entry("handshake-again")]}}),
     ));
-    assert_eq!(request.step(), McpProbeStep::Wait);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
     assert!(!request.is_done());
     let mut response = line(json!({
         "id": 1,
@@ -627,7 +680,8 @@ fn codex_ignores_interleaved_notifications_and_decoys_then_completes() {
         json!({"id": 1, "result": {"data": [codex_entry("late-decoy")]}}),
     ));
     response.chunks(11).for_each(|chunk| request.observe(chunk));
-    assert_eq!(request.step(), McpProbeStep::Done);
+    assert!(request.is_done());
+    settle_without_config(&mut request);
     assert!(request.is_done());
     let snapshot = request.take_snapshot().expect("snapshot");
     assert_eq!(snapshot.provider, AgentCliInvocation::CodexExec);
@@ -649,7 +703,7 @@ fn codex_marks_a_paged_response_truncated() {
         "id": 1,
         "result": {"data": [codex_entry("docs")], "nextCursor": "128"},
     })));
-    assert_eq!(request.step(), McpProbeStep::Done);
+    settle_without_config(&mut request);
     let snapshot = request.take_snapshot().unwrap();
     assert!(snapshot.truncated);
     assert_eq!(
@@ -660,10 +714,10 @@ fn codex_marks_a_paged_response_truncated() {
 
 #[test]
 fn codex_fails_on_error_responses() {
-    let mut handshake = CodexMcpStatusRequest::new();
+    let mut handshake = CodexMcpStatusRequest::new(ROOT);
     handshake.observe(b"{\"id\":0,\"error\":{\"code\":-32600,\"message\":\"Invalid request\"}}\n");
     assert_eq!(
-        handshake.step(),
+        handshake.step(Instant::now()),
         McpProbeStep::Failed(HANDSHAKE_ERROR.to_string())
     );
     assert!(!handshake.is_done());
@@ -673,14 +727,14 @@ fn codex_fails_on_error_responses() {
         b"{\"error\":{\"code\":-32600,\"message\":\"Invalid request: unknown variant `mcpServerStatus/list`\"},\"id\":1}\n",
     );
     assert_eq!(
-        request.step(),
+        request.step(Instant::now()),
         McpProbeStep::Failed(REQUEST_ERROR.to_string())
     );
     request.observe(&line(
         json!({"id": 1, "result": {"data": [codex_entry("docs")]}}),
     ));
     assert_eq!(
-        request.step(),
+        request.step(Instant::now()),
         McpProbeStep::Failed(REQUEST_ERROR.to_string())
     );
     assert!(!request.is_done());
@@ -698,7 +752,7 @@ fn codex_fails_on_a_response_without_a_server_list() {
         let mut request = requested_codex();
         request.observe(&line(response.clone()));
         assert_eq!(
-            request.step(),
+            request.step(Instant::now()),
             McpProbeStep::Failed(PAYLOAD_ERROR.to_string()),
             "{response}"
         );
@@ -724,7 +778,7 @@ fn codex_assembles_a_large_response_and_fails_closed_above_the_line_limit() {
     response
         .chunks(4096)
         .for_each(|chunk| request.observe(chunk));
-    assert_eq!(request.step(), McpProbeStep::Done);
+    settle_without_config(&mut request);
     assert_eq!(
         request.take_snapshot().unwrap().servers[0].tool_count,
         Some(2_000)
@@ -734,20 +788,162 @@ fn codex_assembles_a_large_response_and_fails_closed_above_the_line_limit() {
     let chunk = vec![b' '; 1024 * 1024];
     let reads = MAX_CODEX_MCP_STATUS_LINE_BYTES / chunk.len();
     (0..reads).for_each(|_| request.observe(&chunk));
-    assert_eq!(request.step(), McpProbeStep::Wait);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
     request.observe(b" ");
     assert_eq!(
-        request.step(),
+        request.step(Instant::now()),
         McpProbeStep::Failed(LINE_LIMIT_ERROR.to_string())
     );
     request.observe(&line(
         json!({"id": 1, "result": {"data": [codex_entry("docs")]}}),
     ));
     assert_eq!(
-        request.step(),
+        request.step(Instant::now()),
         McpProbeStep::Failed(LINE_LIMIT_ERROR.to_string())
     );
     assert_eq!(request.take_snapshot(), None);
+}
+
+#[test]
+fn codex_reads_the_config_once_after_the_status_list_and_marks_disabled_servers() {
+    let mut early = requested_codex();
+    early.observe(&config_response(json!({"off": {"enabled": false}})));
+    assert_eq!(early.step(Instant::now()), McpProbeStep::Wait);
+    assert!(!early.is_done());
+
+    let mut request = listed_codex(&["off", "on", "absent"]);
+    assert!(request.is_done());
+    request.observe(&config_response(json!({"on": {"enabled": false}})));
+    request_config(&mut request);
+    request.observe(b"not json\n");
+    request.observe(&line(
+        json!({"method": "config/read", "id": 2, "params": {"config": {"mcp_servers": {"absent": {"enabled": false}}}}}),
+    ));
+    request.observe(&line(
+        json!({"id": "2", "result": {"config": {"mcp_servers": {"absent": {"enabled": false}}}}}),
+    ));
+    request.observe(&line(
+        json!({"id": 1, "result": {"data": [codex_entry("late-decoy")]}}),
+    ));
+    request.observe(&line(json!({"id": 0, "error": {"code": -32600}})));
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
+    let mut response = config_response(json!({
+        "off": {
+            "command": format!("/opt/{MARKER}/server"),
+            "args": ["--api-key", MARKER],
+            "env": {"API_TOKEN": MARKER},
+            "enabled": false,
+        },
+        "on": {
+            "url": format!("https://mcp.example.com/{MARKER}?token={MARKER}"),
+            "http_headers": {"Authorization": format!("Bearer {MARKER}")},
+            "enabled": true,
+        },
+        "not-listed": {"command": MARKER, "enabled": false},
+    }));
+    response.extend(config_response(json!({"absent": {"enabled": false}})));
+    response.chunks(7).for_each(|chunk| request.observe(chunk));
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Done);
+    assert_eq!(request.step(Instant::now()), McpProbeStep::Done);
+    let snapshot = request.take_snapshot().expect("snapshot");
+    assert_eq!(
+        statuses(&snapshot),
+        [
+            ("absent", AgentMcpServerStatus::Unknown),
+            ("off", AgentMcpServerStatus::Disabled),
+            ("on", AgentMcpServerStatus::Unknown),
+        ]
+    );
+    assert!(!serde_json::to_string(&snapshot).unwrap().contains(MARKER));
+}
+
+#[test]
+fn codex_keeps_the_status_list_when_the_config_read_fails_or_is_unusable() {
+    for response in [
+        json!({"id": 2, "error": {"code": -32600, "message": "Invalid request"}}),
+        json!({"id": 2, "error": {"code": -32603, "message": MARKER}, "result": {"config": {"mcp_servers": {"off": {"enabled": false}}}}}),
+        json!({"id": 2}),
+        json!({"id": 2, "result": null}),
+        json!({"id": 2, "result": "config"}),
+        json!({"id": 2, "result": {"config": {"mcp_servers": "none"}}}),
+    ] {
+        let mut request = listed_codex(&["off"]);
+        request_config(&mut request);
+        request.observe(&line(response.clone()));
+        assert_eq!(
+            request.step(Instant::now()),
+            McpProbeStep::Done,
+            "{response}"
+        );
+        assert!(request.is_done(), "{response}");
+        let snapshot = request.take_snapshot().expect("snapshot");
+        assert_eq!(
+            statuses(&snapshot),
+            [("off", AgentMcpServerStatus::Unknown)],
+            "{response}"
+        );
+        assert!(!serde_json::to_string(&snapshot).unwrap().contains(MARKER));
+    }
+
+    let mut unanswered = listed_codex(&["off"]);
+    request_config(&mut unanswered);
+    assert_eq!(unanswered.step(Instant::now()), McpProbeStep::Wait);
+    assert!(unanswered.is_done());
+    assert_eq!(
+        statuses(&unanswered.take_snapshot().expect("snapshot")),
+        [("off", AgentMcpServerStatus::Unknown)]
+    );
+}
+
+#[test]
+fn codex_stops_waiting_for_the_config_read_after_its_own_deadline() {
+    assert_eq!(CODEX_MCP_CONFIG_READ_TIMEOUT, Duration::from_secs(5));
+    let base = Instant::now();
+    let mut request = listed_codex(&["off"]);
+    assert!(matches!(request.step(base), McpProbeStep::Write(_)));
+    assert_eq!(request.step(at(base, 0)), McpProbeStep::Wait);
+    assert_eq!(request.step(at(base, 4_999)), McpProbeStep::Wait);
+    assert_eq!(request.step(at(base, 5_000)), McpProbeStep::Done);
+    request.observe(&config_response(json!({"off": {"enabled": false}})));
+    assert_eq!(request.step(at(base, 5_001)), McpProbeStep::Done);
+    assert_eq!(
+        statuses(&request.take_snapshot().expect("snapshot")),
+        [("off", AgentMcpServerStatus::Unknown)]
+    );
+
+    let mut answered = listed_codex(&["off"]);
+    assert!(matches!(answered.step(base), McpProbeStep::Write(_)));
+    assert_eq!(answered.step(at(base, 4_999)), McpProbeStep::Wait);
+    answered.observe(&config_response(json!({"off": {"enabled": false}})));
+    assert_eq!(answered.step(at(base, 60_000)), McpProbeStep::Done);
+    assert_eq!(
+        statuses(&answered.take_snapshot().expect("snapshot")),
+        [("off", AgentMcpServerStatus::Disabled)]
+    );
+}
+
+#[test]
+fn codex_keeps_the_status_list_when_the_config_response_exceeds_the_line_limit() {
+    let chunk = vec![b' '; 1024 * 1024];
+    let reads = MAX_CODEX_MCP_STATUS_LINE_BYTES / chunk.len();
+    for requested in [true, false] {
+        let mut request = listed_codex(&["off"]);
+        if requested {
+            request_config(&mut request);
+        }
+        (0..reads).for_each(|_| request.observe(&chunk));
+        if requested {
+            assert_eq!(request.step(Instant::now()), McpProbeStep::Wait);
+        }
+        request.observe(b" ");
+        assert_eq!(request.step(Instant::now()), McpProbeStep::Done);
+        request.observe(&config_response(json!({"off": {"enabled": false}})));
+        assert_eq!(request.step(Instant::now()), McpProbeStep::Done);
+        assert_eq!(
+            statuses(&request.take_snapshot().expect("snapshot")),
+            [("off", AgentMcpServerStatus::Unknown)]
+        );
+    }
 }
 
 #[test]
