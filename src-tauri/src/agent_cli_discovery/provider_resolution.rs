@@ -33,7 +33,7 @@ impl AgentProviderExecutableResolver for AgentCliDiscovery {
         manual_override: Option<&str>,
         refresh: bool,
     ) -> Result<ResolvedProviderExecutable, String> {
-        if refresh {
+        if refresh || self.detection_is_stale(provider, manual_override) {
             self.refresh().map_err(|error| error.to_string())?;
         }
         let resolution = AgentCliDiscovery::resolve_provider(self, provider, manual_override)
@@ -77,4 +77,35 @@ impl AgentProviderExecutableResolver for AgentCliDiscovery {
             discovery_generation: environment.authority_generation(),
         })
     }
+}
+
+impl AgentCliDiscovery {
+    fn detection_is_stale(
+        &self,
+        provider: AgentCliInvocation,
+        manual_override: Option<&str>,
+    ) -> bool {
+        if manual_override.is_some() {
+            return false;
+        }
+        let Ok(environment) = self.effective_environment() else {
+            return false;
+        };
+        let Some(executable) = environment.provider(provider) else {
+            return false;
+        };
+        !executable.identity().is_current_for_observation()
+            || !search_path_reaches(provider, environment.path(), executable.path())
+    }
+}
+
+fn search_path_reaches(
+    provider: AgentCliInvocation,
+    effective_path: &str,
+    canonical: &Path,
+) -> bool {
+    let executable_name = provider_executable_name(provider);
+    split_path(effective_path).into_iter().any(|directory| {
+        bounded_executable_path(&directory.join(executable_name)).as_deref() == Some(canonical)
+    })
 }
