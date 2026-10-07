@@ -432,6 +432,42 @@ describe("automatic retry of transient server read failures", () => {
     expect(retryButton()?.disabled).toBe(false);
   });
 
+  it("recovers from the shared IPC permit limit during a thread-open burst without a failure row", async () => {
+    const getTurnChanges = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Runner is busy; retry shortly"))
+      .mockResolvedValue(summary("t1"));
+    await render({ getTurnChanges });
+    expect(host.innerHTML).toBe("");
+    await advance(1_000);
+    expect(getTurnChanges).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain("1 changed file");
+    expect(host.textContent).not.toContain("Retry recorded changes");
+    expect(host.textContent).not.toContain("busy");
+  });
+
+  it("shows a server rejection as final without a retry that could never succeed", async () => {
+    for (const [message, shown] of [
+      [
+        "Runner request failed (HTTP 404).",
+        "Recorded changes for this turn are no longer available on the server.",
+      ],
+      ["Runner request failed (HTTP 409).", "The server rejected this recorded changes request."],
+      [
+        "Invalid remote runner getTurnChanges response.",
+        "The saved changes response is invalid and cannot be displayed.",
+      ],
+    ]) {
+      const getTurnChanges = vi.fn().mockRejectedValue(new Error(message));
+      await render({ getTurnChanges, revision: {} });
+      expect(host.textContent).toContain(shown);
+      expect(host.textContent).not.toContain("HTTP");
+      expect(host.textContent).not.toContain("Retry recorded changes");
+      await advance(60_000);
+      expect(getTurnChanges).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it("does not automatically retry unknown or local transient failures", async () => {
     for (const message of [
       "/private/source.ts contains secret content",

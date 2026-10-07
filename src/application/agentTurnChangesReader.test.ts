@@ -575,9 +575,9 @@ it("offers a safe retry for known transient server read failures", () => {
     }
   }
   for (const error of [
-    "Runner request failed (HTTP 404).",
     "Runner request failed (HTTP 503). /private/secret",
     "Server is not connected /private/secret",
+    "Runner request failed (HTTP 5030).",
   ])
     expect(classifyTurnChangesReadFailure(error)).toEqual({
       kind: "retryable",
@@ -585,6 +585,114 @@ it("offers a safe retry for known transient server read failures", () => {
     });
   for (const reason of [null, "Saved turn changes could not be read.", "notGitRepository"])
     expect(isAutoRetryableTurnChangesReason(reason)).toBe(false);
+});
+it("absorbs the shared IPC operation permit limit in the bounded queue retry", async () => {
+  const getSummary = vi
+    .fn<() => Promise<AgentTurnChangeSummary>>()
+    .mockRejectedValueOnce(new Error("Runner is busy; retry shortly"))
+    .mockRejectedValueOnce(new Error("Runner is busy; retry shortly"))
+    .mockResolvedValue(summary());
+  const lease = {};
+  const reader = readerFor(() => ({
+    lease,
+    identity: "owner",
+    getSummary,
+    getFileDiff: async () => diff,
+  }));
+  expect((await reader.getTurnChanges("t", "old")).state).toBe("ready");
+  expect(getSummary).toHaveBeenCalledTimes(3);
+  getSummary.mockRejectedValue(new Error("Runner is busy; retry shortly"));
+  const exhausted = await reader.getTurnChanges("t", "new");
+  expect(getSummary).toHaveBeenCalledTimes(6);
+  expect(exhausted).toEqual({
+    turnId: "new",
+    state: "unavailable",
+    files: [],
+    truncated: false,
+    reason: "Server changes could not be loaded. Check the connection and try again.",
+  });
+  expect(isAutoRetryableTurnChangesReason(exhausted.reason)).toBe(true);
+});
+it("auto-retries transport setup and permit failures without exposing their text", () => {
+  for (const error of [
+    "Runner is busy; retry shortly",
+    "Runner operation failed",
+    "Server registry unavailable",
+    "Runner connections are shutting down",
+    "Runner connection was canceled.",
+    "Runner connection changed during request.",
+    "Unable to create private runner connection.",
+    "Unable to open SSH handshake.",
+    "Unable to configure SSH handshake.",
+    "Unable to configure runner HTTP connection.",
+    "Runner request failed (HTTP 408).",
+    "Runner request failed (HTTP 500).",
+    "Runner request failed (HTTP 507).",
+    "Runner request failed (HTTP 599).",
+  ]) {
+    expect(classifyTurnChangesReadFailure(new Error(error))).toEqual({
+      kind: "retryable",
+      reason: "Server changes could not be loaded. Check the connection and try again.",
+    });
+  }
+});
+it("keeps server rejections final so no retry button can promise a load that never succeeds", () => {
+  const rejected = "The server rejected this recorded changes request.";
+  const outdated =
+    "The server runner cannot provide recorded changes. Update the runner on the server.";
+  const gone = "Recorded changes for this turn are no longer available on the server.";
+  const connection =
+    "The server connection could not be established. Check the server connection settings and reconnect.";
+  const invalid = "The saved changes response is invalid and cannot be displayed.";
+  for (const [error, reason] of [
+    ["Runner request failed (HTTP 400).", outdated],
+    [
+      "The server runner rejected this request as invalid (HTTP 400). If it is older than this editor, update the runner on the server.",
+      outdated,
+    ],
+    ["Runner request failed (HTTP 404).", gone],
+    ["Runner request failed (HTTP 403).", rejected],
+    ["Runner request failed (HTTP 405).", rejected],
+    ["Runner request failed (HTTP 409).", rejected],
+    ["Runner request failed (HTTP 413).", rejected],
+    ["Runner request failed (HTTP 415).", rejected],
+    ["Runner request failed (HTTP 422).", rejected],
+    ["Runner request failed (HTTP 499).", rejected],
+    ["Runner request failed (HTTP 204).", invalid],
+    ["Runner request failed (HTTP 302).", invalid],
+    ["Invalid SSH host or username.", connection],
+    ["Unable to start SSH tunnel.", connection],
+    ["SSH tunnel connection failed. Check SSH access and runner authentication.", connection],
+    ["SSH tunnel authentication failed.", connection],
+    ["Invalid runner authentication.", connection],
+  ]) {
+    expect(classifyTurnChangesReadFailure(new Error(error))).toEqual({ kind: "final", reason });
+    expect(isRetryableTurnChangesReason(reason)).toBe(false);
+    expect(isAutoRetryableTurnChangesReason(reason)).toBe(false);
+  }
+  for (const error of [
+    "Invalid runner UUID",
+    "Invalid runner identifier",
+    "Invalid turn file path",
+    "Invalid remote runner getTurnChanges response.",
+    "Invalid remote runner getTurnFileDiff response.",
+    "Runner returned changes for another turn.",
+    "Runner returned a different turn file diff.",
+  ]) {
+    expect(classifyTurnChangesReadFailure(new Error(error))).toEqual({
+      kind: "final",
+      reason: invalid,
+    });
+  }
+  for (const error of [
+    "Invalid remote runner getTurnChanges request.",
+    "Invalid remote runner getTurnFileDiff request.",
+  ]) {
+    expect(classifyTurnChangesReadFailure(new Error(error))).toEqual({
+      kind: "retryable",
+      reason: "Recorded changes could not be loaded.",
+    });
+  }
 });
 it("keeps invalid server responses final and explains changed server identity", () => {
   expect(classifyTurnChangesReadFailure("Invalid runner turn changes")).toEqual({

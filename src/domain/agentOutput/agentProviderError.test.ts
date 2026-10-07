@@ -507,3 +507,154 @@ describe("conversation images too large", () => {
     expect(classifyAgentProviderError(raw, "claudeCode").message).toBe(raw);
   });
 });
+
+describe("runner terminal codes", () => {
+  const RUNNER_FAILURES = [
+    {
+      code: "process_cleanup_failed",
+      reason: "processCleanupFailed",
+      headline: "The server could not keep track of this run's processes.",
+    },
+    {
+      code: "execution_timeout",
+      reason: "timedOut",
+      headline: "The server stopped this run because it reached the runner's time limit.",
+    },
+    {
+      code: "provider_unavailable",
+      reason: "providerUnavailable",
+      headline: "The server could not start Claude Code.",
+    },
+    {
+      code: "provider_result_missing",
+      reason: "providerResultMissing",
+      headline: "Claude Code ended without reporting a result.",
+    },
+    {
+      code: "output_persistence_failed",
+      reason: "outputNotSaved",
+      headline: "The server stopped this run because it could not save the run's output.",
+    },
+    {
+      code: "output_limit_exceeded",
+      reason: "outputLimitExceeded",
+      headline:
+        "The server stopped this run because it produced more output than the runner allows.",
+    },
+    {
+      code: "instruction_sync_failed",
+      reason: "instructionSyncFailed",
+      headline: "The server could not apply your instruction files for this run.",
+    },
+    {
+      code: "execution_failed",
+      reason: "executionFailed",
+      headline: "The server ran into a problem and could not complete this run.",
+    },
+  ] as const;
+
+  it.each(RUNNER_FAILURES)("explains $code in a plain sentence", ({ code, reason, headline }) => {
+    const error = classifyAgentProviderError(code, "claudeCode");
+
+    expect(error.detail).toEqual({ kind: "runnerFailure", provider: "claudeCode", reason });
+    expect(agentProviderErrorHeadline(error, null)).toBe(headline);
+    expect(agentProviderErrorHeadline(error, null)).not.toContain(code);
+    expect(agentProviderErrorHeadline(error, null)).not.toMatch(/[–—]/u);
+    expect(error.raw).toBe(code);
+    expect(error.signature).toBe(`runnerFailure:claudeCode:${reason}`);
+  });
+
+  it("names the provider of the thread that failed", () => {
+    expect(
+      agentProviderErrorHeadline(classifyAgentProviderError("provider_unavailable", "codex"), null),
+    ).toBe("The server could not start Codex.");
+    expect(
+      agentProviderErrorHeadline(
+        classifyAgentProviderError("provider_result_missing", "codex"),
+        null,
+      ),
+    ).toBe("Codex ended without reporting a result.");
+  });
+
+  it("treats a broken provider input pipe as a protocol failure", () => {
+    const error = classifyAgentProviderError("provider_input_failed", "codex");
+
+    expect(error.detail).toEqual({ kind: "protocolFailure", provider: "codex" });
+    expect(agentProviderErrorHeadline(error, null)).toBe("Codex could not complete this run.");
+    expect(error.raw).toBe("provider_input_failed");
+  });
+
+  it("recognizes a code surrounded only by whitespace or wrapped in an error payload", () => {
+    const expected = {
+      kind: "runnerFailure",
+      provider: "claudeCode",
+      reason: "processCleanupFailed",
+    };
+
+    expect(classifyAgentProviderError("  process_cleanup_failed\n", "claudeCode").detail).toEqual(
+      expected,
+    );
+    expect(
+      classifyAgentProviderError(
+        JSON.stringify({ error: { message: "process_cleanup_failed" } }),
+        "claudeCode",
+      ).detail,
+    ).toEqual(expected);
+  });
+
+  it.each([
+    "The tool printed process_cleanup_failed while cleaning up.",
+    "process_cleanup_failed: could not signal pid 4242",
+    "process_cleanup_failed\nexecution_timeout",
+    "Error: execution_timeout",
+    "PROCESS_CLEANUP_FAILED",
+    "process cleanup failed",
+    "execution_failed.",
+  ])("keeps %j as the provider's own text", (raw) => {
+    const error = classifyAgentProviderError(raw, "claudeCode");
+
+    expect(error.detail).toEqual({ kind: "unknown" });
+    expect(error.message).toBe(raw);
+    expect(agentProviderErrorHeadline(error, null)).toBe(raw);
+  });
+
+  it.each([
+    "cancelled",
+    "provider_reported_failure",
+    "workspace_identity_invalid",
+    "unsupported_platform",
+    "git_branch_not_found",
+    "brand_new_runner_code",
+    "constructor",
+    "__proto__",
+  ])("passes the unmapped code %s through unchanged", (code) => {
+    const error = classifyAgentProviderError(code, "codex");
+
+    expect(error.detail).toEqual({ kind: "unknown" });
+    expect(agentProviderErrorHeadline(error, null)).toBe(code);
+    expect(error.signature).toBe(`unknown:${code}`);
+  });
+
+  it("matches a repeated runner failure and keeps different failures apart", () => {
+    const cleanup = classifyAgentProviderError("process_cleanup_failed", "claudeCode");
+
+    expect(
+      sameAgentProviderError(
+        cleanup,
+        classifyAgentProviderError(" process_cleanup_failed ", "claudeCode"),
+      ),
+    ).toBe(true);
+    expect(
+      sameAgentProviderError(
+        cleanup,
+        classifyAgentProviderError("execution_timeout", "claudeCode"),
+      ),
+    ).toBe(false);
+    expect(
+      sameAgentProviderError(
+        cleanup,
+        classifyAgentProviderError("process_cleanup_failed", "codex"),
+      ),
+    ).toBe(false);
+  });
+});

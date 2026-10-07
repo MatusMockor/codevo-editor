@@ -51,7 +51,7 @@ pub(crate) async fn read_agent_provider_usage(
     let provider_registry = Arc::clone(&provider_registry);
     run_blocking_command(move || {
         let lease = provider_registry
-            .acquire_health_for_generation(request.provider, request.provider_generation)?;
+            .acquire_account_usage_for_generation(request.provider, request.provider_generation)?;
         provider_registry.revalidate_health(&lease)?;
         let read_claude_identity = || -> Result<Option<String>, String> {
             provider_registry.revalidate_health(&lease)?;
@@ -250,6 +250,10 @@ fn window_label(minutes: u64) -> &'static str {
         _ => "Usage limit",
     }
 }
+
+#[cfg(test)]
+#[path = "agent_provider_usage_authority_tests.rs"]
+mod authority_tests;
 
 #[cfg(test)]
 mod tests {

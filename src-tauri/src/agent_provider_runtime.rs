@@ -382,6 +382,14 @@ impl AgentProviderRuntimeRegistry {
         self.acquire_health_resolved(provider, generation, true)
     }
 
+    pub fn acquire_account_usage_for_generation(
+        self: &Arc<Self>,
+        provider: AgentCliInvocation,
+        generation: u64,
+    ) -> Result<ProviderHealthLease, String> {
+        self.acquire_health_resolved(provider, generation, false)
+    }
+
     pub fn observed_health_version(
         &self,
         lease: &ProviderHealthLease,
@@ -588,7 +596,8 @@ impl AgentProviderRuntimeRegistry {
 
     pub fn revalidate_turn_authority(&self, lease: &ProviderTurnLease) -> Result<(), String> {
         self.revalidate_operation_state(lease.provider, lease.generation, &lease.policy)?;
-        self.revalidate_resolution(lease.provider, &lease.policy, lease.resolved())?;
+        self.revalidate_unregressed_resolution(lease.provider, &lease.policy, lease.resolved())
+            .map_err(ProviderResolutionMismatch::stale_error)?;
         self.revalidate_operation_state(lease.provider, lease.generation, &lease.policy)
     }
 
@@ -670,7 +679,7 @@ impl AgentProviderRuntimeRegistry {
         .map_err(ProviderResolutionMismatch::stale_error)
     }
 
-    fn revalidate_update_resolution(
+    fn revalidate_unregressed_resolution(
         &self,
         provider: AgentCliInvocation,
         policy: &AgentProviderPolicy,
@@ -809,7 +818,7 @@ impl AgentProviderRuntimeRegistry {
             }
             configuration.policy.clone()
         };
-        self.revalidate_update_resolution(
+        self.revalidate_unregressed_resolution(
             lease.provider,
             &policy,
             ResolvedProviderExecutableRef {
@@ -844,7 +853,7 @@ impl AgentProviderRuntimeRegistry {
         resolved: &ResolvedProviderExecutable,
     ) -> Result<(), String> {
         let policy = self.update_policy(lease)?;
-        self.revalidate_update_resolution(
+        self.revalidate_unregressed_resolution(
             lease.provider,
             &policy,
             ResolvedProviderExecutableRef {

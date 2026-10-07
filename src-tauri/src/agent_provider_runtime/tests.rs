@@ -8,6 +8,10 @@ mod validation_performance {
     include!("validation_performance_tests.rs");
 }
 
+mod turn_authority {
+    include!("turn_authority_tests.rs");
+}
+
 static NONCE: AtomicU64 = AtomicU64::new(0);
 
 fn executable_identity_fixture() -> ExecutableIdentity {
@@ -165,7 +169,7 @@ fn held_turn_lease_fails_after_provider_a_b_a_generation_replacement() {
 }
 
 #[test]
-fn held_turn_lease_rejects_discovery_a_b_a_with_identical_executable_bytes() {
+fn held_turn_lease_survives_a_discovery_refresh_of_an_identical_environment() {
     let resolver = Arc::new(FakeResolver::new(
         executable_identity_fixture(),
         "/detected/bin:/usr/bin",
@@ -182,14 +186,11 @@ fn held_turn_lease_rejects_discovery_a_b_a_with_identical_executable_bytes() {
 
     resolver.refresh_authority();
 
-    assert_eq!(
-        registry.revalidate_turn_authority(&lease),
-        Err(AGENT_PROVIDER_STALE_ERROR.to_string())
-    );
+    assert_eq!(registry.revalidate_turn_authority(&lease), Ok(()));
 }
 
 #[test]
-fn held_manual_override_lease_rejects_discovery_a_b_a() {
+fn held_manual_override_lease_survives_a_discovery_refresh_of_an_identical_environment() {
     let identity = executable_identity_fixture();
     let manual_path = identity.canonical_path.to_string_lossy().into_owned();
     let resolver = Arc::new(FakeResolver::new(identity, "/detected/bin:/usr/bin"));
@@ -210,10 +211,7 @@ fn held_manual_override_lease_rejects_discovery_a_b_a() {
 
     resolver.refresh_authority();
 
-    assert_eq!(
-        registry.revalidate_turn_authority(&lease),
-        Err(AGENT_PROVIDER_STALE_ERROR.to_string())
-    );
+    assert_eq!(registry.revalidate_turn_authority(&lease), Ok(()));
 }
 
 #[test]

@@ -5,11 +5,13 @@ import {
   type AgentCapacityScope,
   type AgentProviderError,
 } from "../../domain/agentOutput/agentProviderError";
+import type { AgentRunnerFailureReason } from "../../domain/agentOutput/agentRunnerFailure";
 
 export type AgentProviderErrorTarget = "local" | "remote";
 
 const USAGE_LIMIT_ADVICE = "Wait for the limit to reset, or switch to another model or provider.";
 const CONVERSATION_IMAGES_ADVICE = "Start a new thread to continue.";
+const CHECK_RUNNER_ADVICE = "Try again. If it keeps failing, check the runner on that server.";
 
 export function agentProviderErrorAdvice(
   error: AgentProviderError,
@@ -27,6 +29,8 @@ export function agentProviderErrorAdvice(
       return target === "remote"
         ? "The server could not continue the provider session. Check the runner on that server and try again."
         : "The provider session could not continue. Check the provider CLI and try again.";
+    case "runnerFailure":
+      return runnerFailureAdvice(detail.reason);
     case "conversationImagesTooLarge":
       return CONVERSATION_IMAGES_ADVICE;
     case "unsupportedModelForCliVersion":
@@ -60,6 +64,27 @@ function authenticationAdvice(
   }
 }
 
+function runnerFailureAdvice(reason: AgentRunnerFailureReason): string {
+  switch (reason) {
+    case "processCleanupFailed":
+      return "Processes from this run may still be running on that server. Check them before you try again. If it keeps happening, restart the runner on that server.";
+    case "timedOut":
+      return "Files this run already changed are left as they are. Try again to continue, or raise the runner's time limit on that server.";
+    case "providerUnavailable":
+      return "Check the provider CLI and the runner on that server, then try again.";
+    case "providerResultMissing":
+      return "Try again. If it keeps failing, check the provider CLI on that server.";
+    case "outputNotSaved":
+      return "Try again. If it keeps failing, check free disk space for the runner on that server.";
+    case "outputLimitExceeded":
+    case "instructionSyncFailed":
+    case "executionFailed":
+      return CHECK_RUNNER_ADVICE;
+    default:
+      return unsupportedRunnerFailureReason(reason);
+  }
+}
+
 function capacityAdvice(scope: AgentCapacityScope): string {
   switch (scope) {
     case "service":
@@ -88,6 +113,10 @@ function capitalized(text: string): string {
 
 function unsupportedDetail(detail: never): never {
   throw new TypeError(`Unsupported provider error detail: ${JSON.stringify(detail)}.`);
+}
+
+function unsupportedRunnerFailureReason(reason: never): never {
+  throw new TypeError(`Unsupported runner failure reason: ${String(reason)}.`);
 }
 
 function unsupportedCause(cause: never): never {

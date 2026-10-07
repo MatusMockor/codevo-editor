@@ -213,6 +213,24 @@ mod tests {
         assert!(parse_summary(data, TASK).is_err());
     }
     #[test]
+    fn summary_accepts_recorded_runner_checkpoints_with_uncounted_lock_files() {
+        const RECORDED: &str = "7d2f3a1c-5b6e-4c8d-9a0b-1e2f3a4b5c6d";
+        let recorded = json!({"turnId":RECORDED,"state":"ready","files":[
+            {"relativePath":"CHANGELOG.md","oldRelativePath":null,"status":"modified","addedLines":52,"deletedLines":0},
+            {"relativePath":"package-lock.json","oldRelativePath":null,"status":"modified","addedLines":null,"deletedLines":null},
+            {"relativePath":"src-tauri/Cargo.lock","oldRelativePath":null,"status":"modified","addedLines":null,"deletedLines":null},
+            {"relativePath":"src/application/agentAttachmentCarriedIntake.ts","oldRelativePath":null,"status":"added","addedLines":207,"deletedLines":0},
+            {"relativePath":"src-tauri/tauri.conf.json","oldRelativePath":null,"status":"modified","addedLines":1,"deletedLines":1}
+        ],"truncated":false,"reason":null});
+        let parsed = parse_summary(recorded, RECORDED).unwrap();
+        assert_eq!(parsed.turn_id, RECORDED);
+        assert_eq!(parsed.files.len(), 5);
+        assert!(parsed.files[1].added_lines.is_none());
+        const RUNNING: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+        let running = json!({"turnId":RUNNING,"state":"unavailable","files":[],"truncated":false,"reason":"A complete snapshot of this turn is unavailable."});
+        assert!(parse_summary(running, RUNNING).is_ok());
+    }
+    #[test]
     fn summary_unavailable_cannot_present_partial_changes_as_ready() {
         let mut value = summary();
         value["state"] = json!("unavailable");
