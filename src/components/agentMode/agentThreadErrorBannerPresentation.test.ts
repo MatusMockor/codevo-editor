@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
+import {
+  agentProviderErrorHeadline,
+  classifyAgentProviderError,
+} from "../../domain/agentOutput/agentProviderError";
 import { agentThreadErrorBannerModel } from "./agentThreadErrorBannerPresentation";
+
+const CHECK_RUNNER = "Try again. If it keeps failing, check the runner on that server.";
+
+function runnerHeadline(code: string, provider: "claudeCode" | "codex" = "claudeCode"): string {
+  return agentProviderErrorHeadline(classifyAgentProviderError(code, provider), null);
+}
 
 function view(
   status: unknown,
@@ -245,6 +255,102 @@ describe("thread error banner model", () => {
       "retry",
     );
   });
+
+  it.each([
+    {
+      code: "process_cleanup_failed",
+      detail:
+        "Processes from this run may still be running on that server. Check them before you try again. If it keeps happening, restart the runner on that server.",
+    },
+    {
+      code: "execution_timeout",
+      detail:
+        "Files this run already changed are left as they are. Try again to continue, or raise the runner's time limit on that server.",
+    },
+    {
+      code: "provider_unavailable",
+      detail: "Check the provider CLI and the runner on that server, then try again.",
+    },
+    {
+      code: "provider_result_missing",
+      detail: "Try again. If it keeps failing, check the provider CLI on that server.",
+    },
+    {
+      code: "provider_input_failed",
+      detail:
+        "The server could not continue the provider session. Check the runner on that server and try again.",
+    },
+    {
+      code: "output_persistence_failed",
+      detail:
+        "Try again. If it keeps failing, check free disk space for the runner on that server.",
+    },
+    { code: "output_limit_exceeded", detail: CHECK_RUNNER },
+    { code: "instruction_sync_failed", detail: CHECK_RUNNER },
+    { code: "execution_failed", detail: CHECK_RUNNER },
+  ])("explains the runner code $code instead of showing it", ({ code, detail }) => {
+    const model = agentThreadErrorBannerModel(
+      view(
+        { kind: "failed", message: code },
+        "claudeCode",
+        [{ kind: "error", message: code }],
+        true,
+      ),
+      null,
+    );
+
+    expect(model).toMatchObject({ title: runnerHeadline(code), detail, remedy: "retry" });
+    expect(model?.retry.kind).toBe("ready");
+    expect(`${model?.title} ${model?.detail}`).not.toContain(code);
+    expect(`${model?.title} ${model?.detail}`).not.toMatch(/[\u2013\u2014]/u);
+  });
+
+  it("explains a runner code reported only by the events of an exited run", () => {
+    expect(
+      agentThreadErrorBannerModel(
+        view(
+          { kind: "exited", exitCode: 1 },
+          "codex",
+          [{ kind: "error", message: "process_cleanup_failed" }],
+          true,
+        ),
+        null,
+      ),
+    ).toMatchObject({
+      title: runnerHeadline("process_cleanup_failed", "codex"),
+      remedy: "retry",
+    });
+  });
+
+  it.each([
+    "The tool printed process_cleanup_failed while cleaning up.",
+    "process_cleanup_failed: could not signal pid 4242",
+    "PROCESS_CLEANUP_FAILED",
+  ])("does not reclassify provider text that only contains a runner code (%j)", (message) => {
+    expect(
+      agentThreadErrorBannerModel(view({ kind: "failed", message }, "claudeCode", [], true), null),
+    ).toMatchObject({
+      title: "Claude Code could not complete this run.",
+      detail: message,
+      remedy: "retry",
+    });
+  });
+
+  it.each(["workspace_identity_invalid", "git_branch_not_found", "brand_new_runner_code"])(
+    "keeps the unmapped runner code %s as the detail",
+    (code) => {
+      expect(
+        agentThreadErrorBannerModel(
+          view({ kind: "failed", message: code }, "claudeCode", [], true),
+          null,
+        ),
+      ).toMatchObject({
+        title: "Claude Code could not complete this run.",
+        detail: code,
+        remedy: "retry",
+      });
+    },
+  );
 
   it("returns null when nothing failed", () => {
     expect(agentThreadErrorBannerModel(view({ kind: "exited", exitCode: 0 }), null)).toBeNull();

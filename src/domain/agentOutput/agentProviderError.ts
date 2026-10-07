@@ -1,4 +1,9 @@
 import { type AgentCliKind, boundedUtf8Text } from "@codevo/agent-events";
+import {
+  agentRunnerFailureHeadline,
+  agentRunnerTerminalOutcome,
+  type AgentRunnerFailureReason,
+} from "./agentRunnerFailure";
 
 export const MAX_AGENT_PROVIDER_ERROR_MESSAGE_BYTES = 4 * 1_024;
 export const MAX_AGENT_PROVIDER_ERROR_PAYLOAD_CHARS = 64 * 1_024;
@@ -96,6 +101,11 @@ export type AgentProviderErrorDetail =
       readonly resetsAt: string | null;
     }
   | { readonly kind: "protocolFailure"; readonly provider: AgentCliKind }
+  | {
+      readonly kind: "runnerFailure";
+      readonly provider: AgentCliKind;
+      readonly reason: AgentRunnerFailureReason;
+    }
   | { readonly kind: "conversationImagesTooLarge"; readonly provider: "claudeCode" }
   | { readonly kind: "advisory"; readonly provider: AgentCliKind; readonly text: string }
   | { readonly kind: "unknown" };
@@ -146,6 +156,8 @@ export function agentProviderErrorHeadline(
     return `${agentProviderDisplayName(detail.provider)} is temporarily over capacity.`;
   if (detail.kind === "protocolFailure")
     return `${agentProviderDisplayName(detail.provider)} could not complete this run.`;
+  if (detail.kind === "runnerFailure")
+    return agentRunnerFailureHeadline(detail.reason, agentProviderDisplayName(detail.provider));
   if (detail.kind === "conversationImagesTooLarge")
     return "This conversation contains images larger than the API allows.";
   if (detail.kind === "advisory") return detail.text;
@@ -206,10 +218,9 @@ function launchFailureDetail(
   message: string,
   provider: AgentCliKind,
 ): AgentProviderErrorDetail | null {
-  if (message === "provider_protocol_failed") return { kind: "protocolFailure", provider };
-  if (message === "authentication_failed") {
-    return { kind: "authenticationRequired", provider, cause: "rejected" };
-  }
+  const outcome = agentRunnerTerminalOutcome(message);
+
+  if (outcome !== null) return { ...outcome, provider };
   if (provider === "claudeCode" && OAUTH_SESSION_EXPIRED_PATTERN.test(message)) {
     return { kind: "authenticationRequired", provider, cause: "sessionExpired" };
   }
@@ -361,6 +372,9 @@ function errorSignature(detail: AgentProviderErrorDetail, message: string): stri
   }
   if (detail.kind === "protocolFailure" || detail.kind === "conversationImagesTooLarge") {
     return `${detail.kind}:${detail.provider}`;
+  }
+  if (detail.kind === "runnerFailure") {
+    return `${detail.kind}:${detail.provider}:${detail.reason}`;
   }
   if (detail.kind === "advisory") {
     return `advisory:${detail.provider}:${normalizedMessage(detail.text)}`;
