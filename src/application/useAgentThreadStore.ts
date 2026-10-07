@@ -864,12 +864,12 @@ function recordBackgroundTurnLog(
   const thread = next.threads.get(action.threadId);
   const turn = thread?.turns.find((candidate) => candidate.turnId === action.turn.turnId);
   if (thread === undefined || turn === undefined) return;
-  if (!openTurnLogSlot(turnLog, projects, thread, turn, NO_AGENT_TURN_LOG_LOSS)) return;
+  const priorLoss = backgroundTurnLoss(turn.eventsTruncated);
+  if (!openTurnLogSlot(turnLog, projects, thread, turn, priorLoss)) return;
   turnLog.writer.recordEvents(turn.turnId, turn.events);
   if (turn.subagentLifecycle !== undefined) {
     turnLog.writer.recordLifecycle(turn.turnId, turn.subagentLifecycle);
   }
-  if (turn.eventsTruncated) turnLog.writer.reportLoss(turn.turnId, { kind: "supervisorGap" });
   turnLog.writer.sealTurn(turn.turnId);
 }
 
@@ -923,6 +923,11 @@ function loggablePrompt(turn: AgentTurn): string | null {
 function resumedTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
   if (!eventsTruncated) return NO_AGENT_TURN_LOG_LOSS;
   return { kind: "legacyWindow" };
+}
+
+function backgroundTurnLoss(eventsTruncated: boolean): AgentTurnLogLoss {
+  if (!eventsTruncated) return NO_AGENT_TURN_LOG_LOSS;
+  return { kind: "backgroundBuffer" };
 }
 
 function recordTurnLogEvents(

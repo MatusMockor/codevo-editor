@@ -321,7 +321,9 @@ export function parseAgentTurnLogLoss(value: unknown, path = "loss"): AgentTurnL
   if (
     kind === "none" ||
     kind === "legacyWindow" ||
+    kind === "backgroundBuffer" ||
     kind === "supervisorGap" ||
+    kind === "writeFailure" ||
     kind === "turnCeiling" ||
     kind === "unreadable"
   ) {

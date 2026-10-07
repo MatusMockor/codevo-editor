@@ -6,6 +6,7 @@ import {
 } from "./agentThread";
 import {
   AGENT_TURN_LOG_LIMITS,
+  mergeAgentTurnLogLoss,
   type AgentTurnLogAnchor,
   type AgentTurnLogEntry,
   type AgentTurnLogLoss,
@@ -80,7 +81,7 @@ export function prependAgentTurnActivityPage(
     hasEarlier: page.hasEarlier,
     hasLater: window.hasLater,
     gap: window.gap || joinedGap,
-    loss: firstLoss(window.loss, page.loss),
+    loss: mergeAgentTurnLogLoss(window.loss, page.loss),
     clipped: window.clipped || page.clipped,
   });
 }
@@ -97,7 +98,7 @@ export function appendAgentTurnActivityPage(
     hasEarlier: window.hasEarlier,
     hasLater: page.hasLater,
     gap: window.gap || joinedGap,
-    loss: firstLoss(window.loss, page.loss),
+    loss: mergeAgentTurnLogLoss(window.loss, page.loss),
     clipped: window.clipped || page.clipped,
   });
 }
@@ -167,11 +168,6 @@ function ascending(entries: ReadonlyArray<AgentTurnLogEntry>): boolean {
 
 function entriesBytes(entries: ReadonlyArray<AgentTurnLogEntry>): number {
   return entries.reduce((total, entry) => total + agentTurnEventUtf8Bytes(entry.event), 0);
-}
-
-function firstLoss(current: AgentTurnLogLoss, next: AgentTurnLogLoss): AgentTurnLogLoss {
-  if (current.kind !== "none") return current;
-  return next;
 }
 
 function overCap(count: number, bytes: number): boolean {

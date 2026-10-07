@@ -6,6 +6,7 @@ import {
   AGENT_TURN_REMOTE_DISCARDED_NOTICE,
   AGENT_TURN_REMOTE_WINDOW_NOTICE,
   AGENT_TURN_WINDOW_NOTICE,
+  agentTurnLogLossNotice,
   agentTurnLogNoticeModel,
   agentTurnLossNotice,
   agentTurnUnsavedNotice,
@@ -76,6 +77,8 @@ describe("agent turn log notices", () => {
   it("keeps every other loss visible on a turn whose document holds every event", () => {
     const wording = (loss: AgentTurnLogLoss) => agentTurnLossNotice(facts({ loss }), false);
     expect(wording({ kind: "supervisorGap" })).not.toBeNull();
+    expect(wording({ kind: "backgroundBuffer" })).not.toBeNull();
+    expect(wording({ kind: "writeFailure" })).not.toBeNull();
     expect(wording({ kind: "turnCeiling" })).not.toBeNull();
     expect(wording({ kind: "unreadable" })).not.toBeNull();
     expect(wording({ kind: "diskBudget", atEpochMs: 1 })).not.toBeNull();
@@ -87,7 +90,13 @@ describe("agent turn log notices", () => {
       "Part of this turn ran before full transcripts were kept, so some activity is gone.",
     );
     expect(wording({ kind: "supervisorGap" })).toBe(
-      "Some activity from this turn could not be saved and is not shown.",
+      "Part of this turn's activity did not reach the saved transcript and is not shown.",
+    );
+    expect(wording({ kind: "backgroundBuffer" })).toBe(
+      "This turn started without a prompt and only part of its activity was kept, so some of it is not shown.",
+    );
+    expect(wording({ kind: "writeFailure" })).toBe(
+      "This turn's activity was not completely saved, so some of it may not be shown.",
     );
     expect(wording({ kind: "turnCeiling" })).toBe(
       "This turn reached its recording limit, so later activity was not saved.",
@@ -98,6 +107,26 @@ describe("agent turn log notices", () => {
     expect(wording({ kind: "diskBudget", atEpochMs: 5 })).toBe(
       "Older activity from this turn was removed to free disk space.",
     );
+  });
+
+  it("gives each cause of missing activity its own sentence", () => {
+    const sentences = (
+      [
+        { kind: "legacyWindow" },
+        { kind: "backgroundBuffer" },
+        { kind: "supervisorGap" },
+        { kind: "writeFailure" },
+        { kind: "turnCeiling" },
+        { kind: "unreadable" },
+        { kind: "diskBudget", atEpochMs: 1 },
+      ] as const
+    ).map((loss) => agentTurnLogLossNotice(loss));
+    expect(agentTurnLogLossNotice({ kind: "none" })).toBeNull();
+    expect(sentences.every((sentence) => sentence !== null)).toBe(true);
+    expect(new Set(sentences).size).toBe(sentences.length);
+    expect(agentTurnLogLossNotice({ kind: "backgroundBuffer" })).not.toContain("saved");
+    expect(agentTurnLogLossNotice({ kind: "supervisorGap" })).not.toContain("agent process");
+    expect(agentTurnLogLossNotice({ kind: "writeFailure" })).not.toContain("disk");
   });
 
   it("adds one bounded line when the writer is not saving to disk", () => {

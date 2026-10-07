@@ -704,6 +704,95 @@ describe("useAgentThreadStore turn log lifecycle", () => {
     harness.unmount();
   });
 
+  it("never stores or publishes a truncated background turn without its buffer loss", async () => {
+    const harness = renderStore();
+    await settle();
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+    await settle();
+    const published: string[] = [];
+    const unsubscribe = harness.turnLog.facts.subscribe(() => {
+      const facts = harness.turnLog.facts.factsOf("agt-bg-0002");
+      if (facts !== null) published.push(facts.loss.kind);
+    });
+    const background = agentBackgroundTurn(
+      "agt-bg-0002",
+      parseAgentBackgroundTurn({
+        output: `${JSON.stringify({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: { content: [{ type: "text", text: "tail of a long background turn" }] },
+        })}\n`,
+        truncated: true,
+        complete: true,
+      }),
+      60,
+    );
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "backgroundTurnRecorded",
+        threadId: THREAD_ID,
+        workspaceId: OWNER_ID,
+        turn: background,
+      }),
+    );
+    await settle();
+    await settle();
+    unsubscribe();
+
+    const requests = [
+      ...harness.logGateway.opens.map((request) => request.priorLoss.kind),
+      ...harness.logGateway.appends.map((request) => request.loss.kind),
+    ];
+    expect(background.eventsTruncated).toBe(true);
+    expect(harness.seams.some((seam) => seam.startsWith("reportLoss:"))).toBe(false);
+    expect(requests.length).toBeGreaterThan(1);
+    expect(requests).toEqual(requests.map(() => "backgroundBuffer"));
+    expect(published.length).toBeGreaterThan(0);
+    expect(published).toEqual(published.map(() => "backgroundBuffer"));
+    expect(harness.turnLog.facts.factsOf("agt-bg-0002")).toMatchObject({
+      loss: { kind: "backgroundBuffer" },
+      sealed: true,
+    });
+    harness.unmount();
+  });
+
+  it("records a background turn that fit its buffer without any loss", async () => {
+    const harness = renderStore();
+    await settle();
+    act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
+    await settle();
+    const background = agentBackgroundTurn(
+      "agt-bg-0003",
+      parseAgentBackgroundTurn({
+        output: `${JSON.stringify({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: { content: [{ type: "text", text: "short background turn" }] },
+        })}\n`,
+        truncated: false,
+        complete: true,
+      }),
+      60,
+    );
+    act(() =>
+      harness.hook().dispatchAction({
+        kind: "backgroundTurnRecorded",
+        threadId: THREAD_ID,
+        workspaceId: OWNER_ID,
+        turn: background,
+      }),
+    );
+    await settle();
+    await settle();
+
+    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "none" });
+    expect(lastAppend(harness.logGateway.appends)?.seal).toBe(true);
+    expect(harness.logGateway.appends.map((request) => request.loss.kind)).toEqual(
+      harness.logGateway.appends.map(() => "none"),
+    );
+    harness.unmount();
+  });
+
   it("logs, seals and saves a background turn at once without an origin on the wire", async () => {
     const harness = renderStore();
     await settle();
@@ -742,14 +831,13 @@ describe("useAgentThreadStore turn log lifecycle", () => {
     expect(harness.seams).toEqual([
       "openTurn:agt-bg-0001",
       "recordEvents:agt-bg-0001:1",
-      "reportLoss:agt-bg-0001:supervisorGap",
       "sealTurn:agt-bg-0001",
     ]);
     expect(harness.logGateway.opens[0]?.prompt).toBeNull();
-    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "none" });
+    expect(harness.logGateway.opens[0]?.priorLoss).toEqual({ kind: "backgroundBuffer" });
     const sealed = lastAppend(harness.logGateway.appends);
     expect(sealed?.seal).toBe(true);
-    expect(sealed?.loss).toEqual({ kind: "supervisorGap" });
+    expect(sealed?.loss).toEqual({ kind: "backgroundBuffer" });
     expect(sealed?.ops.map((entry) => entry.event)).toEqual([say("background-finished")]);
     expect(harness.saved.length).toBeGreaterThan(savesBefore);
     const saved = harness.saved[harness.saved.length - 1]?.thread;

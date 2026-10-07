@@ -76,6 +76,31 @@ describe("agent turn log wire contract", () => {
     rejects(wire.rejectedLosses, (value) => parseAgentTurnLogLoss(value));
   });
 
+  it("round-trips the background buffer and write failure losses through JSON", () => {
+    for (const kind of ["backgroundBuffer", "writeFailure"] as const) {
+      const parsed = parseAgentTurnLogLoss(JSON.parse(JSON.stringify({ kind })));
+      expect(parsed).toEqual({ kind });
+      expect(JSON.stringify(parsed)).toBe(`{"kind":"${kind}"}`);
+      expect(Object.isFrozen(parsed)).toBe(true);
+    }
+  });
+
+  it("still loads a supervisor gap written before the loss kinds were split", () => {
+    expect(parseAgentTurnLogLoss(JSON.parse('{"kind":"supervisorGap"}'))).toEqual({
+      kind: "supervisorGap",
+    });
+  });
+
+  it("refuses an unknown loss kind and a new kind carrying extra fields", () => {
+    expect(() => parseAgentTurnLogLoss({ kind: "backgroundbuffer" })).toThrow(TypeError);
+    expect(() => parseAgentTurnLogLoss({ kind: "write_failure" })).toThrow(TypeError);
+    expect(() => parseAgentTurnLogLoss({ kind: "somethingNewer" })).toThrow(TypeError);
+    expect(() => parseAgentTurnLogLoss({ kind: "writeFailure", atEpochMs: 1 })).toThrow(TypeError);
+    expect(() => parseAgentTurnLogLoss({ kind: "backgroundBuffer", detail: "x" })).toThrow(
+      TypeError,
+    );
+  });
+
   it("round-trips every digest and rejects the invalid ones", () => {
     for (const digest of wire.digests) expect(parseAgentTurnDigest(digest)).toEqual(digest);
     rejects(wire.rejectedDigests, (value) => parseAgentTurnDigest(value));

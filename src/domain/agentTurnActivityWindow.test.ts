@@ -101,6 +101,31 @@ describe("agent turn activity window", () => {
     expect(gapped.clipped).toBe(true);
   });
 
+  it("keeps the most severe loss across pages and never lets a milder page replace it", () => {
+    const opened = openAgentTurnActivityWindow(
+      page(range(50, 60), { loss: { kind: "backgroundBuffer" } }),
+    );
+    const failed = prependAgentTurnActivityPage(
+      opened,
+      page(range(40, 50), { loss: { kind: "writeFailure" } }),
+    );
+    const milder = appendAgentTurnActivityPage(
+      failed,
+      page(range(60, 70), { loss: { kind: "supervisorGap" } }),
+    );
+    const unreadable = appendAgentTurnActivityPage(
+      milder,
+      page(range(70, 80), { loss: { kind: "unreadable" } }),
+    );
+    const clean = appendAgentTurnActivityPage(unreadable, page(range(80, 90)));
+
+    expect(opened.loss).toEqual({ kind: "backgroundBuffer" });
+    expect(failed.loss).toEqual({ kind: "writeFailure" });
+    expect(milder.loss).toEqual({ kind: "writeFailure" });
+    expect(unreadable.loss).toEqual({ kind: "unreadable" });
+    expect(clean.loss).toEqual({ kind: "unreadable" });
+  });
+
   it("rejects pages that overflow, reorder, disagree with their bounds or do not advance", () => {
     expect(agentTurnActivityPageRejection(page(range(1, 201)), { at: "tail" })).toBe("oversized");
     expect(agentTurnActivityPageRejection(page([tool(5), tool(4)]), { at: "tail" })).toBe(

@@ -14,9 +14,7 @@ pub(crate) fn open_lease(
     let row = match read_turn_meta(&transaction, turn_id)? {
         Some(mut existing) => {
             existing.writer_epoch += 1;
-            if existing.loss.is_none() {
-                existing.loss = request.prior_loss;
-            }
+            existing.loss = existing.loss.merged(request.prior_loss);
             if existing.prompt.is_none() {
                 existing.prompt.clone_from(&request.prompt);
             }

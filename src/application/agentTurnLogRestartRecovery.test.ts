@@ -68,15 +68,62 @@ describe("durable restart tail evidence", () => {
   it.each([
     { ...page, hasLater: true },
     { ...page, clipped: true },
-    { ...page, loss: { kind: "supervisorGap" } as const },
     { ...page, entries: [] },
     { ...page, entries: [{ seq: 999, event: { ...result, text: "Different result" } }] },
-  ])("preserves uncertainty when completion cannot be proven", async (value) => {
+  ])(
+    "records a write failure when no loss is stored and completion cannot be proven",
+    async (value) => {
+      expect(
+        (
+          await interruptedTurnLogLosses({ readPage: async () => value }, thread, [summary], owns)
+        ).get(summary.turnId),
+      ).toEqual({ kind: "writeFailure" });
+    },
+  );
+  it.each([
+    { kind: "supervisorGap" },
+    { kind: "backgroundBuffer" },
+    { kind: "writeFailure" },
+    { kind: "unreadable" },
+  ] as const)("keeps the $kind the tail page reports without relabelling it", async (loss) => {
     expect(
       (
-        await interruptedTurnLogLosses({ readPage: async () => value }, thread, [summary], owns)
+        await interruptedTurnLogLosses(
+          { readPage: async () => ({ ...page, loss }) },
+          thread,
+          [summary],
+          owns,
+        )
       ).get(summary.turnId),
-    ).toEqual({ kind: "supervisorGap" });
+    ).toEqual(loss);
+  });
+  it.each([
+    { kind: "supervisorGap" },
+    { kind: "backgroundBuffer" },
+    { kind: "writeFailure" },
+    { kind: "legacyWindow" },
+  ] as const)(
+    "keeps the $kind already stored for the turn without reading the tail",
+    async (loss) => {
+      const readPage = vi.fn(async () => page);
+      expect(
+        (await interruptedTurnLogLosses({ readPage }, thread, [{ ...summary, loss }], owns)).get(
+          summary.turnId,
+        ),
+      ).toEqual(loss);
+      expect(readPage).not.toHaveBeenCalled();
+    },
+  );
+  it("reports no loss for an interrupted turn whose window holds every event", async () => {
+    const whole = {
+      ...thread,
+      turns: thread.turns.map((turn) => ({ ...turn, eventsTruncated: false })),
+    };
+    const readPage = vi.fn(async () => page);
+    expect(
+      (await interruptedTurnLogLosses({ readPage }, whole, [summary], owns)).get(summary.turnId),
+    ).toEqual({ kind: "none" });
+    expect(readPage).not.toHaveBeenCalled();
   });
   it("preserves a more specific loss discovered while reading the tail", async () => {
     const loss = { kind: "diskBudget", atEpochMs: 4 } as const;
@@ -120,6 +167,6 @@ describe("durable restart tail evidence", () => {
     };
     expect(
       (await interruptedTurnLogLosses({ readPage }, thread, [summary], owns)).get(summary.turnId),
-    ).toEqual({ kind: "supervisorGap" });
+    ).toEqual({ kind: "writeFailure" });
   });
 });

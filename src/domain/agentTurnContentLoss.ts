@@ -37,7 +37,9 @@ function agentTurnLogLossVisible(loss: AgentTurnLogLoss, eventsTruncated: boolea
       return false;
     case "legacyWindow":
       return eventsTruncated;
+    case "backgroundBuffer":
     case "supervisorGap":
+    case "writeFailure":
     case "turnCeiling":
     case "unreadable":
     case "diskBudget":

@@ -15,6 +15,7 @@ import {
   agentTurnLogFailureCode,
   agentTurnLogFailureNextSeq,
   isAgentTurnLogBatchTooLarge,
+  mergeAgentTurnLogLoss,
   type AgentTurnLogError,
   type AgentTurnLogLease,
   type AgentTurnLogLoss,
@@ -52,7 +53,7 @@ import {
 } from "./agentTurnLogPorts";
 
 const MAX_AGENT_TURN_LOG_QUIT_FLUSH_ROUNDS = 8;
-const INCOMPLETE_AGENT_TURN_LOG_LOSS: AgentTurnLogLoss = Object.freeze({ kind: "supervisorGap" });
+const INCOMPLETE_AGENT_TURN_LOG_LOSS: AgentTurnLogLoss = Object.freeze({ kind: "writeFailure" });
 
 export interface AgentTurnLogWriterDependencies {
   readonly gateway: AgentTurnLogGateway;
@@ -134,13 +135,14 @@ export function createAgentTurnLogWriter(
     cancelTimer(slot);
     slot.state = { kind: "stopped", reason };
     slot.final = { ...slotStatus(slot), pendingOps: 0, pendingBytes: 0, backpressure: false };
+    const recorded = mergeAgentTurnLogLoss(slot.final.loss, loss);
     release(slot);
     dependencies.onStatus?.(slot.final);
     if (reason === "sealed") {
       forget(slot);
       return;
     }
-    void retire(slot, loss);
+    void retire(slot, recorded);
   };
 
   const retire = async (slot: WriterSlot, loss: AgentTurnLogLoss): Promise<void> => {
@@ -282,7 +284,7 @@ export function createAgentTurnLogWriter(
 
   const stopRetries = (slot: WriterSlot, error: AgentTurnLogRetryError): void => {
     const loss = retryLoss(error, dependencies.timers.now());
-    if (slot.reportedLoss.kind === "none") slot.reportedLoss = loss;
+    slot.reportedLoss = mergeAgentTurnLogLoss(slot.reportedLoss, loss);
     stop(slot, "failed", loss);
   };
 
@@ -543,9 +545,8 @@ export function createAgentTurnLogWriter(
 
   const slotLoss = (slot: WriterSlot): AgentTurnLogLoss => {
     const observed = slot.window?.loss() ?? NO_AGENT_TURN_LOG_LOSS;
-    if (observed.kind !== "none") return observed;
-    if (slot.reportedLoss.kind !== "none") return slot.reportedLoss;
-    return slot.request.priorLoss;
+    const reported = mergeAgentTurnLogLoss(slot.request.priorLoss, slot.reportedLoss);
+    return mergeAgentTurnLogLoss(reported, observed);
   };
 
   const slotStatus = (slot: WriterSlot): AgentTurnLogSlotStatus => {
@@ -645,8 +646,9 @@ export function createAgentTurnLogWriter(
       const slot = slots.get(turnId);
       if (slot === undefined) return;
       if (slot.state.kind === "stopped") return;
-      if (slot.reportedLoss.kind !== "none") return;
-      slot.reportedLoss = loss;
+      const merged = mergeAgentTurnLogLoss(slot.reportedLoss, loss);
+      if (merged === slot.reportedLoss) return;
+      slot.reportedLoss = merged;
       publish(slot);
       scheduleFlush(slot, false);
     },

@@ -20,6 +20,7 @@ mod contract_tests;
 mod delete_tests;
 mod error_contract_tests;
 mod loader_interop_tests;
+mod loss_tests;
 mod metadata_tests;
 mod migration_tests;
 mod page_tests;

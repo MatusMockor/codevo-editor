@@ -55,9 +55,7 @@ pub(crate) fn append(
     meta.bytes = turn_bytes;
     meta.first_seq = plan.first_seq;
     meta.sealed = meta.sealed || request.seal;
-    if !request.loss.is_none() {
-        meta.loss = request.loss;
-    }
+    meta.loss = meta.loss.merged(request.loss);
     if let Some(digest) = request.digest.as_ref() {
         meta.digest = Some(digest.clone());
         meta.digest_through_seq = meta.next_seq - 1;

@@ -24,7 +24,7 @@ export async function interruptedTurnLogLosses(
       summary.loss.kind !== "none"
         ? summary.loss
         : turn.eventsTruncated
-          ? { kind: "supervisorGap" }
+          ? { kind: "writeFailure" }
           : { kind: "none" };
     if (
       summary.loss.kind === "none" &&

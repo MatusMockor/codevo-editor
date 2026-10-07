@@ -70,8 +70,12 @@ export function agentTurnLogLossNotice(loss: AgentTurnLogLoss): string | null {
       return null;
     case "legacyWindow":
       return "Part of this turn ran before full transcripts were kept, so some activity is gone.";
+    case "backgroundBuffer":
+      return "This turn started without a prompt and only part of its activity was kept, so some of it is not shown.";
     case "supervisorGap":
-      return "Some activity from this turn could not be saved and is not shown.";
+      return "Part of this turn's activity did not reach the saved transcript and is not shown.";
+    case "writeFailure":
+      return "This turn's activity was not completely saved, so some of it may not be shown.";
     case "turnCeiling":
       return "This turn reached its recording limit, so later activity was not saved.";
     case "unreadable":

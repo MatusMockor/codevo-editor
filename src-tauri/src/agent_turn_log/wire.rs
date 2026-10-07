@@ -23,11 +23,28 @@ pub(crate) const AGENT_TURN_DIGEST_VERSION: u32 = 1;
 pub(crate) enum AgentTurnLogLossKind {
     None,
     LegacyWindow,
+    BackgroundBuffer,
     SupervisorGap,
+    WriteFailure,
     DiskBudget,
     // Historical loss marker; new writes have no cumulative turn-size quota.
     TurnCeiling,
     Unreadable,
+}
+
+impl AgentTurnLogLossKind {
+    pub(crate) fn severity(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::LegacyWindow => 1,
+            Self::BackgroundBuffer => 2,
+            Self::SupervisorGap => 3,
+            Self::WriteFailure => 4,
+            Self::TurnCeiling => 5,
+            Self::DiskBudget => 6,
+            Self::Unreadable => 7,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -46,8 +63,11 @@ impl AgentTurnLogLoss {
         }
     }
 
-    pub(crate) fn is_none(self) -> bool {
-        matches!(self.kind, AgentTurnLogLossKind::None)
+    pub(crate) fn merged(self, next: Self) -> Self {
+        if next.kind.severity() > self.kind.severity() {
+            return next;
+        }
+        self
     }
 }
 

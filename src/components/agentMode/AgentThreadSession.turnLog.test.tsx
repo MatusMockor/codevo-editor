@@ -249,7 +249,7 @@ describe("thread session turn log notices", () => {
     act(() => store.publishSlot(THREAD_ID, slot({ loss: { kind: "supervisorGap" } })));
     expect(renders.length).toBe(before);
     expect(host.textContent).toContain(
-      "Some activity from this turn could not be saved and is not shown.",
+      "Part of this turn's activity did not reach the saved transcript and is not shown.",
     );
   });
 });

@@ -23,11 +23,15 @@ export const AGENT_TURN_LOG_LIMITS = {
 export type AgentTurnLogLoss =
   | { readonly kind: "none" }
   | { readonly kind: "legacyWindow" }
+  | { readonly kind: "backgroundBuffer" }
   | { readonly kind: "supervisorGap" }
+  | { readonly kind: "writeFailure" }
   | { readonly kind: "diskBudget"; readonly atEpochMs: number }
   // Historical loss marker retained for logs written before incremental storage.
   | { readonly kind: "turnCeiling" }
   | { readonly kind: "unreadable" };
+
+export type AgentTurnLogLossKind = AgentTurnLogLoss["kind"];
 
 export interface AgentTurnLogScope {
   readonly rootKey: string;
@@ -146,6 +150,41 @@ export type AgentTurnLogError = (typeof AGENT_TURN_LOG_ERRORS)[number];
 export const AGENT_TURN_LOG_SEQUENCE_GAP_PREFIX = "sequenceGap:";
 
 export const NO_AGENT_TURN_LOG_LOSS: AgentTurnLogLoss = Object.freeze({ kind: "none" });
+
+export function agentTurnLogLossSeverity(kind: AgentTurnLogLossKind): number {
+  switch (kind) {
+    case "none":
+      return 0;
+    case "legacyWindow":
+      return 1;
+    case "backgroundBuffer":
+      return 2;
+    case "supervisorGap":
+      return 3;
+    case "writeFailure":
+      return 4;
+    case "turnCeiling":
+      return 5;
+    case "diskBudget":
+      return 6;
+    case "unreadable":
+      return 7;
+    default:
+      return unsupportedAgentTurnLogLossKind(kind);
+  }
+}
+
+export function mergeAgentTurnLogLoss(
+  current: AgentTurnLogLoss,
+  next: AgentTurnLogLoss,
+): AgentTurnLogLoss {
+  if (agentTurnLogLossSeverity(next.kind) > agentTurnLogLossSeverity(current.kind)) return next;
+  return current;
+}
+
+function unsupportedAgentTurnLogLossKind(kind: never): never {
+  throw new TypeError(`Unsupported agent turn log loss kind: ${JSON.stringify(kind)}.`);
+}
 
 export function isAgentTurnLogError(value: unknown): value is AgentTurnLogError {
   return AGENT_TURN_LOG_ERRORS.some((code) => code === value);

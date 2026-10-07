@@ -605,7 +605,7 @@ describe("agent turn log writer", () => {
 
     const notes = gateway.appends.filter((request) => request.ops.length === 0);
     expect(notes).toHaveLength(1);
-    expect(notes[0]?.loss).toEqual({ kind: "supervisorGap" });
+    expect(notes[0]?.loss).toEqual({ kind: "writeFailure" });
     expect(notes[0]?.seal).toBe(false);
     expect(lastStatus(statuses)).toEqual(final);
     subject.dispose();

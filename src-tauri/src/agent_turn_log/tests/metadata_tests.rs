@@ -135,7 +135,7 @@ fn a_reported_loss_and_digest_survive_a_reopen() {
 }
 
 #[test]
-fn a_prior_loss_is_recorded_only_while_the_turn_reports_no_loss() {
+fn a_reopen_without_a_reported_loss_keeps_the_stored_prior_loss() {
     let temp = TempLogStore::create("prior-loss");
     let store = temp.store();
     let mut first = open_request(TURN_ID);

@@ -348,13 +348,13 @@ describe("agent turn logs of turns a quit interrupted", () => {
     await harness.unmount();
   });
 
-  it("seals a truncated JSON tail as a supervisor gap and then lets hydration rebuild it", async () => {
+  it("seals a truncated JSON tail as a write failure and then lets hydration rebuild it", async () => {
     const { harness, events } = loadedWithRunningTurn(400, PERSISTED_TAIL_EVENTS);
     await settleLogStore();
 
     const sealed = harness.logGateway.appends.filter((append) => append.seal);
     expect(sealed).toHaveLength(1);
-    expect(sealed[0]?.loss).toEqual({ kind: "supervisorGap" });
+    expect(sealed[0]?.loss).toEqual({ kind: "writeFailure" });
 
     act(() =>
       harness.turnLog.facts.publishSummaries(LOG_THREAD_ID, [sealedLogSummary(LOG_TURN_ID, 400)]),

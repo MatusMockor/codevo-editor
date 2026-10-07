@@ -53,6 +53,16 @@
       "usage": null
     }
   ],
+  "lossPrecedence": [
+    "none",
+    "legacyWindow",
+    "backgroundBuffer",
+    "supervisorGap",
+    "writeFailure",
+    "turnCeiling",
+    "diskBudget",
+    "unreadable"
+  ],
   "losses": [
     {
       "kind": "none"
@@ -61,7 +71,13 @@
       "kind": "legacyWindow"
     },
     {
+      "kind": "backgroundBuffer"
+    },
+    {
       "kind": "supervisorGap"
+    },
+    {
+      "kind": "writeFailure"
     },
     {
       "kind": "diskBudget",
@@ -79,6 +95,32 @@
       "why": "unknown kind",
       "value": {
         "kind": "diskFull"
+      }
+    },
+    {
+      "why": "unknown kind differing only by case",
+      "value": {
+        "kind": "backgroundbuffer"
+      }
+    },
+    {
+      "why": "unknown kind in snake case",
+      "value": {
+        "kind": "write_failure"
+      }
+    },
+    {
+      "why": "timestamp on a background buffer loss",
+      "value": {
+        "kind": "backgroundBuffer",
+        "atEpochMs": 1750000000000
+      }
+    },
+    {
+      "why": "timestamp on a write failure loss",
+      "value": {
+        "kind": "writeFailure",
+        "atEpochMs": 1750000000000
       }
     },
     {
