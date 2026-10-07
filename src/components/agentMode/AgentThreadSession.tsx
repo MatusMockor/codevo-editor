@@ -24,6 +24,7 @@ import {
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import type { AgentAttachmentImagesSurface } from "../../application/useAgentAttachmentImages";
+import type { AgentInlineImagesSurface } from "../../application/useAgentInlineImages";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type {
@@ -42,6 +43,8 @@ import type { AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { useAgentAttachmentLightbox } from "./useAgentAttachmentLightbox";
 import { useAgentTurnAttachmentImagePort } from "./useAgentTurnAttachmentImages";
+import { useAgentInlineImageLightbox } from "./useAgentInlineImageLightbox";
+import { useAgentThreadInlineImages } from "./useAgentThreadInlineImages";
 import type { AgentProseContext } from "./AgentAssistantText";
 import {
   agentThreadLinks,
@@ -134,6 +137,7 @@ export interface AgentThreadSessionProps {
   readonly serverLoopback?: AgentServerLoopbackPort | null;
   readonly externalHistoryState?: AgentExternalHistoryState;
   readonly attachmentImages?: AgentAttachmentImagesSurface | null;
+  readonly inlineImages?: AgentInlineImagesSurface | null;
   readonly onRevealAttachment?: (threadId: string, attachmentId: string) => void;
   readonly onRetryExternalHistory?: () => void;
   readonly turnLog?: AgentTurnLogFactsSource | null;
@@ -196,6 +200,7 @@ function AgentThreadSessionBody({
   artifactLoader = null,
   artifactPreview = null,
   attachmentImages = null,
+  inlineImages = null,
   deferredFollowUps = NO_DEFERRED_FOLLOW_UPS,
   onRemoveDeferredFollowUp,
   onEditDeferredFollowUp,
@@ -269,6 +274,15 @@ function AgentThreadSessionBody({
   );
   const lightbox = useAgentAttachmentLightbox(attachmentImagePort, attachmentOwner);
   const attachmentImageViewer = lightbox.images;
+  const threadInlineImages = useAgentThreadInlineImages(
+    thread.execution === undefined ? inlineImages : null,
+    attachmentOwner,
+  );
+  const inlineLightbox = useAgentInlineImageLightbox(threadInlineImages, {
+    suppressed: lightbox.entry !== null,
+    onOpen: lightbox.close,
+  });
+  const inlineImageViewer = inlineLightbox.viewer;
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const queueRef = useRef<HTMLDivElement | null>(null);
   const hits = findHits ?? NO_FIND_HITS;
@@ -577,6 +591,7 @@ function AgentThreadSessionBody({
                     highlight={highlightFor(turn.turnId)}
                     onOpenAgents={agents.openPanel}
                     subagents={agents.subagentsFor(turn.turnId)}
+                    inlineImages={inlineImageViewer}
                     prose={prose}
                     provider={record.provider.kind}
                     executionTarget={thread.execution?.kind ?? "local"}
@@ -663,6 +678,13 @@ function AgentThreadSessionBody({
         images={attachmentImageViewer}
         onClose={lightbox.close}
         onSelect={lightbox.select}
+      />
+      <AgentAttachmentLightbox
+        canReveal={false}
+        entry={inlineLightbox.entry}
+        images={inlineLightbox.images}
+        onClose={inlineLightbox.close}
+        onSelect={inlineLightbox.select}
       />
     </section>
   );

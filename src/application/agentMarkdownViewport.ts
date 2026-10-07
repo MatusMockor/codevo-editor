@@ -7,9 +7,15 @@ export interface AgentMarkdownViewportBand {
   readonly bottom: number;
 }
 
+export interface AgentMarkdownViewportWatcher {
+  enter(): void;
+  leave(): void;
+}
+
 export interface AgentMarkdownViewport {
   contains(element: Element): boolean;
   observe(element: Element, onEnter: () => void): () => void;
+  watch(element: Element, watcher: AgentMarkdownViewportWatcher): () => void;
   remeasure(): void;
   dispose(): void;
 }

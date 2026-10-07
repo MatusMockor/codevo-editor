@@ -1,6 +1,7 @@
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import { highlightOccurrences } from "../../domain/agentThreadHighlight";
+import { MAX_AGENT_INLINE_IMAGES_PER_MESSAGE } from "../../domain/agentMarkdown/agentInlineImage";
 import {
   AGENT_MARKDOWN_SOURCE_BLOCKS_NOTE,
   agentMarkdownPlainPreview,
@@ -11,6 +12,7 @@ import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentMarkdownBlockView } from "./AgentMarkdown";
 import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { agentTextParagraphs } from "./agentModePresentation";
+import type { AgentInlineImageViewer } from "./agentInlineImagePort";
 import type {
   AgentExternalLinkOpener,
   AgentLinkTitle,
@@ -19,6 +21,7 @@ import type {
 import { agentMarkdownPathLinks } from "./agentMarkdownPathLinks";
 import { HighlightRun } from "./agentThreadHighlight";
 import { useAgentMarkdownLinkActivation } from "./useAgentMarkdownLinkActivation";
+import { useAgentMessageInlineImages } from "./useAgentMessageInlineImages";
 import {
   useAgentMarkdown,
   useAgentMarkdownGate,
@@ -27,12 +30,15 @@ import {
 
 export type AgentProseStream = "streaming" | "streamed" | "settled";
 
+export const AGENT_INLINE_IMAGES_TRUNCATED_NOTE = `Only the first ${MAX_AGENT_INLINE_IMAGES_PER_MESSAGE} images of this answer are shown.`;
+
 export interface AgentProseContext {
   readonly markdown: AgentMarkdownRendererState;
   readonly openExternalLink: AgentExternalLinkOpener;
   readonly localFiles: AgentLocalFileLinkScope | null;
   readonly linkTitle?: AgentLinkTitle | null;
   readonly viewport: AgentMarkdownViewport | null;
+  readonly inlineImages?: AgentInlineImageViewer | null;
   readonly onParsed: () => void;
 }
 
@@ -78,6 +84,20 @@ export const AgentAssistantText = memo(function AgentAssistantText({
     localFiles,
   );
   const pathLinks = useMemo(() => agentMarkdownPathLinks(localFiles), [localFiles]);
+  const onImageLayout = useCallback((): void => {
+    if (query !== "") return;
+    onParsed();
+  }, [onParsed, query]);
+  const inlineImages = useAgentMessageInlineImages(
+    {
+      viewer: prose.inlineImages ?? null,
+      localFiles,
+      viewport: prose.viewport,
+      onLayout: onImageLayout,
+    },
+    presentation.kind === "rendered" ? presentation.blocks : null,
+    text,
+  );
 
   useLayoutEffect(() => {
     if (!parsed) return;
@@ -138,6 +158,9 @@ export const AgentAssistantText = memo(function AgentAssistantText({
           block={block}
           current={current}
           hitOffset={presentation.hitOffsets[index] ?? 0}
+          imageOffset={inlineImages.blocks?.[index]?.offset ?? 0}
+          imageSlots={inlineImages.blocks?.[index]?.slots ?? null}
+          images={inlineImages.images}
           key={block.key}
           linkTitle={prose.linkTitle ?? null}
           onActivateLink={activateLink}
@@ -150,6 +173,11 @@ export const AgentAssistantText = memo(function AgentAssistantText({
       {(presentation.sourceBlockCount ?? 0) > 0 && (
         <p className="agent-note agent-md__note" role="note">
           {AGENT_MARKDOWN_SOURCE_BLOCKS_NOTE}
+        </p>
+      )}
+      {inlineImages.truncated && (
+        <p className="agent-note agent-md__note" role="note">
+          {AGENT_INLINE_IMAGES_TRUNCATED_NOTE}
         </p>
       )}
       {actions}

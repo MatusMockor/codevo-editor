@@ -17,6 +17,7 @@ import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
+import type { AgentInlineImageGateway } from "./agentInlineImagePorts";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
 import type { TerminalGateway } from "../domain/terminal";
@@ -95,6 +96,7 @@ export interface WorkbenchAgentsOptions {
   readonly agentQuestionGateway?: AgentQuestionGateway;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
+  readonly agentInlineImageGateway?: AgentInlineImageGateway;
   readonly agentProviderGateway: AgentProviderPolicyGateway &
     AgentProviderHealthGateway &
     AgentProviderUpdateGateway &
@@ -514,6 +516,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     agentQuestionGateway: options.agentQuestionGateway,
     agentAttachmentGateway: options.agentAttachmentGateway ?? defaultAgentAttachmentGateway,
     agentImageSurface: options.agentImageSurface ?? defaultAgentImageSurface,
+    agentInlineImageGateway: options.agentInlineImageGateway,
     agentThreadStoreGateway,
     externalSessionGateway: defaultExternalSessionGateway,
     gitWorktreeGateway: options.gitWorktreeGateway ?? defaultGitWorktreeGateway,

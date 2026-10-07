@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Attempt } from "./agentProjectAuthority";
 import {
   AGENT_ATTACHMENT_READ_QUEUE_FULL_REASON,
+  AGENT_ATTACHMENT_READ_RETRY_DELAYS_MS,
   createAgentAttachmentReadLimiter,
   isTransientRunnerBusyError,
 } from "./agentAttachmentReadLimiter";
@@ -49,6 +50,37 @@ describe("createAgentAttachmentReadLimiter", () => {
     expect(settled).toEqual([
       { ok: false, error: new Error(AGENT_ATTACHMENT_READ_QUEUE_FULL_REASON) },
     ]);
+    limiter.dispose();
+  });
+
+  it("retries only the failures its injected predicate accepts", async () => {
+    vi.useFakeTimers();
+    const limiter = createAgentAttachmentReadLimiter<number>(4, (error) => error === "again");
+    const transient = vi
+      .fn<() => Promise<number>>()
+      .mockRejectedValueOnce("again")
+      .mockResolvedValue(7);
+    const runnerBusy = vi.fn(async (): Promise<number> => {
+      throw "Runner is busy; retry shortly";
+    });
+    const settled: Attempt<number>[] = [];
+    const settle = (result: Attempt<number>) => settled.push(result);
+
+    limiter.schedule({ read: transient, isCurrent: () => true, settle });
+    limiter.schedule({ read: runnerBusy, isCurrent: () => true, settle });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(settled).toEqual([{ ok: false, error: "Runner is busy; retry shortly" }]);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(AGENT_ATTACHMENT_READ_RETRY_DELAYS_MS[0] ?? 0);
+
+    expect(transient).toHaveBeenCalledTimes(2);
+    expect(runnerBusy).toHaveBeenCalledTimes(1);
+    expect(settled).toEqual([
+      { ok: false, error: "Runner is busy; retry shortly" },
+      { ok: true, value: 7 },
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
     limiter.dispose();
   });
 

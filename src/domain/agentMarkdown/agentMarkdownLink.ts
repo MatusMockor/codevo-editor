@@ -43,6 +43,10 @@ const NAVIGABLE_SCHEMES: ReadonlySet<string> = new Set([
   "mailto",
   "vbscript",
 ]);
+const HOME_RELATIVE_PATH = /^~[^/]*\//;
+const FORMAT_CHARACTER = /\p{Cf}/u;
+const FRAGMENT_DELIMITER = "#";
+const SCHEME_DELIMITER = ":";
 const LINE_SUFFIX_ONLY = new RegExp(`^[a-z][a-z0-9+.-]*:${POSITION}(?::${POSITION})?(?:#|$)`, "i");
 
 export function parseAgentMarkdownLink(href: string | null): AgentMarkdownLink {
@@ -60,10 +64,29 @@ export function isAgentMarkdownLinkAccepted(href: string): boolean {
   return parseAgentMarkdownLink(href).kind !== "none";
 }
 
+export function parseAgentMarkdownImageSource(source: string | null): AgentMarkdownLink {
+  if (source !== null && FORMAT_CHARACTER.test(source)) return NO_AGENT_MARKDOWN_LINK;
+  const link = parseAgentMarkdownLink(source);
+  if (link.kind !== "localFile") return link;
+  if (source === null || source.includes(FRAGMENT_DELIMITER)) return NO_AGENT_MARKDOWN_LINK;
+  if (link.location.line !== null) return NO_AGENT_MARKDOWN_LINK;
+  const path = link.location.path;
+  if (FORMAT_CHARACTER.test(path)) return NO_AGENT_MARKDOWN_LINK;
+  if (link.anchor === "absolute") return link;
+  if (HOME_RELATIVE_PATH.test(path)) return NO_AGENT_MARKDOWN_LINK;
+  if (firstSegment(path).includes(SCHEME_DELIMITER)) return NO_AGENT_MARKDOWN_LINK;
+  return link;
+}
+
+export function isAgentMarkdownImageSourceAccepted(source: string): boolean {
+  return parseAgentMarkdownImageSource(source).kind !== "none";
+}
+
 export const AGENT_MARKDOWN_LINK_POLICY: MarkdownLinkPolicy = Object.freeze({
   allowedUriPattern:
     /^(?:(?:https?|file):|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$)|(?!(?:about|blob|data|file|https?|javascript|mailto|vbscript):)[a-z][a-z0-9+.-]*:[1-9]\d{0,8}(?::[1-9]\d{0,8})?(?:#|$))/i,
   accepts: isAgentMarkdownLinkAccepted,
+  acceptsImage: isAgentMarkdownImageSourceAccepted,
 });
 
 export function resolveAgentLocalFilePath(
@@ -73,6 +96,11 @@ export function resolveAgentLocalFilePath(
   if (link.anchor === "absolute") return link.location.path;
   if (base === null || !base.startsWith("/")) return null;
   return normalizeSegments(`${base}/${link.location.path}`, "absolute");
+}
+
+function firstSegment(path: string): string {
+  const end = path.indexOf("/");
+  return end < 0 ? path : path.slice(0, end);
 }
 
 function urlScheme(value: string): string | undefined {

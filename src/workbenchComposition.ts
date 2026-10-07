@@ -23,6 +23,7 @@ import { resolveTauriWorkspaceHome } from "./infrastructure/tauriHomeDirectory";
 import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
 import { BrowserAgentSidebarRailPreference } from "./infrastructure/browserAgentSidebarRailPreference";
 import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
+import { TauriAgentInlineImageGateway } from "./infrastructure/tauriAgentInlineImageGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
 import { TauriArtisanRoutesGateway } from "./infrastructure/tauriArtisanRoutesGateway";
@@ -137,6 +138,7 @@ export function createWorkbenchComposition() {
   const agentControllerGateways = {
     agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway(),
     agentQuestionGateway: new TauriAgentQuestionGateway(),
+    agentInlineImageGateway: new TauriAgentInlineImageGateway(),
     agentProviderGateway,
     agentProviderSignInGateway: new TauriAgentProviderSignInGateway(),
     agentRootLeaseGateway: new TauriAgentRootLeaseGateway(),

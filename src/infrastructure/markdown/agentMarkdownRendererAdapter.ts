@@ -17,13 +17,10 @@ import {
 } from "../../domain/agentMarkdown/agentMarkdownTree";
 import {
   AGENT_MARKDOWN_LINK_POLICY,
+  parseAgentMarkdownImageSource,
   parseAgentMarkdownLink,
 } from "../../domain/agentMarkdown/agentMarkdownLink";
-import {
-  isSafeExternalMarkdownUrl,
-  loadHardenedMarkdown,
-  type HardenedMarkdown,
-} from "../../domain/markdownPreview";
+import { loadHardenedMarkdown, type HardenedMarkdown } from "../../domain/markdownPreview";
 
 type ProjectionFailure = "too-complex" | "unsupported";
 
@@ -216,7 +213,7 @@ function projectElement(
       return {
         kind: "image",
         alt: element.getAttribute("alt") ?? "",
-        src: safeUrl(element.getAttribute("src")),
+        source: parseAgentMarkdownImageSource(element.getAttribute("src")),
       };
     case "input":
       if (element.getAttribute("type") !== "checkbox") throw new ProjectionError("unsupported");
@@ -259,11 +256,6 @@ function cellAlign(cell: Element): AgentMarkdownAlign | null {
   const align = cell.getAttribute("align");
   if (align === "left" || align === "center" || align === "right") return align;
   return null;
-}
-
-function safeUrl(value: string | null): string | null {
-  if (value === null || !isSafeExternalMarkdownUrl(value)) return null;
-  return value;
 }
 
 function spend<T extends AgentMarkdownNode>(budget: ProjectionBudget, node: T): T {

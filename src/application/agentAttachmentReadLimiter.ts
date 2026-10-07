@@ -31,8 +31,11 @@ interface ReadSlot<TValue> {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+export type AgentAttachmentReadRetryPredicate = (error: unknown) => boolean;
+
 export function createAgentAttachmentReadLimiter<TValue>(
   queueCapacity: number,
+  isRetryable: AgentAttachmentReadRetryPredicate = isTransientRunnerBusyError,
 ): AgentAttachmentReadLimiter<TValue> {
   const queue: AgentAttachmentReadJob<TValue>[] = [];
   const active = new Set<ReadSlot<TValue>>();
@@ -64,7 +67,7 @@ export function createAgentAttachmentReadLimiter<TValue>(
       return;
     }
     const delay =
-      result.ok || !isTransientRunnerBusyError(result.error)
+      result.ok || !isRetryable(result.error)
         ? undefined
         : AGENT_ATTACHMENT_READ_RETRY_DELAYS_MS[attemptIndex];
     if (delay === undefined) {

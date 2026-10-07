@@ -32,11 +32,13 @@ export function isSafeExternalMarkdownUrl(value: string): boolean {
 export interface MarkdownLinkPolicy {
   readonly allowedUriPattern: RegExp | null;
   accepts(href: string): boolean;
+  acceptsImage(source: string): boolean;
 }
 
 export const EXTERNAL_MARKDOWN_LINK_POLICY: MarkdownLinkPolicy = Object.freeze({
   allowedUriPattern: null,
   accepts: isSafeExternalMarkdownUrl,
+  acceptsImage: isSafeExternalMarkdownUrl,
 });
 
 type MarkedModule = typeof import("marked");
@@ -98,7 +100,7 @@ export function createHardenedMarkdown(
     });
     const template = document.createElement("template");
     template.innerHTML = sanitized;
-    stripUnsafeImages(template.content);
+    stripUnsafeImages(template.content, linkPolicy);
     hardenLinks(template.content, linkPolicy);
     return template.content;
   };
@@ -113,10 +115,10 @@ export function createHardenedMarkdown(
   return { lexBlocks, renderTokens, sanitizeToFragment, renderDocument };
 }
 
-function stripUnsafeImages(root: ParentNode): void {
+function stripUnsafeImages(root: ParentNode, policy: MarkdownLinkPolicy): void {
   root.querySelectorAll("img").forEach((image) => {
     const source = image.getAttribute("src");
-    if (source !== null && isSafeExternalMarkdownUrl(source)) return;
+    if (source !== null && policy.acceptsImage(source)) return;
     image.removeAttribute("src");
   });
 }

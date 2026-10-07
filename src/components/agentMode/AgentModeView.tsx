@@ -1341,6 +1341,7 @@ function LocalAgentModeView({
                   remoteFileLinks={remoteFileLinks.port}
                   serverLoopback={serverPorts.serverLoopback}
                   attachmentImages={agents.attachmentImages}
+                  inlineImages={agents.inlineImages}
                   onRevealAttachment={revealAttachment}
                   findBar={
                     find.open ? (

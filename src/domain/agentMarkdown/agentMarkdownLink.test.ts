@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_MARKDOWN_LINK_POLICY,
   MAX_AGENT_MARKDOWN_LINK_CHARS,
+  parseAgentMarkdownImageSource,
   parseAgentMarkdownLink,
   resolveAgentLocalFilePath,
   type AgentLocalFileLink,
@@ -137,6 +138,151 @@ describe("parseAgentMarkdownLink", () => {
 
   it("rejects percent-encoded whitespace before a scheme in the sanitizer policy", () => {
     expect(AGENT_MARKDOWN_LINK_POLICY.accepts("%20javascript:alert(1)")).toBe(false);
+  });
+});
+
+describe("parseAgentMarkdownImageSource", () => {
+  it("classifies external, local and file URL image sources like links", () => {
+    expect(parseAgentMarkdownImageSource("https://e.com/x.png")).toEqual({
+      kind: "external",
+      url: "https://e.com/x.png",
+    });
+    expect(parseAgentMarkdownImageSource("shots/a%20b.png")).toEqual(
+      local("relative", "shots/a b.png"),
+    );
+    expect(parseAgentMarkdownImageSource("/tmp/x.png")).toEqual(local("absolute", "/tmp/x.png"));
+    expect(parseAgentMarkdownImageSource("file:///tmp/x.png")).toEqual(
+      local("absolute", "/tmp/x.png"),
+    );
+    expect(parseAgentMarkdownImageSource("~backup.png")).toEqual(local("relative", "~backup.png"));
+    expect(parseAgentMarkdownImageSource("/tmp/~/x.png")).toEqual(
+      local("absolute", "/tmp/~/x.png"),
+    );
+  });
+
+  it.each([
+    null,
+    "",
+    "~/x.png",
+    "~other/x.png",
+    "%7E/x.png",
+    "data:image/png;base64,AAAA",
+    "blob:https://e.com/0a1b",
+    "asset://localhost/x.png",
+    "javascript:alert(1)",
+    "//host/x.png",
+    "file://remote.host/x.png",
+    "../x.png",
+    "a/\u0007.png",
+  ])("rejects the image source %s", (source) => {
+    expect(parseAgentMarkdownImageSource(source)).toEqual({ kind: "none" });
+  });
+
+  it.each([
+    ["a right-to-left override", "/tmp/\u202egnp.ssapwd.png"],
+    ["an encoded right-to-left override", "/tmp/%E2%80%AEgnp.ssapwd.png"],
+    ["a left-to-right embedding", "shots/\u202ax.png"],
+    ["an isolate", "shots/\u2066x\u2069.png"],
+    ["a left-to-right mark", "shots/x\u200e.png"],
+    ["a right-to-left mark", "shots/x\u200f.png"],
+    ["a zero width no-break space", "shots/\ufeffx.png"],
+    ["a zero width joiner", "shots/x\u200d.png"],
+    ["a soft hyphen in a file URL", "file:///tmp/x\u00ad.png"],
+    ["a format character in an external URL", "https://e.com/\u202ex.png"],
+  ])("refuses an image source with %s", (_label, source) => {
+    expect(parseAgentMarkdownImageSource(source)).toEqual({ kind: "none" });
+    expect(AGENT_MARKDOWN_LINK_POLICY.acceptsImage(source)).toBe(false);
+  });
+
+  it("keeps a format character a link concern only, never an image one", () => {
+    expect(parseAgentMarkdownLink("/tmp/%E2%80%AEgnp.txt").kind).toBe("localFile");
+    expect(parseAgentMarkdownLink("https://e.com/\u202ex").kind).toBe("external");
+  });
+
+  it.each([
+    "shots/x.png:12",
+    "shots/x.png:12:3",
+    "/tmp/x.png:7",
+    "shots/x.png#L12",
+    "shots/x.png#L12C3",
+    "shots/x.png#intro",
+    "shots/x.png#",
+    "file:///tmp/x.png#L3",
+    "file:///tmp/x.png#intro",
+    "shots/x.png?raw=1",
+    "file:///tmp/x.png?raw=1",
+    "shots/x.png%3Fraw=1",
+  ])("refuses the image source %s instead of reading the file without its suffix", (source) => {
+    expect(parseAgentMarkdownImageSource(source)).toEqual({ kind: "none" });
+  });
+
+  it("still reads a line suffix and a fragment as a position for links", () => {
+    expect(parseAgentMarkdownLink("shots/x.png:12")).toEqual({
+      kind: "localFile",
+      anchor: "relative",
+      location: { path: "shots/x.png", line: 12, column: null },
+    });
+    expect(parseAgentMarkdownLink("shots/x.png#intro")).toEqual(local("relative", "shots/x.png"));
+  });
+
+  it.each([
+    "%66ile:///tmp/x.png",
+    "%2566ile:///tmp/x.png",
+    "%68ttps://e.com/x.png",
+    "%2568ttps://e.com/x.png",
+    "%256aavascript:x.png",
+    "%6aavascript:x.png",
+    "codevo:shots/x.png",
+    "shots:old/x.png",
+  ])("never turns the encoded or scheme-like source %s into a local image", (source) => {
+    expect(parseAgentMarkdownImageSource(source)).toEqual({ kind: "none" });
+  });
+
+  it("decodes a source exactly once, so an encoded percent sign names a literal file", () => {
+    expect(parseAgentMarkdownImageSource("My%2520Image.png")).toEqual(
+      local("relative", "My%20Image.png"),
+    );
+    expect(parseAgentMarkdownImageSource("My%20Image.png")).toEqual(
+      local("relative", "My Image.png"),
+    );
+    expect(parseAgentMarkdownImageSource("50%25faster.png")).toEqual(
+      local("relative", "50%faster.png"),
+    );
+    expect(parseAgentMarkdownImageSource("50%faster.png")).toEqual(
+      local("relative", "50%faster.png"),
+    );
+    expect(parseAgentMarkdownImageSource("file%253A///tmp/x.png")).toEqual(
+      local("relative", "file%3A/tmp/x.png"),
+    );
+    expect(parseAgentMarkdownImageSource("shots/old:new.png")).toEqual(
+      local("relative", "shots/old:new.png"),
+    );
+  });
+
+  it("keeps an asset.localhost URL an external link instead of a local image", () => {
+    expect(parseAgentMarkdownImageSource("http://asset.localhost/x.png")).toEqual({
+      kind: "external",
+      url: "http://asset.localhost/x.png",
+    });
+    expect(parseAgentMarkdownImageSource("shots/a%23b.png")).toEqual(
+      local("relative", "shots/a#b.png"),
+    );
+  });
+
+  it("keeps a home-relative path a link target while refusing it as an image source", () => {
+    expect(parseAgentMarkdownLink("~/x.png")).toEqual(local("relative", "~/x.png"));
+    expect(AGENT_MARKDOWN_LINK_POLICY.accepts("~/x.png")).toBe(true);
+    expect(AGENT_MARKDOWN_LINK_POLICY.acceptsImage("~/x.png")).toBe(false);
+  });
+
+  it("accepts exactly the parsed image sources in the sanitizer policy", () => {
+    for (const source of ["rel/x.png", "/abs/x.png", "file:///abs/x.png", "https://e.com/x.png"]) {
+      expect(AGENT_MARKDOWN_LINK_POLICY.allowedUriPattern?.test(source)).toBe(true);
+      expect(AGENT_MARKDOWN_LINK_POLICY.acceptsImage(source)).toBe(true);
+    }
+    for (const source of ["data:image/png;base64,AAAA", "blob:x", "asset://localhost/x.png"]) {
+      expect(AGENT_MARKDOWN_LINK_POLICY.acceptsImage(source)).toBe(false);
+    }
   });
 });
 

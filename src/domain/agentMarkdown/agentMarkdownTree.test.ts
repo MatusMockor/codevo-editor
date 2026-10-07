@@ -20,6 +20,8 @@ function paragraph(...children: AgentMarkdownNode[]): AgentMarkdownNode {
   return { kind: "container", tag: "p", children };
 }
 
+const LOCAL_IMAGE = { path: "/shots/parser.png", line: null, column: null } as const;
+
 const BLOCKS: ReadonlyArray<AgentMarkdownBlock> = [
   {
     key: "b0",
@@ -43,7 +45,7 @@ const BLOCKS: ReadonlyArray<AgentMarkdownBlock> = [
     ],
   },
   { key: "b2", nodes: [{ kind: "codeBlock", language: "ts", code: "const parser = 1;\n" }] },
-  { key: "b3", nodes: [{ kind: "image", alt: "parser diagram", src: null }] },
+  { key: "b3", nodes: [{ kind: "image", alt: "parser diagram", source: { kind: "none" } }] },
   {
     key: "b4",
     nodes: [{ kind: "rule" }, { kind: "checkbox", checked: true }, { kind: "lineBreak" }],
@@ -106,11 +108,82 @@ describe("resolveAgentMarkdownPresentation", () => {
     );
     expect(presentation.kind).toBe("rendered");
     const placeholder = resolveAgentMarkdownPresentation(
-      { kind: "rendered", blocks: [{ key: "b0", nodes: [{ kind: "image", alt: "", src: null }] }] },
+      {
+        kind: "rendered",
+        blocks: [{ key: "b0", nodes: [{ kind: "image", alt: "", source: { kind: "none" } }] }],
+      },
       "[x](https://image.com) ![](https://b.com)",
       "image",
     );
     expect(placeholder).toEqual({ kind: "plain", reason: "find-syntax" });
+  });
+
+  it("counts no rendered match for the alt of a local image, which is shown as a picture", () => {
+    const local: AgentMarkdownNode = {
+      kind: "image",
+      alt: "parser diagram",
+      source: { kind: "localFile", anchor: "absolute", location: LOCAL_IMAGE },
+    };
+    const external: AgentMarkdownNode = {
+      kind: "image",
+      alt: "parser diagram",
+      source: { kind: "external", url: "https://example.com/parser.png" },
+    };
+
+    expect(agentMarkdownBlockHighlights({ key: "b0", nodes: [paragraph(local)] }, "parser")).toBe(
+      0,
+    );
+    expect(
+      agentMarkdownBlockHighlights({ key: "b0", nodes: [paragraph(external)] }, "parser"),
+    ).toBe(1);
+  });
+
+  it("degrades only the block whose local image alt or path holds the match", () => {
+    const blocks: ReadonlyArray<AgentMarkdownBlock> = [
+      { key: "b0", nodes: [paragraph(text("The parser is ready."))] },
+      {
+        key: "b1",
+        nodes: [
+          paragraph({
+            kind: "image",
+            alt: "parser diagram",
+            source: { kind: "localFile", anchor: "absolute", location: LOCAL_IMAGE },
+          }),
+        ],
+      },
+      { key: "b2", nodes: [paragraph(text("Another parser note."))] },
+    ];
+    const sources = [
+      "The parser is ready.\n\n",
+      "![parser diagram](/shots/parser.png)\n\n",
+      "Another parser note.",
+    ];
+    const raw = sources.join("");
+
+    const degraded = resolveAgentMarkdownPresentation(
+      { kind: "rendered", blocks },
+      raw,
+      "parser",
+      () => sources,
+    );
+    const withoutSources = resolveAgentMarkdownPresentation(
+      { kind: "rendered", blocks },
+      raw,
+      "parser",
+    );
+
+    expect(degraded).toMatchObject({
+      kind: "rendered",
+      hitOffsets: [0, 1, 3],
+      hitCount: 4,
+      sourceBlockCount: 1,
+    });
+    expect(degraded.kind === "rendered" ? degraded.blocks.map((block) => block.key) : []).toEqual([
+      "b0",
+      "b1s",
+      "b2",
+    ]);
+    expect(withoutSources).toEqual({ kind: "plain", reason: "find-syntax" });
   });
 
   it("skips the count comparison for an empty or too-short query", () => {

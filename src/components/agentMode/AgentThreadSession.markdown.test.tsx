@@ -164,23 +164,34 @@ describe("AgentThreadSession markdown", () => {
     expect(body.querySelectorAll("blockquote > p.agent-text__paragraph")).toHaveLength(1);
   });
 
-  it("escapes raw HTML and strips javascript links and non-http images", () => {
+  it("escapes raw HTML, strips javascript links and never builds an image element from markdown without an image port", () => {
     render({
       thread: view(
         SETTLED,
-        '<img src="x" onerror="alert(1)"><script>globalThis.pwned = true</script>\n\n[go](javascript:alert(1)) [ok](https://example.com) ![pic](data:image/png;base64,AAAA)',
+        '<img src="x" onerror="alert(1)"><script>globalThis.pwned = true</script>\n\n[go](javascript:alert(1)) [ok](https://example.com) ![pic](data:image/png;base64,AAAA) ![shot](/abs/shot.png) ![web](https://example.com/web.png)',
       ),
     });
     const body = message();
 
     expect(body.querySelector("script")).toBeNull();
     expect(body.querySelector("img")).toBeNull();
+    expect(body.querySelector("[src]")).toBeNull();
     expect(body.textContent).toContain('<img src="x" onerror="alert(1)">');
     const links = [...body.querySelectorAll("a")];
-    expect(links.map((link) => link.getAttribute("href"))).toEqual([null, "https://example.com"]);
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      null,
+      "https://example.com",
+      "https://example.com/web.png",
+    ]);
     expect(links[1]?.getAttribute("rel")).toBe("noopener");
-    expect(body.querySelector(".agent-md__image")?.textContent).toBe("pic");
-    expect(body.querySelector(".agent-md__image")?.getAttribute("href")).toBeNull();
+    const images = [...body.querySelectorAll(".agent-md__image")];
+    expect(images.map((image) => image.textContent)).toEqual(["pic", "shot", "web"]);
+    expect(images.map((image) => image.tagName)).toEqual(["SPAN", "SPAN", "A"]);
+    expect(images.map((image) => image.getAttribute("href"))).toEqual([
+      null,
+      null,
+      "https://example.com/web.png",
+    ]);
   });
 
   it("copies the original markdown source, not the rendered text", async () => {

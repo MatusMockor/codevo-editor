@@ -17,6 +17,10 @@ import {
   peekAgentMarkdownRenderer,
   subscribeAgentMarkdownRenderer,
 } from "./agentMarkdownRendererAdapter";
+import {
+  AGENT_MARKDOWN_LINK_POLICY,
+  type AgentMarkdownLink,
+} from "../../domain/agentMarkdown/agentMarkdownLink";
 import { loadHardenedMarkdown, type HardenedMarkdown } from "../../domain/markdownPreview";
 
 let renderer: AgentMarkdownRenderer;
@@ -76,6 +80,10 @@ function firstBlock(candidate: AgentMarkdownRenderer, markdown: string): AgentMa
   const block = candidate.lexBlocks(markdown)[0];
   expect(block).toBeDefined();
   return block as AgentMarkdownSourceBlock;
+}
+
+function localImage(anchor: "absolute" | "relative", path: string): AgentMarkdownLink {
+  return { kind: "localFile", anchor, location: { path, line: null, column: null } };
 }
 
 function withPipeline(overrides: Partial<HardenedMarkdown>): AgentMarkdownRenderer {
@@ -261,7 +269,7 @@ describe("agent markdown renderer adapter", () => {
     ]);
   });
 
-  it("strips non-http image sources and keeps the alt text", () => {
+  it("strips unreadable image sources and keeps the alt text", () => {
     const paragraph = expectContainer(
       render(
         "![data](data:image/png;base64,AAAA) ![asset](asset://localhost/x.png) ![web](https://example.com/a.png)",
@@ -270,10 +278,89 @@ describe("agent markdown renderer adapter", () => {
     );
     const images = paragraph.children.filter((child) => child.kind === "image");
     expect(images).toEqual([
-      { kind: "image", alt: "data", src: null },
-      { kind: "image", alt: "asset", src: null },
-      { kind: "image", alt: "web", src: "https://example.com/a.png" },
+      { kind: "image", alt: "data", source: { kind: "none" } },
+      { kind: "image", alt: "asset", source: { kind: "none" } },
+      { kind: "image", alt: "web", source: { kind: "external", url: "https://example.com/a.png" } },
     ]);
+  });
+
+  it.each([
+    ["rel/x.png", localImage("relative", "rel/x.png")],
+    ["./rel/../shots/x.png", localImage("relative", "shots/x.png")],
+    ["/abs/x.png", localImage("absolute", "/abs/x.png")],
+    ["file:///abs/x.png", localImage("absolute", "/abs/x.png")],
+    ["file://localhost/abs/x.png", localImage("absolute", "/abs/x.png")],
+    ["<path with spaces.png>", localImage("relative", "path with spaces.png")],
+    ["</tmp/My Shots/snímka 1.png>", localImage("absolute", "/tmp/My Shots/snímka 1.png")],
+    ["https://e.com/x.png", { kind: "external", url: "https://e.com/x.png" }],
+    ["http://e.com/x.png", { kind: "external", url: "http://e.com/x.png" }],
+    ["data:image/png;base64,AAAA", { kind: "none" }],
+    ["blob:https://e.com/0a1b", { kind: "none" }],
+    ["asset://localhost/abs/x.png", { kind: "none" }],
+    ["//host/x.png", { kind: "none" }],
+    ["~/x.png", { kind: "none" }],
+    ["~other/x.png", { kind: "none" }],
+    ["javascript:alert(1)", { kind: "none" }],
+    ["file://remote.host/abs/x.png", { kind: "none" }],
+    ["../x.png", { kind: "none" }],
+    ["x.png?v=1", { kind: "none" }],
+  ] as const)("projects the image source %s", (source, expected) => {
+    const paragraph = expectContainer(render(`![a](${source})`)[0], "p");
+    expect(paragraph.children).toEqual([{ kind: "image", alt: "a", source: expected }]);
+  });
+
+  it("escapes a raw image tag instead of projecting an image node", () => {
+    const nodes = render('<img src="/abs/x.png" onerror="alert(1)">');
+    expect(nodes.map(texts)).toEqual(['<img src="/abs/x.png" onerror="alert(1)">']);
+    expect(JSON.stringify(nodes)).not.toContain('"kind":"image"');
+  });
+
+  it("keeps only the typed source of a raw image tag that slips past the escaping renderer", () => {
+    const html = '<p><img src="/abs/x.png" alt="shot" onerror="alert(1)" onload="alert(2)"></p>';
+    const hostile = withPipeline({ renderTokens: () => html });
+    expect(hostile.renderBlock(firstBlock(hostile, "x"))).toEqual({
+      kind: "nodes",
+      nodes: [
+        {
+          kind: "container",
+          tag: "p",
+          children: [{ kind: "image", alt: "shot", source: localImage("absolute", "/abs/x.png") }],
+        },
+      ],
+    });
+    const image = pipeline
+      .sanitizeToFragment(html, AGENT_MARKDOWN_LINK_POLICY)
+      .querySelector("img");
+    expect(image?.getAttributeNames().sort()).toEqual(["alt", "src"]);
+  });
+
+  it("keeps a local image source only in the agent pipeline, never in the editor preview", () => {
+    const html = '<p><img src="/abs/x.png"><img src="rel/x.png"><img src="file:///abs/x.png"></p>';
+    const sources = (fragment: DocumentFragment): ReadonlyArray<string | null> =>
+      [...fragment.querySelectorAll("img")].map((image) => image.getAttribute("src"));
+
+    expect(sources(pipeline.sanitizeToFragment(html, AGENT_MARKDOWN_LINK_POLICY))).toEqual([
+      "/abs/x.png",
+      "rel/x.png",
+      "file:///abs/x.png",
+    ]);
+    expect(sources(pipeline.sanitizeToFragment(html))).toEqual([null, null, null]);
+    expect(pipeline.renderDocument("![a](/abs/x.png) ![b](rel/x.png)")).not.toContain("src=");
+  });
+
+  it.each([
+    "data:image/png;base64,AAAA",
+    "blob:https://e.com/0a1b",
+    "asset://localhost/abs/x.png",
+    "javascript:alert(1)",
+    "//host/x.png",
+    "~/x.png",
+  ])("strips the image source %s in the agent pipeline", (source) => {
+    const fragment = pipeline.sanitizeToFragment(
+      `<p><img src="${source}" alt="a"></p>`,
+      AGENT_MARKDOWN_LINK_POLICY,
+    );
+    expect(fragment.querySelector("img")?.hasAttribute("src")).toBe(false);
   });
 
   it("removes forbidden tags even when they slip past the escaping renderer", () => {
@@ -290,7 +377,11 @@ describe("agent markdown renderer adapter", () => {
           tag: "p",
           children: [
             { kind: "text", text: "x" },
-            { kind: "image", alt: "", src: "https://e.com/a.png" },
+            {
+              kind: "image",
+              alt: "",
+              source: { kind: "external", url: "https://e.com/a.png" },
+            },
           ],
         },
       ],

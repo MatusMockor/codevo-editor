@@ -4,6 +4,11 @@ import {
   agentProsePathMentions,
   type AgentPathMentionSegment,
 } from "../../domain/agentMarkdown/agentFilePathMention";
+import {
+  isAgentInlineImageShown,
+  type AgentInlineImageBlockSlots,
+  type AgentInlineImageSlot,
+} from "../../domain/agentMarkdown/agentInlineImagePlan";
 import type { AgentMarkdownLink } from "../../domain/agentMarkdown/agentMarkdownLink";
 import {
   AGENT_MARKDOWN_IMAGE_PLACEHOLDER,
@@ -16,6 +21,7 @@ import {
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentMarkdownCodeBlock } from "./AgentMarkdownCodeBlock";
 import { AgentMarkdownCodeBody } from "./AgentMarkdownCodeBody";
+import { AgentMarkdownImage } from "./AgentMarkdownImage";
 import { agentLocalFileLinkFailureMessage } from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
 import {
   agentLocalFileLinkKey,
@@ -29,6 +35,7 @@ import {
   type AgentMarkdownPathLinks,
 } from "./agentMarkdownPathLinks";
 import { HighlightRun } from "./agentThreadHighlight";
+import type { AgentMessageInlineImages } from "./useAgentMessageInlineImages";
 
 const PATH_LINK_MODIFIER = "agent-md__path-link";
 const UNAVAILABLE_MODIFIER = "agent-md__link--unavailable";
@@ -46,6 +53,9 @@ interface BlockRenderContext {
   readonly pathLinks: AgentMarkdownPathLinks | null;
   readonly unavailableLinks: AgentUnavailableLinks | null;
   readonly linkTitle: AgentLinkTitle | null;
+  readonly images: AgentMessageInlineImages | null;
+  readonly imageSlots: AgentInlineImageBlockSlots | null;
+  readonly imageOffset: number;
   nextHitIndex: number;
   pathLinkBudget: number;
   pathScanBudget: number;
@@ -56,6 +66,9 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
   block,
   current,
   hitOffset,
+  imageOffset = 0,
+  imageSlots = null,
+  images = null,
   linkTitle = null,
   onActivateLink,
   pathLinks = null,
@@ -66,6 +79,9 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
   readonly block: AgentMarkdownBlock;
   readonly current: number | null;
   readonly hitOffset: number;
+  readonly imageOffset?: number;
+  readonly imageSlots?: AgentInlineImageBlockSlots | null;
+  readonly images?: AgentMessageInlineImages | null;
   readonly linkTitle?: AgentLinkTitle | null;
   readonly onActivateLink: AgentMarkdownLinkActivation;
   readonly pathLinks?: AgentMarkdownPathLinks | null;
@@ -81,6 +97,9 @@ export const AgentMarkdownBlockView = memo(function AgentMarkdownBlockView({
     pathLinks,
     unavailableLinks,
     linkTitle,
+    images,
+    imageSlots,
+    imageOffset,
     nextHitIndex: hitOffset,
     pathLinkBudget: MAX_AGENT_PATH_LINKS_PER_BLOCK,
     pathScanBudget: MAX_AGENT_PATH_SCAN_CHARS_PER_BLOCK,
@@ -375,19 +394,40 @@ function renderImage(
   key: string,
   context: BlockRenderContext,
 ): ReactNode {
-  const alt = agentMarkdownImageLabel(node.alt);
-  const label =
-    alt === null
-      ? AGENT_MARKDOWN_IMAGE_PLACEHOLDER
-      : renderHighlightedText(alt, `${key}l`, context);
-  if (node.src === null) {
+  const slot = inlineImageSlot(node, context);
+  if (slot !== null && context.images !== null) {
+    return <AgentMarkdownImage images={context.images} key={key} slot={slot} />;
+  }
+  const label = imageLabel(node, key, context);
+  if (node.source.kind !== "external") {
     return (
       <span className="agent-md__image" key={key}>
         {label}
       </span>
     );
   }
-  return renderLink({ kind: "external", url: node.src }, label, key, context, "agent-md__image");
+  return renderLink(node.source, label, key, context, "agent-md__image");
+}
+
+function inlineImageSlot(
+  node: Extract<AgentMarkdownNode, { kind: "image" }>,
+  context: BlockRenderContext,
+): AgentInlineImageSlot | null {
+  const slot = context.imageSlots?.get(node);
+  if (slot === undefined) return null;
+  if (!isAgentInlineImageShown(context.imageOffset + slot.index)) return null;
+  return slot;
+}
+
+function imageLabel(
+  node: Extract<AgentMarkdownNode, { kind: "image" }>,
+  key: string,
+  context: BlockRenderContext,
+): ReactNode {
+  const alt = agentMarkdownImageLabel(node.alt);
+  if (alt === null) return AGENT_MARKDOWN_IMAGE_PLACEHOLDER;
+  if (node.source.kind === "localFile") return alt;
+  return renderHighlightedText(alt, `${key}l`, context);
 }
 
 function renderLink(

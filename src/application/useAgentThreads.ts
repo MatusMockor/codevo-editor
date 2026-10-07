@@ -59,6 +59,7 @@ import {
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
+import type { AgentInlineImageGateway } from "./agentInlineImagePorts";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import {
@@ -67,6 +68,7 @@ import {
 } from "./useAgentComposerAttachments";
 import { createAgentQuestionAttachmentsPort } from "./agentQuestionAttachments";
 import { useAgentAttachmentImages } from "./useAgentAttachmentImages";
+import { useAgentInlineImages } from "./useAgentInlineImages";
 import { useExternalSessions } from "./useExternalSessions";
 import { useImportedThreadHistory } from "./useImportedThreadHistory";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
@@ -110,6 +112,7 @@ export interface AgentThreadsDependencies {
   readonly agentQuestionGateway?: AgentQuestionGateway;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
+  readonly agentInlineImageGateway?: AgentInlineImageGateway;
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
   readonly agentTurnLogGateway?: AgentTurnLogGateway;
   readonly externalSessionGateway?: ExternalSessionGateway;
@@ -367,6 +370,10 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const attachmentImages = useAgentAttachmentImages({
     gateway: attachmentGateway,
     reportError,
+  });
+
+  const inlineImages = useAgentInlineImages({
+    gateway: dependencies.agentInlineImageGateway ?? null,
   });
 
   const attachmentDrafts = attachments.forDraft;
@@ -918,6 +925,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     attachments,
     questionAttachments,
     attachmentImages,
+    inlineImages,
     revealAttachment,
     repositories,
     orphanedWorktrees: worktrees.orphanedWorktrees,

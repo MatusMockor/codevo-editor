@@ -568,7 +568,7 @@ impl AgentAttachmentStore {
         Ok(Some(record.clone()))
     }
 
-    fn ensure_thread_belongs_to_owner(
+    pub fn ensure_thread_belongs_to_owner(
         &self,
         owner: &AgentAttachmentOwner<'_>,
     ) -> Result<(), String> {

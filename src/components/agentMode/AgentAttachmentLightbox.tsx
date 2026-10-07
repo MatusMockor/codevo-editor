@@ -121,6 +121,7 @@ function AgentAttachmentLightboxDialog({
   const handleCloseKeyDown = (event: KeyboardEvent<HTMLButtonElement>): void => {
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
+    if (event.repeat) return;
     onClose();
   };
 

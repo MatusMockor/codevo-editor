@@ -54,7 +54,7 @@ export type AgentMarkdownNode =
       readonly children: ReadonlyArray<AgentMarkdownNode>;
     }
   | { readonly kind: "codeBlock"; readonly language: string | null; readonly code: string }
-  | { readonly kind: "image"; readonly alt: string; readonly src: string | null }
+  | { readonly kind: "image"; readonly alt: string; readonly source: AgentMarkdownLink }
   | { readonly kind: "checkbox"; readonly checked: boolean }
   | { readonly kind: "lineBreak" }
   | { readonly kind: "rule" };
@@ -138,6 +138,7 @@ export function agentMarkdownNodeHighlights(node: AgentMarkdownNode, query: stri
     case "codeBlock":
       return highlightOccurrences(agentMarkdownCodeText(node), query);
     case "image":
+      if (node.source.kind === "localFile") return 0;
       return highlightOccurrences(agentMarkdownImageLabel(node.alt) ?? "", query);
     case "container":
     case "link":

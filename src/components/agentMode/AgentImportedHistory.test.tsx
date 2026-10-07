@@ -64,6 +64,7 @@ function viewportPort(near: boolean): ViewportPort {
           waiting.delete(element);
         };
       },
+      watch: () => () => undefined,
       remeasure() {
         if (!near) return;
         for (const [element, onEnter] of [...waiting]) {
@@ -103,6 +104,7 @@ function scrollDrivenViewport(scrollTop: () => number): ScrollDrivenViewport {
           waiting.delete(element);
         };
       },
+      watch: () => () => undefined,
       remeasure() {
         for (const [element, onEnter] of [...waiting]) {
           if (!within(element)) continue;
@@ -192,12 +194,12 @@ describe("imported conversation history", () => {
     );
   });
 
-  it("escapes raw HTML and strips javascript links and non-http images in imported answers", () => {
+  it("escapes raw HTML, strips javascript links and keeps every markdown image a label in imported answers", () => {
     render({
       thread: imported([
         user("Skús toto"),
         assistant(
-          '<img src="x" onerror="alert(1)"><script>globalThis.pwned = true</script>\n\n[go](javascript:alert(1)) [ok](https://example.com) ![pic](data:image/png;base64,AAAA)',
+          '<img src="x" onerror="alert(1)"><script>globalThis.pwned = true</script>\n\n[go](javascript:alert(1)) [ok](https://example.com) ![pic](data:image/png;base64,AAAA) ![shot](/abs/shot.png)',
         ),
       ]),
     });
@@ -205,10 +207,13 @@ describe("imported conversation history", () => {
 
     expect(body.querySelector("script")).toBeNull();
     expect(body.querySelector("img")).toBeNull();
+    expect(body.querySelector("[src]")).toBeNull();
     expect(body.textContent).toContain('<img src="x" onerror="alert(1)">');
     const links = [...body.querySelectorAll("a")];
     expect(links.map((link) => link.getAttribute("href"))).toEqual([null, "https://example.com"]);
-    expect(body.querySelector(".agent-md__image")?.getAttribute("href")).toBeNull();
+    const images = [...body.querySelectorAll(".agent-md__image")];
+    expect(images.map((image) => image.textContent)).toEqual(["pic", "shot"]);
+    expect(images.map((image) => image.tagName)).toEqual(["SPAN", "SPAN"]);
   });
 
   it("copies the original markdown source of an imported answer, not the rendered text", async () => {

@@ -324,6 +324,8 @@ describe("P3 conversation sheets", () => {
     [PROSE, ".agent-message-copy:focus-visible"],
     [PROSE, ".agent-md__link:focus-visible"],
     [PROSE, ".agent-md__path-link:focus-visible"],
+    [PROSE, ".agent-md__inline-image:focus-visible"],
+    [PROSE, ".agent-md__inline-image-chip:focus-visible"],
     [ARTIFACTS, ".agent-artifacts button:focus-visible"],
     [CONVERSATION, ".agent-prompt__queue-action:focus-visible"],
     [CHANGES, ".cv-changes-retry:focus-visible"],
@@ -331,6 +333,69 @@ describe("P3 conversation sheets", () => {
   ])("never rings transcript content with keyboard focus on %s %s", (sheet, selector) => {
     expect(declaredValue(sheet, selector, "outline")).toBe("none");
     expect(declaredValue(sheet, selector, "box-shadow")).toBe("none");
+  });
+
+  it("sizes an inline answer image like t3code and reserves a 16:9 slot only for a standalone one", () => {
+    const opener = ".agent-md__inline-image";
+    const file = ".agent-md__inline-image-file";
+    const slot = '.agent-md__inline-image[data-box="slot"]';
+    const standaloneSlot = '.agent-md__inline-image[data-box="slot"][data-layout="standalone"]';
+    expect(declaredValue(PROSE, opener, "max-width")).toBe("min(100%, 30rem)");
+    expect(declaredValue(PROSE, opener, "border-radius")).toBe("var(--cv-r-card)");
+    expect(declaredValue(PROSE, opener, "cursor")).toBe("zoom-in");
+    expect(declaredValue(PROSE, file, "max-height")).toBe("30rem");
+    expect(declaredValue(PROSE, file, "object-fit")).toBe("contain");
+    expect(declaredValue(PROSE, file, "width")).toBe("auto");
+    expect(declaredValue(PROSE, file, "height")).toBe("auto");
+    expect(declaredValue(PROSE, standaloneSlot, "aspect-ratio")).toBe("16 / 9");
+    expect(declaredValue(PROSE, standaloneSlot, "width")).toBe("30rem");
+    expect(declaredValue(PROSE, slot, "aspect-ratio")).toBeUndefined();
+    expect(declaredValue(PROSE, `${opener}::after`, "box-shadow")).toBe("var(--cv-ring-hair)");
+    expect(
+      declaredValue(
+        PROSE,
+        ".agent-md__inline-image:focus-visible > .agent-md__inline-image-file",
+        "opacity",
+      ),
+    ).toBe("0.85");
+  });
+
+  it("keeps the reserved box of an answer image until its picture has loaded", () => {
+    const pending = '.agent-md__inline-image[data-loaded="false"]';
+    const loading = '.agent-md__inline-image[data-state="loading"]';
+    expect(declaredValue(PROSE, pending, "background")).toBe("var(--cv-tint-1)");
+    expect(declaredValue(PROSE, loading, "background")).toBe("var(--cv-tint-1)");
+    expect(declaredValue(PROSE, loading, "cursor")).toBe("default");
+    expect(declaredValue(PROSE, `${pending} > .agent-md__inline-image-file`, "opacity")).toBe("0");
+    expect(
+      declaredValue(
+        PROSE,
+        '.agent-md__inline-image[data-box="slot"] > .agent-md__inline-image-file',
+        "position",
+      ),
+    ).toBe("absolute");
+    expect(
+      declaredValue(
+        PROSE,
+        '.agent-md__inline-image[data-box="sized"] > .agent-md__inline-image-file',
+        "width",
+      ),
+    ).toBe("100%");
+  });
+
+  it("caps an answer image in a table cell at the cell slot size", () => {
+    const cell = '.agent-md__inline-image[data-host="cell"]';
+    expect(declaredValue(PROSE, cell, "max-width")).toBe("12rem");
+    expect(declaredValue(PROSE, `${cell} > .agent-md__inline-image-file`, "max-height")).toBe(
+      "12rem",
+    );
+    expect(
+      declaredValue(
+        PROSE,
+        '.agent-md__inline-image[data-box="slot"][data-layout="standalone"][data-host="cell"]',
+        "width",
+      ),
+    ).toBe("12rem");
   });
 
   it("marks a focused user bubble only with a slightly lighter background", () => {

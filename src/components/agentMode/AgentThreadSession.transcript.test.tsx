@@ -38,6 +38,7 @@ const RECOVERED_ANSWER = [
 const OFF_SCREEN: AgentMarkdownViewport = {
   contains: () => false,
   observe: () => () => undefined,
+  watch: () => () => undefined,
   remeasure: () => undefined,
   dispose: () => undefined,
 };

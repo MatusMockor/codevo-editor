@@ -59,6 +59,7 @@ export function extractAgentArtifactReferences(
   for (const match of content.matchAll(links)) {
     const path = parseAgentArtifactPath(match[2] ?? match[3] ?? "");
     if (path === null || seen.has(path)) continue;
+    if (match[0].startsWith("!") && path.startsWith("/")) continue;
     seen.add(path);
     references.push({
       path,

@@ -156,6 +156,23 @@ describe("agent attachment lightbox", () => {
     expect(lightbox().querySelector(".agent-lightbox__controls")).toBeNull();
   });
 
+  it.each(["Enter", " "])(
+    "stays open while %j that opened it is still held down on the close control",
+    (key) => {
+      render({ attachmentImages: readySurface() });
+      openLightbox();
+
+      press(closeControl(), key, { repeat: true });
+      press(closeControl(), key, { repeat: true });
+      expect(document.querySelector(".agent-lightbox")).not.toBeNull();
+      expect(document.activeElement).toBe(closeControl());
+
+      press(closeControl(), key);
+      expect(document.querySelector(".agent-lightbox")).toBeNull();
+      expect(document.activeElement).toBe(thumbnail());
+    },
+  );
+
   it("closes from the close control by click, Enter and Space and returns focus to the thumbnail", () => {
     render({ attachmentImages: readySurface() });
 

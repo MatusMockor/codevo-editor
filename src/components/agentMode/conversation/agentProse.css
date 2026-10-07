@@ -161,6 +161,123 @@
   border-radius: var(--cv-r-card);
 }
 
+.agent-md__inline-image {
+  position: relative;
+  display: inline-block;
+  max-width: min(100%, 30rem);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--cv-r-card);
+  background: none;
+  line-height: 0;
+  vertical-align: middle;
+  cursor: zoom-in;
+}
+
+.agent-md__inline-image[data-layout="standalone"] {
+  display: block;
+}
+
+.agent-md__inline-image[data-host="cell"] {
+  max-width: 12rem;
+}
+
+.agent-md__inline-image::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: var(--cv-ring-hair);
+  content: "";
+  pointer-events: none;
+}
+
+.agent-md__inline-image[data-state="loading"],
+.agent-md__inline-image[data-loaded="false"] {
+  background: var(--cv-tint-1);
+}
+
+.agent-md__inline-image[data-state="loading"] {
+  cursor: default;
+}
+
+.agent-md__inline-image[data-box="slot"] {
+  width: 2.5em;
+  height: 1.25em;
+}
+
+.agent-md__inline-image[data-box="slot"][data-layout="standalone"] {
+  width: 30rem;
+  height: auto;
+  aspect-ratio: 16 / 9;
+}
+
+.agent-md__inline-image[data-box="slot"][data-layout="standalone"][data-host="cell"] {
+  width: 12rem;
+}
+
+.agent-md__inline-image-file {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: 30rem;
+  object-fit: contain;
+}
+
+.agent-md__inline-image[data-host="cell"] > .agent-md__inline-image-file {
+  max-height: 12rem;
+}
+
+.agent-md__inline-image[data-box="sized"] > .agent-md__inline-image-file {
+  width: 100%;
+  max-height: none;
+}
+
+.agent-md__inline-image[data-box="slot"] > .agent-md__inline-image-file {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+}
+
+.agent-md__inline-image:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.agent-md__inline-image:focus-visible > .agent-md__inline-image-file {
+  opacity: 0.85;
+}
+
+.agent-md__inline-image[data-loaded="false"] > .agent-md__inline-image-file {
+  opacity: 0;
+}
+
+.agent-md__inline-image-chip {
+  border: 0;
+  font-family: inherit;
+  line-height: inherit;
+  text-align: start;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.agent-md__inline-image-chip[data-state="waiting"] {
+  cursor: default;
+}
+
+.agent-md__inline-image-chip[data-state="unavailable"]:hover,
+.agent-md__inline-image-chip:focus-visible {
+  background: var(--cv-tint-2);
+}
+
+.agent-md__inline-image-chip:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 .agent-md__note {
   margin: var(--cv-space-2) 0 0;
 }

@@ -24,6 +24,7 @@ import type { AgentImageMime } from "../domain/agentAttachment";
 import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import type { AgentAttachmentImagesSurface } from "./useAgentAttachmentImages";
+import type { AgentInlineImagesSurface } from "./useAgentInlineImages";
 import type { AgentComposerAttachmentsSurface } from "./useAgentComposerAttachments";
 import type { AgentQuestionAttachmentsPort } from "./agentQuestionAttachments";
 import type { AgentProjectOrigin } from "../domain/agentProject";
@@ -407,6 +408,7 @@ export interface AgentThreadsSurface {
   readonly attachments: AgentComposerAttachmentsSurface;
   readonly questionAttachments?: AgentQuestionAttachmentsPort;
   readonly attachmentImages: AgentAttachmentImagesSurface;
+  readonly inlineImages?: AgentInlineImagesSurface;
   revealAttachment(threadId: string, attachmentId: string): Promise<void>;
   readonly externalHistory?: {
     readonly states: ReadonlyMap<string, "loading" | "failed" | "unavailable" | "ready">;

@@ -67,6 +67,7 @@ function viewportPort(near: boolean): ViewportPort {
           waiting.delete(element);
         };
       },
+      watch: () => () => undefined,
       remeasure() {
         if (!near) return;
         for (const [element, onEnter] of [...waiting]) {

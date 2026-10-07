@@ -613,6 +613,7 @@ pub fn run() {
             agent_output_artifact_commands::locate_agent_output_artifact_file,
             agent_output_artifact_commands::reveal_agent_output_artifact_file,
             agent_attachment_commands::read_agent_attachment,
+            agent_inline_image_commands::read_agent_inline_image,
             agent_attachment_commands::reveal_agent_attachment,
             agent_task_commands::acknowledge_agent_task_start,
             agent_task_commands::output_delivery::acknowledge_agent_task_output,

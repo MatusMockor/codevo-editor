@@ -28,6 +28,8 @@ import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentActivityItems } from "./AgentActivityItems";
 import type { AgentProseContext, AgentProseStream } from "./AgentAssistantText";
 import { AgentBackgroundActivity } from "./AgentBackgroundActivity";
+import type { AgentThreadInlineImageViewer } from "./agentInlineImagePort";
+import { useAgentTurnProse } from "./useAgentThreadInlineImages";
 import { AgentCompactionActivity } from "./AgentCompactionActivity";
 import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
 import { AgentToolDisclosureContext, useAgentTurnToolDisclosure } from "./AgentToolDisclosure";
@@ -108,6 +110,7 @@ export interface AgentTurnViewProps {
   readonly artifactScope?: AgentArtifactScope | null;
   readonly attachmentImages?: AgentTurnAttachmentImageViewer | null;
   readonly highlight?: AgentTurnHighlight | null;
+  readonly inlineImages?: AgentThreadInlineImageViewer | null;
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
   readonly executionTarget: "local" | "remote";
@@ -125,9 +128,10 @@ export const AgentTurnView = memo(function AgentTurnView({
   artifactScope = null,
   attachmentImages = null,
   highlight = null,
+  inlineImages = null,
   executionTarget,
   onOpenAgents,
-  prose,
+  prose: threadProse,
   provider,
   renderProbe,
   subagents,
@@ -137,6 +141,7 @@ export const AgentTurnView = memo(function AgentTurnView({
   workspaceRoot = null,
 }: AgentTurnViewProps) {
   renderProbe?.(turn.turnId);
+  const prose = useAgentTurnProse(threadProse, inlineImages, turn.turnId);
   const attachments = useMemo(() => agentTurnAttachmentViews(turn.attachments), [turn.attachments]);
   const revealEventIndex =
     highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;

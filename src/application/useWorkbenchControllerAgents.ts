@@ -129,6 +129,7 @@ export interface WorkbenchControllerAgentsOptions {
     | "agentThreadSessionGateway"
     | "turnChangesGateway"
     | "agentQuestionGateway"
+    | "agentInlineImageGateway"
     | "gitWorktreeGateway"
   >;
   readonly openFileRef: WorkbenchControllerOpenFileRef;
@@ -282,6 +283,7 @@ export function useWorkbenchControllerAgents(
     agentThreadSessionGateway: options.options.agentThreadSessionGateway,
     turnChangesGateway: options.options.turnChangesGateway,
     agentQuestionGateway: options.options.agentQuestionGateway,
+    agentInlineImageGateway: options.options.agentInlineImageGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
     gitWorktreeGateway: options.options.gitWorktreeGateway,
     editorBridge,

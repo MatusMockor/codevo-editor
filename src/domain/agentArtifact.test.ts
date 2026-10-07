@@ -29,6 +29,31 @@ describe("artifact references", () => {
     "a\\b.png",
     "%zz.png",
   ])("rejects unsupported path %s", (path) => expect(parseAgentArtifactPath(path)).toBeNull());
+  it("leaves an absolute image to inline rendering instead of the artifact pipeline", () => {
+    expect(
+      extractAgentArtifactReferences(
+        "![Shot](/tmp/shot.png) ![Spaced](</tmp/my shot.png>) ![Url](file:///tmp/shot.png)",
+      ),
+    ).toEqual([]);
+  });
+  it("keeps relative image syntax and absolute or relative link syntax as references", () => {
+    expect(
+      extractAgentArtifactReferences(
+        "![Shot](/tmp/shot.png) ![Rel](out/rel.png) ![Dot](./dot.webp) [Abs](/tmp/shot.png) [Page](out/page.html)",
+      ),
+    ).toEqual([
+      { path: "out/rel.png", label: "Rel" },
+      { path: "dot.webp", label: "Dot" },
+      { path: "/tmp/shot.png", label: "Abs" },
+      { path: "out/page.html", label: "Page" },
+    ]);
+  });
+  it("does not spend the reference limit on absolute images", () => {
+    const images = Array.from({ length: 40 }, (_, i) => `![a](/tmp/${i}.png)`).join(" ");
+    expect(extractAgentArtifactReferences(`${images} [kept](kept.png)`)).toEqual([
+      { path: "kept.png", label: "kept" },
+    ]);
+  });
   it("normalizes current-directory references before native resolution", () => {
     expect(parseAgentArtifactPath("./design/./preview.html")).toBe("design/preview.html");
     expect(extractAgentArtifactReferences("[A](./preview.png) [B](preview.png)")).toEqual([
