@@ -17,8 +17,8 @@ use super::{
     AGENT_STDIN_FRAME_DEADLINE,
 };
 use crate::agent_task_supervisor::{
-    terminate_group_survivors, AgentProcessGroupSignalSender, KILL_PROCESS_GROUP_SIGNAL,
-    TERMINATE_PROCESS_GROUP_SIGNAL,
+    split_output_chunks, terminate_group_survivors, AgentProcessGroupSignalSender,
+    KILL_PROCESS_GROUP_SIGNAL, TERMINATE_PROCESS_GROUP_SIGNAL,
 };
 use std::{
     io::{self, Read},
@@ -1101,11 +1101,7 @@ impl ClaudeThreadSession {
     }
 
     fn send_output(&self, sender: &SyncSender<Vec<u8>>, bytes: &[u8]) {
-        for chunk in bytes.chunks(SESSION_OUTPUT_CHUNK_BYTES) {
-            if !self.send_chunk(sender, chunk.to_vec()) {
-                return;
-            }
-        }
+        send_output_chunks(bytes, |chunk| self.send_chunk(sender, chunk));
     }
 
     fn send_chunk(&self, sender: &SyncSender<Vec<u8>>, chunk: Vec<u8>) -> bool {
@@ -1284,3 +1280,23 @@ fn lock_before<T>(mutex: &Mutex<T>, deadline: Instant) -> io::Result<MutexGuard<
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
+
+fn send_output_chunks(bytes: &[u8], mut send: impl FnMut(Vec<u8>) -> bool) {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        for chunk in split_output_chunks(text) {
+            if !send(chunk.into_bytes()) {
+                return;
+            }
+        }
+        return;
+    }
+    for chunk in bytes.chunks(SESSION_OUTPUT_CHUNK_BYTES) {
+        if !send(chunk.to_vec()) {
+            return;
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "claude_thread_session_tests.rs"]
+mod tests;

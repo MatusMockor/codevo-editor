@@ -51,6 +51,58 @@ use std::{
 };
 
 pub const MAX_AGENT_OUTPUT_CHUNK_BYTES: usize = 8 * 1024;
+
+#[derive(Default)]
+pub(crate) struct Utf8ChunkDecoder {
+    carry: [u8; 3],
+    carry_len: usize,
+}
+
+impl Utf8ChunkDecoder {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> String {
+        assert!(bytes.len() <= MAX_AGENT_OUTPUT_CHUNK_BYTES);
+        let mut buffer = [0_u8; MAX_AGENT_OUTPUT_CHUNK_BYTES + 3];
+        let mut remaining = bytes;
+        if self.carry_len > 0 {
+            buffer[..self.carry_len].copy_from_slice(&self.carry[..self.carry_len]);
+            buffer[self.carry_len..self.carry_len + bytes.len()].copy_from_slice(bytes);
+            remaining = &buffer[..self.carry_len + bytes.len()];
+        }
+        self.carry_len = 0;
+        let mut text = String::new();
+        while !remaining.is_empty() {
+            let error = match std::str::from_utf8(remaining) {
+                Ok(valid) => {
+                    text.push_str(valid);
+                    break;
+                }
+                Err(error) => error,
+            };
+            let (valid, rest) = remaining.split_at(error.valid_up_to());
+            text.push_str(std::str::from_utf8(valid).expect("UTF-8 validated prefix"));
+            if let Some(invalid_len) = error.error_len() {
+                text.push('\u{fffd}');
+                remaining = &rest[invalid_len..];
+                continue;
+            }
+            assert!(rest.len() <= self.carry.len());
+            self.carry[..rest.len()].copy_from_slice(rest);
+            self.carry_len = rest.len();
+            break;
+        }
+        text
+    }
+
+    pub(crate) fn finish(&mut self) -> Option<String> {
+        if self.carry_len == 0 {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&self.carry[..self.carry_len]).into_owned();
+        self.carry_len = 0;
+        Some(text)
+    }
+}
+
 // Match the runner's bounded multi-hour task policy.
 pub const AGENT_TASK_MAX_RUNTIME: Duration = Duration::from_secs(12 * 60 * 60);
 pub const MAX_AGENT_TASK_FAILURE_BYTES: usize = 4 * 1024;
@@ -1231,28 +1283,32 @@ fn run_output_pump(
     input: Option<Arc<AgentTaskInputSlot>>,
 ) {
     let mut buffer = vec![0_u8; MAX_AGENT_OUTPUT_CHUNK_BYTES];
+    let mut decoder = Utf8ChunkDecoder::default();
     let mut watch = result_watch(input);
-    loop {
+    let incomplete = loop {
         if cancellation.load(Ordering::SeqCst) {
-            return;
+            break false;
         }
         match reader.read(&mut buffer) {
-            Ok(0) => return,
+            Ok(0) => break false,
             Ok(count) => {
                 watch = close_input_after_result(watch, &buffer[..count]);
-                publish_output(shared, task_id, stream, &buffer[..count]);
+                publish_output(shared, task_id, stream, &decoder.push(&buffer[..count]));
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(WAIT_POLL_INTERVAL);
             }
             Err(_) => {
-                if !cancellation.load(Ordering::SeqCst) {
-                    publish_output_incomplete_marker(shared, task_id, stream);
-                }
-                return;
+                break !cancellation.load(Ordering::SeqCst);
             }
         }
+    };
+    if let Some(text) = decoder.finish() {
+        publish_output(shared, task_id, stream, &text);
+    }
+    if incomplete {
+        publish_output_incomplete_marker(shared, task_id, stream);
     }
 }
 
@@ -1260,19 +1316,15 @@ fn publish_output(
     shared: &Arc<AgentTaskShared>,
     task_id: &str,
     stream: AgentTaskOutputStream,
-    bytes: &[u8],
+    text: &str,
 ) {
-    let text = sanitize_output_text(bytes);
+    let text = text.replace('\0', "\u{fffd}");
     for chunk in split_output_chunks(&text) {
         publish_output_chunk(shared, task_id, stream, chunk);
     }
 }
 
-fn sanitize_output_text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).replace('\0', "\u{fffd}")
-}
-
-fn split_output_chunks(text: &str) -> Vec<String> {
+pub(crate) fn split_output_chunks(text: &str) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut remaining = text;
     while remaining.len() > MAX_AGENT_OUTPUT_CHUNK_BYTES {
@@ -1558,6 +1610,10 @@ mod signal_sender_tests;
 #[cfg(test)]
 #[path = "agent_task_supervisor_session_tests.rs"]
 mod session_tests;
+
+#[cfg(test)]
+#[path = "agent_task_supervisor_utf8_tests.rs"]
+pub(crate) mod utf8_tests;
 
 #[path = "agent_task_questions.rs"]
 mod questions;
