@@ -94,8 +94,13 @@ fn a_permission_request_inside_an_unprompted_turn_is_denied_not_fatal() {
     assert!(!closed.unowned);
     assert_eq!(closed.background.len(), 1);
     assert!(closed.background[0].complete);
+    assert!(!closed.background[0].truncated);
     let text = String::from_utf8_lossy(&closed.background[0].output).into_owned();
-    assert!(text.contains("perm-1"), "{text}");
+    assert!(
+        !text.contains("perm-1"),
+        "the answered request is not transcript content: {text}"
+    );
+    assert_eq!(lines_of(&closed.background[0].output).len(), 3);
 }
 
 #[test]
@@ -401,8 +406,13 @@ fn an_unsupported_control_request_inside_an_unprompted_turn_is_answered_not_fata
     assert!(!closed.unowned);
     assert_eq!(closed.background.len(), 1);
     assert!(closed.background[0].complete);
+    assert!(!closed.background[0].truncated);
     let text = String::from_utf8_lossy(&closed.background[0].output).into_owned();
-    assert!(text.contains("hook-1"), "{text}");
+    assert!(
+        !text.contains("hook-1"),
+        "the answered request is not transcript content: {text}"
+    );
+    assert_eq!(lines_of(&closed.background[0].output).len(), 3);
 }
 
 #[test]

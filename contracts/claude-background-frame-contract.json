@@ -1,0 +1,406 @@
+{
+  "schemaVersion": 1,
+  "frames": [
+    {
+      "name": "root assistant text",
+      "buffer": "kept",
+      "frame": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": { "role": "assistant", "content": [{ "type": "text", "text": "Done." }] }
+      }
+    },
+    {
+      "name": "assistant thinking loses only its signature",
+      "buffer": "kept",
+      "frame": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "assistant",
+          "content": [
+            { "type": "thinking", "thinking": "Weighing options.", "signature": "c2lnbmF0dXJl" }
+          ]
+        }
+      },
+      "projection": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "assistant",
+          "content": [{ "type": "thinking", "thinking": "Weighing options." }]
+        }
+      }
+    },
+    {
+      "name": "assistant redacted thinking loses only its payload",
+      "buffer": "kept",
+      "frame": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "assistant",
+          "content": [{ "type": "redacted_thinking", "data": "b3BhcXVl" }]
+        }
+      },
+      "projection": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": { "role": "assistant", "content": [{ "type": "redacted_thinking" }] }
+      }
+    },
+    {
+      "name": "assistant tool call",
+      "buffer": "kept",
+      "frame": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "toolu_contract_bash",
+              "name": "Bash",
+              "input": { "command": "ls", "description": "List files" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "subagent assistant text",
+      "buffer": "kept",
+      "frame": {
+        "type": "assistant",
+        "parent_tool_use_id": "toolu_contract_agent",
+        "message": { "role": "assistant", "content": [{ "type": "text", "text": "Mapping." }] }
+      }
+    },
+    {
+      "name": "user tool result",
+      "buffer": "kept",
+      "frame": {
+        "type": "user",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "user",
+          "content": [
+            { "type": "tool_result", "tool_use_id": "toolu_contract_bash", "content": "ok" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "user subagent completion without a tool result block",
+      "buffer": "kept",
+      "frame": {
+        "type": "user",
+        "parent_tool_use_id": null,
+        "message": { "role": "user", "content": [] },
+        "tool_use_result": {
+          "agentId": "a1b2c3",
+          "agentType": "general-purpose",
+          "status": "completed"
+        }
+      }
+    },
+    {
+      "name": "root result",
+      "buffer": "kept",
+      "frame": {
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "Done.",
+        "origin": { "kind": "task-notification" }
+      }
+    },
+    {
+      "name": "rate limit observation",
+      "buffer": "kept",
+      "frame": {
+        "type": "rate_limit_event",
+        "rate_limit_info": {
+          "rateLimitType": "five_hour",
+          "utilization": 0.5,
+          "resetsAt": 1900000000
+        }
+      }
+    },
+    {
+      "name": "system init",
+      "buffer": "kept",
+      "frame": {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "e49e4ab6-b1c3-4d26-9c2c-601ac23714f7"
+      }
+    },
+    {
+      "name": "system api retry",
+      "buffer": "kept",
+      "frame": {
+        "type": "system",
+        "subtype": "api_retry",
+        "attempt": 1,
+        "max_retries": 10,
+        "retry_delay_ms": 500,
+        "error_status": 529
+      }
+    },
+    {
+      "name": "system root compact boundary",
+      "buffer": "kept",
+      "frame": {
+        "type": "system",
+        "subtype": "compact_boundary",
+        "compact_metadata": { "pre_tokens": 1000, "post_tokens": 100 }
+      }
+    },
+    {
+      "name": "system root compaction status",
+      "buffer": "kept",
+      "frame": { "type": "system", "subtype": "status", "status": "compacting" }
+    },
+    {
+      "name": "system task started",
+      "buffer": "kept",
+      "frame": {
+        "type": "system",
+        "subtype": "task_started",
+        "task_id": "a1b2c3",
+        "tool_use_id": "toolu_contract_agent",
+        "task_type": "local_agent",
+        "description": "Review"
+      }
+    },
+    {
+      "name": "system task progress",
+      "buffer": "kept",
+      "frame": {
+        "type": "system",
+        "subtype": "task_progress",
+        "task_id": "a1b2c3",
+        "tool_use_id": "toolu_contract_agent",
+        "description": "Reading files",
+        "usage": { "duration_ms": 10, "total_tokens": 20, "tool_uses": 1 }
+      }
+    },
+    {
+      "name": "system task notification",
+      "buffer": "kept",
+      "frame": {
+        "type": "system",
+        "subtype": "task_notification",
+        "task_id": "a1b2c3",
+        "tool_use_id": "toolu_contract_agent",
+        "status": "completed"
+      }
+    },
+    {
+      "name": "system task updated",
+      "buffer": "kept",
+      "frame": {
+        "type": "system",
+        "subtype": "task_updated",
+        "task_id": "a1b2c3",
+        "patch": { "status": "completed" }
+      }
+    },
+    {
+      "name": "unsupported frame type keeps only its name",
+      "buffer": "kept",
+      "frame": {
+        "type": "future_frame",
+        "payload": "never read by the parser",
+        "items": [1, 2, 3]
+      },
+      "projection": { "type": "future_frame" }
+    },
+    {
+      "name": "frame without a type keeps only that fact",
+      "buffer": "kept",
+      "frame": { "payload": "never read by the parser" },
+      "projection": {}
+    },
+    {
+      "name": "frame with an overlong type keeps only that fact",
+      "buffer": "kept",
+      "frame": {
+        "type": "future_frame_with_a_type_name_longer_than_the_sixty_four_bytes_a_notice_may_name",
+        "payload": "never read by the parser"
+      },
+      "projection": { "type": "" }
+    },
+    {
+      "name": "json line that is not an object",
+      "buffer": "kept",
+      "frame": [1, 2, 3]
+    },
+    {
+      "name": "line that is not json",
+      "buffer": "gap",
+      "raw": "not json at all"
+    },
+    {
+      "name": "stream event",
+      "buffer": "dropped",
+      "frame": {
+        "type": "stream_event",
+        "parent_tool_use_id": null,
+        "event": { "type": "content_block_delta", "delta": { "type": "text_delta", "text": "Do" } }
+      }
+    },
+    {
+      "name": "tool progress",
+      "buffer": "dropped",
+      "frame": {
+        "type": "tool_progress",
+        "tool_use_id": "toolu_contract_bash",
+        "elapsed_time_seconds": 3
+      }
+    },
+    {
+      "name": "tool use summary",
+      "buffer": "dropped",
+      "frame": { "type": "tool_use_summary", "summary": "Listed files" }
+    },
+    { "name": "keep alive", "buffer": "dropped", "frame": { "type": "keep_alive" } },
+    {
+      "name": "auth status",
+      "buffer": "dropped",
+      "frame": { "type": "auth_status", "isAuthenticating": false, "output": [] }
+    },
+    {
+      "name": "prompt suggestion",
+      "buffer": "dropped",
+      "frame": { "type": "prompt_suggestion", "suggestion": "run the tests" }
+    },
+    {
+      "name": "control request",
+      "buffer": "dropped",
+      "frame": {
+        "type": "control_request",
+        "request_id": "contract-request-1",
+        "request": { "subtype": "can_use_tool", "tool_name": "Bash", "input": { "command": "ls" } }
+      }
+    },
+    {
+      "name": "control response",
+      "buffer": "dropped",
+      "frame": {
+        "type": "control_response",
+        "response": { "subtype": "success", "request_id": "contract-request-2" }
+      }
+    },
+    {
+      "name": "control cancel request",
+      "buffer": "dropped",
+      "frame": { "type": "control_cancel_request", "request_id": "contract-request-1" }
+    },
+    {
+      "name": "streamlined text",
+      "buffer": "dropped",
+      "frame": { "type": "streamlined_text", "text": "Done." }
+    },
+    {
+      "name": "streamlined tool use summary",
+      "buffer": "dropped",
+      "frame": { "type": "streamlined_tool_use_summary", "tool_summary": "Listed files" }
+    },
+    {
+      "name": "command lifecycle",
+      "buffer": "dropped",
+      "frame": {
+        "type": "command_lifecycle",
+        "command_uuid": "contract-command-1",
+        "state": "started"
+      }
+    },
+    {
+      "name": "user echo with string content",
+      "buffer": "dropped",
+      "frame": {
+        "type": "user",
+        "parent_tool_use_id": null,
+        "message": { "role": "user", "content": "<task-notification>finished</task-notification>" }
+      }
+    },
+    {
+      "name": "user echo with only text blocks",
+      "buffer": "dropped",
+      "frame": {
+        "type": "user",
+        "parent_tool_use_id": null,
+        "message": {
+          "role": "user",
+          "content": [{ "type": "text", "text": "[Request interrupted by user]" }]
+        }
+      }
+    },
+    {
+      "name": "assistant without a content array",
+      "buffer": "dropped",
+      "frame": {
+        "type": "assistant",
+        "parent_tool_use_id": null,
+        "message": { "role": "assistant", "content": "Done." }
+      }
+    },
+    {
+      "name": "rate limit event without its info",
+      "buffer": "dropped",
+      "frame": { "type": "rate_limit_event" }
+    },
+    {
+      "name": "system hook started",
+      "buffer": "dropped",
+      "frame": { "type": "system", "subtype": "hook_started", "hook_name": "PostToolUse" }
+    },
+    {
+      "name": "system hook response",
+      "buffer": "dropped",
+      "frame": {
+        "type": "system",
+        "subtype": "hook_response",
+        "hook_name": "PostToolUse",
+        "stdout": "ok"
+      }
+    },
+    {
+      "name": "system background tasks level",
+      "buffer": "dropped",
+      "frame": {
+        "type": "system",
+        "subtype": "background_tasks_changed",
+        "tasks": [{ "task_id": "a1b2c3", "task_type": "local_agent" }]
+      }
+    },
+    {
+      "name": "system subagent compact boundary",
+      "buffer": "dropped",
+      "frame": {
+        "type": "system",
+        "subtype": "compact_boundary",
+        "parent_tool_use_id": "toolu_contract_agent",
+        "compact_metadata": { "pre_tokens": 1000, "post_tokens": 100 }
+      }
+    },
+    {
+      "name": "system subagent compaction status",
+      "buffer": "dropped",
+      "frame": {
+        "type": "system",
+        "subtype": "status",
+        "status": "compacting",
+        "parent_tool_use_id": "toolu_contract_agent"
+      }
+    },
+    {
+      "name": "system frame without a subtype",
+      "buffer": "dropped",
+      "frame": { "type": "system" }
+    }
+  ]
+}

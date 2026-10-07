@@ -166,15 +166,199 @@ fn only_assistant_reply_text_and_reasoning_stay_verbatim() {
 
     let compacted = decoded(
         &compact(json!({
+            "type":"user",
+            "message":{"content":[
+                {"type":"thinking","thinking":large("echoed "),"signature":"sig"},
+                {"type":"tool_result","tool_use_id":"t4","content":"ok"}
+            ]}
+        }))
+        .unwrap(),
+    );
+    let echoed = &compacted["message"]["content"][0];
+    assert!(echoed["thinking"]
+        .as_str()
+        .unwrap()
+        .contains("bytes omitted"));
+    assert_eq!(echoed["signature"], "sig");
+}
+
+#[test]
+fn a_reasoning_signature_is_removed_and_the_reasoning_stays_byte_identical() {
+    let thinking = format!("START é€ {} END", large("private reasoning ž "));
+    let text = large("visible reply ");
+    let command = "c".repeat(MIN_CLIPPED_STRING_BYTES - 1);
+    let frame = json!({
+        "type":"assistant",
+        "parent_tool_use_id":null,
+        "session_id":"sess-abcdefgh",
+        "message":{"role":"assistant","model":"claude","usage":{"input_tokens":3,"output_tokens":5},"content":[
+            {"type":"thinking","thinking":thinking,"signature":"S".repeat(20 * 1024)},
+            {"type":"text","text":text},
+            {"type":"tool_use","id":"t1","name":"Bash","input":{"command":command,"description":"List files"}}
+        ]}
+    });
+
+    let line = compact(frame.clone()).unwrap();
+
+    assert!(line.len() < serde_json::to_vec(&frame).unwrap().len() - 20 * 1024);
+    let mut expected = frame;
+    expected["message"]["content"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("signature");
+    assert_eq!(decoded(&line), expected);
+    let kept = String::from_utf8(line).unwrap();
+    assert!(kept.contains(&serde_json::to_string(&thinking).unwrap()));
+    assert!(kept.contains(&serde_json::to_string(&text).unwrap()));
+}
+
+#[test]
+fn a_signature_is_removed_from_lines_too_short_to_clip() {
+    let frame = json!({
+        "type":"assistant",
+        "message":{"content":[{"type":"thinking","thinking":"short","signature":"c2ln"}]}
+    });
+
+    let compacted = decoded(&compact(frame).unwrap());
+
+    assert_eq!(
+        compacted,
+        json!({"type":"assistant","message":{"content":[{"type":"thinking","thinking":"short"}]}})
+    );
+}
+
+#[test]
+fn a_redacted_reasoning_payload_is_removed_whole() {
+    let compacted = decoded(
+        &compact(json!({
             "type":"assistant",
             "message":{"content":[{"type":"redacted_thinking","data":large("opaque ")}]}
         }))
         .unwrap(),
     );
-    assert!(compacted["message"]["content"][0]["data"]
+
+    assert_eq!(
+        compacted["message"]["content"],
+        json!([{"type":"redacted_thinking"}])
+    );
+}
+
+#[test]
+fn assistant_lines_without_an_undisplayed_field_stay_verbatim() {
+    assert_eq!(
+        compact(json!({
+            "type":"assistant",
+            "message":{"content":[
+                {"type":"thinking","thinking":"short"},
+                {"type":"text","text":"signature"},
+                {"type":"tool_use","id":"t1","name":"Bash","input":{"signature":"kept","data":"kept"}}
+            ]}
+        })),
+        None
+    );
+}
+
+fn projected(frame: Value) -> Option<Value> {
+    let mut line = serde_json::to_vec(&frame).unwrap();
+    line.push(b'\n');
+    background_line(&frame, line).map(|bytes| decoded(&bytes))
+}
+
+#[test]
+fn frames_the_transcript_shows_are_buffered_whole_or_compacted() {
+    let small = json!({"type":"result","subtype":"success","result":"done"});
+    assert_eq!(projected(small.clone()), Some(small));
+    let scalar = json!([1, 2, 3]);
+    assert_eq!(projected(scalar.clone()), Some(scalar));
+
+    let clipped = projected(json!({
+        "type":"user",
+        "message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":large("z")}]}
+    }))
+    .unwrap();
+    assert!(clipped["message"]["content"][0]["content"]
         .as_str()
         .unwrap()
         .contains("bytes omitted"));
+}
+
+#[test]
+fn frames_the_transcript_never_shows_are_not_buffered() {
+    for kind in SILENT_FRAME_TYPES {
+        assert_eq!(
+            projected(json!({"type":kind,"payload":large("p")})),
+            None,
+            "{kind}"
+        );
+    }
+    let echo = json!({"type":"user","message":{"content":large("<task-notification>")}});
+    assert_eq!(projected(echo), None);
+    let text_only = json!({"type":"user","message":{"content":[{"type":"text","text":"hi"}]}});
+    assert_eq!(projected(text_only), None);
+    let listed = json!({"type":"user","message":[{"type":"tool_result","tool_use_id":"t1"}]});
+    assert_eq!(projected(listed), None);
+    for subtype in [
+        "hook_started",
+        "hook_response",
+        "background_tasks_changed",
+        "files_persisted",
+    ] {
+        assert_eq!(
+            projected(json!({"type":"system","subtype":subtype,"stdout":large("h")})),
+            None,
+            "{subtype}"
+        );
+    }
+    for subtype in ["compact_boundary", "status"] {
+        assert_eq!(
+            projected(
+                json!({"type":"system","subtype":subtype,"parent_tool_use_id":"toolu_parent"})
+            ),
+            None,
+            "{subtype}"
+        );
+    }
+}
+
+#[test]
+fn every_system_subtype_the_transcript_reads_is_buffered() {
+    let subtypes = [
+        "init",
+        "api_retry",
+        "compact_boundary",
+        "status",
+        "task_started",
+        "task_progress",
+        "task_notification",
+        "task_updated",
+    ];
+    for subtype in subtypes {
+        let frame =
+            json!({"type":"system","subtype":subtype,"parent_tool_use_id":null,"task_id":"t1"});
+        assert_eq!(projected(frame.clone()), Some(frame), "{subtype}");
+    }
+    for subtype in ["init", "api_retry", "task_started", "task_progress"] {
+        let frame = json!({"type":"system","subtype":subtype,"parent_tool_use_id":"toolu_parent"});
+        assert_eq!(projected(frame.clone()), Some(frame), "{subtype}");
+    }
+}
+
+#[test]
+fn an_unsupported_frame_keeps_only_the_type_its_notice_names() {
+    assert_eq!(
+        projected(json!({"type":"future_frame","payload":large("p")})),
+        Some(json!({"type":"future_frame"}))
+    );
+    assert_eq!(
+        projected(json!({"type":"t".repeat(MAX_NAMED_FRAME_TYPE_BYTES),"payload":1})),
+        Some(json!({"type":"t".repeat(MAX_NAMED_FRAME_TYPE_BYTES)}))
+    );
+    assert_eq!(
+        projected(json!({"type":"t".repeat(MAX_NAMED_FRAME_TYPE_BYTES + 1),"payload":1})),
+        Some(json!({"type":""}))
+    );
+    assert_eq!(projected(json!({"payload":large("p")})), Some(json!({})));
+    assert_eq!(projected(json!({"type":7,"payload":1})), Some(json!({})));
 }
 
 #[test]

@@ -1129,3 +1129,9 @@ mod compaction;
 
 #[path = "claude_session_router_reply_tests.rs"]
 mod reply_level;
+
+#[path = "claude_session_router_display_tests.rs"]
+mod display;
+
+#[path = "claude_session_router_ownership_tests.rs"]
+mod ownership;

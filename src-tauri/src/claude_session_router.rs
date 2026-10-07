@@ -1,5 +1,5 @@
 use super::agent_task_input::claude_lifecycle::ClaudeInputLifecycle;
-use super::claude_background_line::compact_background_frame;
+use super::claude_background_line::background_line;
 use super::claude_session_task_stop::{PendingTaskStops, TaskStopReply};
 use crate::agent_task_supervisor::agent_task_result_detector::{
     failed_result, lifecycle_candidate, ResultLineDetector, ResultSettlePolicy,
@@ -8,11 +8,13 @@ pub use crate::agent_task_supervisor::agent_task_result_detector::{
     BackgroundTaskKind, LiveBackgroundTask,
 };
 use serde_json::Value;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 pub const MAX_ROUTED_LINE_BYTES: usize = 1024 * 1024;
 pub const MAX_BACKGROUND_TURN_BYTES: usize = 256 * 1024;
 pub const BACKGROUND_RESULT_RESERVE_BYTES: usize = 64 * 1024;
+pub const BACKGROUND_ANSWER_RESERVE_BYTES: usize = 32 * 1024;
 pub const MAX_REPORTED_BACKGROUND_TASKS: usize = 32;
 const OVERSIZED_FRAME_ERROR: &str = "Claude session frame exceeded its size limit.";
 const COST_FIELD: &str = "total_cost_usd";
@@ -21,6 +23,8 @@ const COST_TOLERANCE: f64 = 1e-9;
 const MAX_BACKGROUND_PERMISSION_DENIALS: usize = 16;
 const MAX_UNOWNED_CONTROL_ANSWERS: usize = 16;
 const MAX_CONTROL_REQUEST_ID_BYTES: usize = 128;
+const MAX_OWNED_RUNS: usize = 256;
+const MAX_RUN_ID_BYTES: usize = 256;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClaudeBackgroundTurn {
@@ -71,6 +75,54 @@ struct AttachedTurn {
     interrupt_evidence: bool,
     cancelled: bool,
     result_failed: bool,
+    runs: OwnedRuns,
+}
+
+struct OwnedRun {
+    task: String,
+    tool: Option<String>,
+}
+
+#[derive(Default)]
+struct OwnedRuns {
+    runs: VecDeque<OwnedRun>,
+}
+
+impl OwnedRuns {
+    fn claim(&mut self, message: &Value, live: impl Fn(&str) -> bool) {
+        let Some(task) = run_id(message.get("task_id")) else {
+            return;
+        };
+        self.release(task);
+        if self.runs.len() == MAX_OWNED_RUNS {
+            let finished = self.runs.iter().position(|run| !live(&run.task));
+            self.runs.remove(finished.unwrap_or(0));
+        }
+        self.runs.push_back(OwnedRun {
+            task: task.to_string(),
+            tool: run_id(message.get("tool_use_id")).map(str::to_string),
+        });
+    }
+
+    fn release(&mut self, task: &str) {
+        self.runs.retain(|run| run.task != task);
+    }
+
+    fn owns(&self, message: &Value) -> bool {
+        if let Some(parent) = message.get("parent_tool_use_id").and_then(Value::as_str) {
+            return self
+                .runs
+                .iter()
+                .any(|run| run.tool.as_deref() == Some(parent));
+        }
+        let Some(task) = task_frame(message).and_then(|_| run_id(message.get("task_id"))) else {
+            return false;
+        };
+        let tool = run_id(message.get("tool_use_id"));
+        self.runs
+            .iter()
+            .any(|run| run.task == task && same_run(run.tool.as_deref(), tool))
+    }
 }
 
 #[derive(Default)]
@@ -81,13 +133,40 @@ struct UnsolicitedTurn {
     unsupported_answers: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BudgetClass {
+    Closing,
+    Answer,
+    Activity,
+}
+
+impl BudgetClass {
+    fn of(message: &Value) -> Self {
+        if root_result(message) {
+            return Self::Closing;
+        }
+        if root_answer(message) {
+            return Self::Answer;
+        }
+        Self::Activity
+    }
+
+    fn limit(self) -> usize {
+        match self {
+            Self::Closing => MAX_BACKGROUND_TURN_BYTES,
+            Self::Answer => MAX_BACKGROUND_TURN_BYTES - BACKGROUND_RESULT_RESERVE_BYTES,
+            Self::Activity => {
+                MAX_BACKGROUND_TURN_BYTES
+                    - BACKGROUND_RESULT_RESERVE_BYTES
+                    - BACKGROUND_ANSWER_RESERVE_BYTES
+            }
+        }
+    }
+}
+
 impl UnsolicitedTurn {
-    fn push(&mut self, line: &[u8], closing: bool) -> bool {
-        let limit = match closing {
-            true => MAX_BACKGROUND_TURN_BYTES,
-            false => MAX_BACKGROUND_TURN_BYTES - BACKGROUND_RESULT_RESERVE_BYTES,
-        };
-        if self.output.len() + line.len() > limit {
+    fn push(&mut self, line: &[u8], class: BudgetClass) -> bool {
+        if self.output.len() + line.len() > class.limit() {
             self.truncated = true;
             return false;
         }
@@ -176,6 +255,7 @@ impl ClaudeSessionRouter {
             interrupt_evidence: false,
             cancelled: false,
             result_failed: false,
+            runs: OwnedRuns::default(),
         });
         self.pending_interrupt = None;
         self.idle_unsupported_answers = 0;
@@ -401,7 +481,7 @@ impl ClaudeSessionRouter {
                 return;
             }
             let destination = self.attached_destination();
-            self.deliver(destination, line, false, step);
+            self.deliver(destination, line, BudgetClass::Activity, step);
             return;
         };
         if self.acknowledges_interrupt(&message) {
@@ -415,6 +495,7 @@ impl ClaudeSessionRouter {
         let finishes_command = self.finishes_attached_command(&message);
         let destination = self.classify(&message, step);
         let owned = self.owned();
+        self.note_run(destination, owned, &message);
         let outcome = match destination {
             Destination::Turn | Destination::Command if owned => {
                 self.detector.consume_message(&message)
@@ -422,19 +503,8 @@ impl ClaudeSessionRouter {
             Destination::Command => self.detector.observe_command(&message).map(|()| false),
             _ => self.detector.track_message(&message).map(|()| false),
         };
-        let closing = root_result(&message);
-        let ends_unsolicited = destination == Destination::Unsolicited && closing;
-        let line = match destination {
-            Destination::Unsolicited => {
-                compact_background_frame(&message, line.len()).unwrap_or(line)
-            }
-            _ => line,
-        };
-        let (line, process_total) = self.normalize_cost(destination, message, line);
-        let accepted = self.deliver(destination, line, closing, step);
-        if let (true, Some(total)) = (accepted, process_total) {
-            self.cost_baseline = total;
-        }
+        let ends_unsolicited = destination == Destination::Unsolicited && root_result(&message);
+        self.forward(destination, message, line, step);
         if ends_unsolicited {
             self.emit_unsolicited(true, step);
         }
@@ -455,6 +525,28 @@ impl ClaudeSessionRouter {
         };
         if settled {
             self.record_settlement(via_interrupt, step);
+        }
+    }
+
+    fn forward(
+        &mut self,
+        destination: Destination,
+        message: Value,
+        line: Vec<u8>,
+        step: &mut RouterStep,
+    ) {
+        let class = BudgetClass::of(&message);
+        let line = match destination {
+            Destination::Unsolicited => background_line(&message, line),
+            _ => Some(line),
+        };
+        let Some(line) = line else {
+            return;
+        };
+        let (line, process_total) = self.normalize_cost(destination, message, line);
+        let accepted = self.deliver(destination, line, class, step);
+        if let (true, Some(total)) = (accepted, process_total) {
+            self.cost_baseline = total;
         }
     }
 
@@ -507,7 +599,10 @@ impl ClaudeSessionRouter {
             return Destination::Turn;
         }
         if self.unsolicited.is_some() {
-            return Destination::Unsolicited;
+            return match self.attached_run_owns(message) {
+                true => Destination::Turn,
+                false => Destination::Unsolicited,
+            };
         }
         if self.owned() {
             return self.classify_owned(kind, message);
@@ -517,6 +612,31 @@ impl ClaudeSessionRouter {
             return Destination::Unsolicited;
         }
         self.attached_destination()
+    }
+
+    fn attached_run_owns(&self, message: &Value) -> bool {
+        self.attached
+            .as_ref()
+            .is_some_and(|turn| turn.runs.owns(message))
+    }
+
+    fn note_run(&mut self, destination: Destination, owned: bool, message: &Value) {
+        if task_frame(message) != Some("task_started") {
+            return;
+        }
+        let claimed = destination == Destination::Turn && (owned || self.unsolicited.is_some());
+        let detector = &self.detector;
+        let Some(turn) = self.attached.as_mut() else {
+            return;
+        };
+        if claimed {
+            turn.runs
+                .claim(message, |task| detector.has_live_background_task(task));
+            return;
+        }
+        if let Some(task) = run_id(message.get("task_id")) {
+            turn.runs.release(task);
+        }
     }
 
     fn classify_control_request(&mut self, message: &Value, step: &mut RouterStep) -> Destination {
@@ -688,7 +808,7 @@ impl ClaudeSessionRouter {
         &mut self,
         destination: Destination,
         line: Vec<u8>,
-        closing: bool,
+        class: BudgetClass,
         step: &mut RouterStep,
     ) -> bool {
         match destination {
@@ -699,10 +819,10 @@ impl ClaudeSessionRouter {
             Destination::Unsolicited => self
                 .unsolicited
                 .as_mut()
-                .is_some_and(|active| active.push(&line, closing)),
+                .is_some_and(|active| active.push(&line, class)),
             Destination::Background => {
                 let mut turn = UnsolicitedTurn::default();
-                let accepted = turn.push(&line, true);
+                let accepted = turn.push(&line, BudgetClass::Closing);
                 step.background_turns.push(turn.finish(true));
                 accepted
             }
@@ -782,6 +902,45 @@ fn valid_request_id(id: &str) -> bool {
 fn root_result(message: &Value) -> bool {
     message.get("type").and_then(Value::as_str) == Some("result")
         && message.get("parent_tool_use_id").is_none_or(Value::is_null)
+}
+
+fn run_id(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= MAX_RUN_ID_BYTES)
+}
+
+fn same_run(claimed: Option<&str>, named: Option<&str>) -> bool {
+    match (claimed, named) {
+        (Some(claimed), Some(named)) => claimed == named,
+        _ => true,
+    }
+}
+
+fn task_frame(message: &Value) -> Option<&str> {
+    if message.get("type").and_then(Value::as_str) != Some("system") {
+        return None;
+    }
+    message
+        .get("subtype")
+        .and_then(Value::as_str)
+        .filter(|subtype| {
+            matches!(
+                *subtype,
+                "task_started" | "task_progress" | "task_notification" | "task_updated"
+            )
+        })
+}
+
+fn root_answer(message: &Value) -> bool {
+    message.get("type").and_then(Value::as_str) == Some("assistant")
+        && message.get("parent_tool_use_id").is_none_or(Value::is_null)
+        && message
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("text"))
 }
 
 fn opens_activity(kind: Option<&str>, message: &Value) -> bool {

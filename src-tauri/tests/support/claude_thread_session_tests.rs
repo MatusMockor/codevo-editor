@@ -1248,7 +1248,8 @@ fn a_permission_request_inside_a_background_turn_is_denied_and_the_session_survi
     let (_, recorded) = &background[0];
     assert!(recorded.complete);
     let text = String::from_utf8_lossy(&recorded.output).into_owned();
-    assert!(text.contains("perm-bg-0001"), "{text}");
+    assert!(!recorded.truncated);
+    assert!(!text.contains("perm-bg-0001"), "{text}");
     assert!(text.contains("background-finished"), "{text}");
     assert!(owner.reasons().is_empty(), "{:?}", owner.reasons());
     let (next, mut second) = run_turn(&session, "hello");
