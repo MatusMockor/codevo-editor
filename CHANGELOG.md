@@ -7,6 +7,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.106] - 2026-10-07
+
+### Changed
+
+- Dictation detects the spoken language automatically, independently of the system
+  language. Slovak, English and Czech can still be selected explicitly. Automatic
+  detection requires an updated Codevo Runner and speech service.
+
+### Fixed
+
+- Dismissed usage-limit notices stay dismissed when the provider changes the reset
+  date format.
+- Server conversation failures show the specific provider error when the runner
+  reports only a generic failure, with matching retry advice.
+
 ## [0.2.0-beta.105] - 2026-10-07
 
 ### Added
