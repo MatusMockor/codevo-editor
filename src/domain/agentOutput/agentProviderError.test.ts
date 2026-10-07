@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentProviderErrorHeadline,
   classifyAgentProviderError,
+  isGenericProviderFailure,
   sameAgentProviderError,
   MAX_AGENT_PROVIDER_ERROR_MESSAGE_BYTES,
 } from "./agentProviderError";
@@ -564,6 +565,22 @@ describe("runner terminal codes", () => {
     expect(error.signature).toBe(`runnerFailure:claudeCode:${reason}`);
   });
 
+  it("explains provider_reported_failure and keeps the signature it had as unclassified text", () => {
+    const error = classifyAgentProviderError("provider_reported_failure", "claudeCode");
+
+    expect(error.detail).toEqual({
+      kind: "runnerFailure",
+      provider: "claudeCode",
+      reason: "providerReportedFailure",
+    });
+    expect(agentProviderErrorHeadline(error, null)).toBe(
+      "Claude Code did not complete this run successfully.",
+    );
+    expect(agentProviderErrorHeadline(error, null)).not.toMatch(/[–—]/u);
+    expect(error.raw).toBe("provider_reported_failure");
+    expect(error.signature).toBe("unknown:provider_reported_failure");
+  });
+
   it("names the provider of the thread that failed", () => {
     expect(
       agentProviderErrorHeadline(classifyAgentProviderError("provider_unavailable", "codex"), null),
@@ -574,6 +591,12 @@ describe("runner terminal codes", () => {
         null,
       ),
     ).toBe("Codex ended without reporting a result.");
+    expect(
+      agentProviderErrorHeadline(
+        classifyAgentProviderError("provider_reported_failure", "codex"),
+        null,
+      ),
+    ).toBe("Codex did not complete this run successfully.");
   });
 
   it("treats a broken provider input pipe as a protocol failure", () => {
@@ -610,6 +633,10 @@ describe("runner terminal codes", () => {
     "PROCESS_CLEANUP_FAILED",
     "process cleanup failed",
     "execution_failed.",
+    "provider_reported_failure: turn failed",
+    "Error: provider_reported_failure",
+    "PROVIDER_REPORTED_FAILURE",
+    "provider reported failure",
   ])("keeps %j as the provider's own text", (raw) => {
     const error = classifyAgentProviderError(raw, "claudeCode");
 
@@ -620,7 +647,6 @@ describe("runner terminal codes", () => {
 
   it.each([
     "cancelled",
-    "provider_reported_failure",
     "workspace_identity_invalid",
     "unsupported_platform",
     "git_branch_not_found",
@@ -656,5 +682,81 @@ describe("runner terminal codes", () => {
         classifyAgentProviderError("process_cleanup_failed", "codex"),
       ),
     ).toBe(false);
+  });
+
+  it("marks only the bare provider-reported code as the generic provider failure", () => {
+    for (const provider of ["claudeCode", "codex"] as const) {
+      expect(
+        isGenericProviderFailure(classifyAgentProviderError("provider_reported_failure", provider)),
+      ).toBe(true);
+      expect(
+        isGenericProviderFailure(
+          classifyAgentProviderError(" provider_reported_failure\n", provider),
+        ),
+      ).toBe(true);
+    }
+    for (const raw of [
+      "provider_result_missing",
+      "execution_failed",
+      "provider_protocol_failed",
+      "authentication_failed",
+      "provider_reported_failure: turn failed",
+      "PROVIDER_REPORTED_FAILURE",
+      "Local provider detail",
+      "",
+    ]) {
+      expect(isGenericProviderFailure(classifyAgentProviderError(raw, "codex"))).toBe(false);
+    }
+  });
+
+  it("treats a wrapped payload that carries only the provider-reported code as generic", () => {
+    const wrapped = classifyAgentProviderError(
+      JSON.stringify({ error: { message: "provider_reported_failure" } }),
+      "codex",
+    );
+
+    expect(isGenericProviderFailure(wrapped)).toBe(true);
+    expect(wrapped.message).toBe("provider_reported_failure");
+    expect(wrapped.signature).toBe("unknown:provider_reported_failure");
+    expect(agentProviderErrorHeadline(wrapped, null)).toBe(
+      "Codex did not complete this run successfully.",
+    );
+  });
+
+  it("matches the generic provider failure with every spelling it matched as unclassified text", () => {
+    const generic = classifyAgentProviderError("provider_reported_failure", "codex");
+
+    for (const raw of [
+      "provider_reported_failure",
+      " provider_reported_failure\n",
+      "PROVIDER_REPORTED_FAILURE",
+      "  Provider_Reported_Failure\n",
+      JSON.stringify({ error: { message: "provider_reported_failure" } }),
+    ]) {
+      const repeated = classifyAgentProviderError(raw, "codex");
+
+      expect(repeated.signature).toBe(generic.signature);
+      expect(sameAgentProviderError(generic, repeated)).toBe(true);
+    }
+    expect(
+      sameAgentProviderError(
+        generic,
+        classifyAgentProviderError("provider_reported_failure", "claudeCode"),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the generic provider failure apart from every other failure", () => {
+    const generic = classifyAgentProviderError("provider_reported_failure", "codex");
+
+    for (const raw of [
+      "provider_result_missing",
+      "execution_failed",
+      "provider_reported_failure: turn failed",
+      "provider reported failure",
+      "Local provider detail",
+    ]) {
+      expect(sameAgentProviderError(generic, classifyAgentProviderError(raw, "codex"))).toBe(false);
+    }
   });
 });

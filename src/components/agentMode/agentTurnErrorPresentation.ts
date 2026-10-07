@@ -7,6 +7,7 @@ import {
 import type { AgentTurnItem } from "./agentModePresentation";
 import {
   classifyAgentProviderError,
+  isGenericProviderFailure,
   sameAgentProviderError,
   type AgentProviderError,
 } from "../../domain/agentOutput/agentProviderError";
@@ -39,7 +40,7 @@ export function createTurnErrorContext(
         error !== null &&
         error.detail.kind !== "advisory" &&
         error.message !== "" &&
-        error.message !== "provider_reported_failure"
+        !isGenericProviderFailure(error)
       );
     }),
   };
@@ -61,7 +62,7 @@ export function suppressGenericFailure(
   return (
     context.executionTarget === "remote" &&
     context.hasProviderFailure &&
-    error.message === "provider_reported_failure"
+    isGenericProviderFailure(error)
   );
 }
 

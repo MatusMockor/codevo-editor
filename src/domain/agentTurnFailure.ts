@@ -2,11 +2,11 @@ import type { AgentCliKind } from "./agentTask";
 import type { AgentThread, AgentTurn, AgentTurnEvent } from "./agentThread";
 import {
   classifyAgentProviderError,
+  isGenericProviderFailure,
   type AgentProviderError,
 } from "./agentOutput/agentProviderError";
 import { agentFailedLastTurn } from "./agentTurnRetry";
 
-const PROVIDER_REPORTED_FAILURE = "provider_reported_failure";
 const SYNTHETIC_API_ERROR_PREFIX = "API Error:";
 const METADATA_EVENT_KINDS: ReadonlySet<AgentTurnEvent["kind"]> = new Set([
   "contextUsage",
@@ -27,7 +27,7 @@ export function agentTurnFailureError(
   }
   if (status.kind !== "failed") return null;
   const error = classifyAgentProviderError(status.message, provider);
-  if (error.message !== PROVIDER_REPORTED_FAILURE) return error;
+  if (!isGenericProviderFailure(error)) return error;
   return agentTurnReportedFailure(turn, provider) ?? error;
 }
 
@@ -91,5 +91,7 @@ function apiErrorNotice(
 }
 
 function recognized(error: AgentProviderError): AgentProviderError | null {
-  return error.detail.kind === "unknown" ? null : error;
+  if (error.detail.kind === "unknown") return null;
+  if (isGenericProviderFailure(error)) return null;
+  return error;
 }

@@ -3,6 +3,7 @@ export type AgentRunnerFailureReason =
   | "timedOut"
   | "providerUnavailable"
   | "providerResultMissing"
+  | "providerReportedFailure"
   | "outputNotSaved"
   | "outputLimitExceeded"
   | "instructionSyncFailed"
@@ -24,6 +25,7 @@ const RUNNER_TERMINAL_OUTCOMES: ReadonlyMap<string, AgentRunnerTerminalOutcome> 
   ["execution_timeout", { kind: "runnerFailure", reason: "timedOut" }],
   ["provider_unavailable", { kind: "runnerFailure", reason: "providerUnavailable" }],
   ["provider_result_missing", { kind: "runnerFailure", reason: "providerResultMissing" }],
+  ["provider_reported_failure", { kind: "runnerFailure", reason: "providerReportedFailure" }],
   ["output_persistence_failed", { kind: "runnerFailure", reason: "outputNotSaved" }],
   ["output_limit_exceeded", { kind: "runnerFailure", reason: "outputLimitExceeded" }],
   ["instruction_sync_failed", { kind: "runnerFailure", reason: "instructionSyncFailed" }],
@@ -47,6 +49,8 @@ export function agentRunnerFailureHeadline(
       return `The server could not start ${providerName}.`;
     case "providerResultMissing":
       return `${providerName} ended without reporting a result.`;
+    case "providerReportedFailure":
+      return `${providerName} did not complete this run successfully.`;
     case "outputNotSaved":
       return "The server stopped this run because it could not save the run's output.";
     case "outputLimitExceeded":

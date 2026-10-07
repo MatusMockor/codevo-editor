@@ -14,6 +14,10 @@ import type {
   AgentTurnStatus,
 } from "../../domain/agentThread";
 import type { AgentCliKind } from "../../domain/agentTask";
+import {
+  agentProviderErrorHeadline,
+  classifyAgentProviderError,
+} from "../../domain/agentOutput/agentProviderError";
 import type { AgentThreadFindHit } from "../../domain/agentThreadSearch";
 import type { GitChangedFile } from "../../domain/git";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
@@ -1002,6 +1006,29 @@ describe("AgentThreadSession", () => {
     expect(host.querySelector(".agent-finale--bad")).toBeNull();
   }
 
+  function genericFailureHeadline(provider: AgentCliKind): string {
+    return agentProviderErrorHeadline(
+      classifyAgentProviderError("provider_reported_failure", provider),
+      null,
+    );
+  }
+
+  function failedRunBodies(): ReadonlyArray<string> {
+    return [...host.querySelectorAll(".agent-finale--bad .agent-finale__body")].map(
+      (body) => body.textContent ?? "",
+    );
+  }
+
+  function expectGenericCodeOnlyInCollapsedDetails(): void {
+    const raw = [...host.querySelectorAll<HTMLDetailsElement>("details.agent-raw")];
+    const visible = host.cloneNode(true) as HTMLElement;
+    visible.querySelectorAll("details.agent-raw").forEach((details) => details.remove());
+
+    expect(raw.map((details) => details.open)).toEqual([false]);
+    expect(raw[0]?.querySelector("pre")?.textContent).toBe("provider_reported_failure");
+    expect(visible.textContent).not.toContain("provider_reported_failure");
+  }
+
   it("targets server upgrades and hides the runner wrapper after a provider failure", () => {
     const message = "The 'gpt-6-astra' model requires a newer version of Codex.";
     render({
@@ -1022,6 +1049,7 @@ describe("AgentThreadSession", () => {
     );
     expect(host.textContent).not.toContain("Open Settings > Providers");
     expect(host.textContent).not.toContain("provider_reported_failure");
+    expect(host.textContent).not.toContain(genericFailureHeadline("codex"));
   });
 
   it.each([
@@ -1053,7 +1081,8 @@ describe("AgentThreadSession", () => {
         }),
       });
       expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
-      expect(host.textContent).toContain("provider_reported_failure");
+      expect(failedRunBodies()).toEqual([genericFailureHeadline("codex")]);
+      expectGenericCodeOnlyInCollapsedDetails();
     },
   );
 
@@ -1070,7 +1099,8 @@ describe("AgentThreadSession", () => {
       }),
     });
     expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
-    expect(host.textContent).toContain("provider_reported_failure");
+    expect(failedRunBodies()).toEqual([genericFailureHeadline("codex")]);
+    expectGenericCodeOnlyInCollapsedDetails();
   });
 
   it("preserves unrelated local failure messages", () => {
@@ -1085,7 +1115,51 @@ describe("AgentThreadSession", () => {
       }),
     });
     expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(2);
-    expect(host.textContent).toContain("provider_reported_failure");
+    expect(failedRunBodies()).toEqual(["Local provider detail", genericFailureHeadline("codex")]);
+    expectGenericCodeOnlyInCollapsedDetails();
+    expect(host.textContent).toContain("check the provider CLI.");
+    expect(host.textContent).not.toContain("on that server");
+  });
+
+  it.each(["PROVIDER_REPORTED_FAILURE", "  Provider_Reported_Failure\n"])(
+    "shows one failure when the generic code repeats in another spelling (%j)",
+    (message) => {
+      for (const remote of [false, true]) {
+        render({
+          thread: threadView({
+            provider: "codex",
+            remote,
+            turns: [
+              turn("agt-1-t1", "Hello", { kind: "failed", message: "provider_reported_failure" }, [
+                { kind: "error", message },
+              ]),
+            ],
+          }),
+        });
+        expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
+        expect(failedRunBodies()).toEqual([message.trim()]);
+      }
+    },
+  );
+
+  it("shows one generic failure when the status wraps the generic code in a payload", () => {
+    const wrapped = JSON.stringify({ error: { message: "provider_reported_failure" } });
+
+    for (const remote of [false, true]) {
+      render({
+        thread: threadView({
+          provider: "codex",
+          remote,
+          turns: [
+            turn("agt-1-t1", "Hello", { kind: "failed", message: wrapped }, [
+              { kind: "error", message: "provider_reported_failure" },
+            ]),
+          ],
+        }),
+      });
+      expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
+      expect(failedRunBodies()).toEqual([genericFailureHeadline("codex")]);
+    }
   });
 
   it("does not hide a later turn failure using an earlier turn's provider error", () => {
@@ -1102,7 +1176,11 @@ describe("AgentThreadSession", () => {
       }),
     });
     expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(2);
-    expect(host.textContent).toContain("provider_reported_failure");
+    expect(failedRunBodies()).toEqual([
+      "Provider failed previously",
+      genericFailureHeadline("codex"),
+    ]);
+    expectGenericCodeOnlyInCollapsedDetails();
   });
 
   it("keeps the Codex hook-trust notice a quiet note inside the work fold", () => {

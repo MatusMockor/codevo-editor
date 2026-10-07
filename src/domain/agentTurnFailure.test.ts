@@ -165,6 +165,51 @@ describe("agentTurnFailureError", () => {
     );
   });
 
+  it("reads the output when the status wraps the generic code in a payload", () => {
+    const wrapped = JSON.stringify({ error: { message: "provider_reported_failure" } });
+    const failed = turn({ kind: "failed", message: wrapped }, [result(REMOVED_NOTICE)]);
+
+    expect(agentTurnFailureError(failed, "claudeCode")?.detail.kind).toBe(
+      "conversationImagesTooLarge",
+    );
+    expect(agentTurnFailureError(turn({ kind: "failed", message: wrapped }, []), "codex")).toEqual(
+      expect.objectContaining({
+        detail: { kind: "runnerFailure", provider: "codex", reason: "providerReportedFailure" },
+        signature: "unknown:provider_reported_failure",
+      }),
+    );
+  });
+
+  it("keeps the generic provider failure when the output explains nothing", () => {
+    const generic = { kind: "runnerFailure", provider: "codex", reason: "providerReportedFailure" };
+    const outputs: ReadonlyArray<ReadonlyArray<AgentTurnEvent>> = [
+      [],
+      [{ kind: "error", message: "provider_reported_failure" }],
+      [result("Something odd"), { kind: "error", message: "provider_reported_failure" }],
+    ];
+
+    for (const events of outputs) {
+      const failed = turn({ kind: "failed", message: "provider_reported_failure" }, events);
+
+      expect(agentTurnFailureError(failed, "codex")?.detail).toEqual(generic);
+    }
+  });
+
+  it("does not read the generic code as the reported failure of an exited run", () => {
+    const events: ReadonlyArray<AgentTurnEvent> = [
+      { kind: "error", message: "provider_reported_failure" },
+    ];
+
+    expect(agentTurnReportedFailure(turn(EXITED, events), "codex")).toBeNull();
+    expect(agentTurnFailureError(turn(EXITED, events), "codex")).toBeNull();
+    expect(
+      agentTurnReportedFailure(turn(EXITED, [result("provider_reported_failure")]), "codex"),
+    ).toBeNull();
+    expect(
+      agentTurnFailureError(turn(EXITED, [result("provider_reported_failure")]), "codex"),
+    ).toBeNull();
+  });
+
   it("keeps an unknown failure message when the output explains nothing", () => {
     const failed = turn({ kind: "failed", message: "boom" }, [result(REMOVED_NOTICE)]);
 

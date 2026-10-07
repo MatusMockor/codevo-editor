@@ -166,6 +166,12 @@ export function agentProviderErrorHeadline(
   return unsupportedAgentProviderErrorDetail(detail);
 }
 
+export function isGenericProviderFailure(error: AgentProviderError): boolean {
+  const detail = error.detail;
+
+  return detail.kind === "runnerFailure" && detail.reason === "providerReportedFailure";
+}
+
 export function sameAgentProviderError(
   left: AgentProviderError,
   right: AgentProviderError,
@@ -374,14 +380,19 @@ function errorSignature(detail: AgentProviderErrorDetail, message: string): stri
     return `${detail.kind}:${detail.provider}`;
   }
   if (detail.kind === "runnerFailure") {
+    if (detail.reason === "providerReportedFailure") return unclassifiedSignature(message);
     return `${detail.kind}:${detail.provider}:${detail.reason}`;
   }
   if (detail.kind === "advisory") {
     return `advisory:${detail.provider}:${normalizedMessage(detail.text)}`;
   }
-  if (detail.kind === "unknown") return `unknown:${normalizedMessage(message)}`;
+  if (detail.kind === "unknown") return unclassifiedSignature(message);
 
   return unsupportedAgentProviderErrorDetail(detail);
+}
+
+function unclassifiedSignature(message: string): string {
+  return `unknown:${normalizedMessage(message)}`;
 }
 
 function normalizedMessage(message: string): string {

@@ -7,6 +7,9 @@ import {
 import { agentThreadErrorBannerModel } from "./agentThreadErrorBannerPresentation";
 
 const CHECK_RUNNER = "Try again. If it keeps failing, check the runner on that server.";
+const GENERIC_STATUS = { kind: "failed", message: "provider_reported_failure" };
+const CHECK_RUN_OUTPUT =
+  "Check this run's output for any details, then try again. If it keeps failing, check the provider CLI on that server.";
 
 function runnerHeadline(code: string, provider: "claudeCode" | "codex" = "claudeCode"): string {
   return agentProviderErrorHeadline(classifyAgentProviderError(code, provider), null);
@@ -275,6 +278,7 @@ describe("thread error banner model", () => {
       code: "provider_result_missing",
       detail: "Try again. If it keeps failing, check the provider CLI on that server.",
     },
+    { code: "provider_reported_failure", detail: CHECK_RUN_OUTPUT },
     {
       code: "provider_input_failed",
       detail:
@@ -303,6 +307,29 @@ describe("thread error banner model", () => {
     expect(model?.retry.kind).toBe("ready");
     expect(`${model?.title} ${model?.detail}`).not.toContain(code);
     expect(`${model?.title} ${model?.detail}`).not.toMatch(/[\u2013\u2014]/u);
+  });
+
+  it("explains a provider-reported failure recorded only as the turn status", () => {
+    const model = agentThreadErrorBannerModel(
+      view({ kind: "failed", message: "provider_reported_failure" }, "codex", [], true),
+      null,
+    );
+
+    expect(model).toMatchObject({
+      title: "Codex did not complete this run successfully.",
+      detail: CHECK_RUN_OUTPUT,
+      remedy: "retry",
+    });
+    expect(`${model?.title} ${model?.detail}`).not.toContain("provider_reported_failure");
+  });
+
+  it("does not point a local run at a server", () => {
+    expect(agentThreadErrorBannerModel(view(GENERIC_STATUS, "codex"), null)).toMatchObject({
+      title: "Codex did not complete this run successfully.",
+      detail:
+        "Check this run's output for any details, then try again. If it keeps failing, check the provider CLI.",
+      remedy: "retry",
+    });
   });
 
   it("explains a runner code reported only by the events of an exited run", () => {

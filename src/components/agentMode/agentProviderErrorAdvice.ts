@@ -30,7 +30,7 @@ export function agentProviderErrorAdvice(
         ? "The server could not continue the provider session. Check the runner on that server and try again."
         : "The provider session could not continue. Check the provider CLI and try again.";
     case "runnerFailure":
-      return runnerFailureAdvice(detail.reason);
+      return runnerFailureAdvice(detail.reason, target);
     case "conversationImagesTooLarge":
       return CONVERSATION_IMAGES_ADVICE;
     case "unsupportedModelForCliVersion":
@@ -64,7 +64,10 @@ function authenticationAdvice(
   }
 }
 
-function runnerFailureAdvice(reason: AgentRunnerFailureReason): string {
+function runnerFailureAdvice(
+  reason: AgentRunnerFailureReason,
+  target: AgentProviderErrorTarget,
+): string {
   switch (reason) {
     case "processCleanupFailed":
       return "Processes from this run may still be running on that server. Check them before you try again. If it keeps happening, restart the runner on that server.";
@@ -74,6 +77,10 @@ function runnerFailureAdvice(reason: AgentRunnerFailureReason): string {
       return "Check the provider CLI and the runner on that server, then try again.";
     case "providerResultMissing":
       return "Try again. If it keeps failing, check the provider CLI on that server.";
+    case "providerReportedFailure":
+      return target === "remote"
+        ? "Check this run's output for any details, then try again. If it keeps failing, check the provider CLI on that server."
+        : "Check this run's output for any details, then try again. If it keeps failing, check the provider CLI.";
     case "outputNotSaved":
       return "Try again. If it keeps failing, check free disk space for the runner on that server.";
     case "outputLimitExceeded":

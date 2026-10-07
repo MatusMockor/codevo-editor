@@ -9,6 +9,7 @@ import {
   classifyAgentProviderError,
 } from "../../domain/agentOutput/agentProviderError";
 import { agentProviderErrorAdvice } from "./agentProviderErrorAdvice";
+import { agentThreadErrorBannerModel } from "./agentThreadErrorBannerPresentation";
 import { AgentThreadSession } from "./AgentThreadSession";
 
 const RUNNER_CODES = [
@@ -16,6 +17,7 @@ const RUNNER_CODES = [
   "execution_timeout",
   "provider_unavailable",
   "provider_result_missing",
+  "provider_reported_failure",
   "provider_input_failed",
   "output_persistence_failed",
   "output_limit_exceeded",
@@ -100,6 +102,31 @@ describe("failed turn of a remote run that ended with a runner code", () => {
     },
   );
 
+  it.each([
+    [[]],
+    [[{ kind: "error", message: "provider_reported_failure" }]],
+  ] satisfies ReadonlyArray<[ReadonlyArray<AgentTurnEvent>]>)(
+    "names the generic failure in the turn and the banner when nothing else was reported (%j)",
+    (events) => {
+      const banner = agentThreadErrorBannerModel(
+        render({ kind: "failed", message: "provider_reported_failure" }, events),
+        null,
+      );
+      const blocks = host.querySelectorAll(".agent-finale--bad");
+
+      expect(blocks).toHaveLength(1);
+      expect(banner?.title).toBe(
+        agentProviderErrorHeadline(
+          classifyAgentProviderError("provider_reported_failure", "claudeCode"),
+          null,
+        ),
+      );
+      expect(blocks[0]?.querySelector(".agent-finale__body")?.textContent).toBe(banner?.title);
+      expect(blocks[0]?.querySelector(".agent-note")?.textContent).toBe(banner?.detail);
+      expect(visibleText(blocks[0])).not.toContain("provider_reported_failure");
+    },
+  );
+
   it("keeps a stopped remote run a neutral stop marker", () => {
     render({ kind: "stopped" }, []);
 
@@ -113,7 +140,7 @@ describe("failed turn of a remote run that ended with a runner code", () => {
     return copy?.textContent ?? "";
   }
 
-  function render(status: AgentTurnStatus, events: ReadonlyArray<AgentTurnEvent>) {
+  function render(status: AgentTurnStatus, events: ReadonlyArray<AgentTurnEvent>): AgentThreadView {
     const turn: AgentTurn = {
       turnId: "turn",
       prompt: "Fix the router",
@@ -173,5 +200,6 @@ describe("failed turn of a remote run that ended with a runner code", () => {
         />,
       ),
     );
+    return view;
   }
 });
