@@ -26,6 +26,7 @@ import {
 import { AgentDictationSettingsRows } from "../AgentDictationSettingsRows";
 import { AgentSidebarSettingsRows } from "../AgentSidebarSettingsRows";
 import { AgentThreadDefaultsRows } from "../AgentThreadDefaultsRows";
+import { useRemoteRunnerContext } from "../../remoteRunner/remoteRunnerContext";
 import { SettingsNumberField } from "../primitives/SettingsNumberField";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
@@ -42,6 +43,7 @@ const PROVIDER_ROW_IDS = {
 export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
   const [nowEpochMs, setNowEpochMs] = useState(() => Date.now());
   const appSettingsRef = useRef(draft.appSettings);
+  const speechInputDevices = useRemoteRunnerContext()?.speechDictation?.input?.devices ?? null;
 
   const management = env.providerManagement ?? UNAVAILABLE_MANAGEMENT;
   const preferences =
@@ -201,7 +203,12 @@ export function AgentsSettingsPage({ actions, draft, env }: SettingsPageProps) {
       </SettingsSectionHeading>
 
       <AgentDictationSettingsRows
+        input={draft.appSettings.speechDictationInput}
+        inputDevices={speechInputDevices}
         language={draft.appSettings.speechDictationLanguage}
+        onChangeInput={(speechDictationInput) =>
+          writeAppSettings({ ...appSettingsRef.current, speechDictationInput })
+        }
         onChangeLanguage={(speechDictationLanguage) =>
           writeAppSettings({ ...appSettingsRef.current, speechDictationLanguage })
         }

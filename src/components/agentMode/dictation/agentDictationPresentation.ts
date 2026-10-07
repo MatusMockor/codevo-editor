@@ -1,8 +1,10 @@
-import type {
-  SpeechDictationFailureReason,
-  SpeechDictationState,
-  SpeechDictationUnavailableReason,
-  SpeechLanguage,
+import {
+  isSpeechDictationActive,
+  type SpeechDictationFailureReason,
+  type SpeechDictationInput,
+  type SpeechDictationState,
+  type SpeechDictationUnavailableReason,
+  type SpeechLanguage,
 } from "../../../domain/speechDictation";
 
 export type AgentDictationButtonGlyph = "microphone" | "microphoneOff" | "stop" | "busy";
@@ -22,7 +24,31 @@ export type AgentDictationNoticeView = Readonly<{
   message: string;
 }>;
 
+export type AgentDictationControlView =
+  Readonly<{ kind: "hidden" }> | Readonly<{ kind: "shown"; button: AgentDictationButtonView }>;
+
+export type AgentDictationAftermath = Readonly<{
+  ownerKey: string;
+  state: SpeechDictationState;
+  origin: "owned" | "inherited";
+  notice: AgentDictationNoticeView | null;
+}>;
+
 export type AgentDictationToggleAction = "start" | "stop" | "none";
+
+export type AgentDictationStartRefusal = "prompt-unavailable" | "window-hidden";
+
+export type AgentDictationExplanation =
+  | Readonly<{ kind: "disabled"; reason: string }>
+  | Readonly<{ kind: "start-refused"; ownerKey: string; refusal: AgentDictationStartRefusal }>;
+
+export type AgentDictationExplanationContext = Readonly<{
+  ownerKey: string;
+  disabledReason: string | null;
+  action: AgentDictationToggleAction;
+}>;
+
+const HIDDEN_CONTROL: AgentDictationControlView = { kind: "hidden" };
 
 export const AGENT_DICTATION_START_LABEL = "Start dictation";
 export const AGENT_DICTATION_STOP_LABEL = "Stop dictation";
@@ -38,6 +64,41 @@ export const SPEECH_LANGUAGE_LABELS: Readonly<Record<SpeechLanguage, string>> = 
   en: "English",
   cs: "Czech",
 };
+
+export function agentDictationControlView(
+  state: SpeechDictationState,
+  blockedReason: string | null,
+  retainedNotice: AgentDictationNoticeView | null,
+): AgentDictationControlView {
+  if (!controlOffered(state, retainedNotice)) return HIDDEN_CONTROL;
+  return { kind: "shown", button: agentDictationButtonView(state, blockedReason) };
+}
+
+export function initialAgentDictationAftermath(
+  ownerKey: string,
+  state: SpeechDictationState,
+): AgentDictationAftermath {
+  return { ownerKey, state, origin: "owned", notice: null };
+}
+
+export function observeAgentDictationAftermath(
+  aftermath: AgentDictationAftermath,
+  ownerKey: string,
+  state: SpeechDictationState,
+): AgentDictationAftermath {
+  if (aftermath.ownerKey !== ownerKey) {
+    return { ownerKey, state, origin: "inherited", notice: null };
+  }
+  if (aftermath.state === state) return aftermath;
+  return { ownerKey, state, origin: "owned", notice: retainedNoticeAfter(aftermath, state) };
+}
+
+export function dismissAgentDictationAftermath(
+  aftermath: AgentDictationAftermath,
+): AgentDictationAftermath {
+  if (aftermath.notice === null) return aftermath;
+  return { ...aftermath, notice: null };
+}
 
 export function agentDictationButtonView(
   state: SpeechDictationState,
@@ -106,10 +167,39 @@ export function agentDictationDisabledReason(
 export function agentDictationNoticeView(
   state: SpeechDictationState,
   explainedReason: string | null,
+  retainedNotice: AgentDictationNoticeView | null,
 ): AgentDictationNoticeView | null {
   if (explainedReason !== null) return { kind: "unavailable", message: explainedReason };
+  if (retainedNotice !== null) return retainedNotice;
   if (state.kind !== "failed") return null;
-  return { kind: "failed", message: agentDictationFailureMessage(state.reason) };
+  return failureNotice(state.reason);
+}
+
+export function agentDictationExplanationText(
+  explanation: AgentDictationExplanation | null,
+  context: AgentDictationExplanationContext,
+): string | null {
+  if (explanation === null) return null;
+  switch (explanation.kind) {
+    case "disabled":
+      return explanation.reason === context.disabledReason ? explanation.reason : null;
+    case "start-refused":
+      return startRefusalText(explanation.ownerKey, explanation.refusal, context);
+    default:
+      return unreachable(explanation);
+  }
+}
+
+export function agentDictationInputNote(state: SpeechDictationState): string | null {
+  if (state.kind !== "recording") return null;
+  switch (state.input) {
+    case "selected":
+      return null;
+    case "system-default":
+      return "Using the system default microphone";
+    default:
+      return unreachable(state.input);
+  }
 }
 
 export function agentDictationToggleAction(
@@ -155,6 +245,12 @@ export function agentDictationFailureMessage(reason: SpeechDictationFailureReaso
       return "The server disconnected during dictation. Audio that was not transcribed yet was discarded.";
     case "limit-reached":
       return "Dictation reached its limit and stopped. Speech captured so far was transcribed. Start again to continue.";
+    case "no-speech-detected":
+      return "No speech was detected. Check the input device and speak closer to the microphone, then try again.";
+    case "no-speech-on-system-default":
+      return "No speech was detected on the system default microphone. The selected one was unavailable. Check both, then try again.";
+    case "transcript-empty":
+      return "Transcription returned no text. Check the dictation language and speak closer to the microphone, then try again.";
     default:
       return unreachable(reason);
   }
@@ -168,7 +264,7 @@ export function agentDictationStatusText(state: SpeechDictationState): string {
     case "starting":
       return "Starting the microphone";
     case "recording":
-      return "Dictation recording";
+      return recordingStatusText(state.input);
     case "finishing":
       return "Transcribing dictation";
     case "failed":
@@ -200,6 +296,95 @@ export function formatAgentDictationElapsed(elapsedMs: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function startRefusalText(
+  ownerKey: string,
+  refusal: AgentDictationStartRefusal,
+  context: AgentDictationExplanationContext,
+): string | null {
+  if (ownerKey !== context.ownerKey || context.disabledReason !== null) return null;
+  if (context.action !== "start") return null;
+  switch (refusal) {
+    case "prompt-unavailable":
+      return "Dictation did not start because the prompt field was not available. Try again once you can type in it.";
+    case "window-hidden":
+      return null;
+    default:
+      return unreachable(refusal);
+  }
+}
+
+function recordingStatusText(input: SpeechDictationInput): string {
+  switch (input) {
+    case "selected":
+      return "Dictation recording";
+    case "system-default":
+      return "Dictation recording, using the system default microphone";
+    default:
+      return unreachable(input);
+  }
+}
+
+function controlOffered(
+  state: SpeechDictationState,
+  retainedNotice: AgentDictationNoticeView | null,
+): boolean {
+  switch (state.kind) {
+    case "unavailable":
+      return retainedNotice !== null;
+    case "idle":
+    case "starting":
+    case "recording":
+    case "finishing":
+    case "failed":
+      return true;
+    default:
+      return unreachable(state);
+  }
+}
+
+function retainedNoticeAfter(
+  aftermath: AgentDictationAftermath,
+  next: SpeechDictationState,
+): AgentDictationNoticeView | null {
+  if (isSpeechDictationActive(next)) return null;
+  if (next.kind !== "unavailable" || aftermath.origin === "inherited") return aftermath.notice;
+  return unsettledNotice(aftermath.state, next.reason) ?? aftermath.notice;
+}
+
+function unsettledNotice(
+  previous: SpeechDictationState,
+  reason: SpeechDictationUnavailableReason,
+): AgentDictationNoticeView | null {
+  switch (previous.kind) {
+    case "starting":
+    case "recording":
+    case "finishing":
+      return interruptionNotice(reason);
+    case "failed":
+      return failureNotice(previous.reason);
+    case "idle":
+    case "unavailable":
+      return null;
+    default:
+      return unreachable(previous);
+  }
+}
+
+function interruptionNotice(reason: SpeechDictationUnavailableReason): AgentDictationNoticeView {
+  switch (reason) {
+    case "no-speech-server":
+      return failureNotice("server-disconnected");
+    case "capture-unsupported":
+      return { kind: "unavailable", message: agentDictationUnavailableReason(reason) };
+    default:
+      return unreachable(reason);
+  }
+}
+
+function failureNotice(reason: SpeechDictationFailureReason): AgentDictationNoticeView {
+  return { kind: "failed", message: agentDictationFailureMessage(reason) };
 }
 
 function unavailableButton(reason: string): AgentDictationButtonView {

@@ -138,20 +138,16 @@ describe("agent workbench dictation wiring", () => {
       "the speech server is disconnected",
       [{ id: "a", connected: false, speechTranscription: true }],
     ],
-  ] as const)("keeps dictation unavailable with the reason when %s", async (_name, servers) => {
+  ] as const)("shows no microphone when %s", async (_name, servers) => {
     await mount(servers);
     await act(() => flushAsync(40));
 
-    expect(microphone()?.disabled).toBe(false);
-    expect(microphone()?.getAttribute("aria-disabled")).toBe("true");
-    expect(microphone()?.getAttribute("title")).toBe(
-      "Dictation needs a connected server with speech transcription.",
-    );
-    act(() => microphone()?.click());
+    expect(prompt()).not.toBeNull();
+    expect(microphone()).toBeNull();
+    expect(host.querySelector('button[aria-label="Dictation unavailable"]')).toBeNull();
+    expect(host.querySelector(".agent-dictation button")).toBeNull();
+    expect(host.querySelector("[data-dictation-notice]")).toBeNull();
     expect(audio.getUserMedia).not.toHaveBeenCalled();
-    expect(host.querySelector('[data-dictation-notice="unavailable"] span')?.textContent).toBe(
-      "Dictation needs a connected server with speech transcription.",
-    );
   });
 
   it("stops recording when the composer is hidden and still inserts what was heard", async () => {

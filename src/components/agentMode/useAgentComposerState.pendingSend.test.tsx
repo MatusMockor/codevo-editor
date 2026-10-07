@@ -269,6 +269,97 @@ describe("composer optimistic send", () => {
     },
   );
 
+  it.each(["new", "followUp"] as const)(
+    "shows the %s message at once while its photo is still being prepared",
+    async (kind) => {
+      const preparation = deferred<boolean>();
+      prepareGate = preparation;
+      const send = deferred<boolean>();
+      const startThread = vi.fn(async () =>
+        (await send.promise) ? { threadId: "agt-new" } : null,
+      );
+      const sendFollowUp = vi.fn(() => send.promise);
+      render(followUpSurface([surfaceThreadView()], sendFollowUp, { startThread }));
+      if (kind === "followUp") act(() => current().navigation.selectThread("agt-1"));
+      await attachImage();
+      act(() => current().composer.composerProps.onPromptChange("Look"));
+
+      act(() =>
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        }),
+      );
+
+      const optimistic = current().composer.pendingSend;
+      expect(optimistic).toMatchObject({
+        prompt: "Look",
+        status: "sending",
+        attachments: [{ previewUrl: "blob:preview-1", view: { kind: "image" } }],
+      });
+      expect(startThread).not.toHaveBeenCalled();
+      expect(sendFollowUp).not.toHaveBeenCalled();
+
+      await act(async () => preparation.resolve(true));
+
+      expect(current().composer.pendingSend).toBe(optimistic);
+      expect(kind === "new" ? startThread : sendFollowUp).toHaveBeenCalledOnce();
+
+      await act(async () => send.resolve(true));
+
+      expect(current().composer.pendingSend).toBeNull();
+    },
+  );
+
+  it.each(["refused", "throws"] as const)(
+    "withdraws the message without calling it failed when preparation %s",
+    async (failure) => {
+      const preparation = deferred<boolean>();
+      prepareGate = preparation;
+      prepareThrows = failure === "throws";
+      const startThread = vi.fn(async () => ({ threadId: "agt-new" }));
+      render(threadsSurfaceFixture({ startThread }));
+      await attachImage();
+      act(() => current().composer.composerProps.onPromptChange("Original photo description"));
+      act(() =>
+        current().composer.composerProps.onSubmit({
+          launch: defaultAgentLaunchOptions("claudeCode"),
+          dangerousLaunchConfirmed: false,
+        }),
+      );
+      expect(current().composer.pendingSend?.status).toBe("sending");
+
+      await act(async () => preparation.resolve(failure === "throws"));
+
+      expect(startThread).not.toHaveBeenCalled();
+      expect(current().composer.pendingSend).toBeNull();
+      expect(current().composer.composerProps.prompt).toBe("Original photo description");
+      expect(current().composer.composerProps.attachments?.drafts).toMatchObject([
+        { draftId: "draft-1", previewUrl: "blob:preview-1" },
+      ]);
+    },
+  );
+
+  it("carries the launch provider on a new thread's message", async () => {
+    const start = deferred<AgentThreadStartResult | null>();
+    render(threadsSurfaceFixture({ startThread: vi.fn(() => start.promise) }));
+    act(() => current().composer.composerProps.onPromptChange("Build it"));
+
+    await act(async () => {
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("codex"),
+        dangerousLaunchConfirmed: false,
+      });
+    });
+
+    expect(current().composer.pendingSend?.target).toEqual({
+      kind: "new",
+      projectRootKey: SURFACE_FIXTURE_ROOT,
+      provider: "codex",
+    });
+    await act(async () => start.resolve(null));
+  });
+
   it.each(["refused", "throws"] as const)(
     "restores the exact photo and merges new text when preparation %s",
     async (failure) => {
@@ -324,6 +415,7 @@ describe("composer optimistic send", () => {
     await act(async () => preparation.resolve(true));
 
     expect(sendFollowUp).not.toHaveBeenCalled();
+    expect(current().composer.pendingSend).toBeNull();
     expect(current().composer.composerProps.attachments?.drafts).toHaveLength(1);
     expect(revoked).toEqual([]);
   });
@@ -351,6 +443,7 @@ describe("composer optimistic send", () => {
       await act(async () => preparation.resolve(true));
 
       expect(startThread).not.toHaveBeenCalled();
+      expect(current().composer.pendingSend).toBeNull();
       expect(current().composer.composerProps.prompt).toBe("Original photo description");
       expect(current().composer.composerProps.attachments?.drafts).toEqual([]);
       expect(revoked).toEqual(["blob:preview-1"]);
@@ -375,6 +468,7 @@ describe("composer optimistic send", () => {
     await act(async () => preparation.resolve(true));
 
     expect(startThread).not.toHaveBeenCalled();
+    expect(current().composer.pendingSend).toBeNull();
     expect(current().composer.composerProps.prompt).toBe("Original");
     expect(current().composer.composerProps.attachments?.drafts).toEqual([]);
     expect(released).toEqual([IMAGE_ID]);
@@ -525,7 +619,7 @@ describe("composer optimistic send", () => {
     expect(current().composer.pendingSend).toMatchObject({
       prompt: "Build it",
       status: "sending",
-      target: { kind: "new", projectRootKey: SURFACE_FIXTURE_ROOT },
+      target: { kind: "new", projectRootKey: SURFACE_FIXTURE_ROOT, provider: "claudeCode" },
     });
     expect(current().composer.composerProps.attachments?.drafts).toEqual([]);
 

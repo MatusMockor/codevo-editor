@@ -23,11 +23,19 @@ import { useLatest } from "../../../ui/foundation/useLatest";
 import { agentEscapeIsUnclaimed, agentSurfaceIsInteractive } from "../agentConversationEscape";
 import { useAgentDictationEnvironment } from "./agentDictationContext";
 import {
+  agentDictationControlView,
   agentDictationDisabledReason,
+  agentDictationExplanationText,
   agentDictationNoticeView,
   agentDictationSubmitBlockedReason,
   agentDictationToggleAction,
+  dismissAgentDictationAftermath,
+  initialAgentDictationAftermath,
+  observeAgentDictationAftermath,
+  type AgentDictationControlView,
+  type AgentDictationExplanation,
   type AgentDictationNoticeView,
+  type AgentDictationStartRefusal,
 } from "./agentDictationPresentation";
 
 export interface AgentComposerDictationOptions {
@@ -43,7 +51,7 @@ export type AgentComposerDictation = Readonly<{
   available: boolean;
   state: SpeechDictationState;
   meter: SpeechDictationMeterStore;
-  blockedReason: string | null;
+  control: AgentDictationControlView;
   notice: AgentDictationNoticeView | null;
   submitBlockedReason: string | null;
   toggle: () => void;
@@ -94,16 +102,32 @@ export function useAgentComposerDictation(
   });
   const available = environment !== null;
   const visible = environment?.visible ?? false;
-  const usable = available && visible && blockedReason === null && !suspended;
+  const presentable = available && visible && !suspended;
+  const usable = presentable && blockedReason === null;
   const active = isSpeechDictationActive(state);
   const action = usable ? agentDictationToggleAction(state) : "none";
   const disabledReason = available ? agentDictationDisabledReason(state, blockedReason) : null;
-  const [explained, setExplained] = useState<string | null>(null);
-  if (explained !== null && explained !== disabledReason) setExplained(null);
-  const explainedReason = explained === disabledReason ? explained : null;
+  const explains = presentable && disabledReason !== null;
+  const [explanation, setExplanation] = useState<AgentDictationExplanation | null>(null);
+  const explainedReason = agentDictationExplanationText(explanation, {
+    ownerKey,
+    disabledReason,
+    action,
+  });
+  if (explanation !== null && explainedReason === null) setExplanation(null);
+  const [observedAftermath, setAftermath] = useState(() =>
+    initialAgentDictationAftermath(ownerKey, state),
+  );
+  const aftermath = observeAgentDictationAftermath(observedAftermath, ownerKey, state);
+  if (aftermath !== observedAftermath) setAftermath(aftermath);
+  const retainedNotice = aftermath.notice;
   const notice = useMemo(
-    () => (available ? agentDictationNoticeView(state, explainedReason) : null),
-    [available, state, explainedReason],
+    () => (available ? agentDictationNoticeView(state, explainedReason, retainedNotice) : null),
+    [available, state, explainedReason, retainedNotice],
+  );
+  const control = useMemo(
+    () => agentDictationControlView(state, blockedReason, retainedNotice),
+    [state, blockedReason, retainedNotice],
   );
 
   useEffect(() => {
@@ -118,34 +142,40 @@ export function useAgentComposerDictation(
     return () => document.removeEventListener("visibilitychange", stopWhenHidden);
   }, [usable, stop]);
 
-  const startable = useCallback((): boolean => {
+  const startRefusal = useCallback((): AgentDictationStartRefusal | null => {
+    if (document.visibilityState === "hidden") return "window-hidden";
     const textarea = textareaRef.current;
-    if (textarea === null || document.visibilityState === "hidden") return false;
-    return agentSurfaceIsInteractive(textarea);
+    if (textarea === null || !agentSurfaceIsInteractive(textarea)) return "prompt-unavailable";
+    return null;
   }, [textareaRef]);
 
   const toggle = useCallback((): void => {
     if (disabledReason !== null) {
-      setExplained(disabledReason);
+      setExplanation({ kind: "disabled", reason: disabledReason });
       return;
     }
     if (action === "none") return;
-    if (action === "start" && !startable()) return;
+    const refusal = action === "start" ? startRefusal() : null;
+    if (refusal !== null) {
+      setExplanation({ kind: "start-refused", ownerKey, refusal });
+      return;
+    }
     textareaRef.current?.focus({ preventScroll: true });
     if (action === "start") {
       start();
       return;
     }
     stop();
-  }, [action, disabledReason, start, startable, stop, textareaRef]);
+  }, [action, disabledReason, ownerKey, start, startRefusal, stop, textareaRef]);
 
   const dismiss = useCallback((): void => {
-    if (explainedReason !== null) {
-      setExplained(null);
+    if (explainedReason !== null || retainedNotice !== null) {
+      setExplanation(null);
+      setAftermath(dismissAgentDictationAftermath);
       return;
     }
     cancel();
-  }, [cancel, explainedReason]);
+  }, [cancel, explainedReason, retainedNotice]);
 
   const cancelOnEscape = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
@@ -171,28 +201,31 @@ export function useAgentComposerDictation(
   }, [active, cancel, visible]);
 
   const commands = environment?.commands ?? null;
-  const command = useLatest({ action, toggle });
+  const command = useLatest({ action, explains, toggle });
   useEffect(() => {
     if (commands === null) return;
     return commands.bindDictation({
-      available: () =>
-        command.current.action === "stop" || (command.current.action === "start" && startable()),
+      available: () => {
+        if (command.current.action === "stop") return true;
+        if (command.current.action !== "start" && !command.current.explains) return false;
+        return startRefusal() === null;
+      },
       toggle: () => command.current.toggle(),
     });
-  }, [commands, command, startable]);
+  }, [commands, command, startRefusal]);
 
   return useMemo(
     () => ({
       available,
       state,
       meter,
-      blockedReason,
+      control,
       notice,
       submitBlockedReason: available ? agentDictationSubmitBlockedReason(state) : null,
       toggle,
       dismiss,
       cancelOnEscape,
     }),
-    [available, state, meter, blockedReason, notice, toggle, dismiss, cancelOnEscape],
+    [available, state, meter, control, notice, toggle, dismiss, cancelOnEscape],
   );
 }

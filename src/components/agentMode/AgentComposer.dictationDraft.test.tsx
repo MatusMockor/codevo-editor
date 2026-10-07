@@ -292,14 +292,42 @@ describe("AgentComposer dictation shortcut", () => {
     expect(registry.get("agent.toggleDictation")?.isEnabled(context)).toBe(true);
   });
 
-  it("keeps the command disabled while dictation is unavailable", () => {
-    const { bridge, registry, press } = workbench();
+  it("explains through the keymap chord why dictation cannot start while the microphone is hidden", () => {
+    const reason = "Dictation needs a connected server with speech transcription.";
+    const { bridge, registry, press, ran } = workbench();
     const composer = mountDictationComposer({ commands: bridge, serverIds: [] });
+    act(() => composer.prompt().focus());
 
-    expect(registry.get("agent.toggleDictation")?.isEnabled(context)).toBe(false);
-    press();
+    expect(composer.microphone()).toBeNull();
+    expect(registry.get("agent.toggleDictation")?.isEnabled(context)).toBe(true);
+    expect(press()).toBe(true);
 
+    expect(ran).toEqual(["agent.toggleDictation"]);
     expect(composer.state()).toBe("unavailable");
+    expect(composer.audio?.getUserMedia).not.toHaveBeenCalled();
+    expect(composer.noticeKind()).toBe("unavailable");
+    expect(composer.notice()).toBe(reason);
+    expect(composer.status()).toBe(reason);
+    expect(composer.microphone()).toBeNull();
+    expect(document.activeElement).toBe(composer.prompt());
+
+    act(() => composer.button("Dismiss dictation message")?.click());
+    expect(composer.notice()).toBeNull();
+
+    composer.render({ serverIds: ["server-a"] });
+    expect(composer.notice()).toBeNull();
+    expect(composer.microphone()?.getAttribute("aria-label")).toBe("Start dictation");
+  });
+
+  it("explains through the keymap chord that this build cannot capture the microphone", () => {
+    const { bridge, press } = workbench();
+    const composer = mountDictationComposer({ commands: bridge, audio: false });
+
+    expect(composer.microphone()).toBeNull();
+    expect(press()).toBe(true);
+
+    expect(composer.notice()).toBe("Microphone capture is not available in this build.");
+    expect(composer.microphone()).toBeNull();
   });
 
   it("releases the command when the composer unmounts", () => {

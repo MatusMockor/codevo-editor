@@ -12,7 +12,9 @@ import {
   type SpeechDictationEvent,
   type SpeechDictationFailureReason,
   type SpeechDictationFinishOutcome,
+  type SpeechDictationInput,
   type SpeechDictationState,
+  type SpeechDictationTranscriptOutcome,
   type SpeechLanguage,
 } from "../domain/speechDictation";
 import {
@@ -67,6 +69,8 @@ interface Session {
   segmenter: SpeechSegmenterState;
   capturedSamples: number;
   framesReceived: number;
+  segmentsRequested: number;
+  transcriptsDelivered: number;
   transcribing: boolean;
   sessionTimer: Timer | null;
   stallTimer: Timer | null;
@@ -183,6 +187,8 @@ export class SpeechDictationCoordinator {
       segmenter: createSpeechSegmenter(),
       capturedSamples: 0,
       framesReceived: 0,
+      segmentsRequested: 0,
+      transcriptsDelivered: 0,
       transcribing: false,
       sessionTimer: null,
       stallTimer: null,
@@ -238,7 +244,7 @@ export class SpeechDictationCoordinator {
       SPEECH_MAX_SESSION_MS,
     );
     this.watchStall(session, session.framesReceived);
-    this.dispatch({ type: "capture-ready" });
+    this.dispatch({ type: "capture-ready", input: captureInput(outcome) });
   }
 
   private async startCapture(session: Session): Promise<AudioCaptureStartOutcome> {
@@ -353,6 +359,7 @@ export class SpeechDictationCoordinator {
     const pcm = session.queue.shift();
     if (pcm === undefined) return;
     session.transcribing = true;
+    session.segmentsRequested += 1;
     void this.transcribe(session, pcm);
   }
 
@@ -427,6 +434,7 @@ export class SpeechDictationCoordinator {
     if (transcript.length === 0 || binding === null) return;
     try {
       binding.onTranscript(transcript);
+      session.transcriptsDelivered += 1;
     } catch {
       if (this.isCurrent(session)) this.failSession(session, "transcription-failed");
     }
@@ -436,7 +444,7 @@ export class SpeechDictationCoordinator {
     if (!this.isCurrent(session) || this.state.kind !== "finishing") return;
     if (session.transcribing || session.queue.length > 0) return;
     this.closeSession(session);
-    this.dispatch({ type: "drained" });
+    this.dispatch({ type: "drained", transcript: transcriptOutcome(session) });
   }
 
   private dispatch(event: SpeechDictationEvent): void {
@@ -457,6 +465,19 @@ function stopQuietly(capture: AudioCaptureHandle): void {
 
 function elapsedMs(session: Session): number {
   return Math.floor((session.capturedSamples * 1000) / SPEECH_SAMPLE_RATE);
+}
+
+function captureInput(
+  outcome: Extract<AudioCaptureStartOutcome, { kind: "started" }>,
+): SpeechDictationInput {
+  if (outcome.inputFallback === "system-default") return "system-default";
+  return "selected";
+}
+
+function transcriptOutcome(session: Session): SpeechDictationTranscriptOutcome {
+  if (session.transcriptsDelivered > 0) return "delivered";
+  if (session.segmentsRequested > 0) return "empty";
+  return "no-speech";
 }
 
 function startFailureEvent(

@@ -130,6 +130,7 @@ describe("settings registry", () => {
       "agents.checkCliUpdates",
       "agents.threadNotifications",
       "agents.dictationLanguage",
+      "agents.dictationMicrophone",
       "agents.workingSection",
     ]);
   });

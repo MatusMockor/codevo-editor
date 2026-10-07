@@ -3,6 +3,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { sharedAgentMarkdownDocumentCache } from "../../application/agentMarkdownDocumentCache";
+import type { AgentMarkdownViewport } from "../../application/agentMarkdownViewport";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { DeferredFollowUp } from "../../application/agentDeferredFollowUps";
 import {
@@ -13,6 +15,7 @@ import {
   type AgentTurnEvent,
   type AgentTurnStatus,
 } from "../../domain/agentThread";
+import { findInThread } from "../../domain/agentThreadSearch";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
@@ -21,6 +24,23 @@ import type { AgentLocalFileLinkPort } from "./agentMarkdownLinks";
 
 const ROOT = "/workspace/app";
 const NOW = 1_700_000_600_000;
+const SETTLED: AgentTurnStatus = { kind: "exited", exitCode: 0 };
+const RECOVERED_ANSWER = [
+  "**Done** with `parser.ts`.",
+  "",
+  "- first step",
+  "- all done",
+  "",
+  "| File | Lines |",
+  "|---|---|",
+  "| a.ts | 12 |",
+].join("\n");
+const OFF_SCREEN: AgentMarkdownViewport = {
+  contains: () => false,
+  observe: () => () => undefined,
+  remeasure: () => undefined,
+  dispose: () => undefined,
+};
 
 describe("AgentThreadSession transcript", () => {
   let host: HTMLDivElement;
@@ -225,6 +245,115 @@ describe("AgentThreadSession transcript", () => {
     });
     expect(host.querySelector(".agent-md__code-colorized")).toBeNull();
     expect(host.querySelector(".agent-md__code-body mark")?.textContent).toBe("const");
+  });
+
+  describe("a final answer that survives only in the result", () => {
+    const recovered: ReadonlyArray<AgentTurnEvent> = [
+      { kind: "toolCall", toolId: "t-1", name: "Read", inputSummary: "src/parser.ts" },
+      { kind: "toolResult", toolId: "t-1", outputSummary: "42 lines", isError: false },
+      { kind: "result", text: RECOVERED_ANSWER, isError: false, usage: null },
+    ];
+
+    it("renders it as formatted markdown that reads like a normal answer", () => {
+      render({
+        textClipboard: { canWriteText: () => true, writeText: async () => undefined },
+        thread: view([turn("t1", "Fix it", SETTLED, recovered)]),
+      });
+
+      const answers = [...host.querySelectorAll<HTMLElement>(".agent-text")];
+      expect(answers).toHaveLength(1);
+      const answer = answers[0];
+      expect(answer?.getAttribute("data-agent-markdown")).toBe("rendered");
+      expect(answer?.querySelector("strong")?.textContent).toBe("Done");
+      expect(answer?.querySelector("code")?.textContent).toBe("parser.ts");
+      expect([...(answer?.querySelectorAll("li") ?? [])].map((item) => item.textContent)).toEqual([
+        "first step",
+        "all done",
+      ]);
+      expect(answer?.querySelector("table td")?.textContent).toBe("a.ts");
+      expect(answer?.textContent).not.toContain("**");
+      expect(answer?.textContent).not.toContain("|---|");
+      expect(host.querySelector(".agent-finale")).toBeNull();
+      expect(host.querySelector(".agent-microlabel")).toBeNull();
+      expect(host.querySelectorAll('[data-agent-event="e2"]')).toHaveLength(1);
+      expect(answer?.getAttribute("data-agent-event")).toBe("e2");
+      expect(host.querySelectorAll('button[aria-label="Copy AI response"]')).toHaveLength(1);
+    });
+
+    it("lands the current find hit on the occurrence the thread search counted", () => {
+      const thread = view([turn("t1", "Fix it", SETTLED, recovered)]);
+      const findHits = findInThread(thread.thread, "done");
+      expect(findHits.map((hit) => (hit.scope === "turn" ? hit.eventIndex : null))).toEqual([2, 2]);
+
+      render({ thread, findQuery: "done", findHits, findHitIndex: 1 });
+
+      const answer = host.querySelector<HTMLElement>(".agent-text");
+      expect(answer?.getAttribute("data-agent-markdown")).toBe("rendered");
+      const marks = [...(answer?.querySelectorAll("mark") ?? [])];
+      expect(marks.map((mark) => mark.textContent)).toEqual(["Done", "done"]);
+      expect(marks[0]?.closest("strong")).not.toBeNull();
+      const current = [...host.querySelectorAll(".agent-find__hit--current")];
+      expect(current).toHaveLength(1);
+      expect(current[0]).toBe(marks[1]);
+      expect(current[0]?.closest("li")?.textContent).toBe("all done");
+    });
+
+    it("parses a result of a running turn at once as a settled document", () => {
+      sharedAgentMarkdownDocumentCache().clear();
+      render({
+        markdownViewport: OFF_SCREEN,
+        thread: view([turn("t1", "Fix it", { kind: "running" }, recovered)]),
+      });
+
+      const answer = host.querySelector<HTMLElement>(".agent-text");
+      expect(answer?.getAttribute("data-agent-markdown")).toBe("rendered");
+      expect(answer?.querySelector("table")).not.toBeNull();
+      expect(sharedAgentMarkdownDocumentCache().sourceBytes()).toBeGreaterThan(0);
+    });
+
+    it("defers an off-screen result of a reopened thread like any other answer", () => {
+      render({
+        markdownViewport: OFF_SCREEN,
+        thread: view([turn("t1", "Fix it", SETTLED, recovered)]),
+      });
+
+      const answer = host.querySelector<HTMLElement>(".agent-text");
+      expect(answer?.getAttribute("data-agent-markdown")).toBe("deferred");
+      expect(answer?.querySelector("table")).toBeNull();
+    });
+
+    it("renders a result that repeats the visible answer only once", () => {
+      render({
+        thread: view([
+          turn("t1", "Fix it", SETTLED, [
+            { kind: "assistantText", text: RECOVERED_ANSWER },
+            { kind: "result", text: `${RECOVERED_ANSWER}\n`, isError: false, usage: null },
+          ]),
+        ]),
+      });
+
+      expect(host.querySelectorAll(".agent-text")).toHaveLength(1);
+      expect(host.querySelectorAll("table")).toHaveLength(1);
+      expect(host.querySelector(".agent-finale")).toBeNull();
+    });
+
+    it("keeps a failed result as plain text in the failed presentation", () => {
+      const failure = "**Build failed** in `parser.ts`";
+      render({
+        thread: view([
+          turn("t1", "Fix it", { kind: "exited", exitCode: 1 }, [
+            { kind: "result", text: failure, isError: true, usage: null },
+          ]),
+        ]),
+      });
+
+      const block = host.querySelector<HTMLElement>("[data-agent-event].agent-finale--bad");
+      expect(block?.querySelector(".agent-microlabel--bad")?.textContent).toBe("run failed");
+      expect(block?.querySelector(".agent-finale__body")?.textContent).toBe(failure);
+      expect(block?.querySelector("strong")).toBeNull();
+      expect(block?.querySelector("code")).toBeNull();
+      expect(host.querySelector(".agent-text")).toBeNull();
+    });
   });
 
   function jumpButton(): HTMLButtonElement | null {

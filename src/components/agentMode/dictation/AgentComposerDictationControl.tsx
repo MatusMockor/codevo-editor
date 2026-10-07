@@ -6,9 +6,10 @@ import { Spinner } from "../../../ui/foundation/Spinner";
 import { AgentDictationMeter } from "./AgentDictationMeter";
 import {
   AGENT_DICTATION_TRANSCRIBING_LABEL,
-  agentDictationButtonView,
+  agentDictationInputNote,
   agentDictationStatusText,
   type AgentDictationButtonGlyph,
+  type AgentDictationButtonView,
 } from "./agentDictationPresentation";
 import type { AgentComposerDictation } from "./useAgentComposerDictation";
 import "./agentDictation.css";
@@ -18,22 +19,46 @@ export interface AgentComposerDictationControlProps {
 }
 
 export function AgentComposerDictationControl({ dictation }: AgentComposerDictationControlProps) {
-  const reasonId = useId();
   if (!dictation.available) return null;
-  const { state, notice } = dictation;
-  const view = agentDictationButtonView(state, dictation.blockedReason);
-  const unavailable = view.unavailableReason !== null;
+  const { control, state, notice } = dictation;
   return (
-    <span className="agent-dictation" data-dictation-state={state.kind}>
+    <span
+      className={cx("agent-dictation", control.kind === "hidden" && "agent-dictation--announcer")}
+      data-dictation-state={state.kind}
+    >
       <span aria-live="polite" className="agent-visually-hidden" role="status">
         {notice?.message ?? agentDictationStatusText(state)}
       </span>
+      {control.kind === "shown" && (
+        <AgentDictationMicrophone dictation={dictation} view={control.button} />
+      )}
+    </span>
+  );
+}
+
+interface AgentDictationMicrophoneProps {
+  readonly dictation: AgentComposerDictation;
+  readonly view: AgentDictationButtonView;
+}
+
+function AgentDictationMicrophone({ dictation, view }: AgentDictationMicrophoneProps) {
+  const reasonId = useId();
+  const { state } = dictation;
+  const unavailable = view.unavailableReason !== null;
+  const inputNote = agentDictationInputNote(state);
+  return (
+    <>
       {unavailable && (
         <span className="agent-visually-hidden" id={reasonId}>
           {view.unavailableReason}
         </span>
       )}
       {state.kind === "recording" && <AgentDictationMeter meter={dictation.meter} />}
+      {inputNote !== null && (
+        <span className="agent-dictation__note" data-dictation-input="system-default">
+          {inputNote}
+        </span>
+      )}
       {state.kind === "finishing" && (
         <span className="agent-dictation__note">{AGENT_DICTATION_TRANSCRIBING_LABEL}</span>
       )}
@@ -50,7 +75,7 @@ export function AgentComposerDictationControl({ dictation }: AgentComposerDictat
         size="round"
         title={view.title}
       />
-    </span>
+    </>
   );
 }
 

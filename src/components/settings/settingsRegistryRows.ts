@@ -312,6 +312,13 @@ export const SETTINGS_ROW_TABLE = [
     ["agent", "dictation", "voice", "speech", "microphone", "language", "transcription"],
   ),
   row(
+    "agents.dictationMicrophone",
+    "agents",
+    "Dictation microphone",
+    "Microphone used when dictating into the composer.",
+    ["agent", "dictation", "voice", "speech", "microphone", "mic", "input", "audio", "device"],
+  ),
+  row(
     "agents.workingSection",
     "agents",
     "Working section",

@@ -37,6 +37,10 @@ import { AgentProviderErrorHint, AgentTurnItemView } from "./AgentTurnItemView";
 import { AgentTurnOriginLabel, AgentTurnPrompt } from "./AgentTurnParts";
 import { AgentTurnMeta } from "./conversation/AgentTurnMeta";
 import { AgentLiveRow } from "./conversation/AgentLiveRow";
+import {
+  AgentCodexStartingNote,
+  AgentWaitingForOutputNote,
+} from "./conversation/AgentTurnAwaitingOutput";
 import { AgentTurnWork } from "./conversation/AgentTurnWork";
 import { releaseFocusAfterPointerPress } from "./conversation/releasePointerFocus";
 import {
@@ -337,9 +341,7 @@ export const AgentTurnView = memo(function AgentTurnView({
 
         <div className="agent-answer">
           {turn.status.kind === "pending" && provider === "codex" && !compacting && (
-            <p className="agent-note" role="status">
-              Starting Codex…
-            </p>
+            <AgentCodexStartingNote />
           )}
           <div className="agent-turn__events">
             <AgentTurnEarlierControl
@@ -457,10 +459,7 @@ export const AgentTurnView = memo(function AgentTurnView({
               foregroundRunning &&
               compaction.kind === "idle" &&
               !(turn.status.kind === "pending" && provider === "codex") && (
-                <p className="agent-note">
-                  Waiting for output…
-                  <span aria-hidden="true" className="agent-well__caret" />
-                </p>
+                <AgentWaitingForOutputNote />
               )}
           </div>
 

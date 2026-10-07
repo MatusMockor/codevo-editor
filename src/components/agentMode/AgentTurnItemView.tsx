@@ -96,6 +96,18 @@ export function AgentTurnItemView({
         return <AgentQuestionToolRow attachmentImages={attachmentImages} item={item} />;
       return <AgentToolRow item={item} />;
     case "result":
+      if (isAnswerResult(item))
+        return (
+          <AgentAssistantText
+            eventKey={item.key}
+            current={highlight?.current ?? null}
+            prose={prose}
+            query={highlight?.query ?? ""}
+            stream={completedProseStream(stream)}
+            text={item.text}
+            textClipboard={textClipboard}
+          />
+        );
       return (
         <AgentResultItem
           errorContext={errorContext}
@@ -111,6 +123,16 @@ export function AgentTurnItemView({
     default:
       return unsupportedItem(item);
   }
+}
+
+function isAnswerResult(item: Extract<AgentTurnItem, { kind: "result" }>): boolean {
+  if (item.isError) return false;
+  return item.text.trim() !== "";
+}
+
+function completedProseStream(stream: AgentProseStream): AgentProseStream {
+  if (stream === "streaming") return "streamed";
+  return stream;
 }
 
 function AgentResultItem({

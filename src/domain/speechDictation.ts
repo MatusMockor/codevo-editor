@@ -14,8 +14,13 @@ export type SpeechDictationFailureReason =
   | "server-busy"
   | "transcription-failed"
   | "server-disconnected"
-  | "limit-reached";
+  | "limit-reached"
+  | "no-speech-detected"
+  | "no-speech-on-system-default"
+  | "transcript-empty";
+export type SpeechDictationInput = "selected" | "system-default";
 export type SpeechDictationFinishOutcome = "completed" | "limit-reached" | "microphone-failed";
+export type SpeechDictationTranscriptOutcome = "delivered" | "no-speech" | "empty";
 export type SpeechDictationAvailability =
   | Readonly<{ kind: "available" }>
   | Readonly<{ kind: "unavailable"; reason: SpeechDictationUnavailableReason }>;
@@ -24,16 +29,22 @@ export type SpeechDictationState =
   | Readonly<{ kind: "unavailable"; reason: SpeechDictationUnavailableReason }>
   | Readonly<{ kind: "idle" }>
   | Readonly<{ kind: "starting" }>
-  | Readonly<{ kind: "recording" }>
-  | Readonly<{ kind: "finishing"; outcome: SpeechDictationFinishOutcome }>
+  | Readonly<{ kind: "recording"; input: SpeechDictationInput }>
+  | SpeechDictationFinishingState
   | Readonly<{ kind: "failed"; reason: SpeechDictationFailureReason }>;
+
+export type SpeechDictationFinishingState = Readonly<{
+  kind: "finishing";
+  outcome: SpeechDictationFinishOutcome;
+  input: SpeechDictationInput;
+}>;
 
 export type SpeechDictationEvent =
   | Readonly<{ type: "availability"; availability: SpeechDictationAvailability }>
   | Readonly<{ type: "start" }>
-  | Readonly<{ type: "capture-ready" }>
+  | Readonly<{ type: "capture-ready"; input: SpeechDictationInput }>
   | Readonly<{ type: "capture-ended"; outcome: SpeechDictationFinishOutcome }>
-  | Readonly<{ type: "drained" }>
+  | Readonly<{ type: "drained"; transcript: SpeechDictationTranscriptOutcome }>
   | Readonly<{ type: "fail"; reason: SpeechDictationFailureReason }>
   | Readonly<{ type: "reset" }>;
 
@@ -92,11 +103,11 @@ export function reduceSpeechDictation(
     case "start":
       return canStartSpeechDictation(state) ? { kind: "starting" } : state;
     case "capture-ready":
-      return state.kind === "starting" ? { kind: "recording" } : state;
+      return state.kind === "starting" ? { kind: "recording", input: event.input } : state;
     case "capture-ended":
       return endCapture(state, event.outcome);
     case "drained":
-      return state.kind === "finishing" ? settledState(state.outcome) : state;
+      return state.kind === "finishing" ? drainedState(state, event.transcript) : state;
     case "fail":
       return isSpeechDictationActive(state) ? { kind: "failed", reason: event.reason } : state;
     case "reset":
@@ -128,7 +139,7 @@ function endCapture(
   outcome: SpeechDictationFinishOutcome,
 ): SpeechDictationState {
   if (state.kind === "starting") return settledState(outcome);
-  if (state.kind === "recording") return { kind: "finishing", outcome };
+  if (state.kind === "recording") return { kind: "finishing", outcome, input: state.input };
   return state;
 }
 
@@ -142,6 +153,34 @@ function settledState(outcome: SpeechDictationFinishOutcome): SpeechDictationSta
       return { kind: "failed", reason: "microphone-failed" };
     default:
       return unreachable(outcome);
+  }
+}
+
+function drainedState(
+  finishing: SpeechDictationFinishingState,
+  transcript: SpeechDictationTranscriptOutcome,
+): SpeechDictationState {
+  if (finishing.outcome !== "completed") return settledState(finishing.outcome);
+  switch (transcript) {
+    case "delivered":
+      return IDLE;
+    case "no-speech":
+      return { kind: "failed", reason: noSpeechReason(finishing.input) };
+    case "empty":
+      return { kind: "failed", reason: "transcript-empty" };
+    default:
+      return unreachable(transcript);
+  }
+}
+
+function noSpeechReason(input: SpeechDictationInput): SpeechDictationFailureReason {
+  switch (input) {
+    case "selected":
+      return "no-speech-detected";
+    case "system-default":
+      return "no-speech-on-system-default";
+    default:
+      return unreachable(input);
   }
 }
 
