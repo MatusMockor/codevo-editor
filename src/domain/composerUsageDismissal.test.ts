@@ -29,6 +29,15 @@ describe("composerUsageDismissalKey", () => {
     );
   });
 
+  it("uses one identity for comma and at separators and live resets", () => {
+    const comma = window({ resetsAtEpochMs: null, resetsLabel: "Oct 6, 1:39pm (UTC)" });
+    const at = window({ resetsAtEpochMs: null, resetsLabel: "Oct 6 at 1:39pm (UTC)" });
+    const live = window({ resetsAtEpochMs: RESET + 27_000 });
+    const key = composerUsageDismissalKey("claudeCode", live, OBSERVED);
+    expect(composerUsageDismissalKey("claudeCode", comma, OBSERVED)).toBe(key);
+    expect(composerUsageDismissalKey("claudeCode", at, OBSERVED)).toBe(key);
+  });
+
   it("keeps different reset minutes and providers distinct", () => {
     const key = composerUsageDismissalKey("claudeCode", window(), OBSERVED);
     expect(

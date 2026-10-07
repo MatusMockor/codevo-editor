@@ -8,6 +8,9 @@ describe("claudeUsageResetEpochMs", () => {
     ["Sep 30 at 4:20pm (Europe/Bratislava)", Date.UTC(2026, 8, 30, 14, 20)],
     ["Oct 6 at 8am (Europe/Bratislava)", Date.UTC(2026, 9, 6, 6, 0)],
     ["Oct 6, 2026 at 8am (Europe/Bratislava)", Date.UTC(2026, 9, 6, 6, 0)],
+    ["Oct 7, 7:20pm (Europe/Prague)", Date.UTC(2026, 9, 7, 17, 20)],
+    ["Oct 13, 8am (Europe/Prague)", Date.UTC(2026, 9, 13, 6, 0)],
+    ["Oct 7, 2026, 7:20pm (Europe/Prague)", Date.UTC(2026, 9, 7, 17, 20)],
     ["Dec 1 at 12am (Europe/Bratislava)", Date.UTC(2026, 10, 30, 23, 0)],
     ["Sep 30 at 12pm (UTC)", Date.UTC(2026, 8, 30, 12, 0)],
     ["4:20pm (Europe/Bratislava)", Date.UTC(2026, 8, 30, 14, 20)],
@@ -38,12 +41,23 @@ describe("claudeUsageResetEpochMs", () => {
     "Sep 30 at 4:61pm (UTC)",
     "Sep 30 at 4pm (Mars/Olympus)",
     "Sep 30 at 4pm (UTC) and more",
+    "Sep 31, 8am (UTC)",
+    "Sep 30, 4:61pm (UTC)",
+    "Sep 30, 4pm (Mars/Olympus)",
+    "Sep 30 4pm (UTC)",
   ])("rejects %j", (label) => {
     expect(claudeUsageResetEpochMs(label, NOW)).toBeNull();
   });
 });
 
 describe("claudeUsageUpcomingResetEpochMs", () => {
+  it("reads the comma-separated date emitted by Claude /usage", () => {
+    const fetchedAt = Date.UTC(2026, 9, 7, 12);
+    expect(claudeUsageUpcomingResetEpochMs("Oct 7, 7:20pm (Europe/Prague)", fetchedAt)).toBe(
+      Date.UTC(2026, 9, 7, 17, 20),
+    );
+  });
+
   it("reads a time-only label more than half a day ahead as the next occurrence", () => {
     const noon = Date.UTC(2026, 9, 5, 10, 0);
     expect(claudeUsageUpcomingResetEpochMs("8am (Europe/Bratislava)", noon)).toBe(

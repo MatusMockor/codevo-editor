@@ -157,6 +157,30 @@ describe("useComposerUsageLimitsNotice", () => {
     expect(notice?.visible).toBe(false);
   });
 
+  it("keeps dismissal across comma-separated Claude /usage labels and live resets", () => {
+    const polled = usageWith(NOW, [
+      { usedPercent: 100, resetsLabel: "Sep 25, 4pm (Europe/Prague)" },
+    ]);
+    act(() => root.render(<Harness accountUsage={polled} />));
+    expect(notice?.visible).toBe(true);
+    act(() => notice?.dismiss());
+    act(() =>
+      root.render(
+        <Harness
+          key="live-workspace"
+          accountUsage={usageWith(NOW + 60_000, [
+            { usedPercent: 100, resetsLabel: null, resetsAtEpochMs: NOW + 2 * HOUR + 27_000 },
+          ])}
+        />,
+      ),
+    );
+    expect(notice?.visible).toBe(false);
+    act(() => root.render(<Harness key="editor-reopened" accountUsage={polled} />));
+    expect(notice?.visible).toBe(false);
+    act(() => notice?.show());
+    expect(notice?.visible).toBe(true);
+  });
+
   it("keeps dismissal across workspace A → B → A remounts and permits /usage", () => {
     act(() => root.render(<Harness key="A" accountUsage={usage(95, 1)} />));
     act(() => notice?.dismiss());
@@ -275,6 +299,19 @@ describe("useComposerUsageLimitsNotice", () => {
       ),
     );
     expect(notice?.visible).toBe(true);
+  });
+
+  it("ignores expired comma-separated Claude /usage readings", () => {
+    act(() =>
+      root.render(
+        <Harness
+          accountUsage={usageWith(NOW - HOUR, [
+            { usedPercent: 100, resetsLabel: "Sep 25, 11:30am (UTC)" },
+          ])}
+        />,
+      ),
+    );
+    expect(notice?.visible).toBe(false);
   });
 
   it("lets /usage reopen a dismissed notice for the same snapshot", () => {

@@ -5,7 +5,7 @@ const LABEL_ROUNDING_TOLERANCE_MS = 2 * 60_000;
 const UPCOMING_RESET_HORIZON_MS = 8 * 86_400_000;
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const RESET_LABEL =
-  /^(?:([a-z]{3})[a-z]{0,6}\.? (\d{1,2})(?:, (\d{4}))? at )?(\d{1,2})(?::(\d{2}))? ?(am|pm) \(([A-Za-z0-9_+\-/]{1,64})\)$/iu;
+  /^(?:([a-z]{3})[a-z]{0,6}\.? (\d{1,2})(?:, (\d{4}))?(?: at |, ))?(\d{1,2})(?::(\d{2}))? ?(am|pm) \(([A-Za-z0-9_+\-/]{1,64})\)$/iu;
 
 interface ParsedResetLabel {
   readonly month: number | null;
