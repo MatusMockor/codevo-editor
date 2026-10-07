@@ -230,3 +230,28 @@ pub async fn remote_runner_upload_attachment(
     let state = state.inner().clone();
     blocking(move || state.upload(request)).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::OperationPermit;
+
+    #[test]
+    fn ninth_operation_is_refused_with_the_fixed_busy_text_until_a_permit_drops() {
+        let mut held: Vec<OperationPermit> = (0..8)
+            .map(|_| OperationPermit::acquire().expect("eight operations are admitted"))
+            .collect();
+        assert_eq!(
+            OperationPermit::acquire().err(),
+            Some("Runner is busy; retry shortly".to_string())
+        );
+        held.pop();
+        let replacement = OperationPermit::acquire().expect("a released permit is reusable");
+        assert_eq!(
+            OperationPermit::acquire().err(),
+            Some("Runner is busy; retry shortly".to_string())
+        );
+        drop(replacement);
+        drop(held);
+        assert!(OperationPermit::acquire().is_ok());
+    }
+}
