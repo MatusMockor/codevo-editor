@@ -699,7 +699,7 @@ describe("AgentThreadSession", () => {
     expect(host.textContent).toContain("Ahoj!");
   });
 
-  it("renders the result as a finale and an error as a bad finale", () => {
+  it("renders the result as an answer and an error as a bad finale", () => {
     render({
       thread: threadView({
         turns: [
@@ -711,9 +711,10 @@ describe("AgentThreadSession", () => {
       }),
     });
 
-    expect(host.textContent).toContain("Done in 4 files.");
+    expect(host.querySelector(".agent-text")?.textContent).toContain("Done in 4 files.");
     expect(host.textContent).toContain("The MCP server refused the token.");
     expect(host.querySelectorAll(".agent-finale--bad")).toHaveLength(1);
+    expect(host.querySelectorAll(".agent-finale")).toHaveLength(1);
   });
 
   it("explains a model the installed CLI cannot run once, without the raw JSON", () => {

@@ -897,6 +897,9 @@ describe("agent thread turns", () => {
       const element = answer?.querySelector(selector);
       expect(element, selector).not.toBeNull();
     }
+    expect(
+      [...(answer?.querySelectorAll(".agent-text") ?? [])].map((element) => element.textContent),
+    ).toContainEqual(expect.stringContaining("All done"));
     expect(host.querySelector(".agent-prompt__body")?.textContent).toBe("First question");
     expect(host.querySelector(".agent-answer > .cv-turn-meta time")?.textContent).toBe(
       agentClockTime(NOW - 30_000)?.label,
