@@ -95,11 +95,11 @@ impl AgentCliDiscovery {
             return false;
         };
         !executable.identity().is_current_for_observation()
-            || !search_path_reaches(provider, environment.path(), executable.path())
+            || !search_path_resolves_to(provider, environment.path(), executable.path())
     }
 }
 
-fn search_path_reaches(
+fn search_path_resolves_to(
     provider: AgentCliInvocation,
     effective_path: &str,
     canonical: &Path,

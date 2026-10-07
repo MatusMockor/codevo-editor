@@ -299,6 +299,35 @@ fn acquisitions_of_an_unchanged_executable_never_refresh_discovery() {
     assert!(Arc::ptr_eq(&before, &fixture.snapshot()));
 }
 
+#[test]
+fn turn_acquisition_rediscovers_once_after_the_executable_is_rewritten_in_place() {
+    let fixture = Fixture::detected("rewritten");
+    let before = fixture.snapshot();
+    let original = before.provider(PROVIDER).expect("original executable");
+    install(&fixture.cli(), "a replacement build");
+
+    let turn = fixture.turn();
+
+    let healed = fixture.snapshot();
+    assert_eq!(
+        fs::canonicalize(&turn.cli_path).ok(),
+        fs::canonicalize(fixture.cli()).ok()
+    );
+    assert_ne!(&turn.cli_identity, original.identity());
+    assert_eq!(
+        healed.provider(PROVIDER).map(|cli| cli.identity()),
+        Some(&turn.cli_identity)
+    );
+    assert_eq!(
+        healed.authority_generation(),
+        before.authority_generation() + 1
+    );
+    assert_eq!(fixture.revalidate(&turn), Ok(()));
+    drop(turn);
+    drop(fixture.turn());
+    assert!(Arc::ptr_eq(&healed, &fixture.snapshot()));
+}
+
 #[cfg(unix)]
 #[test]
 fn turn_acquisition_rediscovers_once_after_the_cached_executable_is_deleted() {
@@ -380,6 +409,19 @@ fn revalidating_a_held_turn_after_its_entry_was_retargeted_fails_closed() {
     fixture.self_update();
 
     assert_eq!(fixture.revalidate(&held), stale());
+}
+
+#[cfg(unix)]
+#[test]
+fn revalidating_a_held_usage_read_after_its_entry_was_retargeted_fails_closed() {
+    let fixture = Fixture::versioned("usage-retargeted");
+    let held = fixture
+        .registry
+        .acquire_account_usage_for_generation(PROVIDER, fixture.generation)
+        .expect("usage lease");
+    fixture.self_update();
+
+    assert_eq!(fixture.registry.revalidate_health(&held), stale());
 }
 
 #[cfg(unix)]
