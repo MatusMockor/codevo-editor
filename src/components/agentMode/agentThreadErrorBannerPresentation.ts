@@ -93,6 +93,7 @@ function failureText(
   const detail = error.detail;
   switch (detail.kind) {
     case "protocolFailure":
+    case "runnerFailure":
     case "authenticationRequired":
     case "usageLimited":
     case "temporarilyOverCapacity":
