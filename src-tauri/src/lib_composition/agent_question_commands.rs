@@ -16,7 +16,10 @@ pub(crate) struct QuestionAnswerRequest {
     request_id: String,
     response: AgentQuestionResponse,
 }
-fn validate_owner(app: &AppHandle, owner: &QuestionOwner) -> Result<std::path::PathBuf, String> {
+fn validate_owner(
+    workspaces: &WorkspaceRegistry,
+    owner: &QuestionOwner,
+) -> Result<std::path::PathBuf, String> {
     safe_agent_task_id(&owner.task_id)?;
     ensure_workspace_id_bounds(&owner.workspace_id)?;
     if owner.repository_root.len() > MAX_AGENT_TASK_PATH_BYTES
@@ -24,16 +27,31 @@ fn validate_owner(app: &AppHandle, owner: &QuestionOwner) -> Result<std::path::P
     {
         return Err("Invalid question workspace.".into());
     }
-    let descriptor = app
-        .state::<WorkspaceRegistry>()
+    let descriptor = workspaces
         .descriptor(&owner.workspace_id)
         .map_err(|error| error.to_string())?;
     if descriptor.canonical_root_path != std::path::Path::new(&owner.repository_root) {
         return Err("Question workspace changed.".into());
     }
-    revalidate_agent_steer_workspace(&app.state::<WorkspaceRegistry>(), &descriptor)
+    revalidate_agent_steer_workspace(workspaces, &descriptor)
         .map_err(|_| "Question workspace changed.".to_string())?;
     Ok(descriptor.canonical_root_path)
+}
+fn list_owned_questions(
+    workspaces: &WorkspaceRegistry,
+    tasks: &AgentTaskRegistry,
+    owner: &QuestionOwner,
+) -> Result<Vec<AgentQuestionRequest>, String> {
+    let root = validate_owner(workspaces, owner)?;
+    tasks.list_questions(&owner.task_id, owner.workspace_id.as_str(), &root)
+}
+fn list_owned_approvals(
+    workspaces: &WorkspaceRegistry,
+    tasks: &AgentTaskRegistry,
+    owner: &QuestionOwner,
+) -> Result<Vec<crate::agent_questions::approvals::AgentApprovalRequest>, String> {
+    let root = validate_owner(workspaces, owner)?;
+    tasks.list_approvals(&owner.task_id, owner.workspace_id.as_str(), &root)
 }
 #[tauri::command]
 pub(crate) async fn list_agent_questions(
@@ -41,11 +59,10 @@ pub(crate) async fn list_agent_questions(
     request: QuestionOwner,
 ) -> Result<Vec<AgentQuestionRequest>, String> {
     run_blocking_command(move || {
-        let root = validate_owner(&app, &request)?;
-        app.state::<AgentTaskRegistry>().list_questions(
-            &request.task_id,
-            request.workspace_id.as_str(),
-            &root,
+        list_owned_questions(
+            &app.state::<WorkspaceRegistry>(),
+            &app.state::<AgentTaskRegistry>(),
+            &request,
         )
     })
     .await
@@ -61,7 +78,7 @@ pub(crate) async fn answer_agent_question(
             workspace_id: request.workspace_id,
             repository_root: request.repository_root,
         };
-        let root = validate_owner(&app, &owner)?;
+        let root = validate_owner(&app.state::<WorkspaceRegistry>(), &owner)?;
         app.state::<AgentTaskRegistry>().answer_question(
             &owner.task_id,
             owner.workspace_id.as_str(),
@@ -87,11 +104,10 @@ pub(crate) async fn list_agent_approvals(
     request: QuestionOwner,
 ) -> Result<Vec<crate::agent_questions::approvals::AgentApprovalRequest>, String> {
     run_blocking_command(move || {
-        let root = validate_owner(&app, &request)?;
-        app.state::<AgentTaskRegistry>().list_approvals(
-            &request.task_id,
-            request.workspace_id.as_str(),
-            &root,
+        list_owned_approvals(
+            &app.state::<WorkspaceRegistry>(),
+            &app.state::<AgentTaskRegistry>(),
+            &request,
         )
     })
     .await
@@ -110,7 +126,7 @@ pub(crate) async fn answer_agent_approval(
             workspace_id: request.workspace_id,
             repository_root: request.repository_root,
         };
-        let root = validate_owner(&app, &owner)?;
+        let root = validate_owner(&app.state::<WorkspaceRegistry>(), &owner)?;
         app.state::<AgentTaskRegistry>().answer_approval(
             &owner.task_id,
             owner.workspace_id.as_str(),
@@ -121,3 +137,6 @@ pub(crate) async fn answer_agent_approval(
     })
     .await
 }
+#[cfg(all(test, unix))]
+#[path = "agent_question_commands_tests.rs"]
+mod tests;

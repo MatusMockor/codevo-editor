@@ -1,8 +1,17 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { AgentApprovalGateway, AgentApprovalOwner } from "./agentApprovalPorts";
+import {
+  AGENT_PENDING_REQUEST_POLL_MS,
+  agentPendingRequestSnapshotAfterPoll,
+  emptyAgentPendingRequestSnapshot,
+  startAgentPendingRequestPolling,
+  type AgentPendingRequestSnapshot,
+} from "./agentPendingRequestPolling";
 import type { AgentApprovalDecision, AgentApprovalRequest } from "../domain/agentApproval";
 
-export const AGENT_APPROVAL_POLL_MS = 1000;
+export const AGENT_APPROVAL_POLL_MS = AGENT_PENDING_REQUEST_POLL_MS;
+
+const APPROVALS_UNREACHABLE_NOTICE = "Approvals could not be refreshed. Reconnecting…";
 
 interface Scope {
   readonly lease: object;
@@ -11,12 +20,7 @@ interface Scope {
   revision: number;
 }
 
-interface Snapshot {
-  readonly lease: object;
-  readonly requests: readonly AgentApprovalRequest[];
-  readonly answering: string | null;
-  readonly error: string | null;
-}
+type Snapshot = AgentPendingRequestSnapshot<AgentApprovalRequest>;
 
 export interface AgentApprovalsSurface {
   readonly requests: readonly AgentApprovalRequest[];
@@ -41,39 +45,25 @@ export function useAgentApprovals(
     }
     const scope: Scope = { lease: {}, owner, busy: false, revision: 0 };
     active.current = scope;
-    setSnapshot({ lease: scope.lease, requests: [], answering: null, error: null });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const current = () => active.current === scope;
-    const poll = async () => {
-      const revision = scope.revision;
-      try {
-        const requests = await gateway.listApprovals(owner);
-        if (!current() || revision !== scope.revision) return;
-        setSnapshot((previous) => ({
-          lease: scope.lease,
-          requests,
-          answering: previous?.lease === scope.lease ? previous.answering : null,
-          error: null,
-        }));
-      } catch {
-        if (!current() || revision !== scope.revision) return;
-        setSnapshot((previous) => ({
-          lease: scope.lease,
-          requests: previous?.lease === scope.lease ? previous.requests : [],
-          answering: previous?.lease === scope.lease ? previous.answering : null,
-          error: "Approvals could not be refreshed. Reconnecting…",
-        }));
-      } finally {
-        if (current() && running)
-          timer = setTimeout(() => {
-            void poll();
-          }, AGENT_APPROVAL_POLL_MS);
-      }
-    };
-    void poll();
+    setSnapshot(emptyAgentPendingRequestSnapshot(scope.lease));
+    const stopPolling = startAgentPendingRequestPolling<AgentApprovalRequest>({
+      cadence: running ? "repeating" : "once",
+      isCurrent: () => active.current === scope,
+      revision: () => scope.revision,
+      list: () => gateway.listApprovals(owner),
+      publish: (outcome) =>
+        setSnapshot((previous) =>
+          agentPendingRequestSnapshotAfterPoll(
+            previous,
+            scope.lease,
+            outcome,
+            APPROVALS_UNREACHABLE_NOTICE,
+          ),
+        ),
+    });
     return () => {
       if (active.current === scope) active.current = null;
-      clearTimeout(timer);
+      stopPolling();
     };
   }, [gateway, owner, running]);
 

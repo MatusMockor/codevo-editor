@@ -1,4 +1,10 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import {
+  agentPendingRequestSnapshotAfterPoll,
+  emptyAgentPendingRequestSnapshot,
+  startAgentPendingRequestPolling,
+  type AgentPendingRequestSnapshot,
+} from "./agentPendingRequestPolling";
 import type { AgentQuestionGateway, AgentQuestionOwner } from "./agentQuestionPorts";
 import {
   parseAgentQuestionResponse,
@@ -6,12 +12,9 @@ import {
   type AgentQuestionResponse,
 } from "../domain/agentQuestion";
 
-interface Snapshot {
-  readonly lease: object;
-  readonly requests: readonly AgentQuestionRequest[];
-  readonly answering: string | null;
-  readonly error: string | null;
-}
+type Snapshot = AgentPendingRequestSnapshot<AgentQuestionRequest>;
+
+const QUESTIONS_UNREACHABLE_NOTICE = "Questions could not be refreshed. Reconnecting…";
 
 /** Serial polling survives reconnects, while each selection owns a fresh generation. */
 export function useAgentQuestions(
@@ -34,38 +37,25 @@ export function useAgentQuestions(
     }
     const scope = { lease: {}, owner, busy: false, revision: 0 };
     active.current = scope;
-    setSnapshot({ lease: scope.lease, requests: [], answering: null, error: null });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
-      const revision = scope.revision;
-      try {
-        const requests = await gateway.list(owner);
-        if (active.current !== scope || revision !== scope.revision) return;
-        setSnapshot((previous) => ({
-          lease: scope.lease,
-          requests,
-          answering: previous?.answering ?? null,
-          error: null,
-        }));
-      } catch {
-        if (active.current !== scope || revision !== scope.revision) return;
-        setSnapshot((previous) => ({
-          lease: scope.lease,
-          requests: previous?.requests ?? [],
-          answering: previous?.answering ?? null,
-          error: "Questions could not be refreshed. Reconnecting…",
-        }));
-      } finally {
-        if (active.current === scope && running)
-          timer = setTimeout(() => {
-            void poll();
-          }, 1000);
-      }
-    };
-    void poll();
+    setSnapshot(emptyAgentPendingRequestSnapshot(scope.lease));
+    const stopPolling = startAgentPendingRequestPolling<AgentQuestionRequest>({
+      cadence: running ? "repeating" : "once",
+      isCurrent: () => active.current === scope,
+      revision: () => scope.revision,
+      list: () => gateway.list(owner),
+      publish: (outcome) =>
+        setSnapshot((previous) =>
+          agentPendingRequestSnapshotAfterPoll(
+            previous,
+            scope.lease,
+            outcome,
+            QUESTIONS_UNREACHABLE_NOTICE,
+          ),
+        ),
+    });
     return () => {
       if (active.current === scope) active.current = null;
-      clearTimeout(timer);
+      stopPolling();
     };
   }, [gateway, owner, running]);
 
