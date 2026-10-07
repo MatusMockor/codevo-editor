@@ -7,6 +7,27 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.105] - 2026-10-07
+
+### Added
+
+- Local images linked from an agent's Markdown answer appear inline and open in
+  the image viewer in trusted local conversations.
+- Settings > MCP servers lists configured Claude and Codex MCP servers and their
+  status for local and server projects. Server checks require an updated Codevo
+  Runner; disabled Codex servers are reported explicitly.
+
+### Fixed
+
+- Final answers keep their Markdown formatting when they arrive only in the
+  provider's completion result.
+- Claude answers from a turn started after background work remain visible.
+- Streamed agent output preserves characters split across incoming chunks.
+- Follow-up turns no longer briefly show a stale questions warning.
+- Background usage checks no longer interfere with starting an agent turn.
+- Recorded changes retry temporary busy responses and explain permanent failures.
+- Server failures and missing turn activity show specific, truthful explanations.
+
 ## [0.2.0-beta.104] - 2026-10-06
 
 ### Added
