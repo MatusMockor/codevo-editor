@@ -79,6 +79,7 @@ function samePresentationView(left: AgentThreadView, right: AgentThreadView): bo
     left.worktreeRemoved === right.worktreeRemoved &&
     left.worktreeMissing === right.worktreeMissing &&
     left.changeSummary === right.changeSummary &&
+    left.sessionBackground === right.sessionBackground &&
     left.ship === right.ship &&
     left.editorAvailability === right.editorAvailability &&
     left.attention === right.attention &&
