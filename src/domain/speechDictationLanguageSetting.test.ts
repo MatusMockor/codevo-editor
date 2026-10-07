@@ -6,7 +6,7 @@ import {
 } from "./speechDictationLanguageSetting";
 
 describe("speech dictation language setting", () => {
-  it.each(["sk", "en", "cs"] as const)("keeps the stored language %s", (language) => {
+  it.each(["auto", "sk", "en", "cs"] as const)("keeps the stored language %s", (language) => {
     expect(normalizeSpeechDictationLanguageSetting(language)).toEqual({
       speechDictationLanguage: language,
     });
@@ -23,17 +23,20 @@ describe("speech dictation language setting", () => {
       expect("speechDictationLanguage" in normalized).toBe(false);
     },
   );
-  it("leaves the language unset by default so it follows the system locale", () => {
+  it("leaves the language unset by default for automatic recognition", () => {
     expect("speechDictationLanguage" in defaultAppSettings()).toBe(false);
     expect("speechDictationLanguage" in normalizeAppSettings({})).toBe(false);
     expect("speechDictationLanguage" in normalizeAppSettings(null)).toBe(false);
   });
-  it("round-trips a chosen language through serialization", () => {
-    const stored = JSON.parse(
-      JSON.stringify(normalizeAppSettings({ speechDictationLanguage: "cs" })),
-    );
-    expect(normalizeAppSettings(stored).speechDictationLanguage).toBe("cs");
-  });
+  it.each(["auto", "sk", "en", "cs"] as const)(
+    "round-trips the chosen language %s through serialization",
+    (language) => {
+      const stored = JSON.parse(
+        JSON.stringify(normalizeAppSettings({ speechDictationLanguage: language })),
+      );
+      expect(normalizeAppSettings(stored).speechDictationLanguage).toBe(language);
+    },
+  );
   it("does not disturb other settings when the stored language is malformed", () => {
     const normalized = normalizeAppSettings({
       agentFollowUpBehavior: "steer",
@@ -46,11 +49,12 @@ describe("speech dictation language setting", () => {
     ["sk", "en-US", "sk"],
     ["cs", "sk-SK", "cs"],
     ["en", "cs-CZ", "en"],
-    [undefined, "sk-SK", "sk"],
-    [undefined, "cs", "cs"],
-    [undefined, "en-GB", "en"],
-    [undefined, "de-DE", "en"],
-    [undefined, "", "en"],
+    ["auto", "en-US", "auto"],
+    [undefined, "sk-SK", "auto"],
+    [undefined, "cs", "auto"],
+    [undefined, "en-GB", "auto"],
+    [undefined, "de-DE", "auto"],
+    [undefined, "", "auto"],
   ] as const)("resolves stored %j with locale %s to %s", (stored, locale, expected) => {
     expect(effectiveSpeechDictationLanguage(stored, locale)).toBe(expected);
   });

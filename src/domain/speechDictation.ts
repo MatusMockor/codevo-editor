@@ -1,4 +1,4 @@
-export const SPEECH_LANGUAGES = ["sk", "en", "cs"] as const;
+export const SPEECH_LANGUAGES = ["auto", "sk", "en", "cs"] as const;
 export type SpeechLanguage = (typeof SPEECH_LANGUAGES)[number];
 
 export const SPEECH_MAX_SESSION_MS = 5 * 60 * 1000;
@@ -54,9 +54,8 @@ export function parseSpeechLanguage(value: unknown): SpeechLanguage | null {
   return SPEECH_LANGUAGES.find((language) => language === value) ?? null;
 }
 
-export function defaultSpeechLanguage(locale: string): SpeechLanguage {
-  const primary = locale.trim().toLowerCase().split(/[-_]/)[0];
-  return parseSpeechLanguage(primary) ?? "en";
+export function defaultSpeechLanguage(_locale: string): SpeechLanguage {
+  return "auto";
 }
 
 export function speechDictationAvailability(

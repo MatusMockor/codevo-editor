@@ -22,7 +22,7 @@ const fallbackRecording = run(
 );
 
 describe("speech language", () => {
-  it.each(["sk", "en", "cs"])("parses the closed language %s", (language) => {
+  it.each(["auto", "sk", "en", "cs"])("parses the closed language %s", (language) => {
     expect(parseSpeechLanguage(language)).toBe(language);
   });
   it.each(["SK", "de", "", " sk", null, undefined, 1, {}, ["sk"]])(
@@ -31,21 +31,12 @@ describe("speech language", () => {
       expect(parseSpeechLanguage(language)).toBeNull();
     },
   );
-  it.each([
-    ["sk", "sk"],
-    ["sk-SK", "sk"],
-    ["SK_sk", "sk"],
-    ["cs-CZ", "cs"],
-    ["cs", "cs"],
-    ["en-US", "en"],
-    ["en", "en"],
-    ["de-DE", "en"],
-    ["skx", "en"],
-    ["", "en"],
-    ["  cs-CZ ", "cs"],
-  ])("defaults locale %j to %s", (locale, language) => {
-    expect(defaultSpeechLanguage(locale)).toBe(language);
-  });
+  it.each(["sk", "sk-SK", "SK_sk", "cs-CZ", "en-US", "de-DE", "", "  cs-CZ "])(
+    "detects the spoken language automatically regardless of locale %j",
+    (locale) => {
+      expect(defaultSpeechLanguage(locale)).toBe("auto");
+    },
+  );
 });
 
 describe("speech dictation availability", () => {

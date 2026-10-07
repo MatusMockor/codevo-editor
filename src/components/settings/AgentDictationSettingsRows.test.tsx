@@ -109,6 +109,7 @@ describe("dictation language setting", () => {
     );
 
     expect([...select().options].map((option) => [option.value, option.textContent])).toEqual([
+      ["auto", "Automatic detection"],
       ["sk", "Slovak"],
       ["en", "English"],
       ["cs", "Czech"],
@@ -116,11 +117,11 @@ describe("dictation language setting", () => {
   });
 
   it.each([
-    ["sk-SK", "sk"],
-    ["cs-CZ", "cs"],
-    ["en-US", "en"],
-    ["de-DE", "en"],
-  ])("defaults an unset language from the system locale %s", (locale, expected) => {
+    ["sk-SK", "auto"],
+    ["cs-CZ", "auto"],
+    ["en-US", "auto"],
+    ["de-DE", "auto"],
+  ])("defaults to automatic detection regardless of the system locale %s", (locale, expected) => {
     act(() =>
       root.render(
         <AgentDictationSettingsRows
@@ -154,13 +155,27 @@ describe("dictation language setting", () => {
     expect(select().value).toBe("cs");
   });
 
+  it("can restore automatic detection after choosing an explicit language", async () => {
+    const gateway = new BrowserSettingsGateway(memoryStorage());
+    const saved: AppSettings[] = [];
+    renderPage({ ...(await gateway.loadAppSettings()), speechDictationLanguage: "en" }, saved);
+
+    expect(select().value).toBe("en");
+    choose("auto");
+
+    expect(select().value).toBe("auto");
+    expect(saved[0]?.speechDictationLanguage).toBe("auto");
+    await gateway.saveAppSettings(saved[0] ?? (await gateway.loadAppSettings()));
+    expect((await gateway.loadAppSettings()).speechDictationLanguage).toBe("auto");
+  });
+
   it("persists the chosen language through the settings gateway", async () => {
     const storage = memoryStorage();
     const gateway = new BrowserSettingsGateway(storage);
     const saved: AppSettings[] = [];
     renderPage(await gateway.loadAppSettings(), saved);
 
-    expect(select().value).toBe("en");
+    expect(select().value).toBe("auto");
     choose("sk");
 
     expect(select().value).toBe("sk");
@@ -191,7 +206,7 @@ describe("dictation language setting", () => {
       expect(loaded.speechDictationLanguage).toBeUndefined();
       expect(loaded.agentFollowUpBehavior).toBe("steer");
       renderPage(loaded, []);
-      expect(select().value).toBe("en");
+      expect(select().value).toBe("auto");
     },
   );
 

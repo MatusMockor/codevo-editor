@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn speech_budgets_are_scoped_to_exact_post_routes() {
-        for language in ["sk", "en", "cs"] {
+        for language in ["auto", "sk", "en", "cs"] {
             let path = format!("/v1/speech/transcriptions?language={language}");
             assert_eq!(response_limit("POST", &path), 32 * 1024);
             assert_eq!(request_timeout("POST", &path), Duration::from_secs(65));

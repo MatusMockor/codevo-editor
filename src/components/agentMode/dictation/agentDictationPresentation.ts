@@ -60,6 +60,7 @@ export const AGENT_DICTATION_SUBMIT_RECORDING_REASON = "Stop dictation before se
 export const AGENT_DICTATION_SUBMIT_TRANSCRIBING_REASON = "Wait for the transcript before sending.";
 
 export const SPEECH_LANGUAGE_LABELS: Readonly<Record<SpeechLanguage, string>> = {
+  auto: "Automatic detection",
   sk: "Slovak",
   en: "English",
   cs: "Czech",

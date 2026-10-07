@@ -19,6 +19,7 @@ pub struct SpeechTranscriptionRequest {
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Language {
+    Auto,
     Sk,
     En,
     Cs,
@@ -26,6 +27,7 @@ enum Language {
 impl Language {
     fn path(self) -> &'static str {
         match self {
+            Self::Auto => "/v1/speech/transcriptions?language=auto",
             Self::Sk => "/v1/speech/transcriptions?language=sk",
             Self::En => "/v1/speech/transcriptions?language=en",
             Self::Cs => "/v1/speech/transcriptions?language=cs",
@@ -37,7 +39,8 @@ pub(super) fn is_route(method: &str, path: &str) -> bool {
     method == "POST"
         && matches!(
             path,
-            "/v1/speech/transcriptions?language=sk"
+            "/v1/speech/transcriptions?language=auto"
+                | "/v1/speech/transcriptions?language=sk"
                 | "/v1/speech/transcriptions?language=en"
                 | "/v1/speech/transcriptions?language=cs"
         )
@@ -129,6 +132,7 @@ mod tests {
     #[test]
     fn requests_are_closed_and_languages_have_exact_routes() {
         for (language, path) in [
+            ("auto", Language::Auto.path()),
             ("sk", Language::Sk.path()),
             ("en", Language::En.path()),
             ("cs", Language::Cs.path()),
@@ -147,6 +151,7 @@ mod tests {
         for value in [
             json!({"serverId":"server","language":"de","base64":""}),
             json!({"serverId":"server","language":"SK","base64":""}),
+            json!({"serverId":"server","language":"AUTO","base64":""}),
             json!({"serverId":"server","language":"sk","base64":"","extra":true}),
             json!({"serverId":"server","language":"sk"}),
         ] {
@@ -156,6 +161,13 @@ mod tests {
             "POST",
             "/v1/speech/transcriptions?language=sk&extra=true"
         ));
+        for path in [
+            "/v1/speech/transcriptions?language=AUTO",
+            "/v1/speech/transcriptions?language=auto&language=sk",
+            "/v1/speech/transcriptions?language=auto&extra=true",
+        ] {
+            assert!(!is_route("POST", path));
+        }
     }
     #[test]
     fn validates_identifier_encoding_and_audio_bounds_before_connection() {

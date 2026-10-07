@@ -259,11 +259,11 @@ describe("AgentComposer dictation control", () => {
     expect(document.activeElement).toBe(composer.prompt());
   });
 
-  it("uses the dictation language resolved from the setting and the system locale", async () => {
+  it("automatically detects dictation language regardless of the system locale", async () => {
     const composer = mountDictationComposer({ language: undefined, locale: "cs-CZ" });
     await composer.record();
     composer.utter();
-    expect(composer.ipc.calls[0]?.request.language).toBe("cs");
+    expect(composer.ipc.calls[0]?.request.language).toBe("auto");
   });
 });
 

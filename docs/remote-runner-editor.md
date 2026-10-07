@@ -410,9 +410,11 @@ Limits:
   inserted in order.
 - One dictation session lasts at most 5 minutes, then stops and keeps what was
   transcribed. A server that falls too far behind also stops the session early.
-- Supported languages are Slovak, English and Czech. Choose one in Settings > Providers >
-  Dictation language; until you do, the editor follows the system language and falls
-  back to English.
+- The default is **Automatic detection**, which detects the spoken language and
+  transcribes it without translation, independently of the system language. You can
+  force Slovak, English or Czech in Settings > Providers > Dictation language.
+  Automatic detection requires an updated runner and speech sidecar supporting
+  `language=auto`.
 
 Privacy: audio is captured in the editor window and sent through the existing SSH
 tunnel only to your own connected server, whose runner passes it to the speech service

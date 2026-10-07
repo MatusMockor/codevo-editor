@@ -11,6 +11,15 @@ const transcriber = (invoke: ConstructorParameters<typeof TauriRemoteRunnerGatew
   new RemoteRunnerSpeechTranscriber(new TauriRemoteRunnerGateway(invoke));
 
 describe("remote runner speech gateway", () => {
+  it("requests automatic language detection and preserves the Slovak transcript", async () => {
+    const invoke = vi.fn().mockResolvedValue({ text: "Hovorím po slovensky." });
+    expect(
+      await transcriber(invoke).transcribe({ serverId: "server-a", language: "auto", pcm }),
+    ).toEqual({ kind: "transcribed", text: "Hovorím po slovensky." });
+    expect(invoke).toHaveBeenCalledWith("remote_runner_transcribe_speech", {
+      request: { ...request, language: "auto" },
+    });
+  });
   it("sends the exact closed request to the speech command", async () => {
     const invoke = vi.fn().mockResolvedValue({ text: "Ahoj svet" });
     expect(await new TauriRemoteRunnerGateway(invoke).transcribeSpeech(request)).toEqual({

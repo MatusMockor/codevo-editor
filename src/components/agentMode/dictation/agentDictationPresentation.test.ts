@@ -537,6 +537,11 @@ describe("agent dictation presentation", () => {
   });
 
   it("labels the closed language set", () => {
-    expect(SPEECH_LANGUAGE_LABELS).toEqual({ sk: "Slovak", en: "English", cs: "Czech" });
+    expect(SPEECH_LANGUAGE_LABELS).toEqual({
+      auto: "Automatic detection",
+      sk: "Slovak",
+      en: "English",
+      cs: "Czech",
+    });
   });
 });

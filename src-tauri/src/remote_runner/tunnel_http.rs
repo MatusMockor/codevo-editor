@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn speech_http_timeout_is_scoped_to_exact_post_routes() {
-        for language in ["sk", "en", "cs"] {
+        for language in ["auto", "sk", "en", "cs"] {
             let path = format!("/v1/speech/transcriptions?language={language}");
             assert_eq!(
                 request_timeout("POST", &path),
