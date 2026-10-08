@@ -5,7 +5,8 @@ use super::super::{
 use super::*;
 use std::{collections::VecDeque, path::PathBuf, sync::Mutex, time::Duration};
 
-const WORKSPACE: &str = "ws-revoked";
+const TRUST_ROOT: &str = "/project";
+const NESTED_REPOSITORY: &str = "/project/nested";
 const TASK: &str = "agt-claim";
 const PROCESS_GROUP: i32 = 4242;
 
@@ -44,9 +45,10 @@ fn running_turn(signals: &Arc<RecordingSignals>) -> AgentTaskRegistryState {
             metadata: AgentTaskMetadata {
                 task_id: TASK.to_string(),
                 thread_id: "thread".to_string(),
-                workspace_id: WORKSPACE.to_string(),
-                repository_root: PathBuf::from("/project"),
-                cwd: PathBuf::from("/project"),
+                workspace_id: "ws-retired".to_string(),
+                trust_root: PathBuf::from(TRUST_ROOT),
+                repository_root: PathBuf::from(NESTED_REPOSITORY),
+                cwd: PathBuf::from(NESTED_REPOSITORY),
                 isolation: AgentTaskIsolation::InPlace,
                 worktree_path: None,
             },
@@ -91,7 +93,7 @@ fn an_outcome_the_waiter_decided_before_the_claim_stays_its_own_and_its_group_is
     let mut state = running_turn(&signals);
 
     note_own_outcome_in(&mut state, TASK);
-    let claim = claim_revoked_workspace(&mut state, WORKSPACE);
+    let claim = claim_revoked_trust(&mut state, Path::new(TRUST_ROOT));
 
     assert_eq!(
         turn(&state).outcome_authority,
@@ -116,7 +118,7 @@ fn an_outcome_decided_after_the_claim_is_attributed_to_the_revocation() {
     let signals = Arc::new(RecordingSignals::default());
     let mut state = running_turn(&signals);
 
-    let claim = claim_revoked_workspace(&mut state, WORKSPACE);
+    let claim = claim_revoked_trust(&mut state, Path::new(TRUST_ROOT));
     note_own_outcome_in(&mut state, TASK);
 
     assert_eq!(
@@ -138,7 +140,7 @@ fn a_turn_the_user_already_stopped_is_stopped_again_without_changing_its_outcome
         .expect("turn entry")
         .stop_requested = true;
 
-    let claim = claim_revoked_workspace(&mut state, WORKSPACE);
+    let claim = claim_revoked_trust(&mut state, Path::new(TRUST_ROOT));
 
     assert_eq!(
         turn(&state).outcome_authority,
@@ -148,20 +150,23 @@ fn a_turn_the_user_already_stopped_is_stopped_again_without_changing_its_outcome
 }
 
 #[test]
-fn a_foreign_workspace_and_a_reaped_group_are_left_alone() {
+fn a_foreign_trust_root_and_a_reaped_group_are_left_alone() {
     let signals = Arc::new(RecordingSignals::default());
     let mut state = running_turn(&signals);
 
-    let foreign = claim_revoked_workspace(&mut state, "ws-other");
-    assert!(foreign.settling.is_empty());
-    assert!(foreign.revoked.into_groups().is_empty());
-    assert_eq!(
-        turn(&state).outcome_authority,
-        AgentTaskOutcomeAuthority::Undecided
-    );
+    for foreign_root in [NESTED_REPOSITORY, "/", "/other", "/project/.", "/project/"] {
+        let foreign = claim_revoked_trust(&mut state, Path::new(foreign_root));
+        assert!(foreign.settling.is_empty());
+        assert!(foreign.revoked.into_groups().is_empty());
+        assert_eq!(
+            turn(&state).outcome_authority,
+            AgentTaskOutcomeAuthority::Undecided
+        );
+        assert!(!turn(&state).stop_requested);
+    }
 
     note_own_outcome_in(&mut state, TASK);
-    let claim = claim_revoked_workspace(&mut state, WORKSPACE);
+    let claim = claim_revoked_trust(&mut state, Path::new(TRUST_ROOT));
     *claim.settling[0].state() = AgentProcessGroupState::Released;
     claim.settling[0].kill_unreaped();
     assert!(signals.sent().is_empty());

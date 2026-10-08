@@ -1557,3 +1557,6 @@ fn prepare_builds_an_in_place_plan_without_a_worktree_path() {
 
 #[path = "agent_task_commands_steering_tests.rs"]
 mod steering_tests;
+
+#[path = "agent_task_commands_trust_root_tests.rs"]
+mod trust_root_tests;

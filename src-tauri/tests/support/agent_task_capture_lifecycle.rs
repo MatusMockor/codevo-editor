@@ -136,7 +136,7 @@ fn trust_revoked_during_the_completion_snapshot_keeps_the_turns_own_result() {
     registry.acknowledge("agt-capture").unwrap();
     entered_rx.recv_timeout(EVENT_DEADLINE).unwrap();
 
-    registry.stop_for_revoked_workspace_trust("ws-agent-tests", || {});
+    registry.stop_for_revoked_trust(&root, || {});
     release.send(()).unwrap();
 
     assert!(wait_until(EVENT_DEADLINE, || sink

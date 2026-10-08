@@ -7,10 +7,12 @@ use super::codex_app_server_turn::CodexAppServerTurnPlan;
 use super::{AgentTaskProjectAuthority, StartAgentTaskRequest};
 use crate::agent_task_spawner::agent_artifact_instructions::VISUAL_OUTPUT_INSTRUCTIONS;
 use crate::agent_task_spawner::agent_launch::{AgentLaunchOptions, CodexExecutionMode};
+use crate::agent_task_spawner::agent_provider::process::ExecutableIdentity;
 use crate::agent_task_spawner::agent_provider::runtime::{
     AgentProviderHostLifecycle, CodexTransport, ProviderTurnLease,
 };
 use crate::agent_task_spawner::{AgentCliInvocation, AgentPromptTransport, AgentTaskSpawnPlan};
+use std::path::Path;
 use std::sync::Arc;
 
 pub(crate) struct CodexProviderHostLifecycle(pub Arc<CodexAppServerHostRegistry>);
@@ -41,14 +43,8 @@ pub(super) fn prepare_transport(
         return Err("Codex launch settings are invalid.".into());
     };
     let identity = plan.executable_identity().clone();
-    let host_plan = CodexHostLaunchPlan::new(
-        identity.clone(),
-        &authority.repository_root,
-        &[],
-        provider.app_server_args(),
-    )?
-    .with_cwd_authority(Arc::clone(&authority.repository_authority))
-    .with_env(plan.env().to_vec());
+    let host_plan = host_launch_plan(identity.clone(), authority, provider.app_server_args())?
+        .with_env(plan.env().to_vec());
     let key = CodexHostKey::new(
         authority.repository_root.clone(),
         provider.generation(),
@@ -90,6 +86,21 @@ pub(super) fn prepare_transport(
         turn_start,
         validate_authority,
     }))
+}
+
+pub(super) fn host_launch_plan(
+    identity: ExecutableIdentity,
+    authority: &AgentTaskProjectAuthority,
+    app_server_args: &[String],
+) -> Result<CodexHostLaunchPlan, String> {
+    let plan = CodexHostLaunchPlan::new(
+        identity,
+        &authority.repository_root,
+        Path::new(&authority.project_trust.root_path),
+        &[],
+        app_server_args,
+    )?;
+    Ok(plan.with_cwd_authority(Arc::clone(&authority.repository_authority)))
 }
 
 fn model_selection(launch: &AgentLaunchOptions) -> (Option<String>, Option<String>) {

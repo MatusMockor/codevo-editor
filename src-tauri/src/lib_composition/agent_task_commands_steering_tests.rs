@@ -44,6 +44,7 @@ fn steer_target(request: &StartAgentTaskRequest, workspace_id: &str) -> AgentTas
             task_id: request.task_id.clone(),
             thread_id: request.thread_id.clone(),
             workspace_id: workspace_id.to_string(),
+            trust_root: PathBuf::from(&request.project_root),
             repository_root: PathBuf::from(&request.repository_root),
             cwd: PathBuf::from(&request.cwd),
             isolation: request.isolation,

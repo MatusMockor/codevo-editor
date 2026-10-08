@@ -50,9 +50,13 @@ pub const CODEX_HOST_ARG_CHARSET_ERROR: &str =
 pub const CODEX_HOST_ARG_REJECTED_ERROR: &str =
     "Codex app-server transport arguments are reserved.";
 pub const CODEX_HOST_ROOT_ERROR: &str = "Codex app-server requires an absolute repository root.";
+pub const CODEX_HOST_TRUST_ROOT_ERROR: &str =
+    "Codex app-server requires the absolute trust root of its project.";
 pub const CODEX_HOST_IDENTITY_ERROR: &str =
     "The Codex CLI executable identity changed before launch.";
 pub const CODEX_HOST_LIMIT_ERROR: &str = "Every Codex app-server host is busy with a live turn.";
+pub const CODEX_HOST_REPLACEMENT_PENDING_ERROR: &str =
+    "The Codex session of this repository is finishing a running turn before it restarts. Try again when that turn ends.";
 pub const CODEX_HOST_HANDSHAKE_ERROR: &str = "Codex app-server did not complete its handshake.";
 pub const CODEX_HOST_THREAD_ID_ERROR: &str = "Codex app-server returned an unusable thread id.";
 pub const CODEX_HOST_TURN_ID_ERROR: &str = "Codex app-server returned an unusable turn id.";
@@ -102,6 +106,7 @@ impl CodexHostKey {
 pub struct CodexHostLaunchPlan {
     identity: ExecutableIdentity,
     repository_root: PathBuf,
+    trust_root: PathBuf,
     cwd_authority: Option<Arc<File>>,
     args: Vec<String>,
     env: Vec<(String, String)>,
@@ -111,11 +116,15 @@ impl CodexHostLaunchPlan {
     pub fn new(
         identity: ExecutableIdentity,
         repository_root: &Path,
+        trust_root: &Path,
         model_args: &[&str],
         extra_args: &[String],
     ) -> Result<Self, String> {
         if !repository_root.is_absolute() {
             return Err(CODEX_HOST_ROOT_ERROR.to_string());
+        }
+        if !trust_root.is_absolute() {
+            return Err(CODEX_HOST_TRUST_ROOT_ERROR.to_string());
         }
         let mut args: Vec<String> = CODEX_APP_SERVER_ARGS
             .iter()
@@ -130,6 +139,7 @@ impl CodexHostLaunchPlan {
         Ok(Self {
             identity,
             repository_root: repository_root.to_path_buf(),
+            trust_root: trust_root.to_path_buf(),
             cwd_authority: None,
             args,
             env: inherited_environment(),
@@ -152,6 +162,10 @@ impl CodexHostLaunchPlan {
 
     pub fn repository_root(&self) -> &Path {
         self.repository_root.as_path()
+    }
+
+    pub fn trust_root(&self) -> &Path {
+        self.trust_root.as_path()
     }
 
     pub fn args(&self) -> &[String] {
@@ -469,11 +483,17 @@ impl Drop for LiveTurnLease {
     }
 }
 
+#[path = "codex_app_server_host_trust.rs"]
+pub mod trust;
+use trust::HostActivityClaim;
+
 #[derive(Default)]
 struct HostActivity {
     users: usize,
     retired: bool,
     last_release: Option<Instant>,
+    trust_roots: Vec<PathBuf>,
+    draining: bool,
 }
 
 struct HostActivityLease(Arc<Mutex<HostActivity>>);
@@ -579,7 +599,7 @@ impl CodexAppServerHost {
             process: Mutex::new(process),
             stderr,
             turns: Arc::new(LiveTurns::default()),
-            activity: Arc::new(Mutex::new(HostActivity::default())),
+            activity: Arc::new(Mutex::new(HostActivity::serving(plan.trust_root()))),
         });
         host.handshake(started, start_timeout)?;
         if validated_directory_identity(plan)? != directory_identity {
@@ -594,7 +614,11 @@ impl CodexAppServerHost {
                     return;
                 };
                 if let Some(reason) = host.transport.failure() {
-                    host.shutdown(&reason);
+                    host.shutdown_recovering(&reason);
+                    return;
+                }
+                if host.drained_after_revoked_trust() {
+                    host.shutdown_recovering(trust::CODEX_HOST_TRUST_REVOKED_REASON);
                     return;
                 }
             })
@@ -654,9 +678,12 @@ impl CodexAppServerHost {
         self.shutdown(reason);
     }
 
-    fn acquire_activity(&self) -> Result<HostActivityLease, CodexRpcFailure> {
+    fn acquire_activity(
+        &self,
+        claim: HostActivityClaim,
+    ) -> Result<HostActivityLease, CodexRpcFailure> {
         let mut activity = self.activity.lock().unwrap_or_else(PoisonError::into_inner);
-        if activity.retired || !self.is_ready() {
+        if activity.retired || !activity.admits(claim) || !self.is_ready() {
             return Err(CodexRpcFailure::HostFailed {
                 reason: "Codex session is unavailable.".into(),
             });
@@ -697,7 +724,7 @@ impl CodexAppServerHost {
         method: ClientMethod,
         params: Value,
     ) -> Result<ThreadHandle, CodexRpcFailure> {
-        let activity = self.acquire_activity()?;
+        let activity = self.acquire_activity(HostActivityClaim::NewThread)?;
         let expected_id = (method == ClientMethod::ThreadResume).then(|| {
             params
                 .get("threadId")
@@ -770,7 +797,7 @@ impl CodexAppServerHost {
                 reason: "Codex turn belongs to a different host or thread.".into(),
             });
         }
-        let activity = self.acquire_activity()?;
+        let activity = self.acquire_activity(HostActivityClaim::TurnOfOpenThread)?;
         let result = self
             .transport
             .request(
@@ -941,6 +968,15 @@ impl CodexAppServerHost {
     }
 }
 
+impl CodexAppServerHost {
+    fn shutdown_recovering(&self, reason: &str) -> bool {
+        let stops = || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.shutdown(reason))).is_ok()
+        };
+        stops() || stops()
+    }
+}
+
 impl Drop for CodexAppServerHost {
     fn drop(&mut self) {
         self.shutdown("Codex app-server host was retired.");
@@ -1045,16 +1081,7 @@ impl CodexAppServerHostRegistry {
             .spawn(move || {
                 while let Ok(mut batch) = incoming.recv() {
                     for host in batch.hosts.drain(..) {
-                        let stopped =
-                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                host.shutdown("Codex repository was disposed.");
-                            }));
-                        if stopped.is_err()
-                            && std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                host.shutdown("Codex cleanup is recovering from a failure.")
-                            }))
-                            .is_err()
-                        {
+                        if !host.shutdown_recovering("Codex repository was disposed.") {
                             worker_failed.store(true, Ordering::SeqCst);
                         }
                         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(host)))
@@ -1148,7 +1175,9 @@ impl CodexAppServerHostRegistry {
                 slot.key.matches(&key)
                     && slot.host.directory_identity == directory_identity
                     && slot.host.is_ready()
+                    && slot.host.accepts_new_threads()
             }) {
+                slot.host.serve_trust_root(plan.trust_root())?;
                 slot.last_used = Instant::now();
                 let existing = Arc::clone(&slot.host);
                 drop(state);
@@ -1164,7 +1193,7 @@ impl CodexAppServerHostRegistry {
                     continue;
                 }
                 if same_root {
-                    return Err(CODEX_HOST_LIMIT_ERROR.into());
+                    return Err(CODEX_HOST_REPLACEMENT_PENDING_ERROR.into());
                 }
                 index += 1;
             }
@@ -1253,39 +1282,46 @@ impl CodexAppServerHostRegistry {
                     cancelled.store(true, Ordering::SeqCst);
                 }
             }
-            let mut retired = Vec::new();
-            let mut index = 0;
-            while index < state.slots.len() {
-                if state.slots[index].key.repository_root() == repository_root {
-                    retired.push(state.slots.remove(index).retire());
-                    continue;
-                }
-                index += 1;
-            }
-            self.pending_reaps
-                .fetch_add(retired.len(), Ordering::SeqCst);
-            retired
+            self.retire_slots(&mut state, |slot| {
+                slot.key.repository_root() == repository_root
+            })
         };
-        if retired.is_empty() {
+        self.reap_in_background(retired, "Codex repository was disposed.");
+    }
+
+    fn retire_slots(
+        &self,
+        state: &mut RegistryState,
+        retires: impl Fn(&HostSlot) -> bool,
+    ) -> HostReapBatch {
+        let (retired, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut state.slots)
+            .into_iter()
+            .partition(retires);
+        state.slots = kept;
+        self.pending_reaps
+            .fetch_add(retired.len(), Ordering::SeqCst);
+        HostReapBatch {
+            _completion: BackgroundReapCompletion {
+                pending: Arc::clone(&self.pending_reaps),
+                count: retired.len(),
+            },
+            hosts: retired.into_iter().map(HostSlot::retire).collect(),
+        }
+    }
+
+    fn reap_in_background(&self, batch: HostReapBatch, reason: &str) {
+        if batch.hosts.is_empty() {
             return;
         }
-        for host in &retired {
+        for host in &batch.hosts {
             host.activity
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .retired = true;
-            host.transport.fail("Codex repository was disposed.");
+            host.transport.fail(reason);
         }
-        let pending = Arc::clone(&self.pending_reaps);
-        let completion = BackgroundReapCompletion {
-            pending,
-            count: retired.len(),
-        };
         self.reaper
-            .send(HostReapBatch {
-                hosts: retired,
-                _completion: completion,
-            })
+            .send(batch)
             .expect("Codex host cleanup worker stopped unexpectedly.");
     }
 
@@ -1367,6 +1403,10 @@ impl Drop for CodexAppServerHostRegistry {
         self.drain_for_dispose();
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "codex_app_server_host_shell_test_support.rs"]
+pub(crate) mod shell_test_support;
 
 #[cfg(test)]
 #[path = "codex_app_server_host_tests.rs"]

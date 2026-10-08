@@ -59,18 +59,24 @@ pub(crate) fn set_workspace_trust(
     app: AppHandle,
 ) -> Result<WorkspaceTrustState, String> {
     let workspace_registry = app.state::<WorkspaceRegistry>();
-    let runtime_root = registered_runtime_root(&workspace_registry, &root_path);
-    let mut service = service.lock().map_err(|error| error.to_string())?;
-    let state = service
-        .set(&root_path, trusted)
-        .map_err(|error| error.to_string())?;
     if trusted {
-        drop(service);
+        let runtime_root = registered_runtime_root(&workspace_registry, &root_path);
+        let state = service
+            .lock()
+            .map_err(|error| error.to_string())?
+            .set(&root_path, true)
+            .map_err(|error| error.to_string())?;
         runtime.eslint_processes.activate_root(&runtime_root);
         return Ok(state);
     }
-    drop(service);
-    if let Ok(descriptor) = workspace_registry.descriptor_for_registered_path(&runtime_root) {
+    let revocation = agent_trust_revocation::revoke_trust_and_stop_agents(
+        &app,
+        &service,
+        &workspace_registry,
+        &root_path,
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(descriptor) = &revocation.registered {
         node_package_tasks::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
         js_test_tasks::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
         js_test_watch::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
@@ -80,14 +86,13 @@ pub(crate) fn set_workspace_trust(
         if let Some(service) = app.try_state::<VscodeProcessTaskCommandService>() {
             service.request_stop_workspace(&descriptor.workspace_id);
         }
-        agent_trust_revocation::stop_agents_of_revoked_workspace(&app, &descriptor.workspace_id);
     }
     revoke_workspace_runtime_trust(
-        &runtime_root,
+        &revocation.runtime_root,
         &runtime.eslint_processes,
         &runtime.terminal_sessions,
     );
-    Ok(state)
+    Ok(revocation.state)
 }
 
 fn revoke_workspace_runtime_trust(

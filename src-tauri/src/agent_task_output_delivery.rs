@@ -230,6 +230,7 @@ mod tests {
                 task_id: "delivery-test".into(),
                 thread_id: "thread".into(),
                 workspace_id: "workspace".into(),
+                trust_root: PathBuf::from("/repo"),
                 repository_root: PathBuf::from("/repo"),
                 cwd: PathBuf::from("/repo"),
                 isolation: AgentTaskIsolation::InPlace,

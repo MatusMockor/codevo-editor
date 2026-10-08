@@ -6,6 +6,7 @@ use super::{
 };
 use std::{
     panic::{catch_unwind, AssertUnwindSafe},
+    path::Path,
     sync::Arc,
 };
 
@@ -19,7 +20,7 @@ pub(super) enum AgentTaskOutcomeAuthority {
     RevokedTrust,
 }
 
-struct RevokedWorkspaceClaim {
+struct RevokedTrustClaim {
     revoked: AgentTaskStopTargets,
     settling: Vec<Arc<AgentProcessGroup>>,
 }
@@ -27,28 +28,24 @@ struct RevokedWorkspaceClaim {
 type RevocationWorker = Box<dyn FnOnce() + Send>;
 
 impl AgentTaskRegistry {
-    pub fn stop_for_revoked_workspace_trust(
-        &self,
-        workspace_id: &str,
-        end_sessions: impl FnOnce(),
-    ) {
-        self.stop_revoked_workspace(workspace_id, end_sessions, |work| {
+    pub fn stop_for_revoked_trust(&self, trust_root: &Path, end_sessions: impl FnOnce()) {
+        self.stop_revoked_trust(trust_root, end_sessions, |work| {
             self.spawn_worker("agent-task-revoke", work).is_ok()
         });
     }
 
     #[cfg(test)]
-    pub fn stop_for_revoked_workspace_trust_without_workers_for_tests(&self, workspace_id: &str) {
-        self.stop_revoked_workspace(workspace_id, || {}, |_| false);
+    pub fn stop_for_revoked_trust_without_workers_for_tests(&self, trust_root: &Path) {
+        self.stop_revoked_trust(trust_root, || {}, |_| false);
     }
 
-    fn stop_revoked_workspace(
+    fn stop_revoked_trust(
         &self,
-        workspace_id: &str,
+        trust_root: &Path,
         end_sessions: impl FnOnce(),
         spawn: impl Fn(RevocationWorker) -> bool,
     ) {
-        let claim = claim_revoked_workspace(&mut self.shared.state(), workspace_id);
+        let claim = claim_revoked_trust(&mut self.shared.state(), trust_root);
         let _ = catch_unwind(AssertUnwindSafe(end_sessions));
         for group in &claim.settling {
             group.kill_unreaped();
@@ -68,14 +65,14 @@ impl AgentTaskRegistry {
     }
 }
 
-fn claim_revoked_workspace(
-    state: &mut AgentTaskRegistryState,
-    workspace_id: &str,
-) -> RevokedWorkspaceClaim {
+fn claim_revoked_trust(state: &mut AgentTaskRegistryState, trust_root: &Path) -> RevokedTrustClaim {
     let settling = state
         .entries
         .values()
-        .filter(|entry| entry.metadata.workspace_id == workspace_id && keeps_own_outcome(entry))
+        .filter(|entry| {
+            entry.metadata.trust_root.as_os_str() == trust_root.as_os_str()
+                && keeps_own_outcome(entry)
+        })
         .filter_map(|entry| entry.group.clone())
         .collect();
     let revoked = AgentTaskStopTargets::claim(
@@ -83,11 +80,12 @@ fn claim_revoked_workspace(
             .entries
             .values_mut()
             .filter(|entry| {
-                entry.metadata.workspace_id == workspace_id && !keeps_own_outcome(entry)
+                entry.metadata.trust_root.as_os_str() == trust_root.as_os_str()
+                    && !keeps_own_outcome(entry)
             })
             .map(attribute_to_revoked_trust),
     );
-    RevokedWorkspaceClaim { revoked, settling }
+    RevokedTrustClaim { revoked, settling }
 }
 
 fn keeps_own_outcome(entry: &AgentTaskEntry) -> bool {

@@ -112,6 +112,7 @@ fn output_fixture() -> (Arc<AgentTaskShared>, Arc<RecordingSink>) {
                 task_id: "utf8".to_string(),
                 thread_id: "thread".to_string(),
                 workspace_id: "workspace".to_string(),
+                trust_root: PathBuf::from("/test"),
                 repository_root: PathBuf::from("/test"),
                 cwd: PathBuf::from("/test"),
                 isolation: AgentTaskIsolation::InPlace,

@@ -356,6 +356,7 @@ pub struct AgentTaskStartRequest {
     pub task_id: String,
     pub thread_id: String,
     pub workspace_id: String,
+    pub trust_root: PathBuf,
     pub repository_root: PathBuf,
     pub isolation: AgentTaskIsolation,
     pub worktree_path: Option<PathBuf>,
@@ -487,6 +488,7 @@ pub struct AgentTaskMetadata {
     pub task_id: String,
     pub thread_id: String,
     pub workspace_id: String,
+    pub trust_root: PathBuf,
     pub repository_root: PathBuf,
     pub cwd: PathBuf,
     pub isolation: AgentTaskIsolation,
@@ -784,6 +786,7 @@ impl AgentTaskRegistry {
             task_id: task_id.clone(),
             thread_id: request.thread_id,
             workspace_id: request.workspace_id,
+            trust_root: request.trust_root,
             repository_root: request.repository_root,
             cwd: plan.cwd().to_path_buf(),
             isolation: request.isolation,
@@ -1264,8 +1267,8 @@ fn validate_start_request(request: &AgentTaskStartRequest) -> Result<(), String>
     if request.workspace_id.is_empty() {
         return Err("Agent task workspace id is invalid.".to_string());
     }
-    if !request.repository_root.is_absolute() {
-        return Err("Agent task repository root must be absolute.".to_string());
+    if !request.trust_root.is_absolute() || !request.repository_root.is_absolute() {
+        return Err("Agent task trust and repository roots must be absolute.".to_string());
     }
     Ok(())
 }

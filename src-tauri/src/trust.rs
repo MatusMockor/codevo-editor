@@ -249,6 +249,10 @@ impl WorkspaceTrustService {
         })
     }
 
+    pub(crate) fn revoke_resolved_root(&mut self, root: &Path) -> io::Result<WorkspaceTrustState> {
+        self.set_canonical(normalize_path_string(&root.to_string_lossy()), false)
+    }
+
     pub(crate) fn revoke_clone_canonical_root(
         &mut self,
         root: &str,

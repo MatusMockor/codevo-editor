@@ -635,6 +635,7 @@ fn start_request(task_id: &str, repository_root: &Path) -> AgentTaskStartRequest
         task_id: task_id.to_string(),
         thread_id: "thread-a".into(),
         workspace_id: "ws-agent-tests".to_string(),
+        trust_root: repository_root.to_path_buf(),
         repository_root: repository_root.to_path_buf(),
         isolation: AgentTaskIsolation::Worktree,
         worktree_path: Some(repository_root.join(".worktrees").join(task_id)),

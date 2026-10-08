@@ -164,7 +164,8 @@ fn setup_host(
     }));
     let identity = executable_identity("/bin/echo").unwrap();
     let key = CodexHostKey::new(PathBuf::from("/repo"), 1, identity.clone());
-    let plan = CodexHostLaunchPlan::new(identity, Path::new("/repo"), &[], &[]).unwrap();
+    let root = Path::new("/repo");
+    let plan = CodexHostLaunchPlan::new(identity, root, root, &[], &[]).unwrap();
     let host = registry.host_for(key, &plan).unwrap();
     (registry, host, control)
 }

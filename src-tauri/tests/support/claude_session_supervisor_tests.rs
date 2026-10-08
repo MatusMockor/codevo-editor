@@ -146,6 +146,7 @@ impl SessionHarness {
                 task_id: task_id.to_string(),
                 thread_id: thread_id.to_string(),
                 workspace_id: WORKSPACE.to_string(),
+                trust_root: self.cli.dir.clone(),
                 repository_root: self.cli.dir.clone(),
                 isolation: AgentTaskIsolation::InPlace,
                 worktree_path: None,
@@ -633,14 +634,12 @@ fn revoked_trust_records_its_reason_on_the_session_before_the_running_turn_is_te
     harness.await_stdout("agt-revoked-1", "still-working");
     let pid = cli_pid(&harness);
 
-    harness
-        .tasks
-        .stop_for_revoked_workspace_trust(WORKSPACE, || {
-            thread::sleep(Duration::from_millis(200));
-            harness
-                .sessions
-                .end_for_workspace(WORKSPACE, ClaudeSessionEndReason::TrustRevoked);
-        });
+    harness.tasks.stop_for_revoked_trust(&harness.cli.dir, || {
+        thread::sleep(Duration::from_millis(200));
+        harness
+            .sessions
+            .end_for_workspace(WORKSPACE, ClaudeSessionEndReason::TrustRevoked);
+    });
 
     assert!(matches!(
         harness.terminal("agt-revoked-1"),
@@ -676,15 +675,13 @@ fn revoked_trust_explains_a_turn_that_settles_with_an_unfinished_follow_up_befor
         .expect("accepted follow-up");
     let settled_before_inputs_closed = AtomicBool::new(false);
 
-    harness
-        .tasks
-        .stop_for_revoked_workspace_trust(WORKSPACE, || {
-            harness
-                .sessions
-                .end_for_workspace(WORKSPACE, ClaudeSessionEndReason::TrustRevoked);
-            let settled = wait_until(TERMINAL_DEADLINE, || harness.is_terminal("agt-revoked-2"));
-            settled_before_inputs_closed.store(settled, Ordering::SeqCst);
-        });
+    harness.tasks.stop_for_revoked_trust(&harness.cli.dir, || {
+        harness
+            .sessions
+            .end_for_workspace(WORKSPACE, ClaudeSessionEndReason::TrustRevoked);
+        let settled = wait_until(TERMINAL_DEADLINE, || harness.is_terminal("agt-revoked-2"));
+        settled_before_inputs_closed.store(settled, Ordering::SeqCst);
+    });
 
     assert!(settled_before_inputs_closed.load(Ordering::SeqCst));
     assert!(matches!(

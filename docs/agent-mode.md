@@ -11,10 +11,14 @@ the project scope menu to show all projects or one repository. Codevo keeps at m
 roots in the rail; any additional roots are reported as not shown.
 
 A project must be trusted before an agent can start there. Revoking a project's trust stops its
-running agents and ends its Claude sessions; each stopped turn says that trust was revoked, and its
-queued messages stay paused. A background project can run agents only in an isolated worktree. A
-project whose tab was closed while tasks are still live is being released: its existing work is
-retained, but new threads and follow-ups are blocked.
+running agents, including turns started before the project was last reopened, ends its Claude
+sessions and retires the Codex session process that served it; each stopped turn says that trust
+was revoked, and its queued messages stay paused. A Codex session process that another trusted
+project is using at that moment only finishes that project's running turn and is retired when the
+turn ends; until then every new Codex turn in that repository is refused, also for the other
+project. A background project can run agents only in an isolated worktree. A project whose tab was
+closed while tasks are still live is being released: its existing work is retained, but new threads
+and follow-ups are blocked.
 
 Selecting a project or one of its threads activates that project's workspace automatically.
 The right panel follows the selected project; a selected thread uses its own checkout. While a

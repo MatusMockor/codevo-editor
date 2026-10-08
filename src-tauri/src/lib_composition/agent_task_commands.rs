@@ -520,6 +520,7 @@ fn prepare_claimed_agent_task_start(
             task_id,
             thread_id: request.thread_id.clone(),
             workspace_id: request.workspace_id.as_str().to_string(),
+            trust_root: PathBuf::from(&authority.project_trust.root_path),
             repository_root,
             isolation: request.isolation,
             worktree_path,

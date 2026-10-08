@@ -5,9 +5,14 @@ use agent_task_supervisor::agent_task_trust_revocation::AGENT_TASK_TRUST_REVOKED
 const REVOKED: &str = "ws-revoked";
 const OTHER: &str = "ws-other";
 
+fn trust_root(workspace_id: &str) -> PathBuf {
+    Path::new("/projects").join(workspace_id)
+}
+
 fn in_place_request(task_id: &str, workspace_id: &str, root: &Path) -> AgentTaskStartRequest {
     AgentTaskStartRequest {
         workspace_id: workspace_id.to_string(),
+        trust_root: trust_root(workspace_id),
         isolation: AgentTaskIsolation::InPlace,
         worktree_path: None,
         ..start_request(task_id, root)
@@ -22,32 +27,46 @@ fn start_fake_turn(
     process_group_id: i32,
     term_exit_code: Option<i32>,
 ) {
+    start_fake_turn_for(
+        fixture,
+        in_place_request(task_id, workspace_id, root),
+        process_group_id,
+        term_exit_code,
+    );
+}
+
+fn start_fake_turn_for(
+    fixture: &Fixture,
+    request: AgentTaskStartRequest,
+    process_group_id: i32,
+    term_exit_code: Option<i32>,
+) {
     let process = FakeProcess::new(None, term_exit_code);
     fixture.signals.track(process_group_id, &process);
     fixture.spawner.script(FakeSpawnOutcome::Child(
         FakeChildSpec::new(&process, process_group_id).build(),
     ));
+    let cwd = request
+        .worktree_path
+        .clone()
+        .unwrap_or_else(|| request.repository_root.clone());
     let admission = fixture
         .admission
         .reserve(
-            &workspace(workspace_id),
-            root,
-            root,
-            AgentTaskIsolation::InPlace,
+            &workspace(&request.workspace_id),
+            &request.repository_root,
+            &cwd,
+            request.isolation,
         )
         .expect("admission");
     fixture
         .registry
-        .start(
-            in_place_request(task_id, workspace_id, root),
-            fake_plan(root),
-            admission,
-        )
+        .start(request, fake_plan(&cwd), admission)
         .expect("start turn");
 }
 
 fn revoke_trust(registry: &AgentTaskRegistry) {
-    registry.stop_for_revoked_workspace_trust(REVOKED, || {});
+    registry.stop_for_revoked_trust(&trust_root(REVOKED), || {});
 }
 
 fn terminal_status(sink: &RecordingSink, task_id: &str) -> Option<AgentTaskStatusPayload> {
@@ -120,6 +139,78 @@ fn revoked_trust_stops_every_turn_of_the_exact_workspace_and_reports_why() {
         terminal_status(&fixture.sink, "agt-foreign"),
         Some(AgentTaskStatusPayload::Stopped)
     ));
+}
+
+#[test]
+fn revoked_trust_stops_a_turn_started_under_an_earlier_registration_of_the_project() {
+    let fixture = fixture(Duration::from_secs(60));
+    let repository = trust_root(REVOKED);
+    start_fake_turn_for(
+        &fixture,
+        AgentTaskStartRequest {
+            trust_root: repository.clone(),
+            ..in_place_request("agt-earlier", "ws-revoked-earlier", &repository)
+        },
+        9321,
+        Some(143),
+    );
+    fixture
+        .registry
+        .acknowledge("agt-earlier")
+        .expect("acknowledge");
+
+    revoke_trust(&fixture.registry);
+
+    assert!(stopped_for_revoked_trust(terminal_status(
+        &fixture.sink,
+        "agt-earlier"
+    )));
+    assert_eq!(
+        fixture.signals.signals_for(9321).first().copied(),
+        Some(TERMINATE_PROCESS_GROUP_SIGNAL)
+    );
+}
+
+#[test]
+fn revoked_trust_leaves_a_parent_project_and_a_foreign_worktree_on_the_revoked_root_alone() {
+    let fixture = fixture(Duration::from_secs(60));
+    let revoked_root = trust_root(REVOKED);
+    let parent_using_it_as_a_nested_repository = AgentTaskStartRequest {
+        trust_root: PathBuf::from("/projects"),
+        ..in_place_request("agt-parent", "ws-parent", &revoked_root)
+    };
+    let other_project_working_in_it_as_a_worktree = AgentTaskStartRequest {
+        isolation: AgentTaskIsolation::Worktree,
+        worktree_path: Some(revoked_root.clone()),
+        ..in_place_request("agt-worktree", OTHER, &trust_root(OTHER))
+    };
+    start_fake_turn_for(
+        &fixture,
+        parent_using_it_as_a_nested_repository,
+        9322,
+        Some(143),
+    );
+    start_fake_turn_for(
+        &fixture,
+        other_project_working_in_it_as_a_worktree,
+        9323,
+        Some(143),
+    );
+    for task_id in ["agt-parent", "agt-worktree"] {
+        fixture.registry.acknowledge(task_id).expect("acknowledge");
+    }
+
+    revoke_trust(&fixture.registry);
+
+    for (task_id, process_group_id) in [("agt-parent", 9322), ("agt-worktree", 9323)] {
+        assert!(!fixture.sink.has_terminal_status(task_id));
+        assert!(fixture.signals.signals_for(process_group_id).is_empty());
+        fixture.registry.stop(task_id).expect("cleanup stop");
+        assert!(matches!(
+            terminal_status(&fixture.sink, task_id),
+            Some(AgentTaskStatusPayload::Stopped)
+        ));
+    }
 }
 
 #[test]
@@ -316,7 +407,7 @@ fn revocation_without_worker_threads_kills_at_once_instead_of_waiting_on_the_cal
 
     fixture
         .registry
-        .stop_for_revoked_workspace_trust_without_workers_for_tests(REVOKED);
+        .stop_for_revoked_trust_without_workers_for_tests(&trust_root(REVOKED));
 
     for (task_id, process_group_id) in turns {
         assert_eq!(
@@ -500,7 +591,7 @@ fn a_turn_already_failing_on_its_own_keeps_its_failure_when_trust_is_revoked() {
     turn.await_held_teardown();
 
     turn.registry
-        .stop_for_revoked_workspace_trust(REVOKED, || turn.release_teardown());
+        .stop_for_revoked_trust(&trust_root(REVOKED), || turn.release_teardown());
 
     assert!(matches!(
         turn.own_result(),

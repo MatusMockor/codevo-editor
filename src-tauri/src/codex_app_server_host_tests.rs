@@ -207,7 +207,8 @@ fn test_identity() -> ExecutableIdentity {
 }
 
 fn test_plan(root: &str) -> CodexHostLaunchPlan {
-    CodexHostLaunchPlan::new(test_identity(), Path::new(root), &["--model", "gpt-5"], &[])
+    let root = Path::new(root);
+    CodexHostLaunchPlan::new(test_identity(), root, root, &["--model", "gpt-5"], &[])
         .expect("launch plan")
         .with_env(Vec::new())
 }
@@ -240,8 +241,23 @@ fn launch_plan_carries_the_stdio_transport_arguments() {
 
 #[test]
 fn launch_plan_requires_an_absolute_repository_root() {
-    let outcome = CodexHostLaunchPlan::new(test_identity(), Path::new("repo"), &[], &[]);
+    let relative = Path::new("repo");
+    let outcome = CodexHostLaunchPlan::new(test_identity(), relative, relative, &[], &[]);
     assert_eq!(outcome.err(), Some(CODEX_HOST_ROOT_ERROR.to_string()));
+}
+
+#[test]
+fn launch_plan_requires_an_absolute_trust_root() {
+    let repository = Path::new("/project/repo");
+    for trust_root in ["", "project"] {
+        let outcome =
+            CodexHostLaunchPlan::new(test_identity(), repository, Path::new(trust_root), &[], &[]);
+        assert_eq!(outcome.err(), Some(CODEX_HOST_TRUST_ROOT_ERROR.to_string()));
+    }
+    let plan =
+        CodexHostLaunchPlan::new(test_identity(), repository, Path::new("/project"), &[], &[])
+            .expect("launch plan");
+    assert_eq!(plan.trust_root(), Path::new("/project"));
 }
 
 #[test]
@@ -737,10 +753,10 @@ fn failed_update_leaves_every_idle_host_usable() {
     let busy = registry
         .host_for(test_key("/repo/busy", 1), &test_plan("/repo/busy"))
         .unwrap();
-    let _busy = busy.acquire_activity().unwrap();
+    let _busy = busy.acquire_activity(HostActivityClaim::NewThread).unwrap();
     assert!(registry.retire_all_idle_for_update().is_err());
-    assert!(idle.acquire_activity().is_ok());
-    assert!(busy.acquire_activity().is_ok());
+    assert!(idle.acquire_activity(HostActivityClaim::NewThread).is_ok());
+    assert!(busy.acquire_activity(HostActivityClaim::NewThread).is_ok());
 }
 
 #[test]
