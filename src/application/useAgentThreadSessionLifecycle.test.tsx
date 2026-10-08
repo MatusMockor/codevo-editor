@@ -635,6 +635,37 @@ describe("useAgentThreadSessionLifecycle ended notices", () => {
     expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it("explains that revoked project trust ended a session with live background tasks", async () => {
+    const { fake, emit } = gateway();
+    const harness = render(thread(), fake);
+    await waitForReact(() => expect(fake.subscribeAgentSessionEnded).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      emit({
+        workspaceId: "ws-other",
+        threadId: THREAD_ID,
+        reason: "trustRevoked",
+        backgroundTasksLive: true,
+      }),
+    );
+    expect(harness.setNotice).not.toHaveBeenCalled();
+
+    act(() =>
+      emit({
+        workspaceId: OWNER_ID,
+        threadId: THREAD_ID,
+        reason: "trustRevoked",
+        backgroundTasksLive: true,
+      }),
+    );
+    expect(harness.setNotice).toHaveBeenCalledWith({
+      kind: "warning",
+      message:
+        "Trust in this project was revoked while background tasks were still running in this thread; Claude can no longer report on them.",
+      action: null,
+    });
+  });
+
   it("ignores ended events for a Codex thread with the same identity", async () => {
     const { fake, emit } = gateway();
     const harness = render(thread({ provider: { kind: "codex", sessionId: null } }), fake);

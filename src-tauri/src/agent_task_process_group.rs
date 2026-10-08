@@ -126,6 +126,20 @@ impl AgentProcessGroup {
         child.observe_exit()
     }
 
+    pub(super) fn kill_unreaped(&self) {
+        let state = self.state();
+        let AgentProcessGroupState::Active { process_group_id } = *state else {
+            return;
+        };
+        if process_group_id <= 0 {
+            return;
+        }
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            self.signals
+                .send(process_group_id, KILL_PROCESS_GROUP_SIGNAL)
+        }));
+    }
+
     pub(super) fn reap(&self, child: &mut dyn AgentChild) -> Result<i32, String> {
         // The unreaped leader is the identity anchor that makes this group signal safe.
         // Clean the whole group before surrendering that anchor on every exit path.

@@ -7,7 +7,8 @@ use crate::trust::{WorkspaceTrustService, WorkspaceTrustState};
 use crate::vscode_process_task_commands::VscodeProcessTaskCommandService;
 use crate::workspace_registry::WorkspaceRegistry;
 use crate::{
-    js_test_run, js_test_tasks, js_test_watch, node_package_tasks, registered_runtime_root,
+    agent_trust_revocation, js_test_run, js_test_tasks, js_test_watch, node_package_tasks,
+    registered_runtime_root,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -79,6 +80,7 @@ pub(crate) fn set_workspace_trust(
         if let Some(service) = app.try_state::<VscodeProcessTaskCommandService>() {
             service.request_stop_workspace(&descriptor.workspace_id);
         }
+        agent_trust_revocation::stop_agents_of_revoked_workspace(&app, &descriptor.workspace_id);
     }
     revoke_workspace_runtime_trust(
         &runtime_root,

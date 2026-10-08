@@ -114,6 +114,43 @@ fn completion_snapshot_retains_admission_and_precedes_terminal_publication() {
 }
 
 #[test]
+fn trust_revoked_during_the_completion_snapshot_keeps_the_turns_own_result() {
+    let (entered, entered_rx) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let sink = Arc::new(CaptureSink {
+        before: Box::new(|_| {}),
+        after: Box::new(move |_| {
+            entered.send(()).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        }),
+        events: RecordingSink::default(),
+    });
+    let spawner = Arc::new(FakeSpawner::default());
+    spawner.script(FakeSpawnOutcome::Child(
+        FakeChildSpec::new(&FakeProcess::new(Some(0), None), 9783).build(),
+    ));
+    let registry = setup(sink.clone(), spawner);
+    let root = unique_path("capture-revoked-trust");
+    start(&registry, &root).unwrap();
+    registry.acknowledge("agt-capture").unwrap();
+    entered_rx.recv_timeout(EVENT_DEADLINE).unwrap();
+
+    registry.stop_for_revoked_workspace_trust("ws-agent-tests", || {});
+    release.send(()).unwrap();
+
+    assert!(wait_until(EVENT_DEADLINE, || sink
+        .events
+        .has_terminal_status("agt-capture")));
+    assert!(matches!(
+        statuses_for(&sink.events, "agt-capture")
+            .last()
+            .map(|event| &event.status),
+        Some(AgentTaskStatusPayload::Exited { exit_code: 0 })
+    ));
+}
+
+#[test]
 fn cancellation_during_baseline_never_starts_provider() {
     for shutdown in [false, true] {
         let (entered, entered_rx) = mpsc::channel();

@@ -90,6 +90,7 @@ pub enum ClaudeSessionEndReason {
     Evicted,
     Restarted,
     Released,
+    TrustRevoked,
     ThreadEnded,
     ProviderUpdated,
     Shutdown,

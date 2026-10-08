@@ -754,6 +754,42 @@ fn releasing_a_workspace_ends_its_sessions_even_outside_the_released_root() {
 }
 
 #[test]
+fn revoked_trust_kills_the_session_groups_of_the_exact_workspace_and_reports_why() {
+    let (cli, registry, events, background) =
+        live_background_session("reap-revoked-trust", ClaudeSessionTuning::default());
+    let other = acquire(
+        &registry,
+        &cli,
+        &session_request(
+            &cli,
+            "ws-b",
+            "t2",
+            None,
+            AgentLaunchOptions::default(),
+            ClaudeSessionRestartPolicy::RefuseIfBackground,
+        ),
+    )
+    .expect("other owner");
+    settle(other.session.as_ref().expect("session"), "hello");
+
+    registry.end_for_workspace("ws-a", ClaudeSessionEndReason::TrustRevoked);
+
+    assert!(gone_within(background, Duration::from_secs(5)));
+    assert!(wait_until(Duration::from_secs(5), || events
+        .reasons_for("t1")
+        == vec![ClaudeSessionEndReason::TrustRevoked]));
+    assert!(wait_until(Duration::from_secs(5), || registry
+        .live_sessions()
+        == 1));
+    assert!(events.reasons_for("t2").is_empty());
+    assert_eq!(
+        serde_json::to_string(&ClaudeSessionEndReason::TrustRevoked).expect("reason json"),
+        r#""trustRevoked""#
+    );
+    assert!(registry.shutdown_all());
+}
+
+#[test]
 fn shutdown_closes_admission_and_reaps_everything() {
     let (cli, registry, _events, background) =
         live_background_session("reap-shutdown", ClaudeSessionTuning::default());

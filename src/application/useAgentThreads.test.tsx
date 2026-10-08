@@ -218,6 +218,31 @@ describe("useAgentThreads facade", () => {
     harness.unmount();
   });
 
+  it("shows why a turn ended when project trust was revoked and restarts nothing from its queue", async () => {
+    const trustRevoked =
+      "This turn was stopped because trust in its project was revoked. Trust the project again to continue.";
+    const harness = renderThreads();
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))!.threadId;
+    act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
+    const queued = { threadId, prompt: "Then run the tests", delivery: "queued" as const };
+    expect(await act(() => harness.hook().steer(queued))).toBe("deferred");
+
+    await act(async () => {
+      harness.emitStatus(threadId, 2, { kind: "failed", message: trustRevoked });
+    });
+
+    const view = harness.hook().threads[0];
+    expect(view?.lifecycle).toBe("settled");
+    expect(view?.thread.turns[0]?.status).toEqual({ kind: "failed", message: trustRevoked });
+    expect(harness.hook().liveTaskCount).toBe(0);
+    const queue = harness.hook().deferredFollowUps.get(threadId) ?? [];
+    expect(queue.map((entry) => entry.state)).toEqual(["paused"]);
+    expect(harness.startedRequests).toHaveLength(1);
+    expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("starts concurrent local threads in one checkout and isolates their output and status", async () => {
     const harness = renderThreads();
     await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());

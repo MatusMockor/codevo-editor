@@ -1,3 +1,4 @@
+use super::agent_task_trust_revocation::revoked_trust_payload;
 use super::*;
 
 pub(super) fn capture_completion(shared: &Arc<AgentTaskShared>, task_id: &str) -> bool {
@@ -62,7 +63,7 @@ pub(super) fn complete_settled(
             let status = resolve_terminal_status(
                 entry.stop_requested || interrupted,
                 entry.watchdog_timed_out,
-                payload,
+                revoked_trust_payload(entry.outcome_authority, payload),
             );
             if entry.acknowledged
                 && !entry.flushing

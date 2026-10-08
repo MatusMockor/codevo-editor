@@ -21,6 +21,10 @@ pub mod agent_task_stop_escalation;
 #[path = "agent_task_pending_stops.rs"]
 pub mod agent_task_pending_stops;
 
+#[path = "agent_task_trust_revocation.rs"]
+pub mod agent_task_trust_revocation;
+use agent_task_trust_revocation::{note_own_outcome, AgentTaskOutcomeAuthority};
+
 use agent_task_pending_stops::{PendingAgentTaskStops, AGENT_TASK_STOPPED_BEFORE_START_ERROR};
 
 #[path = "agent_task_process_group.rs"]
@@ -538,6 +542,7 @@ struct AgentTaskEntry {
     stdout_at_line_boundary: bool,
     stderr_at_line_boundary: bool,
     stop_requested: bool,
+    outcome_authority: AgentTaskOutcomeAuthority,
     interrupt_requested: bool,
     watchdog_timed_out: bool,
     group: Option<Arc<AgentProcessGroup>>,
@@ -569,6 +574,7 @@ impl AgentTaskEntry {
             stdout_at_line_boundary: true,
             stderr_at_line_boundary: true,
             stop_requested: false,
+            outcome_authority: AgentTaskOutcomeAuthority::Undecided,
             interrupt_requested: false,
             watchdog_timed_out: false,
             group: None,
@@ -1459,6 +1465,7 @@ fn run_waiter(
         wait_for_terminal_output_delivery(shared, task_id, Duration::from_secs(30));
         return;
     }
+    note_own_outcome(shared, task_id);
     let _ = group.force_stop();
     pumps.cancel();
     let _ = catch_unwind(AssertUnwindSafe(|| {
@@ -1509,6 +1516,7 @@ fn run_waiter_inner(
             Err(error) => break Err(error),
         }
     };
+    note_own_outcome(shared, task_id);
     match outcome {
         Ok(()) => {
             if !pumps.settled_within(PUMP_DRAIN_TIMEOUT) {

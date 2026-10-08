@@ -10,9 +10,11 @@ active agent project. Use **Add project** in the agent rail to register another 
 the project scope menu to show all projects or one repository. Codevo keeps at most eight project
 roots in the rail; any additional roots are reported as not shown.
 
-A project must be trusted before an agent can start there. A background project can run agents
-only in an isolated worktree. A project whose tab was closed while tasks are still live is being
-released: its existing work is retained, but new threads and follow-ups are blocked.
+A project must be trusted before an agent can start there. Revoking a project's trust stops its
+running agents and ends its Claude sessions; each stopped turn says that trust was revoked, and its
+queued messages stay paused. A background project can run agents only in an isolated worktree. A
+project whose tab was closed while tasks are still live is being released: its existing work is
+retained, but new threads and follow-ups are blocked.
 
 Selecting a project or one of its threads activates that project's workspace automatically.
 The right panel follows the selected project; a selected thread uses its own checkout. While a

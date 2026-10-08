@@ -129,6 +129,7 @@ fn output_fixture() -> (Arc<AgentTaskShared>, Arc<RecordingSink>) {
             stdout_at_line_boundary: true,
             stderr_at_line_boundary: true,
             stop_requested: false,
+            outcome_authority: AgentTaskOutcomeAuthority::Undecided,
             interrupt_requested: false,
             watchdog_timed_out: false,
             group: None,

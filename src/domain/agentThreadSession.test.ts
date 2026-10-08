@@ -104,6 +104,10 @@ describe("agent thread session contracts", () => {
     };
     expect(AGENT_SESSION_ENDED_EVENT).toBe("agent-session://ended");
     expect(parseAgentSessionEndedEvent(event)).toEqual(event);
+    expect(parseAgentSessionEndedEvent({ ...event, reason: "trustRevoked" })).toEqual({
+      ...event,
+      reason: "trustRevoked",
+    });
     expect(() => parseAgentSessionEndedEvent({ ...event, reason: "other" })).toThrow(TypeError);
     expect(() => parseAgentSessionEndedEvent({ ...event, extra: 1 })).toThrow(TypeError);
   });
@@ -356,6 +360,9 @@ describe("agent thread session contracts", () => {
     } as const;
     expect(agentSessionEndedNotice({ ...base, reason: "idleTimeout" })).toBe(
       "The Claude session was idle too long while background tasks were still running in this thread; Claude can no longer report on them.",
+    );
+    expect(agentSessionEndedNotice({ ...base, reason: "trustRevoked" })).toBe(
+      "Trust in this project was revoked while background tasks were still running in this thread; Claude can no longer report on them.",
     );
     expect(agentSessionEndedNotice({ ...base, reason: "stopped" })).toBeNull();
     expect(agentSessionEndedNotice({ ...base, reason: "threadEnded" })).toBeNull();

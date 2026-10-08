@@ -12,6 +12,7 @@ use agent_task_spawner::claude_session_registry::ClaudeSessionRegistry;
 use agent_task_spawner::claude_session_task_stop::ClaudeBackgroundTaskStopOutcome;
 use agent_task_spawner::claude_session_turn::ClaudeSessionTurnPlan;
 use agent_task_supervisor::agent_task_interrupt::AgentTaskInterruptOutcome;
+use agent_task_supervisor::agent_task_trust_revocation::AGENT_TASK_TRUST_REVOKED_MESSAGE;
 
 const WORKSPACE: &str = "ws-agent-tests";
 const THREAD: &str = "thread-a";
@@ -620,6 +621,81 @@ fn a_hard_stop_ends_the_session_and_reports_live_native_background_tasks() {
         .sessions
         .live_sessions()
         == 0));
+    harness.assert_no_task_group_signals();
+}
+
+#[test]
+fn revoked_trust_records_its_reason_on_the_session_before_the_running_turn_is_terminated() {
+    let harness = SessionHarness::recording("supervised-revoked-trust");
+    harness
+        .start_turn("agt-revoked-1", THREAD, "native-linger", None)
+        .expect("lingering turn");
+    harness.await_stdout("agt-revoked-1", "still-working");
+    let pid = cli_pid(&harness);
+
+    harness
+        .tasks
+        .stop_for_revoked_workspace_trust(WORKSPACE, || {
+            thread::sleep(Duration::from_millis(200));
+            harness
+                .sessions
+                .end_for_workspace(WORKSPACE, ClaudeSessionEndReason::TrustRevoked);
+        });
+
+    assert!(matches!(
+        harness.terminal("agt-revoked-1"),
+        AgentTaskStatusPayload::Failed { message }
+            if message == AGENT_TASK_TRUST_REVOKED_MESSAGE
+    ));
+    assert!(gone_within(pid, PROCESS_DEADLINE));
+    assert!(wait_until(PROCESS_DEADLINE, || harness
+        .events
+        .last_for(THREAD)
+        .is_some()));
+    let ended = harness.events.last_for(THREAD).expect("ended event");
+    assert_eq!(ended.reason, ClaudeSessionEndReason::TrustRevoked);
+    assert!(ended.background_tasks_live);
+    harness.assert_no_task_group_signals();
+}
+
+#[test]
+fn revoked_trust_explains_a_turn_that_settles_with_an_unfinished_follow_up_before_its_input_closes()
+{
+    let harness = SessionHarness::recording("supervised-revoked-follow-up");
+    harness
+        .start_turn("agt-revoked-2", THREAD, "slow", None)
+        .expect("slow turn");
+    harness.await_stdout("agt-revoked-2", "echo:slow");
+    harness
+        .tasks
+        .steer_for_workspace(
+            "agt-revoked-2",
+            WORKSPACE,
+            Arc::from(claude_user_frame("slow follow-up", &[]).as_slice()),
+        )
+        .expect("accepted follow-up");
+    let settled_before_inputs_closed = AtomicBool::new(false);
+
+    harness
+        .tasks
+        .stop_for_revoked_workspace_trust(WORKSPACE, || {
+            harness
+                .sessions
+                .end_for_workspace(WORKSPACE, ClaudeSessionEndReason::TrustRevoked);
+            let settled = wait_until(TERMINAL_DEADLINE, || harness.is_terminal("agt-revoked-2"));
+            settled_before_inputs_closed.store(settled, Ordering::SeqCst);
+        });
+
+    assert!(settled_before_inputs_closed.load(Ordering::SeqCst));
+    assert!(matches!(
+        harness.terminal("agt-revoked-2"),
+        AgentTaskStatusPayload::Failed { message }
+            if message == AGENT_TASK_TRUST_REVOKED_MESSAGE
+    ));
+    assert!(wait_until(PROCESS_DEADLINE, || harness
+        .events
+        .reasons_for(THREAD)
+        == vec![ClaudeSessionEndReason::TrustRevoked]));
     harness.assert_no_task_group_signals();
 }
 

@@ -36,6 +36,7 @@ export type AgentSessionEndReason =
   | "evicted"
   | "restarted"
   | "released"
+  | "trustRevoked"
   | "threadEnded"
   | "providerUpdated"
   | "shutdown"
@@ -52,6 +53,7 @@ const END_REASONS: ReadonlyArray<AgentSessionEndReason> = [
   "evicted",
   "restarted",
   "released",
+  "trustRevoked",
   "threadEnded",
   "providerUpdated",
   "shutdown",
@@ -429,6 +431,8 @@ function sessionEndCause(reason: AgentSessionEndReason): string | null {
       return "Too many Claude sessions were open";
     case "providerUpdated":
       return "Claude was updated";
+    case "trustRevoked":
+      return "Trust in this project was revoked";
     case "unownedActivity":
       return "Claude started work on its own";
     case "interruptTimedOut":
