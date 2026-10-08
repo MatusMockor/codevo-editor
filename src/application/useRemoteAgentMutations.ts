@@ -54,6 +54,10 @@ export const REMOTE_ORIGIN_BASE_UNSUPPORTED =
   "Update the server runner to start a conversation from an origin branch.";
 export const REMOTE_ORIGIN_BASE_NEEDS_WORKTREE =
   "Starting from an origin branch needs a new worktree on the server.";
+export const REMOTE_UNSTARTED_DRAFT_NOTICE =
+  "The draft was not started, so nothing is running on the server. Send the message again; if this repeats, update the server runner.";
+export const REMOTE_POSSIBLY_RUNNING_NOTICE =
+  "The server may still be running this message: find the task in the server conversations and stop it if it should not run. Sending again starts a separate task.";
 type Pending = {
   readonly signature: string;
   readonly idempotencyKey: string;
@@ -183,6 +187,11 @@ export function useRemoteAgentMutations(options: Options) {
     ]);
     let command = pending.current.get(targetKey);
     let dispatched = false;
+    const abandonMismatch = (reason: string, remoteState: string): null => {
+      pending.current.delete(targetKey);
+      options.report(`${reason} ${remoteState}`);
+      return null;
+    };
     try {
       if (command && command.signature !== signature)
         throw new Error(
@@ -297,7 +306,10 @@ export function useRemoteAgentMutations(options: Options) {
           task.id === command.parentTaskId ||
           task.status === "draft"
         )
-          throw new Error("The runner returned a different continuation.");
+          return abandonMismatch(
+            "The runner returned a different continuation.",
+            REMOTE_POSSIBLY_RUNNING_NOTICE,
+          );
       } else {
         const wire = {
           serverId: target.serverId,
@@ -320,7 +332,12 @@ export function useRemoteAgentMutations(options: Options) {
           (task.conversationId !== undefined && task.conversationId !== task.id) ||
           (command.draftId && task.id !== command.draftId)
         )
-          throw new Error("The runner returned a different task draft.");
+          return abandonMismatch(
+            "The runner returned a different task draft.",
+            command.draftId === undefined && task.status === "draft"
+              ? REMOTE_UNSTARTED_DRAFT_NOTICE
+              : REMOTE_POSSIBLY_RUNNING_NOTICE,
+          );
         command.draftId = task.id;
         if (task.status === "draft") {
           task = await gateway.startTask({
@@ -337,7 +354,10 @@ export function useRemoteAgentMutations(options: Options) {
           task.parentTaskId ||
           (task.conversationId !== undefined && task.conversationId !== task.id)
         )
-          throw new Error("The runner did not confirm the task start.");
+          return abandonMismatch(
+            "The runner did not confirm the task start.",
+            REMOTE_POSSIBLY_RUNNING_NOTICE,
+          );
       }
       if (
         (task.isolation ?? "worktree") !== command.isolation ||
@@ -347,7 +367,10 @@ export function useRemoteAgentMutations(options: Options) {
         !remoteRunnerEchoesLaunch(launch, task.launch) ||
         !sameParts(task.parts, command.parts)
       )
-        throw new Error("The runner returned a different remote task.");
+        return abandonMismatch(
+          "The runner returned a different remote task.",
+          REMOTE_POSSIBLY_RUNNING_NOTICE,
+        );
       pending.current.delete(targetKey);
       options.publish(target.serverId, task);
       return task;

@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentLaunchOptions, ClaudeLaunchOptions } from "../domain/agentLaunch";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
-import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
+import {
+  REMOTE_POSSIBLY_RUNNING_NOTICE,
+  REMOTE_UNSTARTED_DRAFT_NOTICE,
+  useRemoteAgentMutations,
+} from "./useRemoteAgentMutations";
 
 const target = { serverId: "s", runnerId: "r", projectId: "p" };
 const continuationTarget = { ...target, conversationId: "t", latestTaskId: "t" };
@@ -168,7 +172,7 @@ describe("remote launch echo for Claude context windows", () => {
     expect(h.gw.startTask).not.toHaveBeenCalled();
     expect(h.publish).not.toHaveBeenCalled();
     expect(h.report).toHaveBeenCalledWith(
-      "Remote execution was not confirmed. The runner returned a different task draft. Retry the same message to recover it safely.",
+      `The runner returned a different task draft. ${REMOTE_UNSTARTED_DRAFT_NOTICE}`,
     );
   });
 
@@ -186,7 +190,7 @@ describe("remote launch echo for Claude context windows", () => {
     });
     expect(h.publish).not.toHaveBeenCalled();
     expect(h.report).toHaveBeenCalledWith(
-      "Remote execution was not confirmed. The runner returned a different remote task. Retry the same message to recover it safely.",
+      `The runner returned a different remote task. ${REMOTE_POSSIBLY_RUNNING_NOTICE}`,
     );
   });
 });

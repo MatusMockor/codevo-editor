@@ -32,6 +32,8 @@ interface Options {
   refresh(): Promise<void>;
   report(message: string): void;
 }
+export const REMOTE_QUEUE_MISMATCH_NOTICE =
+  "The runner returned a different queued message. The server may still run it: check the conversation's queued messages and remove it if it should not run. Sending again queues a separate message.";
 type Command = {
   taskId: string;
   signature: string;
@@ -212,19 +214,22 @@ export function useRemotePendingMessages(options: Options) {
       target(request.threadId);
       const item = response.pending;
       const expectedParts = command.parts;
-      if (
-        item.conversationId !== execution.conversationId ||
-        item.parts.length !== command.parts.length ||
-        item.parts.some((part, index) => {
+      const confirmed =
+        item.conversationId === execution.conversationId &&
+        item.parts.length === command.parts.length &&
+        item.parts.every((part, index) => {
           const expected = expectedParts[index];
           return part.type === "text"
-            ? expected?.type !== "text" || expected.text !== part.text
-            : expected?.type !== "attachment" || expected.attachmentId !== part.attachmentId;
-        }) ||
-        !remoteRunnerEchoesLaunch(launch, item.launch)
-      )
-        throw new Error("The runner returned a different queued message.");
+            ? expected?.type === "text" && expected.text === part.text
+            : expected?.type === "attachment" && expected.attachmentId === part.attachmentId;
+        }) &&
+        remoteRunnerEchoesLaunch(launch, item.launch);
       uncertain.current.delete(commandKey);
+      if (!confirmed) {
+        void options.refresh();
+        options.report(REMOTE_QUEUE_MISMATCH_NOTICE);
+        return false;
+      }
       options.publish(execution.serverId, request.threadId, (values) => [
         ...values.filter((entry) => entry.id !== item.id),
         ...(["queued", "paused", "uncertain"].includes(item.status) ? [item] : []),

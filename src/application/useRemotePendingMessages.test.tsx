@@ -11,7 +11,7 @@ import type {
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import { emptyRemoteInventory } from "./remoteAgentInventoryLoad";
 import type { RemotePendingUpdate } from "./useRemoteAgentInventory";
-import { useRemotePendingMessages } from "./useRemotePendingMessages";
+import { REMOTE_QUEUE_MISMATCH_NOTICE, useRemotePendingMessages } from "./useRemotePendingMessages";
 
 const launch = { provider: "codex", model: "default", mode: "workspaceWrite" } as const;
 const request = { threadId: "agt-1", prompt: "Next step", launch };
@@ -201,7 +201,9 @@ describe("server-owned pending message orchestration", () => {
       );
     });
     expect(h.options.publish).not.toHaveBeenCalled();
-    expect(h.result.hasUnconfirmed(request.threadId)).toBe(true);
+    expect(h.options.refresh).toHaveBeenCalledOnce();
+    expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
+    expect(h.result.hasUnconfirmed(request.threadId)).toBe(false);
   });
   it.each([undefined, "default"] as const)(
     "accepts equivalent default Codex effort when the request uses %s",
@@ -702,10 +704,45 @@ it.each([
       false,
     );
   });
+  expect(h.options.report).toHaveBeenCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
+});
+
+it("refreshes the server queue after a mismatching answer and lets a changed message through", async () => {
+  const h = setup();
+  const mismatched = pending({ parts: [{ type: "text", text: "Other" }] });
+  h.gateway.enqueueMessage.mockResolvedValueOnce({ pending: mismatched, created: true });
+  await act(async () => {
+    expect(await h.result.enqueue(request)).toBe(false);
+  });
+  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
   expect(h.options.publish).not.toHaveBeenCalled();
-  expect(h.options.report).toHaveBeenCalledWith(
-    "Queue delivery was not confirmed. Retry the same message to recover it safely.",
-  );
+  expect(h.options.refresh).toHaveBeenCalledOnce();
+  expect(h.result.hasUnconfirmed(request.threadId)).toBe(false);
+
+  const changed = pending({ id: "pending-2", parts: [{ type: "text", text: "Changed" }] });
+  h.gateway.enqueueMessage.mockResolvedValue({ pending: changed, created: true });
+  await act(async () => {
+    expect(await h.result.enqueue({ ...request, prompt: "Changed" })).toBe(true);
+  });
+  const keys = h.gateway.enqueueMessage.mock.calls.map(([wire]) => wire.idempotencyKey);
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).not.toBe(keys[0]);
+  expect(h.applyPublished([])).toEqual([changed]);
+});
+
+it("drops a queued message the runner placed in another conversation", async () => {
+  const h = setup();
+  h.gateway.enqueueMessage.mockResolvedValueOnce({
+    pending: pending({ conversationId: "elsewhere" }),
+    created: true,
+  });
+  await act(async () => {
+    expect(await h.result.enqueue(request)).toBe(false);
+  });
+  expect(h.options.publish).not.toHaveBeenCalled();
+  expect(h.options.refresh).toHaveBeenCalledOnce();
+  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
+  expect(h.result.hasUnconfirmed(request.threadId)).toBe(false);
 });
 
 it.each([
