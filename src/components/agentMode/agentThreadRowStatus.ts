@@ -4,6 +4,7 @@ import {
   type AgentBackgroundActivity,
 } from "../../domain/agentBackgroundActivity";
 import {
+  agentSessionBackgroundIsLive,
   agentSessionReplySince,
   type AgentSessionBackground,
 } from "../../domain/agentSessionBackground";
@@ -81,7 +82,8 @@ export function agentRowStatus(
         : {}),
     };
   }
-  if (session !== undefined) return sessionBackgroundStatus(session);
+  if (session !== undefined && agentSessionBackgroundIsLive(session))
+    return sessionBackgroundStatus(session);
   const last = lastTurnStatus(view.thread);
   if (last !== null && isFailedTurnStatus(last)) return { kind: "failed" };
   if (last !== null && isStoppedTurnStatus(last)) return { kind: "stopped" };

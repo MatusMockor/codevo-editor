@@ -111,20 +111,37 @@ describe("agentThreadNotificationState", () => {
     }
   });
 
-  it("stays quiet for stopped and interrupted turns, including interrupted background replies", () => {
+  it("stays quiet for stopped and interrupted turns the user prompted or stopped", () => {
     expect(
       agentThreadNotificationState(thread([turn("u1", { kind: "stopped" })]), null, "idle"),
     ).toEqual(QUIET);
     expect(
       agentThreadNotificationState(thread([turn("u1", { kind: "interrupted" })]), null, "idle"),
     ).toEqual(QUIET);
-    expect(
-      agentThreadNotificationState(
-        thread([turn("u2", { kind: "interrupted" }, "background")]),
-        null,
-        "idle",
-      ),
-    ).toEqual(QUIET);
+    for (const work of ["idle", "live"] as const) {
+      expect(
+        agentThreadNotificationState(
+          thread([turn("u2", { kind: "stopped" }, "background")]),
+          null,
+          work,
+        ),
+      ).toEqual(QUIET);
+      expect(
+        agentThreadNotificationState(thread([turn("u1", { kind: "interrupted" })]), null, work),
+      ).toEqual(QUIET);
+    }
+  });
+
+  it("releases what was held when an unprompted reply was cut off, and keeps holding while work is live", () => {
+    const cutOff = thread([
+      turn("u1", { kind: "exited", exitCode: 0 }),
+      turn("u2", { kind: "interrupted" }, "background"),
+    ]);
+    expect(agentThreadNotificationState(cutOff, null, "idle")).toEqual({ kind: "released" });
+    expect(agentThreadNotificationState(cutOff, null, "live")).toEqual({ kind: "withheld" });
+    expect(agentThreadNotificationState({ ...cutOff, archived: true }, null, "idle")).toEqual(
+      QUIET,
+    );
   });
 
   it("keys a pending interaction by its exact request while the turn runs", () => {
@@ -417,5 +434,175 @@ describe("completion while session background work is live", () => {
         [subject("t1", at(settled, "idle"), "owner-b")],
       ]),
     ).toEqual([]);
+  });
+
+  describe("when the follow-up reply is cut off", () => {
+    const cutOff = thread([
+      turn("u1", exitedCleanly),
+      turn("u2", { kind: "interrupted" }, "background"),
+    ]);
+    const cutOffAfterReply = thread([
+      turn("u1", exitedCleanly),
+      turn("u2", exitedCleanly, "background"),
+      turn("u3", { kind: "interrupted" }, "background"),
+    ]);
+    const stoppedReply = thread([
+      turn("u1", exitedCleanly),
+      turn("u2", { kind: "stopped" }, "background"),
+    ]);
+    const failedReply = thread([
+      turn("u1", exitedCleanly),
+      turn("u2", { kind: "failed", message: "boom" }, "background"),
+    ]);
+
+    it("delivers the held completion once when the session dies while the reply is written", () => {
+      expect(
+        signalKeys([
+          at(running, "live"),
+          at(settled, "live"),
+          at(cutOff, "live"),
+          at(cutOff, "idle"),
+          at(cutOff, "idle"),
+        ]),
+      ).toEqual(["u1:completed"]);
+    });
+
+    it("delivers the latest held completion, not an earlier one it replaced", () => {
+      expect(
+        signalKeys([
+          at(running, "live"),
+          at(settled, "live"),
+          at(replied, "live"),
+          at(cutOffAfterReply, "live"),
+          at(cutOffAfterReply, "idle"),
+          at(cutOffAfterReply, "idle"),
+        ]),
+      ).toEqual(["u2:completed"]);
+    });
+
+    it("keeps the held completion across an unknown poll and a hold that goes on", () => {
+      const observed = [
+        at(running, "live"),
+        at(settled, "live"),
+        agentThreadNotificationState(running, undefined, "live"),
+        at(cutOff, "live"),
+        at(cutOff, "live"),
+      ];
+      expect(signalKeys(observed)).toEqual([]);
+      expect(signalKeys([...observed, at(cutOff, "idle")])).toEqual(["u1:completed"]);
+    });
+
+    it("says nothing again for a completion that was already delivered before the hold", () => {
+      expect(
+        signalKeys([
+          at(running, "idle"),
+          at(settled, "idle"),
+          at(settled, "live"),
+          at(cutOff, "live"),
+          at(cutOff, "idle"),
+        ]),
+      ).toEqual(["u1:completed"]);
+    });
+
+    it("stays quiet when the user stopped the reply, also once the work ends", () => {
+      expect(
+        signalKeys([
+          at(running, "live"),
+          at(settled, "live"),
+          at(stoppedReply, "live"),
+          at(stoppedReply, "idle"),
+          at(cutOff, "idle"),
+        ]),
+      ).toEqual([]);
+    });
+
+    it("reports a failed reply as failed and never the completion it replaced", () => {
+      expect(
+        signalKeys([
+          at(running, "live"),
+          at(settled, "live"),
+          at(failedReply, "live"),
+          at(failedReply, "idle"),
+          at(cutOff, "idle"),
+        ]),
+      ).toEqual(["u2:failed"]);
+    });
+
+    it("drops the held completion when a new turn starts before the hold ends", () => {
+      const next = thread([turn("u1", exitedCleanly), turn("u3", { kind: "running" })]);
+      expect(
+        signalKeys([
+          at(running, "live"),
+          at(settled, "live"),
+          at(next, "live"),
+          at(cutOff, "idle"),
+        ]),
+      ).toEqual([]);
+    });
+
+    it("drops the held completion with its owner, its thread or an archive", () => {
+      expect(
+        run([
+          [subject("t1", at(running, "live"), "owner-a")],
+          [subject("t1", at(settled, "live"), "owner-a")],
+          [subject("t1", at(cutOff, "idle"), "owner-b")],
+          [subject("t1", at(cutOff, "idle"), "owner-a")],
+        ]),
+      ).toEqual([]);
+      expect(
+        run([
+          [subject("t1", at(running, "live"))],
+          [subject("t1", at(settled, "live"))],
+          [],
+          [subject("t1", at(cutOff, "idle"))],
+        ]),
+      ).toEqual([]);
+      expect(
+        run([
+          [subject("t1", at(running, "live"))],
+          [subject("t1", at(settled, "live"))],
+          [subject("t1", at({ ...settled, archived: true }, "live"))],
+          [subject("t1", at(cutOff, "idle"))],
+        ]),
+      ).toEqual([]);
+    });
+
+    it("keeps the held completion of a remote thread that is briefly missing", () => {
+      const remote = (state: AgentThreadNotificationState) =>
+        subject("r1", state, "remote-owner", "retain");
+      expect(
+        run([
+          [remote(at(running, "live"))],
+          [remote(at(settled, "live"))],
+          [],
+          [remote(at(cutOff, "idle"))],
+          [remote(at(cutOff, "idle"))],
+        ]),
+      ).toEqual(["r1:completed"]);
+    });
+
+    it("adopts a reply that was already cut off when first seen without a notification", () => {
+      expect(signalKeys([at(cutOff, "idle"), at(cutOff, "idle")])).toEqual([]);
+      expect(signalKeys([at(cutOff, "live"), at(cutOff, "idle")])).toEqual([]);
+    });
+
+    it("delivers a completion first seen held, as after a reload, when its reply is then cut off", () => {
+      const first = detectAgentThreadNotifications(new Map(), [subject("t1", at(settled, "live"))]);
+      expect(first.events).toEqual([]);
+      expect(first.baseline.get("t1")).toMatchObject({
+        signalKey: null,
+        heldCompletion: { kind: "completed", key: "u1:completed" },
+      });
+      const released = detectAgentThreadNotifications(first.baseline, [
+        subject("t1", at(cutOff, "idle")),
+      ]);
+      expect(released.events.map((event) => [event.kind, event.signalKey])).toEqual([
+        ["completed", "u1:completed"],
+      ]);
+      expect(released.baseline.get("t1")).toMatchObject({
+        signalKey: "u1:completed",
+        heldCompletion: null,
+      });
+    });
   });
 });

@@ -598,6 +598,44 @@ fn a_native_background_task_settles_at_the_drain_and_its_wake_up_is_a_background
 }
 
 #[test]
+fn a_task_that_finishes_while_its_turn_still_runs_is_answered_by_that_turn_and_expects_no_reply() {
+    let cli = FakeCli::new("session-midturn-notification");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+
+    let (output, mut turn) = run_turn(&session, "native-midturn");
+
+    assert!(output.contains("\"task_notification\""), "{output}");
+    assert!(output.contains("NOTED"), "{output}");
+    assert_eq!(turn.reap(), Ok(0));
+    assert_eq!(turn.outcome(), Some(TurnOutcome::Settled));
+    assert_eq!(session.background_tasks(), 0);
+    assert_eq!(session.facts().availability, SessionAvailability::Idle);
+
+    let (next, mut second) = run_turn(&session, "hello");
+    assert!(next.contains("echo:hello"), "{next}");
+    assert_eq!(second.reap(), Ok(0));
+    let levels = owner.levels();
+    assert!(
+        levels
+            .iter()
+            .all(|(_, reply)| *reply == ClaudeBackgroundReply::None),
+        "no level may expect or carry a reply: {levels:?}"
+    );
+    assert!(
+        levels
+            .last()
+            .is_none_or(|level| *level == (0, ClaudeBackgroundReply::None)),
+        "the session must end idle: {levels:?}"
+    );
+    assert!(owner.background_turns().is_empty());
+    assert!(owner.reasons().is_empty());
+    assert_eq!(cli.cli_pids().len(), 1);
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+}
+
+#[test]
 fn a_wake_up_reply_is_live_session_work_until_it_lands_and_the_turn_lands_first() {
     let cli = FakeCli::new("session-held-reply");
     let owner = Arc::new(RecordingOwner::default());
@@ -612,6 +650,11 @@ fn a_wake_up_reply_is_live_session_work_until_it_lands_and_the_turn_lands_first(
     assert_eq!(owner.last_reply(), replying);
     assert_eq!(session.background_tasks(), 0);
     assert!(owner.background_turns().is_empty());
+    assert!(
+        !owner.levels().contains(&(0, ClaudeBackgroundReply::None)),
+        "the drain must never publish an idle level before its reply: {:?}",
+        owner.levels()
+    );
 
     cli.release_reply();
     assert!(wait_until(TURN_TIMEOUT, || owner.last_reply()

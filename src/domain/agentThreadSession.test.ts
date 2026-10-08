@@ -8,11 +8,13 @@ import {
 import {
   AGENT_SESSION_BACKGROUND_TASKS_EVENT,
   AGENT_SESSION_BACKGROUND_TURN_EVENT,
+  MAX_AGENT_SESSION_BACKGROUND_LEVELS,
   MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS,
   AGENT_SESSION_ENDED_EVENT,
   MAX_AGENT_SESSION_BACKGROUND_TURN_OUTPUT_BYTES,
   agentSessionEndedNotice,
   isAgentSessionRestartConfirmationError,
+  parseAgentSessionBackgroundLevels,
   parseAgentSessionBackgroundTasksEvent,
   parseAgentSessionBackgroundTurnEvent,
   parseAgentSessionEndedEvent,
@@ -277,6 +279,58 @@ describe("agent thread session contracts", () => {
       },
     ]) {
       expect(() => parseAgentSessionBackgroundTasksEvent(broken)).toThrow(TypeError);
+    }
+  });
+
+  it("parses the pinned expected-reply level exactly as the backend serializes it", () => {
+    const pinned =
+      '{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":0,"agents":0,"tasks":[],"reply":"expected"}';
+    expect(parseAgentSessionBackgroundTasksEvent(JSON.parse(pinned))).toEqual({
+      workspaceId: "ws-1",
+      threadId: "agt-1-0a1c",
+      total: 0,
+      agents: 0,
+      tasks: [],
+      reply: "expected",
+    });
+    expect(() =>
+      parseAgentSessionBackgroundTasksEvent({ ...JSON.parse(pinned), reply: "pending" }),
+    ).toThrow(TypeError);
+  });
+
+  it("parses a bounded listing of session levels and rejects anything else", () => {
+    const level = (workspaceId: string, threadId: string) => ({
+      ...JSON.parse(PINNED_BACKGROUND_TASKS_JSON),
+      workspaceId,
+      threadId,
+    });
+    expect(parseAgentSessionBackgroundLevels([])).toEqual([]);
+    expect(
+      parseAgentSessionBackgroundLevels([
+        level("ws-1", "agt-1-0a1c"),
+        level("ws-2", "agt-1-0a1c"),
+        JSON.parse(PINNED_BACKGROUND_REPLY_JSON.replace("agt-1-0a1c", "agt-2-0a1c")),
+      ]).map((entry) => [entry.workspaceId, entry.threadId, entry.reply]),
+    ).toEqual([
+      ["ws-1", "agt-1-0a1c", "none"],
+      ["ws-2", "agt-1-0a1c", "none"],
+      ["ws-1", "agt-2-0a1c", "inProgress"],
+    ]);
+    const full = Array.from({ length: MAX_AGENT_SESSION_BACKGROUND_LEVELS }, (_, index) =>
+      level("ws-1", `agt-${index}-0a1c`),
+    );
+    expect(parseAgentSessionBackgroundLevels(full)).toHaveLength(64);
+    for (const broken of [
+      null,
+      {},
+      { levels: [] },
+      [...full, level("ws-1", "agt-overflow-0a1c")],
+      [level("ws-1", "agt-1-0a1c"), level("ws-1", "agt-1-0a1c")],
+      [{ ...level("ws-1", "agt-1-0a1c"), generation: 1 }],
+      [{ ...level("ws-1", "agt-1-0a1c"), reply: "pending" }],
+      [level("", "agt-1-0a1c")],
+    ]) {
+      expect(() => parseAgentSessionBackgroundLevels(broken)).toThrow(TypeError);
     }
   });
 

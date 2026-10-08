@@ -94,6 +94,15 @@ fn an_interrupted_turn_leaves_a_live_task_that_its_owner_stops_while_the_session
     );
     assert!(wait_until(LEVEL_DEADLINE, || lingering.level_cleared()));
     assert_eq!(lingering.session.background_tasks(), 0);
+    assert!(
+        lingering
+            .events
+            .background_task_levels()
+            .iter()
+            .all(|level| level.reply == ClaudeSessionBackgroundReply::None),
+        "a stopped task expects no reply: {:?}",
+        lingering.events.background_task_levels()
+    );
     assert_eq!(
         lingering.cli.stop_task_requests(),
         vec![lingering.task.clone()]

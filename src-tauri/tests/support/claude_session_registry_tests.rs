@@ -1198,6 +1198,147 @@ fn a_resumed_agent_reports_background_task_levels_only_for_its_key() {
 }
 
 #[test]
+fn the_levels_listing_reports_exactly_the_live_sessions_in_a_stable_order() {
+    let cli = FakeCli::new("registry-listed-levels");
+    let (registry, events) = session_registry(ClaudeSessionTuning::default());
+    let launch = AgentLaunchOptions::default();
+    let policy = ClaudeSessionRestartPolicy::StopBackground;
+    assert_eq!(registry.background_levels(), Vec::new());
+    let acquire_for = |workspace: &str, thread: &str| {
+        acquire(
+            &registry,
+            &cli,
+            &session_request(&cli, workspace, thread, None, launch, policy),
+        )
+        .expect("acquire")
+        .session
+        .expect("session")
+    };
+    let idle = acquire_for("ws-a", "t0");
+    settle(&idle, "hello");
+    let later = acquire_for("ws-b", "t1");
+    linger_native_background_task(&later);
+    let earlier = acquire_for("ws-a", "t9");
+    linger_native_background_task(&earlier);
+
+    let listed = registry.background_levels();
+
+    assert_eq!(
+        listed
+            .iter()
+            .map(|level| (level.workspace_id.as_str(), level.thread_id.as_str()))
+            .collect::<Vec<_>>(),
+        [("ws-a", "t9"), ("ws-b", "t1")]
+    );
+    for level in &listed {
+        assert_eq!(level.total, 1);
+        assert_eq!(level.agents, 0);
+        assert_eq!(level.tasks.len(), 1);
+        assert_eq!(
+            level.tasks[0].task_type,
+            ClaudeSessionBackgroundTaskType::Shell
+        );
+        assert_eq!(level.reply, ClaudeSessionBackgroundReply::None);
+        let published = events
+            .background_task_levels()
+            .into_iter()
+            .rfind(|event| event.thread_id == level.thread_id);
+        assert_eq!(published.as_ref(), Some(level));
+    }
+    assert_eq!(registry.background_levels(), listed);
+
+    assert!(registry.end_for_thread("ws-a", "t9", ClaudeSessionEndReason::ThreadEnded));
+    assert!(wait_until(Duration::from_secs(5), || registry
+        .background_levels()
+        .len()
+        == 1));
+    assert_eq!(registry.background_levels()[0].workspace_id, "ws-b");
+    assert!(registry.shutdown_all());
+    assert_eq!(registry.background_levels(), Vec::new());
+}
+
+fn listed_after_a_quiet_drain(
+    label: &str,
+    tuning: ClaudeSessionTuning,
+) -> (
+    FakeCli,
+    Arc<ClaudeSessionRegistry>,
+    Arc<RecordingSessionEvents>,
+) {
+    let cli = FakeCli::new(label);
+    let (registry, events) = session_registry(tuning);
+    let acquired = acquire(
+        &registry,
+        &cli,
+        &session_request(
+            &cli,
+            "ws-a",
+            "t1",
+            None,
+            AgentLaunchOptions::default(),
+            ClaudeSessionRestartPolicy::StopBackground,
+        ),
+    )
+    .expect("acquire");
+    settle(
+        acquired.session.as_ref().expect("session"),
+        "native-background-quiet",
+    );
+    assert!(
+        wait_until(Duration::from_secs(5), || events
+            .background_task_levels()
+            .last()
+            .is_some_and(
+                |level| level.reply == ClaudeSessionBackgroundReply::Expected
+            )),
+        "{:?}",
+        events.background_task_levels()
+    );
+    (cli, registry, events)
+}
+
+#[test]
+fn the_levels_listing_reports_a_reply_that_is_still_expected() {
+    let (_cli, registry, events) =
+        listed_after_a_quiet_drain("registry-expected-listed", ClaudeSessionTuning::default());
+
+    let listed = registry.background_levels();
+
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].workspace_id, "ws-a");
+    assert_eq!(listed[0].thread_id, "t1");
+    assert_eq!(listed[0].total, 0);
+    assert_eq!(listed[0].reply, ClaudeSessionBackgroundReply::Expected);
+    assert_eq!(events.background_task_levels().last(), listed.first());
+    assert!(registry.shutdown_all());
+}
+
+#[test]
+fn the_levels_listing_drops_an_expected_reply_past_its_cap_without_any_session_output() {
+    let tuning = ClaudeSessionTuning {
+        wake_up_reply_cap: Duration::from_millis(200),
+        ..ClaudeSessionTuning::default()
+    };
+    let (_cli, registry, events) = listed_after_a_quiet_drain("registry-expected-lapsed", tuning);
+    let published = events.background_task_levels().len();
+
+    assert!(wait_until(Duration::from_secs(5), || registry
+        .background_levels()
+        .is_empty()));
+
+    assert_eq!(events.background_task_levels().len(), published);
+    assert_eq!(
+        events
+            .background_task_levels()
+            .last()
+            .map(|level| level.reply),
+        Some(ClaudeSessionBackgroundReply::Expected)
+    );
+    assert_eq!(registry.live_sessions(), 1);
+    assert!(registry.shutdown_all());
+}
+
+#[test]
 fn background_task_levels_from_a_stale_or_foreign_generation_are_dropped() {
     let cli = FakeCli::new("registry-stale-levels");
     let (registry, events) = session_registry(ClaudeSessionTuning::default());

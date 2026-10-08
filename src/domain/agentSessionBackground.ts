@@ -3,10 +3,11 @@ import type { AgentThread } from "./agentThread";
 import type {
   AgentSessionBackgroundTasksEvent,
   AgentSessionEndedEvent,
+  AgentThreadSessionRequest,
 } from "./agentThreadSession";
 
 export const MAX_AGENT_SESSION_BACKGROUNDS = 64;
-export const AGENT_SESSION_FOLLOW_UP_GRACE_MS = 5_000;
+export const AGENT_SESSION_REPLY_EXPECTED_CAP_MS = 30_000;
 
 export type AgentSessionReply =
   | { readonly kind: "none" }
@@ -34,27 +35,50 @@ export function applyAgentSessionBackgroundLevel(
   event: AgentSessionBackgroundTasksEvent,
   nowEpochMs: number,
 ): AgentSessionBackgrounds {
-  const previous = current.get(event.threadId);
-  const sameOwner = previous?.ownerId === event.workspaceId;
-  const reply = nextReply(sameOwner ? previous : undefined, event, nowEpochMs);
+  const key = sessionKey(event.workspaceId, event.threadId);
+  const previous = current.get(key);
+  const reply = nextReply(previous, event, nowEpochMs);
   const live = event.total > 0 || reply.kind !== "none";
-  if (!live) return sameOwner ? without(current, event.threadId) : current;
+  if (!live) return without(current, key);
   const next = new Map(current);
-  next.delete(event.threadId);
-  next.set(event.threadId, {
+  next.delete(key);
+  next.set(key, {
     ownerId: event.workspaceId,
     total: event.total,
     agents: event.agents,
     tasks: event.tasks,
-    sinceEpochMs: sameOwner ? previous.sinceEpochMs : nowEpochMs,
-    taskSinceEpochMs: taskSince(sameOwner ? previous : undefined, event.tasks, nowEpochMs),
+    sinceEpochMs: previous?.sinceEpochMs ?? nowEpochMs,
+    taskSinceEpochMs: taskSince(previous, event.tasks, nowEpochMs),
     reply,
   });
-  for (const threadId of next.keys()) {
+  for (const oldest of next.keys()) {
     if (next.size <= MAX_AGENT_SESSION_BACKGROUNDS) break;
-    next.delete(threadId);
+    next.delete(oldest);
   }
   return next;
+}
+
+export function recoverAgentSessionBackgrounds(
+  current: AgentSessionBackgrounds,
+  levels: ReadonlyArray<AgentSessionBackgroundTasksEvent>,
+  superseded: ReadonlySet<string>,
+  nowEpochMs: number,
+): AgentSessionBackgrounds {
+  const listed = levels
+    .slice(0, MAX_AGENT_SESSION_BACKGROUNDS)
+    .filter((level) => !superseded.has(agentSessionBackgroundKey(level)));
+  const known = new Set([...superseded, ...listed.map(agentSessionBackgroundKey)]);
+  const retained = [...current].filter(([key]) => known.has(key));
+  let next: AgentSessionBackgrounds =
+    retained.length === current.size ? current : new Map(retained);
+  for (const level of listed) {
+    next = applyAgentSessionBackgroundLevel(next, level, nowEpochMs);
+  }
+  return next;
+}
+
+export function agentSessionBackgroundKey(session: AgentThreadSessionRequest): string {
+  return sessionKey(session.workspaceId, session.threadId);
 }
 
 export function expireAgentSessionBackgroundReplies(
@@ -67,12 +91,12 @@ export function expireAgentSessionBackgroundReplies(
   });
   if (expired.length === 0) return current;
   const next = new Map(current);
-  for (const [threadId, background] of expired) {
+  for (const [key, background] of expired) {
     if (background.total > 0) {
-      next.set(threadId, { ...background, reply: NO_AGENT_SESSION_REPLY });
+      next.set(key, { ...background, reply: NO_AGENT_SESSION_REPLY });
       continue;
     }
-    next.delete(threadId);
+    next.delete(key);
   }
   return next;
 }
@@ -89,11 +113,20 @@ export function nextAgentSessionReplyExpiry(current: AgentSessionBackgrounds): n
 
 export function endAgentSessionBackground(
   current: AgentSessionBackgrounds,
-  event: AgentSessionEndedEvent,
+  session: AgentSessionEndedEvent | AgentThreadSessionRequest,
 ): AgentSessionBackgrounds {
-  const previous = current.get(event.threadId);
-  if (previous?.ownerId !== event.workspaceId) return current;
-  return without(current, event.threadId);
+  return without(current, sessionKey(session.workspaceId, session.threadId));
+}
+
+export function forgetAgentSessionBackground(
+  current: AgentSessionBackgrounds,
+  session: AgentThreadSessionRequest,
+  observed: AgentSessionBackground | undefined,
+): AgentSessionBackgrounds {
+  if (observed === undefined) return current;
+  const retained = agentSessionBackgroundOf(current, session.workspaceId, session.threadId);
+  if (retained !== observed) return current;
+  return endAgentSessionBackground(current, session);
 }
 
 export function agentSessionBackgroundFor(
@@ -101,15 +134,24 @@ export function agentSessionBackgroundFor(
   thread: AgentThread,
 ): AgentSessionBackground | undefined {
   if (thread.provider.kind !== "claudeCode") return undefined;
-  const background = backgrounds.get(thread.threadId);
-  if (background?.ownerId !== thread.owner.ownerId) return undefined;
-  return background;
+  return agentSessionBackgroundOf(backgrounds, thread.owner.ownerId, thread.threadId);
 }
 
-export function agentSessionAwaitsFollowUp(
+export function agentSessionBackgroundOf(
+  backgrounds: AgentSessionBackgrounds,
+  ownerId: string,
+  threadId: string,
+): AgentSessionBackground | undefined {
+  if (backgrounds.size === 0) return undefined;
+  return backgrounds.get(sessionKey(ownerId, threadId));
+}
+
+export function agentSessionBackgroundIsLive(
   background: AgentSessionBackground | undefined,
 ): boolean {
-  return background !== undefined && (background.agents > 0 || background.reply.kind !== "none");
+  if (background === undefined) return false;
+  if (background.total > 0 || background.agents > 0) return true;
+  return background.reply.kind !== "none";
 }
 
 export function agentSessionReplySince(reply: AgentSessionReply): number | null {
@@ -131,7 +173,9 @@ function nextReply(
 ): AgentSessionReply {
   switch (event.reply) {
     case "none":
-      return awaitedReply(previous, event.agents, nowEpochMs);
+      return NO_AGENT_SESSION_REPLY;
+    case "expected":
+      return expectedReply(previous?.reply, nowEpochMs);
     case "inProgress":
       return {
         kind: "inProgress",
@@ -143,21 +187,16 @@ function nextReply(
   }
 }
 
-function awaitedReply(
-  previous: AgentSessionBackground | undefined,
-  agents: number,
+function expectedReply(
+  previous: AgentSessionReply | undefined,
   nowEpochMs: number,
 ): AgentSessionReply {
-  if (previous === undefined || agents > 0) return NO_AGENT_SESSION_REPLY;
-  if (previous.agents > 0)
-    return {
-      kind: "expected",
-      sinceEpochMs: nowEpochMs,
-      untilEpochMs: nowEpochMs + AGENT_SESSION_FOLLOW_UP_GRACE_MS,
-    };
-  const expiry = replyExpiry(previous.reply);
-  if (expiry === null || expiry <= nowEpochMs) return NO_AGENT_SESSION_REPLY;
-  return previous.reply;
+  if (previous?.kind === "expected") return previous;
+  return {
+    kind: "expected",
+    sinceEpochMs: nowEpochMs,
+    untilEpochMs: nowEpochMs + AGENT_SESSION_REPLY_EXPECTED_CAP_MS,
+  };
 }
 
 function replyExpiry(reply: AgentSessionReply): number | null {
@@ -182,10 +221,15 @@ function taskSince(
   );
 }
 
-function without(current: AgentSessionBackgrounds, threadId: string): AgentSessionBackgrounds {
+function without(current: AgentSessionBackgrounds, key: string): AgentSessionBackgrounds {
+  if (!current.has(key)) return current;
   const next = new Map(current);
-  next.delete(threadId);
+  next.delete(key);
   return next;
+}
+
+function sessionKey(ownerId: string, threadId: string): string {
+  return JSON.stringify([ownerId, threadId]);
 }
 
 function unsupportedReply(reply: never): never {

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import type { AgentBackgroundTurnCutOff } from "../domain/agentBackgroundTurn";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import { agentSessionBackgroundKey } from "../domain/agentSessionBackground";
 import { runningTurn, type AgentThread, type AgentThreadOwner } from "../domain/agentThread";
 import {
   agentSessionEndedNotice,
@@ -8,6 +10,7 @@ import {
   type AgentSessionInspection,
   type AgentTaskInterruptOutcome,
   type AgentThreadSessionGateway,
+  type AgentThreadSessionRequest,
 } from "../domain/agentThreadSession";
 import type { AgentTurnHaltRequest } from "../domain/agentTurnHaltRequest";
 import { latestPromptedAgentLaunch } from "../domain/agentTurnOrigin";
@@ -43,6 +46,7 @@ export interface AgentThreadSessionLifecycleOptions {
   readonly reportError: (source: string, error: unknown) => void;
   readonly backgroundTurns?: AgentBackgroundTurnPorts;
   readonly evictedThreads?: AgentEvictedThreadPort;
+  readonly watchSession?: (session: AgentThreadSessionRequest) => () => void;
 }
 
 export interface AgentThreadSessionLifecycle {
@@ -52,6 +56,10 @@ export interface AgentThreadSessionLifecycle {
   inspectBackground(threadId: string): Promise<AgentSessionBackgroundInspection>;
   stopBackgroundTask(threadId: string, taskId: string): Promise<AgentSessionTaskStopResult>;
 }
+
+const MAX_PENDING_SESSION_END_REQUESTS = 64;
+
+type EndRequests = WeakMap<AgentThreadSessionGateway, Set<string>>;
 
 interface ThreadAuthority {
   readonly threadId: string;
@@ -96,8 +104,14 @@ export function useAgentThreadSessionLifecycle(
     return thread.owner.ownerId === authority.ownerId;
   }, []);
 
+  const endRequestsRef = useRef<EndRequests>(new WeakMap());
   useAgentSessionEventSubscription(options.gateway, subscribeSessionEnded, {
-    onEvent: (event) => announceSessionEnded(options, event),
+    onEvent: (event) => {
+      endRequestsOf(endRequestsRef.current, options.gateway).delete(
+        agentSessionBackgroundKey(event),
+      );
+      announceSessionEnded(options, event);
+    },
     onFailure: (error) => options.reportError(AGENT_TASKS_SOURCE, error),
   });
   useAgentSessionEventSubscription(options.gateway, subscribeSessionBackgroundTurn, {
@@ -109,7 +123,14 @@ export function useAgentThreadSessionLifecycle(
           optionsRef.current.reportError(AGENT_TASKS_SOURCE, error),
         ),
       };
-      receiveSessionBackgroundTurn(receiverRef.current, event);
+      const endRequested = endRequestsOf(endRequestsRef.current, options.gateway).has(
+        agentSessionBackgroundKey(event),
+      );
+      receiveSessionBackgroundTurn(
+        receiverRef.current,
+        event,
+        endRequested ? "stopped" : "interrupted",
+      );
     },
     onFailure: (error) => options.reportError(AGENT_TASKS_SOURCE, error),
   });
@@ -142,20 +163,33 @@ export function useAgentThreadSessionLifecycle(
     [isCurrent],
   );
 
-  const endSession = useCallback(async (thread: AgentThread): Promise<AgentSessionEndResult> => {
-    const { gateway } = optionsRef.current;
-    if (gateway === undefined || !isLocalClaudeThread(thread)) return "none";
-    const ended = await attempt(() =>
-      gateway.endAgentThreadSession({
-        workspaceId: thread.owner.ownerId,
-        threadId: thread.threadId,
-      }),
-    );
-    if (ended.ok) return ended.value ? "ended" : "none";
-    if (!mountedRef.current || !optionsRef.current.ownsOwner(thread.owner)) return "failed";
-    optionsRef.current.reportError(AGENT_TASKS_SOURCE, ended.error);
-    return "failed";
-  }, []);
+  const stillOwns = useCallback(
+    (thread: AgentThread, gateway: AgentThreadSessionGateway): boolean =>
+      optionsRef.current.gateway === gateway &&
+      isCurrent({ threadId: thread.threadId, ownerId: thread.owner.ownerId }) &&
+      optionsRef.current.ownsOwner(thread.owner),
+    [isCurrent],
+  );
+
+  const endSession = useCallback(
+    async (thread: AgentThread): Promise<AgentSessionEndResult> => {
+      const { gateway, watchSession } = optionsRef.current;
+      if (gateway === undefined || !isLocalClaudeThread(thread)) return "none";
+      const session = { workspaceId: thread.owner.ownerId, threadId: thread.threadId };
+      const reportMissing = watchSession?.(session);
+      const endRequests = endRequestsOf(endRequestsRef.current, gateway);
+      noteEndRequest(endRequests, agentSessionBackgroundKey(session));
+      const ended = await attempt(() => gateway.endAgentThreadSession(session));
+      if (ended.ok && ended.value) return "ended";
+      endRequests.delete(agentSessionBackgroundKey(session));
+      if (ended.ok && stillOwns(thread, gateway)) reportMissing?.();
+      if (ended.ok) return "none";
+      if (!mountedRef.current || !optionsRef.current.ownsOwner(thread.owner)) return "failed";
+      optionsRef.current.reportError(AGENT_TASKS_SOURCE, ended.error);
+      return "failed";
+    },
+    [stillOwns],
+  );
 
   const inspectRestart = useCallback(
     async (threadId: string, launch: AgentLaunchOptions): Promise<AgentSessionRestartVerdict> => {
@@ -207,24 +241,22 @@ export function useAgentThreadSessionLifecycle(
 
   const stopBackgroundTask = useCallback(
     async (threadId: string, taskId: string): Promise<AgentSessionTaskStopResult> => {
-      const { gateway, readThread } = optionsRef.current;
+      const { gateway, readThread, watchSession } = optionsRef.current;
       const thread = readThread(threadId);
       if (gateway === undefined || thread === undefined) return { kind: "noSession" };
       if (!isLocalClaudeThread(thread)) return { kind: "noSession" };
-      const authority = { threadId, ownerId: thread.owner.ownerId };
-      const outcome = await attempt(() =>
-        gateway.stopAgentBackgroundTask({ workspaceId: authority.ownerId, threadId, taskId }),
-      );
-      if (!isCurrent(authority) || !optionsRef.current.ownsOwner(thread.owner)) {
-        return { kind: "stale" };
-      }
+      const session = { workspaceId: thread.owner.ownerId, threadId };
+      const reportMissing = watchSession?.(session);
+      const outcome = await attempt(() => gateway.stopAgentBackgroundTask({ ...session, taskId }));
+      if (!stillOwns(thread, gateway)) return { kind: "stale" };
       if (!outcome.ok) {
         optionsRef.current.reportError(AGENT_TASKS_SOURCE, outcome.error);
         return { kind: "unavailable" };
       }
+      if (outcome.value.kind === "noSession") reportMissing?.();
       return outcome.value;
     },
-    [isCurrent],
+    [stillOwns],
   );
 
   return { interrupt, endSession, inspectRestart, inspectBackground, stopBackgroundTask };
@@ -242,22 +274,43 @@ function announceSessionEnded(
   options.setNotice(warning(message));
 }
 
+function endRequestsOf(
+  requests: EndRequests,
+  gateway: AgentThreadSessionGateway | undefined,
+): Set<string> {
+  const known = gateway === undefined ? undefined : requests.get(gateway);
+  if (known !== undefined) return known;
+  const created = new Set<string>();
+  if (gateway !== undefined) requests.set(gateway, created);
+  return created;
+}
+
+function noteEndRequest(requests: Set<string>, session: string): void {
+  requests.delete(session);
+  requests.add(session);
+  for (const oldest of requests) {
+    if (requests.size <= MAX_PENDING_SESSION_END_REQUESTS) return;
+    requests.delete(oldest);
+  }
+}
+
 function receiveSessionBackgroundTurn(
   receiver: BackgroundTurnReceiver,
   event: AgentSessionBackgroundTurnEvent,
+  cutOff: AgentBackgroundTurnCutOff,
 ): void {
   const options = receiver.options();
   if (backgroundTurnRecording(options) === null) return;
   if (isRemoteAgentIdentity(event.threadId)) return;
   const thread = options.readThread(event.threadId);
   if (thread !== undefined && !receiver.recoveries.isRecovering(thread.owner.rootKey)) {
-    recordLoadedBackgroundTurn(options, thread, event);
+    recordLoadedBackgroundTurn(options, thread, event, cutOff);
     return;
   }
   const rootKey = options.evictedThreads?.rootKeyOf(event.workspaceId) ?? null;
   if (rootKey === null) return;
   const queued = receiver.recoveries.enqueue(rootKey, () =>
-    recordRecoveredBackgroundTurn(receiver, event),
+    recordRecoveredBackgroundTurn(receiver, event, cutOff),
   );
   if (queued) return;
   reportUnrecordedAgentBackgroundTurn(options.setNotice, null, event);
@@ -266,11 +319,12 @@ function receiveSessionBackgroundTurn(
 async function recordRecoveredBackgroundTurn(
   receiver: BackgroundTurnReceiver,
   event: AgentSessionBackgroundTurnEvent,
+  cutOff: AgentBackgroundTurnCutOff,
 ): Promise<void> {
   if (!receiver.mounted()) return;
   const loaded = receiver.options().readThread(event.threadId);
   if (loaded !== undefined) {
-    recordLoadedBackgroundTurn(receiver.options(), loaded, event);
+    recordLoadedBackgroundTurn(receiver.options(), loaded, event, cutOff);
     return;
   }
   const evicted = receiver.options().evictedThreads;
@@ -280,7 +334,7 @@ async function recordRecoveredBackgroundTurn(
   const options = receiver.options();
   const reopened = options.readThread(event.threadId);
   if (reopened !== undefined) {
-    recordLoadedBackgroundTurn(options, reopened, event);
+    recordLoadedBackgroundTurn(options, reopened, event, cutOff);
     return;
   }
   reportUnrecordedAgentBackgroundTurn(options.setNotice, recoveredTitle(recovery), event);
@@ -290,11 +344,12 @@ function recordLoadedBackgroundTurn(
   options: AgentThreadSessionLifecycleOptions,
   thread: AgentThread,
   event: AgentSessionBackgroundTurnEvent,
+  cutOff: AgentBackgroundTurnCutOff,
 ): void {
   const recording = backgroundTurnRecording(options);
   if (recording === null || !isLocalClaudeThread(thread)) return;
   if (thread.owner.ownerId !== event.workspaceId) return;
-  recordAgentBackgroundTurn(recording, thread, event);
+  recordAgentBackgroundTurn(recording, thread, event, cutOff);
 }
 
 function recoveredTitle(recovery: AgentThreadRecovery): string | null {

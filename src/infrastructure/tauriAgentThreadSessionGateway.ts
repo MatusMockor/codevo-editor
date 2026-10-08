@@ -5,6 +5,7 @@ import {
   AGENT_SESSION_BACKGROUND_TURN_EVENT,
   AGENT_SESSION_ENDED_EVENT,
   parseAgentBackgroundTaskStopOutcome,
+  parseAgentSessionBackgroundLevels,
   parseAgentSessionBackgroundTasksEvent,
   parseAgentSessionBackgroundTurnEvent,
   parseAgentSessionEndedEvent,
@@ -34,6 +35,7 @@ export const INTERRUPT_AGENT_TASK_IPC_COMMAND = "interrupt_agent_task" as const;
 export const INSPECT_AGENT_THREAD_SESSION_IPC_COMMAND = "inspect_agent_thread_session" as const;
 export const END_AGENT_THREAD_SESSION_IPC_COMMAND = "end_agent_thread_session" as const;
 export const STOP_AGENT_BACKGROUND_TASK_IPC_COMMAND = "stop_agent_background_task" as const;
+export const LIST_AGENT_SESSION_BACKGROUNDS_IPC_COMMAND = "list_agent_session_backgrounds" as const;
 
 const invokeSessionCommand: InvokeAgentTaskCommand = (command, args) => invoke(command, args);
 
@@ -82,6 +84,13 @@ export class TauriAgentThreadSessionGateway implements AgentThreadSessionGateway
     const validated = validateStopAgentBackgroundTaskRequest(request);
     return parseAgentBackgroundTaskStopOutcome(
       await this.invokeCommand(STOP_AGENT_BACKGROUND_TASK_IPC_COMMAND, { request: validated }),
+    );
+  }
+
+  async listAgentSessionBackgrounds(): Promise<ReadonlyArray<AgentSessionBackgroundTasksEvent>> {
+    if (!this.isRuntimeAvailable()) return [];
+    return parseAgentSessionBackgroundLevels(
+      await this.invokeCommand(LIST_AGENT_SESSION_BACKGROUNDS_IPC_COMMAND, { request: {} }),
     );
   }
 

@@ -37,6 +37,7 @@ export interface AgentThreadNotificationsProps {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly visibleThreadId: string | null;
   readonly toastsVisible?: boolean;
+  readonly baselineReady?: boolean;
   onSelectThread(threadId: string): void;
 }
 
@@ -47,6 +48,7 @@ export function AgentThreadNotifications({
   projects,
   visibleThreadId,
   toastsVisible = true,
+  baselineReady = true,
   onSelectThread,
 }: AgentThreadNotificationsProps) {
   const subjects = useAgentThreadNotificationSubjects(views, interactions, projects);
@@ -55,6 +57,7 @@ export function AgentThreadNotifications({
     readonly visibleThreadId: string | null;
   } | null>(null);
   useLayoutEffect(() => {
+    if (!baselineReady) return;
     const previous = observed.current;
     if (
       previous !== null &&
@@ -65,7 +68,7 @@ export function AgentThreadNotifications({
     }
     observed.current = { subjects, visibleThreadId };
     center.observe(subjects, visibleThreadId);
-  }, [center, subjects, visibleThreadId]);
+  }, [baselineReady, center, subjects, visibleThreadId]);
 
   const latest = useRef({ views, projects });
   latest.current = { views, projects };

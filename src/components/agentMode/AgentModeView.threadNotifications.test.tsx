@@ -242,6 +242,11 @@ describe("agent thread notifications in agent mode", () => {
     act(() => row?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
   }
 
+  function rowStatus(threadId: string): string | null {
+    const row = host.querySelector<HTMLElement>(`.agent-rail [data-thread-id="${threadId}"]`);
+    return row?.querySelector(".cv-card-row__status-label")?.textContent ?? null;
+  }
+
   function selectedSession(): string | null {
     const section = host.querySelector<HTMLElement>('section[aria-label^="Agent thread "]');
     return section?.getAttribute("aria-label")?.replace("Agent thread ", "") ?? null;
@@ -401,7 +406,7 @@ describe("agent thread notifications in agent mode", () => {
     expect(toasts()).toEqual([]);
   });
 
-  it("reports a finished turn even while session background tasks keep running", () => {
+  it("holds a finished turn's toast while its session background tasks keep running and shows it once they end", () => {
     render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", RUNNING)]);
     clickRow("a1");
     render([
@@ -409,7 +414,28 @@ describe("agent thread notifications in agent mode", () => {
       threadIn("b1", API, "api-service", DONE, { background: true }),
     ]);
 
+    expect(rowStatus("b1")).toBe("Working in background");
+    expect(toasts()).toEqual([]);
+    expect(system.notifications).toEqual([]);
+
+    render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", DONE)]);
     expect(messages()).toEqual(["Thread finished | Thread b1 | api-service"]);
+
+    render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", DONE)]);
+    expect(messages()).toEqual(["Thread finished | Thread b1 | api-service"]);
+  });
+
+  it("toasts a failed turn at once while its session background tasks keep running", () => {
+    render([threadIn("a1", APP, "app", RUNNING), threadIn("b1", API, "api-service", RUNNING)]);
+    clickRow("a1");
+    render([
+      threadIn("a1", APP, "app", RUNNING),
+      threadIn("b1", API, "api-service", { kind: "exited", exitCode: 2 }, { background: true }),
+    ]);
+
+    expect(toasts()).toHaveLength(1);
+    expect(messages()[0]).toContain("Thread b1 | api-service");
+    expect(messages()[0]).not.toContain("Thread finished");
   });
 
   it("stays silent for an interrupted turn", () => {

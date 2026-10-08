@@ -9,6 +9,7 @@ import {
   END_AGENT_THREAD_SESSION_IPC_COMMAND,
   INSPECT_AGENT_THREAD_SESSION_IPC_COMMAND,
   INTERRUPT_AGENT_TASK_IPC_COMMAND,
+  LIST_AGENT_SESSION_BACKGROUNDS_IPC_COMMAND,
   STOP_AGENT_BACKGROUND_TASK_IPC_COMMAND,
   TauriAgentThreadSessionGateway,
 } from "./tauriAgentThreadSessionGateway";
@@ -204,6 +205,45 @@ describe("TauriAgentThreadSessionGateway", () => {
     });
     unsubscribe();
     expect(events.unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists the current session levels through one closed command and parses them strictly", async () => {
+    const pinned =
+      '[{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":1,"agents":0,"tasks":[{"taskId":"bdxqm7bz6","taskType":"shell"}],"reply":"expected"}]';
+    const invoke = vi.fn(async () => JSON.parse(pinned));
+    const gateway = new TauriAgentThreadSessionGateway(invoke, vi.fn(), () => true);
+
+    await expect(gateway.listAgentSessionBackgrounds()).resolves.toEqual([
+      {
+        workspaceId: "ws-1",
+        threadId: "agt-1-0a1c",
+        total: 1,
+        agents: 0,
+        tasks: [{ taskId: "bdxqm7bz6", taskType: "shell" }],
+        reply: "expected",
+      },
+    ]);
+    expect(LIST_AGENT_SESSION_BACKGROUNDS_IPC_COMMAND).toBe("list_agent_session_backgrounds");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("list_agent_session_backgrounds", {
+      request: {},
+    });
+
+    for (const malformed of [null, { levels: [] }, [{ workspaceId: "ws-1" }]]) {
+      const broken = new TauriAgentThreadSessionGateway(
+        vi.fn(async () => malformed),
+        vi.fn(),
+        () => true,
+      );
+      await expect(broken.listAgentSessionBackgrounds()).rejects.toThrow(TypeError);
+    }
+  });
+
+  it("lists no session level without the native runtime", async () => {
+    const invoke = vi.fn();
+    const gateway = new TauriAgentThreadSessionGateway(invoke, vi.fn(), () => false);
+
+    await expect(gateway.listAgentSessionBackgrounds()).resolves.toEqual([]);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it("invokes the closed stop-background-task command and parses its outcome", async () => {

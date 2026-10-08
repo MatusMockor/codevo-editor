@@ -15,6 +15,7 @@ import type {
 import {
   useAgentThreadSessionLifecycle,
   type AgentThreadSessionLifecycle,
+  type AgentThreadSessionLifecycleOptions,
 } from "./useAgentThreadSessionLifecycle";
 import type { AgentHistoryCatalogGateway } from "./useAgentHistoryCatalog";
 
@@ -35,6 +36,7 @@ export interface AgentThreadSessionsOptions {
   readonly setNotice: (notice: AgentTasksNotice) => void;
   readonly reportError: (source: string, error: unknown) => void;
   readonly now: (() => number) | undefined;
+  readonly watchSession?: AgentThreadSessionLifecycleOptions["watchSession"];
 }
 
 export interface AgentThreadSessions extends Pick<
@@ -62,6 +64,7 @@ export function useAgentThreadSessions(options: AgentThreadSessionsOptions): Age
       now: () => (options.now ?? Date.now)(),
     },
     evictedThreads,
+    watchSession: options.watchSession,
   });
   const {
     endSession: endLifecycleSession,

@@ -90,7 +90,7 @@ def unprompted_result(text):
     message.update(next_result_fields())
     emit(message)
 
-def native_drain(task, ask=False, hold=False, hold_reply=False):
+def native_drain(task, ask=False, hold=False, hold_reply=False, quiet=False):
     if hold:
         wait_for_release("release-drain")
     else:
@@ -99,6 +99,8 @@ def native_drain(task, ask=False, hold=False, hold_reply=False):
     system("task_updated", task_id=task, patch={"status": "completed"})
     system("task_notification", task_id=task, status="completed", output_file="/dev/null",
            summary="Background command completed (exit code 0)")
+    if quiet:
+        return
     system("init")
     if hold_reply:
         wait_for_release("release-reply")
@@ -327,6 +329,28 @@ for raw in sys.stdin:
         finish_on_interrupt = text.startswith("slow-finish")
         hold_interrupt = text.startswith("slow-held")
         continue
+    if text.startswith("native-midturn"):
+        task = "midturn-" + uid[:8]
+        front = "front-" + uid[:8]
+        system("background_tasks_changed", tasks=[{"task_id": task, "task_type": "local_bash", "description": "sleep 4"}])
+        system("task_started", task_id=task, tool_use_id="toolu-midturn", description="sleep 4",
+               is_backgrounded=True, task_type="local_bash")
+        assistant("running the foreground command")
+        system("task_updated", task_id=task, patch={"status": "completed"})
+        system("task_notification", task_id=task, status="completed", output_file="/dev/null",
+               summary="Background command completed (exit code 0)")
+        system("background_tasks_changed", tasks=[])
+        system("task_started", task_id=front, tool_use_id="toolu-front", description="sleep 14",
+               is_backgrounded=False, task_type="local_bash")
+        system("task_notification", task_id=front, status="completed", output_file="/dev/null",
+               summary="Command completed")
+        emit({"type": "user", "parent_tool_use_id": None, "session_id": session_id,
+              "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu-front",
+                                                       "content": "done"}]}})
+        assistant("NOTED", uid)
+        result(uid, text="NOTED")
+        lifecycle(uid, "completed")
+        continue
     if text.startswith("native-background") or text.startswith("native-held"):
         task = "native-" + uid[:8]
         system("background_tasks_changed", tasks=[{"task_id": task, "task_type": "local_bash", "description": "sleep"}])
@@ -341,7 +365,8 @@ for raw in sys.stdin:
         ask = text.startswith("native-background-permission")
         hold_reply = text.startswith("native-held-reply")
         hold = text.startswith("native-held") and not hold_reply
-        threading.Thread(target=native_drain, args=(task, ask, hold, hold_reply), daemon=True).start()
+        quiet = text.startswith("native-background-quiet")
+        threading.Thread(target=native_drain, args=(task, ask, hold, hold_reply, quiet), daemon=True).start()
         continue
     if text.startswith("agent-resume"):
         launched = root_tool(AGENT_LAUNCH, "Agent", "Async agent launched successfully.")

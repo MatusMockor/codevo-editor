@@ -425,6 +425,7 @@ export interface AgentThreadsSurface {
   };
   readonly threads: ReadonlyArray<AgentThreadView>;
   readonly loadedProjectRootKeys?: ReadonlySet<string>;
+  readonly sessionBackgroundsRecovered?: boolean;
   readonly repositories: ReadonlyArray<ResolvedGitRepository>;
   readonly orphanedWorktrees: ReadonlyArray<OrphanedWorktreeView>;
   readonly notice: AgentTasksNotice | null;

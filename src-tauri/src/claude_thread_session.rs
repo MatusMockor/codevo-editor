@@ -249,6 +249,7 @@ impl ClaudeThreadSession {
             return Err(error);
         }
         let now = Instant::now();
+        let wake_up_reply_cap = tuning.wake_up_reply_cap;
         let session = Arc::new(Self {
             identity,
             process_group_id,
@@ -273,7 +274,9 @@ impl ClaudeThreadSession {
                 pinned_until: None,
             }),
             dead: Condvar::new(),
-            router: Mutex::new(ClaudeSessionRouter::new()),
+            router: Mutex::new(ClaudeSessionRouter::with_wake_up_reply_cap(
+                wake_up_reply_cap,
+            )),
             input_order: Mutex::new(()),
             notifications: Mutex::new(false),
         });
@@ -635,6 +638,14 @@ impl ClaudeThreadSession {
             return 0;
         }
         router.live_background_tasks()
+    }
+
+    pub fn background_level(&self) -> ClaudeBackgroundTasks {
+        let router = lock(&self.router);
+        if self.phase() == SessionPhase::Dead {
+            return ClaudeBackgroundTasks::default();
+        }
+        router.background_tasks()
     }
 
     pub fn key(&self) -> &ClaudeSessionKey {
@@ -1074,6 +1085,9 @@ impl ClaudeThreadSession {
         if let Some((_, sender)) = &attached {
             self.send_output(sender, &step.turn_output);
         }
+        let mut closing_level = background;
+        let live_level = closing_level.take_if(|level| level.keeps_session_live());
+        self.deliver_background_tasks(live_level);
         let turn = attached.map(|(turn, _)| turn);
         if let (true, Some(turn)) = (step.settled, turn) {
             self.settle_turn(turn, settled_outcome(&step));
@@ -1083,7 +1097,7 @@ impl ClaudeThreadSession {
         }
         self.answer_unowned_requests(&step);
         self.deliver_background_turns(step.background_turns);
-        self.deliver_background_tasks(background);
+        self.deliver_background_tasks(closing_level);
         if step.unowned_activity {
             self.terminate(ClaudeSessionEndReason::UnownedActivity);
         }
@@ -1300,3 +1314,7 @@ fn send_output_chunks(bytes: &[u8], mut send: impl FnMut(Vec<u8>) -> bool) {
 #[cfg(test)]
 #[path = "claude_thread_session_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "claude_thread_session_order_tests.rs"]
+mod order_tests;

@@ -6,7 +6,7 @@ import {
 } from "../../domain/agentNotification";
 import type { AgentPendingInteractionIdentity } from "../../domain/agentPendingInteraction";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import { agentSessionAwaitsFollowUp } from "../../domain/agentSessionBackground";
+import { agentSessionBackgroundIsLive } from "../../domain/agentSessionBackground";
 
 type InteractionLookup = ReadonlyMap<string, AgentPendingInteractionIdentity | null>;
 
@@ -71,7 +71,7 @@ export function agentThreadNotificationSubjects(
       state: agentThreadNotificationState(
         view.thread,
         interaction,
-        agentSessionAwaitsFollowUp(view.sessionBackground) ? "live" : "idle",
+        agentSessionBackgroundIsLive(view.sessionBackground) ? "live" : "idle",
       ),
     };
     cache.set(view, { interactionKey, projectLabel, generation, subject });

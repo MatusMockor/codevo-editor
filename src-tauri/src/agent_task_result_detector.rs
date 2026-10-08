@@ -37,6 +37,7 @@ pub struct ResultLineDetector {
     policy: ResultSettlePolicy,
     started: u64,
     background_revision: u64,
+    wake_ups: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -50,6 +51,12 @@ pub enum ResultSettlePolicy {
 enum TaskScope {
     Foreground,
     Background,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TaskEnd {
+    Finished,
+    Unexplained,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,6 +220,10 @@ impl ResultLineDetector {
 
     pub fn background_revision(&self) -> u64 {
         self.background_revision
+    }
+
+    pub fn wake_ups(&self) -> u64 {
+        self.wake_ups
     }
 
     pub fn background_tasks(&self) -> Vec<LiveBackgroundTask> {
@@ -436,6 +447,12 @@ impl ResultLineDetector {
         }
     }
 
+    fn note_wake_up(&mut self, scope: TaskScope, end: TaskEnd) {
+        if scope == TaskScope::Background && end == TaskEnd::Finished {
+            self.wake_ups = self.wake_ups.wrapping_add(1);
+        }
+    }
+
     fn bury(&mut self, task: String, tombstone: Tombstone) {
         if self.terminal.contains_key(&task) {
             return;
@@ -467,7 +484,7 @@ impl ResultLineDetector {
             return false;
         }
         for task in self.level.take_ended() {
-            self.finish(task, message);
+            self.finish(task, message, TaskEnd::Unexplained);
         }
         true
     }
@@ -494,10 +511,11 @@ impl ResultLineDetector {
         );
     }
 
-    fn finish(&mut self, task: String, message: &Value) {
+    fn finish(&mut self, task: String, message: &Value, end: TaskEnd) {
         let facts = match self.live.remove(&task) {
             Some(live) => {
                 self.note_background(live.scope);
+                self.note_wake_up(live.scope, end);
                 live.facts
             }
             None => task_facts(message, None),
@@ -564,7 +582,7 @@ impl ResultLineDetector {
             if !self.terminal.contains_key(id) && !self.live.contains_key(id) {
                 self.make_room()?;
             }
-            self.finish(id.to_string(), message);
+            self.finish(id.to_string(), message, task_end(status));
         } else if kind == "task_started"
             && !self.terminal.contains_key(id)
             && !self.live.contains_key(id)
@@ -612,6 +630,13 @@ pub fn failed_result(message: &Value) -> bool {
             .get("subtype")
             .and_then(Value::as_str)
             .is_some_and(|subtype| subtype.starts_with("error"))
+}
+
+fn task_end(status: Option<&str>) -> TaskEnd {
+    match status {
+        Some("completed" | "failed") => TaskEnd::Finished,
+        _ => TaskEnd::Unexplained,
+    }
 }
 
 fn did_work(message: &Value) -> bool {

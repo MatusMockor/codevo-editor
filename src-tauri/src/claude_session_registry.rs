@@ -33,6 +33,7 @@ use std::{
 };
 
 pub const CLAUDE_SESSION_ADMISSION_CLOSED_ERROR: &str = "Agent task startup is closed.";
+pub const MAX_LISTED_SESSION_BACKGROUNDS: usize = 64;
 pub const CLAUDE_SESSION_ENDED_DURING_START_ERROR: &str =
     "Claude exited while its thread session was starting.";
 const REUSE_DECISION_ATTEMPTS: usize = 2;
@@ -211,6 +212,19 @@ impl ClaudeSessionRegistry {
             return ClaudeBackgroundTaskStopOutcome::NoSession;
         }
         session.stop_background_task(task_id, deadline)
+    }
+
+    pub fn background_levels(&self) -> Vec<ClaudeSessionBackgroundTasksEvent> {
+        let mut sessions: Vec<Arc<ClaudeThreadSession>> =
+            self.inner.state().sessions.values().cloned().collect();
+        sessions.sort_by(|left, right| listing_order(left.key()).cmp(&listing_order(right.key())));
+        sessions
+            .iter()
+            .map(|session| (session.key(), session.background_level()))
+            .filter(|(_, level)| level.keeps_session_live())
+            .take(MAX_LISTED_SESSION_BACKGROUNDS)
+            .map(|(key, level)| background_tasks_event(key, level))
+            .collect()
     }
 
     pub fn end_for_thread_under_root(
@@ -652,16 +666,27 @@ impl ClaudeSessionOwner for RegistryInner {
         if !self.is_current(key, generation) {
             return false;
         }
-        let event = ClaudeSessionBackgroundTasksEvent {
-            workspace_id: key.workspace_id.clone(),
-            thread_id: key.thread_id.clone(),
-            total: tasks.total,
-            agents: tasks.agents,
-            tasks: tasks.tasks.into_iter().map(wire_background_task).collect(),
-            reply: wire_background_reply(tasks.reply),
-        };
+        let event = background_tasks_event(key, tasks);
         let _ = catch_unwind(AssertUnwindSafe(|| self.events.background_tasks(event)));
         true
+    }
+}
+
+fn listing_order(key: &ClaudeSessionKey) -> (&str, &str) {
+    (key.workspace_id.as_str(), key.thread_id.as_str())
+}
+
+fn background_tasks_event(
+    key: &ClaudeSessionKey,
+    tasks: ClaudeBackgroundTasks,
+) -> ClaudeSessionBackgroundTasksEvent {
+    ClaudeSessionBackgroundTasksEvent {
+        workspace_id: key.workspace_id.clone(),
+        thread_id: key.thread_id.clone(),
+        total: tasks.total,
+        agents: tasks.agents,
+        tasks: tasks.tasks.into_iter().map(wire_background_task).collect(),
+        reply: wire_background_reply(tasks.reply),
     }
 }
 
@@ -681,6 +706,7 @@ fn wire_background_task(task: LiveBackgroundTask) -> ClaudeSessionBackgroundTask
 fn wire_background_reply(reply: ClaudeBackgroundReply) -> ClaudeSessionBackgroundReply {
     match reply {
         ClaudeBackgroundReply::None => ClaudeSessionBackgroundReply::None,
+        ClaudeBackgroundReply::Expected => ClaudeSessionBackgroundReply::Expected,
         ClaudeBackgroundReply::InProgress => ClaudeSessionBackgroundReply::InProgress,
     }
 }

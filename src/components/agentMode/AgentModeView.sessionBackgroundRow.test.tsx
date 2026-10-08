@@ -8,6 +8,12 @@ import type {
   AgentThreadsSurface,
   AgentThreadView,
 } from "../../application/agentThreadPorts";
+import {
+  createAgentThreadNotificationCenter,
+  type AgentAppFocusPort,
+  type AgentSystemAttentionPort,
+  type AgentSystemNotification,
+} from "../../application/agentThreadNotificationCenter";
 import { agentThreadViews } from "../../application/agentThreadViewProjection";
 import {
   useAgentEditorBridge,
@@ -16,6 +22,7 @@ import {
 import { useAgentSessionBackgrounds } from "../../application/useAgentSessionBackgrounds";
 import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import { agentBackgroundTurn, parseAgentBackgroundTurn } from "../../domain/agentBackgroundTurn";
+import { AGENT_SESSION_REPLY_EXPECTED_CAP_MS } from "../../domain/agentSessionBackground";
 import type { AgentShipState } from "../../domain/agentShip";
 import type { AgentThread, AgentTurn } from "../../domain/agentThread";
 import type {
@@ -198,12 +205,16 @@ const GATES_AND_REVIEW: AgentSessionBackgroundTasksEvent = {
 const REVIEW_ONLY: AgentSessionBackgroundTasksEvent = { ...GATES, tasks: [REVIEW] };
 const DRAINED: AgentSessionBackgroundTasksEvent = { ...GATES, total: 0, tasks: [] };
 const REPLYING: AgentSessionBackgroundTasksEvent = { ...DRAINED, reply: "inProgress" };
+const FINISHED: AgentSessionBackgroundTasksEvent = { ...DRAINED, reply: "expected" };
 const GATES_WHILE_REPLYING: AgentSessionBackgroundTasksEvent = { ...GATES, reply: "inProgress" };
 
 function sessionGateway() {
   let levels: ((event: AgentSessionBackgroundTasksEvent) => void) | null = null;
   let ended: ((event: AgentSessionEndedEvent) => void) | null = null;
   const fake = {
+    listAgentSessionBackgrounds: vi.fn<AgentThreadSessionGateway["listAgentSessionBackgrounds"]>(
+      async () => [],
+    ),
     interruptAgentTask: vi.fn(async () => ({ kind: "unsupported" }) as const),
     inspectAgentThreadSession: vi.fn(async () => ({ kind: "none" }) as const),
     endAgentThreadSession: vi.fn(async () => false),
@@ -244,6 +255,23 @@ const NO_SUMMARIES: ReadonlyMap<string, AgentTaskChangeSummary> = new Map();
 const NO_THREAD_IDS: ReadonlySet<string> = new Set();
 const NO_SHIP_STATES: ReadonlyMap<string, AgentShipState> = new Map();
 const reportError = (): void => undefined;
+const WINDOW_IN_BACKGROUND: AgentAppFocusPort = {
+  isFocused: () => false,
+  subscribe: () => () => undefined,
+};
+
+function recordingSystem() {
+  const notifications: AgentSystemNotification[] = [];
+  const port: AgentSystemAttentionPort = {
+    notify: async (notification) => {
+      notifications.push(notification);
+      return "delivered";
+    },
+    setBadgeCount: async () => undefined,
+    recheckPermission: () => undefined,
+  };
+  return { port, notifications };
+}
 
 function workingSectionOn(): AgentRailWorkingSectionPreferencePort {
   const values = new Map([[AGENT_RAIL_WORKING_SECTION_STORAGE_KEY, "on"]]);
@@ -266,7 +294,7 @@ describe("sidebar row status of a thread whose background work is tracked by its
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
     vi.setSystemTime(STARTED_AT + 2_000);
     Element.prototype.scrollIntoView = () => undefined;
     host = document.createElement("div");
@@ -285,9 +313,30 @@ describe("sidebar row status of a thread whose background work is tracked by its
     vi.setSystemTime(Date.now() + elapsedMs);
   }
 
-  async function mount(options: { open?: boolean; workingSection?: boolean } = {}) {
+  async function lapseFollowUpGrace(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_SESSION_REPLY_EXPECTED_CAP_MS);
+    });
+  }
+
+  async function mount(
+    options: {
+      open?: boolean;
+      workingSection?: boolean;
+      recovery?: Promise<ReadonlyArray<AgentSessionBackgroundTasksEvent>>;
+    } = {},
+  ) {
     const preference = options.workingSection === true ? workingSectionOn() : null;
+    const system = recordingSystem();
+    const center = createAgentThreadNotificationCenter({
+      focus: WINDOW_IN_BACKGROUND,
+      system: system.port,
+      now: Date.now,
+    });
     const gateway = sessionGateway();
+    if (options.recovery !== undefined) {
+      gateway.fake.listAgentSessionBackgrounds.mockReturnValueOnce(options.recovery);
+    }
     const reportFailure = vi.fn();
     const stopSessionBackgroundTask = vi.fn(async (): Promise<AgentSessionTaskStopResult> => ({
       kind: "stopping",
@@ -316,7 +365,11 @@ describe("sidebar row status of a thread whose background work is tracked by its
       const [threads, setThreads] = useState(initial);
       rendered.threads = threads;
       rendered.update = setThreads;
-      const backgrounds = useAgentSessionBackgrounds(gateway.fake, Date.now, reportFailure);
+      const { backgrounds, recovered } = useAgentSessionBackgrounds(
+        gateway.fake,
+        Date.now,
+        reportFailure,
+      );
       const editor = useAgentEditorBridge({
         projects: PROJECTS,
         threads,
@@ -346,6 +399,7 @@ describe("sidebar row status of a thread whose background work is tracked by its
       const agents: AgentThreadsSurface = threadsSurfaceFixture({
         threads: views,
         stopSessionBackgroundTask,
+        sessionBackgroundsRecovered: recovered,
       });
       return (
         <AgentModeView
@@ -365,6 +419,7 @@ describe("sidebar row status of a thread whose background work is tracked by its
           overflowRootPaths={[]}
           projects={PROJECTS}
           providerEnabled={{ claudeCode: true, codex: true }}
+          threadNotifications={center}
           workingSectionPreference={preference}
           workspaceRoot={SURFACE_FIXTURE_ROOT}
         />
@@ -381,6 +436,7 @@ describe("sidebar row status of a thread whose background work is tracked by its
     return {
       gateway,
       reportFailure,
+      systemNotifications: (): ReadonlyArray<AgentSystemNotification> => system.notifications,
       recordedGatesStatuses: () => gatesStatuses(rendered.threads.get(THREAD_ID)),
       viewThread() {
         expect(rendered.update).not.toBeNull();
@@ -461,8 +517,9 @@ describe("sidebar row status of a thread whose background work is tracked by its
     expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
 
     later(4 * MINUTE);
-    gateway.level(DRAINED);
-    expect(rowStatuses(THREAD_ID)).toEqual([null]);
+    gateway.level(FINISHED);
+    expect(rowStatuses(THREAD_ID)).toEqual(["Replying"]);
+    expect(host.textContent).not.toContain("Working in background");
 
     gateway.level(REPLYING);
     expect(rowStatuses(THREAD_ID)).toEqual(["Replying"]);
@@ -488,6 +545,19 @@ describe("sidebar row status of a thread whose background work is tracked by its
     later(9 * MINUTE);
     gateway.level(DRAINED);
 
+    expect(rowStatuses(THREAD_ID)).toEqual([null]);
+    expect(rowStatuses(OTHER_THREAD_ID)).toEqual([null]);
+  });
+
+  it("shows Replying while a finished task's reply is expected and clears when the reply never comes", async () => {
+    const { gateway } = await mount();
+    gateway.level(GATES);
+    later(9 * MINUTE);
+
+    gateway.level(FINISHED);
+    expect(rowStatuses(THREAD_ID)).toEqual(["Replying"]);
+
+    await lapseFollowUpGrace();
     expect(rowStatuses(THREAD_ID)).toEqual([null]);
     expect(rowStatuses(OTHER_THREAD_ID)).toEqual([null]);
   });
@@ -520,22 +590,28 @@ describe("sidebar row status of a thread whose background work is tracked by its
     expect(rowStatuses(THREAD_ID)).toEqual([null]);
   });
 
-  it("hides a level reported for the thread under another owner and shows this owner's later work afresh", async () => {
+  it("keeps this owner's level when another owner reports, drains and ends work for the same thread", async () => {
     const { gateway } = await mount();
     gateway.level(GATES);
     expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
 
     later(2 * MINUTE);
     gateway.level({ ...GATES, workspaceId: OTHER_OWNER_ID });
-    expect(rowStatuses(THREAD_ID)).toEqual([null]);
+    expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
 
     gateway.level({ ...DRAINED, workspaceId: OTHER_OWNER_ID });
-    expect(rowStatuses(THREAD_ID)).toEqual([null]);
+    gateway.end({
+      workspaceId: OTHER_OWNER_ID,
+      threadId: THREAD_ID,
+      reason: "stopped",
+      backgroundTasksLive: false,
+    });
+    expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
 
     later(2 * MINUTE);
     gateway.level(GATES);
     expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
-    expect(rowElapsed(THREAD_ID)).toEqual(["0s"]);
+    expect(rowStatuses(OTHER_THREAD_ID)).toEqual([null]);
   });
 
   it("clears the row when the session ends with the task still live", async () => {
@@ -588,6 +664,188 @@ describe("sidebar row status of a thread whose background work is tracked by its
 
     expect(host.textContent).not.toContain("still running in Claude's session");
     expect(stopTasksButtons()).toHaveLength(0);
+  });
+
+  it("sends no finished notification while the task an unprompted reply started still runs, and one when the last reply lands", async () => {
+    const { gateway, recordReply, systemNotifications } = await mount();
+    gateway.level(REPLYING);
+    gateway.level(GATES_WHILE_REPLYING);
+    recordReply("turn-reply-gates", REPLY_STARTING_THE_GATES);
+    gateway.level(GATES);
+    later(4 * MINUTE);
+
+    expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
+    expect(systemNotifications()).toEqual([]);
+
+    gateway.level(FINISHED);
+    expect(rowStatuses(THREAD_ID)).toEqual(["Replying"]);
+    expect(systemNotifications()).toEqual([]);
+    later(12_000);
+    expect(systemNotifications()).toEqual([]);
+
+    gateway.level(REPLYING);
+    recordReply("turn-reply-pushed", REPLY_AFTER_THE_GATES);
+    expect(systemNotifications()).toEqual([]);
+
+    gateway.level(DRAINED);
+    expect(systemNotifications()).toEqual([
+      { title: "Thread finished", body: "Run the gates · app" },
+    ]);
+
+    await lapseFollowUpGrace();
+    expect(rowStatuses(THREAD_ID)).toEqual(["Done"]);
+    expect(systemNotifications()).toHaveLength(1);
+  });
+
+  it("sends the held finished notification once when the finished task's expected reply never comes", async () => {
+    const { gateway, recordReply, systemNotifications } = await mount();
+    gateway.level(GATES_WHILE_REPLYING);
+    recordReply("turn-reply-gates", REPLY_STARTING_THE_GATES);
+    gateway.level(GATES);
+    later(4 * MINUTE);
+    gateway.level(FINISHED);
+    expect(systemNotifications()).toEqual([]);
+
+    await lapseFollowUpGrace();
+    expect(rowStatuses(THREAD_ID)).toEqual(["Done"]);
+    expect(systemNotifications()).toEqual([
+      { title: "Thread finished", body: "Run the gates · app" },
+    ]);
+
+    gateway.level(DRAINED);
+    await lapseFollowUpGrace();
+    expect(systemNotifications()).toHaveLength(1);
+  });
+
+  it("sends the held finished notification at once when the user stops the last task", async () => {
+    const { gateway, recordReply, systemNotifications } = await mount();
+    gateway.level(GATES_WHILE_REPLYING);
+    recordReply("turn-reply-gates", REPLY_STARTING_THE_GATES);
+    gateway.level(GATES);
+    later(4 * MINUTE);
+    expect(systemNotifications()).toEqual([]);
+
+    gateway.level(DRAINED);
+
+    expect(rowStatuses(THREAD_ID)).toEqual(["Done"]);
+    expect(systemNotifications()).toEqual([
+      { title: "Thread finished", body: "Run the gates · app" },
+    ]);
+  });
+
+  it("sends the held finished notification once when the session ends with the task still live", async () => {
+    const { gateway, recordReply, systemNotifications } = await mount();
+    gateway.level(GATES_WHILE_REPLYING);
+    recordReply("turn-reply-gates", REPLY_STARTING_THE_GATES);
+    gateway.level(GATES);
+    expect(systemNotifications()).toEqual([]);
+
+    gateway.end({
+      workspaceId: OWNER_ID,
+      threadId: THREAD_ID,
+      reason: "idleTimeout",
+      backgroundTasksLive: true,
+    });
+    expect(systemNotifications()).toEqual([
+      { title: "Thread finished", body: "Run the gates · app" },
+    ]);
+  });
+
+  it("sends nothing for another owner's level and nothing again for a completion already reported", async () => {
+    const { gateway, systemNotifications } = await mount();
+    gateway.level({ ...GATES, workspaceId: OTHER_OWNER_ID });
+    gateway.level(GATES);
+    gateway.level(DRAINED);
+    await lapseFollowUpGrace();
+
+    expect(rowStatuses(THREAD_ID)).toEqual([null]);
+    expect(systemNotifications()).toEqual([]);
+  });
+
+  describe("after the frontend reloaded", () => {
+    type Levels = ReadonlyArray<AgentSessionBackgroundTasksEvent>;
+
+    function pendingRecovery() {
+      let resolve!: (levels: Levels) => void;
+      let reject!: (reason: Error) => void;
+      const answer = new Promise<Levels>((settle, fail) => {
+        resolve = settle;
+        reject = fail;
+      });
+      return { answer, resolve, reject };
+    }
+
+    async function answered(work: () => void): Promise<void> {
+      await act(async () => {
+        work();
+        await Promise.resolve();
+      });
+    }
+
+    it("shows a thread that is still working and notifies once when that work ends", async () => {
+      const recovery = pendingRecovery();
+      const { gateway, systemNotifications } = await mount({ recovery: recovery.answer });
+      expect(rowStatuses(THREAD_ID)).toEqual([null]);
+      expect(systemNotifications()).toEqual([]);
+
+      await answered(() => recovery.resolve([GATES]));
+      expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
+      expect(systemNotifications()).toEqual([]);
+
+      later(4 * MINUTE);
+      gateway.level(DRAINED);
+      expect(rowStatuses(THREAD_ID)).toEqual([null]);
+      expect(systemNotifications()).toEqual([
+        { title: "Thread finished", body: "Run the gates · app" },
+      ]);
+
+      gateway.level(DRAINED);
+      expect(systemNotifications()).toHaveLength(1);
+    });
+
+    it("adopts a thread that had simply finished without any notification", async () => {
+      const recovery = pendingRecovery();
+      const { gateway, systemNotifications } = await mount({ recovery: recovery.answer });
+
+      await answered(() => recovery.resolve([]));
+      gateway.level({ ...GATES, threadId: OTHER_THREAD_ID });
+      gateway.level({ ...DRAINED, threadId: OTHER_THREAD_ID });
+
+      expect(rowStatuses(THREAD_ID)).toEqual([null]);
+      expect(systemNotifications()).toEqual([]);
+    });
+
+    it("keeps what a session reported before the recovery answered", async () => {
+      const recovery = pendingRecovery();
+      const { gateway, systemNotifications } = await mount({ recovery: recovery.answer });
+      gateway.level(GATES);
+      gateway.level(DRAINED);
+
+      await answered(() => recovery.resolve([GATES]));
+
+      expect(rowStatuses(THREAD_ID)).toEqual([null]);
+      expect(systemNotifications()).toEqual([]);
+    });
+
+    it("reports a failed recovery and still notifies about later work", async () => {
+      const recovery = pendingRecovery();
+      const { gateway, recordReply, reportFailure, systemNotifications } = await mount({
+        recovery: recovery.answer,
+      });
+      const failure = new Error("ipc unavailable");
+
+      await answered(() => recovery.reject(failure));
+      expect(reportFailure).toHaveBeenCalledExactlyOnceWith(failure);
+      expect(systemNotifications()).toEqual([]);
+
+      gateway.level(GATES_WHILE_REPLYING);
+      recordReply("turn-reply-gates", REPLY_STARTING_THE_GATES);
+      gateway.level(GATES);
+      gateway.level(DRAINED);
+      expect(systemNotifications()).toEqual([
+        { title: "Thread finished", body: "Run the gates · app" },
+      ]);
+    });
   });
 
   it("never shows a task as running from a reopened thread whose log lost the terminal status", async () => {

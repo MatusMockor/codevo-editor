@@ -413,6 +413,15 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   );
 
   const sessionDispatchRef = useRef<AgentThreadSessionDispatchPorts | null>(null);
+  const {
+    backgrounds: sessionBackgrounds,
+    recovered: sessionBackgroundsRecovered,
+    watchSession,
+  } = useAgentSessionBackgrounds(
+    dependencies.agentThreadSessionGateway,
+    dependencies.now ?? Date.now,
+    (error) => reportError(AGENT_TASKS_SOURCE, error),
+  );
   const sessions = useAgentThreadSessions({
     gateway: dependencies.agentThreadSessionGateway,
     projects,
@@ -422,13 +431,9 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     setNotice,
     reportError,
     now: dependencies.now,
+    watchSession,
   });
   const { endThreadSession } = sessions;
-  const sessionBackgrounds = useAgentSessionBackgrounds(
-    dependencies.agentThreadSessionGateway,
-    dependencies.now ?? Date.now,
-    (error) => reportError(AGENT_TASKS_SOURCE, error),
-  );
 
   const dispatch = useAgentTurnDispatch({
     agentTaskGateway: dependencies.agentTaskGateway,
@@ -922,6 +927,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     getTurnFileDiff: turnChanges.getTurnFileDiff,
     threads: threadViews,
     loadedProjectRootKeys: store.loadedRootKeys,
+    sessionBackgroundsRecovered,
     attachments,
     questionAttachments,
     attachmentImages,

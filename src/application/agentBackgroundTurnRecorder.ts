@@ -3,6 +3,7 @@ import {
   agentBackgroundTurnPreview,
   parseAgentBackgroundTurn,
   type AgentBackgroundTurnContent,
+  type AgentBackgroundTurnCutOff,
 } from "../domain/agentBackgroundTurn";
 import type { AgentThread, AgentThreadsAction } from "../domain/agentThread";
 import type { AgentSessionBackgroundTurnEvent } from "../domain/agentThreadSession";
@@ -28,6 +29,7 @@ export function recordAgentBackgroundTurn(
   recording: AgentBackgroundTurnRecording,
   thread: AgentThread,
   event: AgentSessionBackgroundTurnEvent,
+  cutOff: AgentBackgroundTurnCutOff = "interrupted",
 ): void {
   const content = parseAgentBackgroundTurn(event);
   if (content.events.length === 0) {
@@ -44,7 +46,7 @@ export function recordAgentBackgroundTurn(
     kind: "backgroundTurnRecorded",
     threadId: thread.threadId,
     workspaceId: event.workspaceId,
-    turn: agentBackgroundTurn(turnId, content, recording.ports.now()),
+    turn: agentBackgroundTurn(turnId, content, recording.ports.now(), cutOff),
   });
   const recorded = recording
     .readThread(thread.threadId)

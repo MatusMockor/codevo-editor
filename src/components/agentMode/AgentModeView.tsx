@@ -1570,6 +1570,7 @@ function LocalAgentModeView({
       />
       {threadNotifications !== null && (
         <AgentThreadNotifications
+          baselineReady={agents.sessionBackgroundsRecovered !== false}
           center={threadNotifications}
           onSelectThread={navigation.selectThread}
           interactions={pendingObservations.observed}

@@ -401,4 +401,12 @@ fn background_tasks_event_serializes_to_the_pinned_wire_shape() {
         serde_json::to_string(&replying).unwrap(),
         r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":0,"agents":0,"tasks":[],"reply":"inProgress"}"#
     );
+    let expecting = ClaudeSessionBackgroundTasksEvent {
+        reply: ClaudeSessionBackgroundReply::Expected,
+        ..replying
+    };
+    assert_eq!(
+        serde_json::to_string(&expecting).unwrap(),
+        r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":0,"agents":0,"tasks":[],"reply":"expected"}"#
+    );
 }

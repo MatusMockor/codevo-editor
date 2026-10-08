@@ -21,6 +21,8 @@ export interface AgentBackgroundTurnOutput {
   readonly complete: boolean;
 }
 
+export type AgentBackgroundTurnCutOff = "interrupted" | "stopped";
+
 export interface AgentBackgroundTurnContent {
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly eventsTruncated: boolean;
@@ -52,13 +54,14 @@ export function agentBackgroundTurn(
   turnId: string,
   content: AgentBackgroundTurnContent,
   nowEpochMs: number,
+  cutOff: AgentBackgroundTurnCutOff = "interrupted",
 ): AgentTurn {
   const subagentLifecycle = retainAgentSubagentLifecycle(undefined, content.events);
   return {
     turnId,
     origin: "background",
     prompt: agentBackgroundTurnLabel(content.cause),
-    status: content.ended ? { kind: "exited", exitCode: 0 } : { kind: "interrupted" },
+    status: content.ended ? { kind: "exited", exitCode: 0 } : { kind: cutOff },
     startedAtEpochMs: nowEpochMs,
     endedAtEpochMs: nowEpochMs,
     events: content.events,

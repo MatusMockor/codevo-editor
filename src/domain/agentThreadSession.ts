@@ -18,6 +18,7 @@ export const AGENT_SESSION_BACKGROUND_TURN_EVENT = "agent-session://background-t
 export const AGENT_SESSION_BACKGROUND_TASKS_EVENT = "agent-session://background-tasks" as const;
 export const MAX_AGENT_SESSION_BACKGROUND_TASKS = 256;
 export const MAX_AGENT_SESSION_REPORTED_BACKGROUND_TASKS = 32;
+export const MAX_AGENT_SESSION_BACKGROUND_LEVELS = 64;
 const MAX_SESSION_BACKGROUND_TASK_ID_BYTES = 256;
 const MAX_SESSION_BACKGROUND_TASK_DESCRIPTION_BYTES = 512;
 const MAX_BACKGROUND_TASK_STOP_REASON_BYTES = 256;
@@ -77,9 +78,13 @@ export interface AgentSessionBackgroundTurnEvent {
   readonly complete: boolean;
 }
 
-export type AgentSessionBackgroundReply = "none" | "inProgress";
+export type AgentSessionBackgroundReply = "none" | "expected" | "inProgress";
 
-const BACKGROUND_REPLIES: ReadonlyArray<AgentSessionBackgroundReply> = ["none", "inProgress"];
+const BACKGROUND_REPLIES: ReadonlyArray<AgentSessionBackgroundReply> = [
+  "none",
+  "expected",
+  "inProgress",
+];
 
 export interface AgentSessionBackgroundTasksEvent {
   readonly workspaceId: string;
@@ -145,6 +150,7 @@ export interface AgentThreadSessionGateway {
   subscribeAgentSessionBackgroundTasks(
     handler: (event: AgentSessionBackgroundTasksEvent) => void,
   ): Promise<() => void>;
+  listAgentSessionBackgrounds(): Promise<ReadonlyArray<AgentSessionBackgroundTasksEvent>>;
 }
 
 const UTF8_ENCODER = new TextEncoder();
@@ -303,6 +309,20 @@ export function parseAgentSessionBackgroundTasksEvent(
   };
 }
 
+export function parseAgentSessionBackgroundLevels(
+  value: unknown,
+): ReadonlyArray<AgentSessionBackgroundTasksEvent> {
+  if (!Array.isArray(value) || value.length > MAX_AGENT_SESSION_BACKGROUND_LEVELS) {
+    return invalid("levels", `at most ${MAX_AGENT_SESSION_BACKGROUND_LEVELS} session levels`);
+  }
+  const levels = value.map((entry) => parseAgentSessionBackgroundTasksEvent(entry));
+  const sessions = new Set(
+    levels.map((level) => JSON.stringify([level.workspaceId, level.threadId])),
+  );
+  if (sessions.size !== levels.length) return invalid("levels", "one level per session");
+  return levels;
+}
+
 export function isAgentSessionRestartConfirmationError(error: unknown): boolean {
   return failureMessageOf(error).startsWith(AGENT_SESSION_RESTART_CONFIRMATION_PREFIX);
 }
@@ -328,7 +348,7 @@ function sessionEndReason(value: unknown, path: string): AgentSessionEndReason {
 
 function backgroundReply(value: unknown, path: string): AgentSessionBackgroundReply {
   const reply = BACKGROUND_REPLIES.find((known) => known === value);
-  if (reply === undefined) return invalid(path, '"none" or "inProgress"');
+  if (reply === undefined) return invalid(path, '"none", "expected" or "inProgress"');
   return reply;
 }
 

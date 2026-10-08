@@ -206,6 +206,12 @@ describe("row status for live session background work", () => {
     });
   });
 
+  it("falls back to the settled turn's status for a session level that lists no live work", () => {
+    expect(agentRowStatus(idleSession([]))).toEqual({ kind: "done" });
+    expect(agentRowStatus(idleSession([], 1))).toEqual({ kind: "failed" });
+    expect(agentRowIsLive(agentRowStatus(idleSession([])))).toBe(false);
+  });
+
   it("shows a follow-up reply being written as Replying, timed from the reply's own start", () => {
     const replyingSince = RESUMED_AT + 42_000;
     const reply = { kind: "inProgress", sinceEpochMs: replyingSince } as const;

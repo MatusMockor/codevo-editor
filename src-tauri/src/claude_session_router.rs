@@ -10,8 +10,10 @@ pub use crate::agent_task_supervisor::agent_task_result_detector::{
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub const MAX_ROUTED_LINE_BYTES: usize = 1024 * 1024;
+pub const WAKE_UP_REPLY_CAP: Duration = Duration::from_secs(30);
 pub const MAX_BACKGROUND_TURN_BYTES: usize = 256 * 1024;
 pub const BACKGROUND_RESULT_RESERVE_BYTES: usize = 64 * 1024;
 pub const BACKGROUND_ANSWER_RESERVE_BYTES: usize = 32 * 1024;
@@ -37,6 +39,7 @@ pub struct ClaudeBackgroundTurn {
 pub enum ClaudeBackgroundReply {
     #[default]
     None,
+    Expected,
     InProgress,
 }
 
@@ -46,6 +49,12 @@ pub struct ClaudeBackgroundTasks {
     pub total: usize,
     pub agents: usize,
     pub reply: ClaudeBackgroundReply,
+}
+
+impl ClaudeBackgroundTasks {
+    pub fn keeps_session_live(&self) -> bool {
+        self.total > 0 || self.reply != ClaudeBackgroundReply::None
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -210,6 +219,9 @@ pub struct ClaudeSessionRouter {
     background_revision: u64,
     background_offer_pending: bool,
     reported_background: ClaudeBackgroundTasks,
+    wake_up_pending: bool,
+    wake_up_expected_since: Option<Instant>,
+    wake_up_reply_cap: Duration,
     task_stops: PendingTaskStops,
     line: Vec<u8>,
     mode: LineMode,
@@ -223,6 +235,10 @@ impl Default for ClaudeSessionRouter {
 
 impl ClaudeSessionRouter {
     pub fn new() -> Self {
+        Self::with_wake_up_reply_cap(WAKE_UP_REPLY_CAP)
+    }
+
+    pub fn with_wake_up_reply_cap(wake_up_reply_cap: Duration) -> Self {
         Self {
             detector: ResultLineDetector::new()
                 .with_settle_policy(ResultSettlePolicy::AwaitBackgroundWork),
@@ -235,6 +251,9 @@ impl ClaudeSessionRouter {
             background_revision: 0,
             background_offer_pending: false,
             reported_background: ClaudeBackgroundTasks::default(),
+            wake_up_pending: false,
+            wake_up_expected_since: None,
+            wake_up_reply_cap,
             task_stops: PendingTaskStops::default(),
             line: Vec::new(),
             mode: LineMode::Buffering,
@@ -259,6 +278,7 @@ impl ClaudeSessionRouter {
         });
         self.pending_interrupt = None;
         self.idle_unsupported_answers = 0;
+        self.consume_wake_up();
     }
 
     pub fn detach(&mut self) {
@@ -355,10 +375,45 @@ impl ClaudeSessionRouter {
     }
 
     fn reply(&self) -> ClaudeBackgroundReply {
-        match self.unsolicited {
-            Some(_) => ClaudeBackgroundReply::InProgress,
-            None => ClaudeBackgroundReply::None,
+        if self.unsolicited.is_some() {
+            return ClaudeBackgroundReply::InProgress;
         }
+        match self.wake_up_expected_since {
+            Some(since) if since.elapsed() < self.wake_up_reply_cap => {
+                ClaudeBackgroundReply::Expected
+            }
+            _ => ClaudeBackgroundReply::None,
+        }
+    }
+
+    fn open_unsolicited(&mut self) {
+        self.unsolicited = Some(UnsolicitedTurn::default());
+        self.consume_wake_up();
+    }
+
+    fn consume_wake_up(&mut self) {
+        self.wake_up_pending = false;
+        self.wake_up_expected_since = None;
+    }
+
+    fn idle(&self) -> bool {
+        self.unsolicited.is_none()
+            && self
+                .attached
+                .as_ref()
+                .is_none_or(|turn| turn.running.is_none())
+    }
+
+    fn refresh_wake_up(&mut self) {
+        if !self.wake_up_pending || !self.idle() {
+            self.wake_up_expected_since = None;
+            return;
+        }
+        let since = *self.wake_up_expected_since.get_or_insert_with(Instant::now);
+        if since.elapsed() < self.wake_up_reply_cap {
+            return;
+        }
+        self.consume_wake_up();
     }
 
     pub fn is_attached_to(&self, lifecycle: &Arc<ClaudeInputLifecycle>) -> bool {
@@ -389,6 +444,7 @@ impl ClaudeSessionRouter {
     }
 
     fn background_change(&mut self) -> Option<ClaudeBackgroundTasks> {
+        self.refresh_wake_up();
         let revision = self.detector.background_revision();
         let refused = std::mem::take(&mut self.background_offer_pending);
         if !refused
@@ -496,6 +552,7 @@ impl ClaudeSessionRouter {
         let destination = self.classify(&message, step);
         let owned = self.owned();
         self.note_run(destination, owned, &message);
+        let wake_ups = self.detector.wake_ups();
         let outcome = match destination {
             Destination::Turn | Destination::Command if owned => {
                 self.detector.consume_message(&message)
@@ -503,6 +560,7 @@ impl ClaudeSessionRouter {
             Destination::Command => self.detector.observe_command(&message).map(|()| false),
             _ => self.detector.track_message(&message).map(|()| false),
         };
+        self.wake_up_pending |= self.idle() && self.detector.wake_ups() != wake_ups;
         let ends_unsolicited = destination == Destination::Unsolicited && root_result(&message);
         self.forward(destination, message, line, step);
         if ends_unsolicited {
@@ -608,7 +666,7 @@ impl ClaudeSessionRouter {
             return self.classify_owned(kind, message);
         }
         if root && opens_activity(kind, message) {
-            self.unsolicited = Some(UnsolicitedTurn::default());
+            self.open_unsolicited();
             return Destination::Unsolicited;
         }
         self.attached_destination()
@@ -669,7 +727,7 @@ impl ClaudeSessionRouter {
             return Destination::Turn;
         };
         if turn.result_seen && !turn.init_expected {
-            self.unsolicited = Some(UnsolicitedTurn::default());
+            self.open_unsolicited();
             return Destination::Unsolicited;
         }
         turn.init_expected = false;
@@ -702,11 +760,15 @@ impl ClaudeSessionRouter {
             return Destination::Command;
         }
         if state != Some("started") {
+            if state == Some("queued") {
+                self.consume_wake_up();
+            }
             return Destination::Command;
         }
         turn.running = Some(id.to_string());
         turn.started |= id == turn.command_id;
         turn.init_expected = true;
+        self.consume_wake_up();
         self.emit_unsolicited(false, step);
         Destination::Command
     }

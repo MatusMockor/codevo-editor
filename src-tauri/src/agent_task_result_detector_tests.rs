@@ -934,3 +934,51 @@ fn ambient_tasks_never_hold_the_turn_or_the_session() {
     assert_eq!(detector.live_task_count(), 0);
     assert!(detector.feed(&poll_result()).unwrap());
 }
+
+#[test]
+fn only_a_background_task_that_finishes_on_its_own_counts_as_a_wake_up() {
+    let ended = |task: &str, status: &str| {
+        format!(
+            "{{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"{task}\",\"status\":\"{status}\"}}\n"
+        )
+    };
+    let foreground = |task: &str| {
+        format!(
+            "{{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"{task}\",\"is_backgrounded\":false}}\n"
+        )
+    };
+    let mut detector = awaiting();
+    assert_eq!(detector.wake_ups(), 0);
+
+    detector.feed(start("done").as_bytes()).unwrap();
+    assert_eq!(detector.wake_ups(), 0);
+    detector
+        .feed(ended("done", "completed").as_bytes())
+        .unwrap();
+    assert_eq!(detector.wake_ups(), 1);
+    detector
+        .feed(ended("done", "completed").as_bytes())
+        .unwrap();
+    assert_eq!(
+        detector.wake_ups(),
+        1,
+        "a repeated bookend is not a second end"
+    );
+
+    detector.feed(start("broke").as_bytes()).unwrap();
+    detector.feed(ended("broke", "failed").as_bytes()).unwrap();
+    assert_eq!(detector.wake_ups(), 2);
+
+    for status in ["stopped", "killed", "cancelled", "interrupted"] {
+        detector.feed(start(status).as_bytes()).unwrap();
+        detector.feed(ended(status, status).as_bytes()).unwrap();
+        assert_eq!(detector.wake_ups(), 2, "{status}");
+    }
+
+    detector.feed(foreground("front").as_bytes()).unwrap();
+    detector
+        .feed(ended("front", "completed").as_bytes())
+        .unwrap();
+    assert_eq!(detector.wake_ups(), 2, "a foreground task wakes nothing");
+    assert_eq!(detector.live_task_count(), 0);
+}

@@ -5,6 +5,7 @@ import {
 } from "../../application/agentThreadNotificationCenter";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import { agentThreadNotificationSubjects } from "./agentThreadNotificationSubjects";
 import { projectFixture } from "./agentThreadsSurfaceTestFixtures";
@@ -52,7 +53,7 @@ describe("agentThreadNotificationSubjects", () => {
     expect(agentThreadNotificationSubjects([archived], new Map(), projects)).toEqual([]);
   });
 
-  it("holds a completion back only while a background agent of the thread's session is live", () => {
+  it("holds a completion back while the thread's session still lists live work or a reply", () => {
     const cache: SubjectCache = new WeakMap();
     const settled = surfaceThreadView({
       thread: {
@@ -74,28 +75,43 @@ describe("agentThreadNotificationSubjects", () => {
         ],
       },
     });
-    const withBackground = (agents: number): AgentThreadView => ({
-      ...settled,
-      sessionBackground: {
-        ownerId: settled.thread.owner.ownerId,
-        total: 1,
-        agents,
-        tasks: [],
-        sinceEpochMs: 2,
-        taskSinceEpochMs: new Map(),
-        reply: { kind: "none" },
-      },
-    });
-    const stateOf = (observed: AgentThreadView) =>
-      agentThreadNotificationSubjects([observed], new Map(), projects, cache)[0]?.state;
+    const idle: AgentSessionBackground = {
+      ownerId: settled.thread.owner.ownerId,
+      total: 0,
+      agents: 0,
+      tasks: [],
+      sinceEpochMs: 2,
+      taskSinceEpochMs: new Map(),
+      reply: { kind: "none" },
+    };
+    const stateOf = (sessionBackground?: AgentSessionBackground) =>
+      agentThreadNotificationSubjects(
+        [sessionBackground === undefined ? settled : { ...settled, sessionBackground }],
+        new Map(),
+        projects,
+        cache,
+      )[0]?.state;
     const completed = {
       kind: "signal",
       signal: { kind: "completed", key: "turn-1:completed" },
     };
+    const held = { ...completed, kind: "held" };
 
-    expect(stateOf(withBackground(1))).toEqual({ ...completed, kind: "held" });
-    expect(stateOf(withBackground(0))).toEqual(completed);
-    expect(stateOf(settled)).toEqual(completed);
+    expect(
+      stateOf({ ...idle, total: 1, agents: 1, tasks: [{ taskId: "a1", taskType: "agent" }] }),
+    ).toEqual(held);
+    expect(stateOf({ ...idle, total: 1, tasks: [{ taskId: "b1", taskType: "shell" }] })).toEqual(
+      held,
+    );
+    expect(stateOf({ ...idle, total: 1, tasks: [{ taskId: "m1", taskType: "monitor" }] })).toEqual(
+      held,
+    );
+    expect(stateOf({ ...idle, reply: { kind: "inProgress", sinceEpochMs: 3 } })).toEqual(held);
+    expect(
+      stateOf({ ...idle, reply: { kind: "expected", sinceEpochMs: 3, untilEpochMs: 5_003 } }),
+    ).toEqual(held);
+    expect(stateOf(idle)).toEqual(completed);
+    expect(stateOf()).toEqual(completed);
   });
 
   it("keeps a remote thread's identity and toast across runner reconnects and inventory resets", () => {

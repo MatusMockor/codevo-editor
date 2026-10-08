@@ -1,4 +1,5 @@
 use crate::agent_task_spawner::agent_launch::AgentLaunchOptions;
+use crate::agent_task_spawner::claude_session_router::WAKE_UP_REPLY_CAP;
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
@@ -22,6 +23,7 @@ pub struct ClaudeSessionTuning {
     pub force_stop: Duration,
     pub clean_exit_grace: Duration,
     pub reader_drain: Duration,
+    pub wake_up_reply_cap: Duration,
 }
 
 impl Default for ClaudeSessionTuning {
@@ -35,6 +37,7 @@ impl Default for ClaudeSessionTuning {
             force_stop: Duration::from_millis(500),
             clean_exit_grace: Duration::from_secs(2),
             reader_drain: Duration::from_secs(2),
+            wake_up_reply_cap: WAKE_UP_REPLY_CAP,
         }
     }
 }
@@ -140,6 +143,7 @@ pub struct ClaudeSessionBackgroundTask {
 #[serde(rename_all = "camelCase")]
 pub enum ClaudeSessionBackgroundReply {
     None,
+    Expected,
     InProgress,
 }
 

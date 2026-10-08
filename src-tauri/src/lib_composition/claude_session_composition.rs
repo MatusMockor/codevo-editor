@@ -197,6 +197,10 @@ pub(crate) struct EndAgentThreadSessionResult {
     ended: bool,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ListAgentSessionBackgroundsRequest {}
+
 #[tauri::command]
 pub(crate) async fn interrupt_agent_task(
     app: AppHandle,
@@ -286,6 +290,16 @@ pub(crate) async fn stop_agent_background_task(
         ))
     })
     .await
+}
+
+#[tauri::command]
+pub(crate) async fn list_agent_session_backgrounds(
+    request: ListAgentSessionBackgroundsRequest,
+    sessions: State<'_, Arc<ClaudeSessionRegistry>>,
+) -> Result<Vec<ClaudeSessionBackgroundTasksEvent>, String> {
+    let ListAgentSessionBackgroundsRequest {} = request;
+    let sessions = Arc::clone(&sessions);
+    run_blocking_command(move || Ok(sessions.background_levels())).await
 }
 
 #[cfg(test)]
@@ -864,6 +878,35 @@ for raw in sys.stdin:
         assert!(end("ws-a", "agt-1-0a1c").expect("owner").ended);
         let event = ended_payload(&ended);
         assert_eq!(event["reason"], "threadEnded");
+        assert!(sessions.shutdown_all());
+    }
+
+    #[test]
+    fn the_session_backgrounds_listing_request_is_closed() {
+        assert!(serde_json::from_value::<ListAgentSessionBackgroundsRequest>(json!({})).is_ok());
+        assert!(
+            serde_json::from_value::<ListAgentSessionBackgroundsRequest>(json!({
+                "workspaceId": "ws-1"
+            }))
+            .is_err()
+        );
+        assert!(serde_json::from_value::<ListAgentSessionBackgroundsRequest>(json!(null)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_session_backgrounds_listing_command_reports_no_level_for_idle_sessions() {
+        let (app, sessions) = mock_app(ClaudeSessionTuning::default());
+        start_unattached_session(&sessions, "ws-a", "agt-1-0a1c", Path::new("/repo"));
+        let request = serde_json::from_value::<ListAgentSessionBackgroundsRequest>(json!({}))
+            .expect("request");
+
+        let listed =
+            tauri::async_runtime::block_on(list_agent_session_backgrounds(request, app.state()))
+                .expect("listing");
+
+        assert_eq!(listed, Vec::new());
+        assert_eq!(sessions.live_sessions(), 1);
         assert!(sessions.shutdown_all());
     }
 

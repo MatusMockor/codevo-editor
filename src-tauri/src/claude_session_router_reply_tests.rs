@@ -2,6 +2,7 @@ use super::*;
 
 const OPEN: ClaudeBackgroundReply = ClaudeBackgroundReply::InProgress;
 const CLOSED: ClaudeBackgroundReply = ClaudeBackgroundReply::None;
+const EXPECTED: ClaudeBackgroundReply = ClaudeBackgroundReply::Expected;
 
 fn shell() -> LiveBackgroundTask {
     LiveBackgroundTask {
@@ -66,7 +67,8 @@ fn a_reply_delivered_in_one_chunk_never_publishes_an_open_level() {
     let step = router.feed(&chunk);
     assert_eq!(step.background_turns.len(), 1);
     assert!(step.background_turns[0].complete);
-    assert_eq!(step.background_tasks, None);
+    assert_eq!(step.background_tasks, level(vec![], CLOSED));
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
 }
 
 #[test]
@@ -149,7 +151,7 @@ fn the_level_carries_tasks_and_reply_together() {
     assert_eq!(router.feed(TASKS_EMPTIED).background_tasks, None);
     let drained = router.feed(TASK_UPDATED);
     assert!(drained.settled);
-    assert_eq!(drained.background_tasks, level(vec![], CLOSED));
+    assert_eq!(drained.background_tasks, level(vec![], EXPECTED));
 }
 
 #[test]
@@ -231,11 +233,11 @@ fn a_refused_task_drain_level_is_offered_again() {
     );
     assert_eq!(turn.background_changes, 1);
     let drained = router.feed(TASK_UPDATED);
-    assert_eq!(drained.background_tasks, level(vec![], CLOSED));
+    assert_eq!(drained.background_tasks, level(vec![], EXPECTED));
     router.forget_reported_background();
     assert_eq!(
         router.feed(KEEP_ALIVE).background_tasks,
-        level(vec![], CLOSED)
+        level(vec![], EXPECTED)
     );
     assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
 }
@@ -253,4 +255,298 @@ fn a_reply_result_and_the_next_reply_init_in_one_chunk_keep_the_level_open() {
     assert_eq!(closed.background_turns.len(), 1);
     assert!(closed.background_turns[0].complete);
     assert_eq!(closed.background_tasks, level(vec![], CLOSED));
+}
+
+fn waiting_for_a_shell(router: &mut ClaudeSessionRouter) {
+    let (_, id) = owned_turn(router);
+    let own = result(Some(&id), 0.25, "STARTED");
+    let completed = lifecycle(&id, "completed");
+    let turn = feed_all(router, &[TASKS_LISTED, TASK_STARTED, &own, &completed]);
+    assert_eq!(turn.settles, 0);
+    assert_eq!(router.background_tasks(), shell_level(CLOSED));
+}
+
+fn shell_level(reply: ClaudeBackgroundReply) -> ClaudeBackgroundTasks {
+    level(vec![shell()], reply).expect("shell level")
+}
+
+fn task_ended(status: &str) -> Vec<u8> {
+    task_finished("bg-1", status)
+}
+
+#[test]
+fn a_task_that_finishes_on_its_own_expects_the_wake_up_reply_until_it_opens() {
+    let mut router = ClaudeSessionRouter::new();
+    waiting_for_a_shell(&mut router);
+    assert_eq!(router.feed(TASKS_EMPTIED).background_tasks, None);
+    let drained = router.feed(TASK_UPDATED);
+    assert!(drained.settled);
+    assert_eq!(drained.background_tasks, level(vec![], EXPECTED));
+    assert_eq!(router.feed(TASK_NOTIFIED).background_tasks, None);
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+    assert_eq!(router.feed(INIT).background_tasks, level(vec![], OPEN));
+    let closed = router.feed(&result(None, 0.5, "background-finished"));
+    assert_eq!(closed.background_turns.len(), 1);
+    assert_eq!(closed.background_tasks, level(vec![], CLOSED));
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+}
+
+#[test]
+fn a_failed_task_expects_the_wake_up_reply_like_a_completed_one() {
+    let mut router = ClaudeSessionRouter::new();
+    waiting_for_a_shell(&mut router);
+    let failed = router.feed(&task_ended("failed"));
+    assert!(failed.settled);
+    assert_eq!(failed.background_tasks, level(vec![], EXPECTED));
+}
+
+#[test]
+fn a_task_the_user_stopped_or_that_was_killed_expects_no_reply() {
+    for status in ["stopped", "killed", "cancelled", "interrupted"] {
+        let mut router = ClaudeSessionRouter::new();
+        waiting_for_a_shell(&mut router);
+        let ended = router.feed(&task_ended(status));
+        assert!(ended.settled, "{status}");
+        assert_eq!(ended.background_tasks, level(vec![], CLOSED), "{status}");
+        assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None, "{status}");
+    }
+}
+
+#[test]
+fn a_listed_task_that_vanishes_without_a_terminal_status_expects_no_reply() {
+    let mut router = ClaudeSessionRouter::new();
+    waiting_for_a_shell(&mut router);
+    assert_eq!(router.feed(TASKS_EMPTIED).background_tasks, None);
+    let vanished = router.feed(KEEP_ALIVE);
+    assert!(vanished.settled);
+    assert_eq!(vanished.background_tasks, level(vec![], CLOSED));
+}
+
+#[test]
+fn a_finished_agent_expects_the_wake_up_reply() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let own = result(Some(&id), 0.25, "STARTED");
+    let completed = lifecycle(&id, "completed");
+    let started = line(serde_json::json!({
+        "type": "system",
+        "subtype": "task_started",
+        "task_id": "agent-1",
+        "task_type": "local_agent",
+        "session_id": "sess-abcdefgh"
+    }));
+    let turn = feed_all(&mut router, &[&started, &own, &completed]);
+    assert_eq!(turn.settles, 0);
+    let finished = router.feed(&task_finished("agent-1", "completed"));
+    assert!(finished.settled);
+    assert_eq!(finished.background_tasks, level(vec![], EXPECTED));
+}
+
+#[test]
+fn a_task_that_finishes_while_our_command_runs_never_expects_a_reply() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let listed = feed_all(&mut router, &[TASKS_LISTED, TASK_STARTED]);
+    assert_eq!(listed.background_changes, 1);
+    let working = assistant("running the foreground command");
+    let finished = feed_all(
+        &mut router,
+        &[&working, TASK_UPDATED, TASK_NOTIFIED, TASKS_EMPTIED],
+    );
+    assert_eq!(finished.settles, 0);
+    assert_eq!(finished.background_changes, 1);
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+
+    let foreground = task_started("front-1", false);
+    let foreground_done = task_finished("front-1", "completed");
+    let noted = assistant("NOTED");
+    let own = result(Some(&id), 0.25, "NOTED");
+    let completed = lifecycle(&id, "completed");
+    let settling = feed_all(
+        &mut router,
+        &[&foreground, &foreground_done, &noted, &own, &completed],
+    );
+    assert_eq!(settling.settles, 1);
+    assert_eq!(settling.background_changes, 0);
+    assert!(settling.background.is_empty());
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+}
+
+#[test]
+fn a_task_that_finishes_while_a_reply_is_written_never_expects_another_reply() {
+    let mut router = ClaudeSessionRouter::new();
+    waiting_for_a_shell(&mut router);
+    assert_eq!(router.feed(INIT).background_tasks, Some(shell_level(OPEN)));
+    let finished = feed_all(&mut router, &[TASKS_EMPTIED, TASK_UPDATED, TASK_NOTIFIED]);
+    assert_eq!(finished.settles, 0);
+    assert_eq!(
+        router.background_tasks(),
+        level(vec![], OPEN).expect("open")
+    );
+
+    let replied = router.feed(&result(None, 0.5, "noted"));
+    assert_eq!(replied.background_turns.len(), 1);
+    assert!(replied.settled);
+    assert_eq!(replied.background_tasks, level(vec![], CLOSED));
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+}
+
+#[test]
+fn a_task_that_finishes_after_our_command_ended_is_expected_again() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let first = task_started("bg-0", true);
+    let first_done = task_finished("bg-0", "completed");
+    let during = feed_all(&mut router, &[&first, TASK_STARTED, &first_done]);
+    assert_eq!(during.settles, 0);
+    assert_eq!(router.background_tasks(), shell_level(CLOSED));
+
+    let own = result(Some(&id), 0.25, "STARTED");
+    let completed = lifecycle(&id, "completed");
+    let waiting = feed_all(&mut router, &[&own, &completed]);
+    assert_eq!(waiting.settles, 0);
+    assert_eq!(waiting.background_changes, 0);
+
+    let drained = router.feed(TASK_UPDATED);
+    assert!(drained.settled);
+    assert_eq!(drained.background_tasks, level(vec![], EXPECTED));
+}
+
+#[test]
+fn a_late_bookend_after_the_reply_opened_never_expects_another_reply() {
+    let mut router = ClaudeSessionRouter::new();
+    waiting_for_a_shell(&mut router);
+    let drained = feed_all(
+        &mut router,
+        &[TASKS_EMPTIED, TASK_UPDATED, INIT, TASK_NOTIFIED],
+    );
+    assert_eq!(drained.settles, 1);
+    assert_eq!(
+        router.background_tasks(),
+        level(vec![], OPEN).expect("open")
+    );
+    let closed = router.feed(&result(None, 0.5, "background-finished"));
+    assert_eq!(closed.background_tasks, level(vec![], CLOSED));
+    assert_eq!(router.feed(TASK_NOTIFIED).background_tasks, None);
+}
+
+#[test]
+fn an_expected_reply_that_never_opens_lapses_at_the_cap_and_stays_lapsed() {
+    let mut router = ClaudeSessionRouter::new();
+    waiting_for_a_shell(&mut router);
+    let drained = router.feed(TASK_UPDATED);
+    assert_eq!(drained.background_tasks, level(vec![], EXPECTED));
+
+    router.wake_up_reply_cap = Duration::ZERO;
+    assert_eq!(
+        router.feed(KEEP_ALIVE).background_tasks,
+        level(vec![], CLOSED)
+    );
+    router.wake_up_reply_cap = WAKE_UP_REPLY_CAP;
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+}
+
+#[test]
+fn an_expected_reply_keeps_the_session_live_and_an_idle_level_does_not() {
+    assert_eq!(WAKE_UP_REPLY_CAP, Duration::from_secs(30));
+    assert!(level(vec![], EXPECTED)
+        .expect("expected")
+        .keeps_session_live());
+    assert!(level(vec![], OPEN).expect("open").keeps_session_live());
+    assert!(shell_level(CLOSED).keeps_session_live());
+    assert!(!ClaudeBackgroundTasks::default().keeps_session_live());
+}
+
+fn expecting_a_reply(router: &mut ClaudeSessionRouter) {
+    waiting_for_a_shell(router);
+    let drained = router.feed(TASK_UPDATED);
+    assert!(drained.settled);
+    assert_eq!(drained.background_tasks, level(vec![], EXPECTED));
+}
+
+#[test]
+fn a_command_accepted_while_a_reply_is_expected_takes_the_notification_over_for_good() {
+    let mut router = ClaudeSessionRouter::new();
+    expecting_a_reply(&mut router);
+    let (_, id) = attach(&mut router);
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+
+    let queued = router.feed(&lifecycle(&id, "queued"));
+    assert_eq!(queued.background_tasks, level(vec![], CLOSED));
+    let started = lifecycle(&id, "started");
+    let working = assistant("working");
+    let own = result(Some(&id), 0.5, "DONE");
+    let completed = lifecycle(&id, "completed");
+    let turn = feed_all(&mut router, &[&started, INIT, &working, &own, &completed]);
+    assert_eq!(turn.settles, 1);
+    assert_eq!(turn.background_changes, 0);
+    assert!(turn.background.is_empty());
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+}
+
+#[test]
+fn a_command_read_in_one_chunk_while_a_reply_is_expected_publishes_the_idle_level_once() {
+    let mut router = ClaudeSessionRouter::new();
+    expecting_a_reply(&mut router);
+    let (_, id) = attach(&mut router);
+
+    let step = router.feed(&turn_stream(&id, 0.5, "DONE"));
+
+    assert!(step.settled);
+    assert_eq!(step.background_tasks, level(vec![], CLOSED));
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+}
+
+#[test]
+fn a_steer_accepted_while_a_reply_is_expected_takes_the_notification_over() {
+    let mut router = ClaudeSessionRouter::new();
+    let (ledger, id) = owned_turn(&mut router);
+    let first = task_started("bg-0", true);
+    let own = result(Some(&id), 0.25, "STARTED");
+    let completed = lifecycle(&id, "completed");
+    let waiting = feed_all(&mut router, &[&first, TASK_STARTED, &own, &completed]);
+    assert_eq!(waiting.settles, 0);
+    let first_done = router.feed(&task_finished("bg-0", "completed"));
+    assert_eq!(first_done.background_tasks, Some(shell_level(EXPECTED)));
+
+    let (steer, _) = ledger.reserve(b"{}").expect("steer reserved");
+    let queued = router.feed(&lifecycle(&steer, "queued"));
+    assert_eq!(queued.background_tasks, Some(shell_level(CLOSED)));
+    let started = lifecycle(&steer, "started");
+    let steered = result(Some(&steer), 0.5, "STEERED");
+    let steer_done = lifecycle(&steer, "completed");
+    let answered = feed_all(&mut router, &[&started, INIT, &steered, &steer_done]);
+    assert_eq!(answered.settles, 0);
+    assert_eq!(answered.background_changes, 0);
+    assert_eq!(router.background_tasks(), shell_level(CLOSED));
+}
+
+#[test]
+fn a_reply_that_opens_before_the_accepted_command_starts_is_still_shown_as_a_reply() {
+    let mut router = ClaudeSessionRouter::new();
+    expecting_a_reply(&mut router);
+    let (_, id) = attach(&mut router);
+    let queued = router.feed(&lifecycle(&id, "queued"));
+    assert_eq!(queued.background_tasks, level(vec![], CLOSED));
+
+    assert_eq!(router.feed(INIT).background_tasks, level(vec![], OPEN));
+    let closed = router.feed(&result(None, 0.5, "background-finished"));
+    assert_eq!(closed.background_turns.len(), 1);
+    assert_eq!(closed.background_tasks, level(vec![], CLOSED));
+}
+
+#[test]
+fn reading_the_level_applies_the_cap_without_another_frame() {
+    let mut router = ClaudeSessionRouter::with_wake_up_reply_cap(WAKE_UP_REPLY_CAP);
+    expecting_a_reply(&mut router);
+    assert_eq!(router.background_tasks().reply, EXPECTED);
+
+    router.wake_up_reply_cap = Duration::ZERO;
+
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+    assert!(!router.background_tasks().keeps_session_live());
 }

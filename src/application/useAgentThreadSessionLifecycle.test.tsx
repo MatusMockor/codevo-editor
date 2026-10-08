@@ -63,6 +63,7 @@ function gateway(overrides: Partial<AgentThreadSessionGateway> = {}) {
   const unsubscribe = vi.fn();
   const unsubscribeBackground = vi.fn();
   const fake = {
+    listAgentSessionBackgrounds: vi.fn(async () => []),
     interruptAgentTask: vi.fn(async (): Promise<AgentTaskInterruptOutcome> => ({
       kind: "interrupting",
     })),

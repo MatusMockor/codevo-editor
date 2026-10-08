@@ -494,6 +494,7 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
     subscribeAgentSessionEnded: vi.fn(async () => () => undefined),
     subscribeAgentSessionBackgroundTurn: vi.fn(async () => () => undefined),
     subscribeAgentSessionBackgroundTasks: vi.fn(async () => () => undefined),
+    listAgentSessionBackgrounds: vi.fn(async () => []),
   };
   const worktree = {
     listWorktrees: vi.fn(async () => []),

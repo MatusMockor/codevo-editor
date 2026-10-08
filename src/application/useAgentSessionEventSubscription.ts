@@ -9,6 +9,7 @@ export type AgentSessionEventSubscription<TEvent> = (
 export interface AgentSessionEventHandlers<TEvent> {
   readonly onEvent: (event: TEvent) => void;
   readonly onFailure: (error: unknown) => void;
+  readonly onSettled?: () => void;
 }
 
 export function useAgentSessionEventSubscription<TEvent>(
@@ -34,10 +35,12 @@ export function useAgentSessionEventSubscription<TEvent>(
           return;
         }
         unsubscribe = stop;
+        handlersRef.current.onSettled?.();
       },
       (error: unknown) => {
         if (disposed) return;
         handlersRef.current.onFailure(error);
+        handlersRef.current.onSettled?.();
       },
     );
     return () => {

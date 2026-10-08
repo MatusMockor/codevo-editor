@@ -12,6 +12,7 @@ import {
 } from "../domain/agentThread";
 import type {
   AgentSessionBackgroundTurnEvent,
+  AgentSessionEndedEvent,
   AgentSessionInspection,
   AgentTaskInterruptOutcome,
   AgentThreadSessionGateway,
@@ -21,7 +22,11 @@ import { surfaceThreadView } from "../components/agentMode/agentSurfaceTestFixtu
 import { waitForReact } from "../test/reactTestLifecycle";
 import type { AgentThreadRecovery } from "./agentEvictedThreadRecovery";
 import { MAX_QUEUED_REPLIES_PER_RECOVERING_ROOT } from "./agentThreadRecoveryQueue";
-import { useAgentThreadSessionLifecycle } from "./useAgentThreadSessionLifecycle";
+import type { AgentSessionEndResult } from "./agentThreadPorts";
+import {
+  useAgentThreadSessionLifecycle,
+  type AgentThreadSessionLifecycle,
+} from "./useAgentThreadSessionLifecycle";
 
 const THREAD_ID = "agt-1-0a1c";
 const OWNER_ID = "ws-1";
@@ -93,17 +98,24 @@ function event(overrides: Partial<AgentSessionBackgroundTurnEvent> = {}) {
 
 function gateway() {
   let background: ((event: AgentSessionBackgroundTurnEvent) => void) | null = null;
+  let ended: ((event: AgentSessionEndedEvent) => void) | null = null;
   const unsubscribeBackground = vi.fn();
   const fake = {
+    listAgentSessionBackgrounds: vi.fn(async () => []),
     interruptAgentTask: vi.fn(async (): Promise<AgentTaskInterruptOutcome> => ({
       kind: "interrupting",
     })),
     inspectAgentThreadSession: vi.fn(async (): Promise<AgentSessionInspection> => ({
       kind: "none",
     })),
-    endAgentThreadSession: vi.fn(async () => true),
+    endAgentThreadSession: vi.fn<AgentThreadSessionGateway["endAgentThreadSession"]>(
+      async () => true,
+    ),
     stopAgentBackgroundTask: vi.fn(async () => ({ kind: "noSession" }) as const),
-    subscribeAgentSessionEnded: vi.fn(async () => () => undefined),
+    subscribeAgentSessionEnded: vi.fn(async (handler: (event: AgentSessionEndedEvent) => void) => {
+      ended = handler;
+      return () => undefined;
+    }),
     subscribeAgentSessionBackgroundTurn: vi.fn(
       async (handler: (event: AgentSessionBackgroundTurnEvent) => void) => {
         background = handler;
@@ -118,6 +130,12 @@ function gateway() {
     emit(value: AgentSessionBackgroundTurnEvent) {
       expect(background).not.toBeNull();
       act(() => background?.(value));
+    },
+    end(workspaceId: string = OWNER_ID, threadId: string = THREAD_ID) {
+      expect(ended).not.toBeNull();
+      act(() =>
+        ended?.({ workspaceId, threadId, reason: "threadEnded", backgroundTasksLive: false }),
+      );
     },
   };
 }
@@ -139,9 +157,11 @@ function render(
   const scenario: {
     current: AgentThread | undefined;
     mintedIds: Array<string | null>;
+    gateway: AgentThreadSessionGateway;
   } = {
     current: initial,
     mintedIds: ["agt-bg-0001"],
+    gateway: fake,
   };
   const setNotice = vi.fn();
   const reportError = vi.fn();
@@ -153,9 +173,11 @@ function render(
     scenario.current = agentThreadsReducer(state, action).threads.get(scenario.current.threadId);
   });
 
+  const latest: { lifecycle: AgentThreadSessionLifecycle | null } = { lifecycle: null };
+
   function Harness() {
-    useAgentThreadSessionLifecycle({
-      gateway: fake,
+    latest.lifecycle = useAgentThreadSessionLifecycle({
+      gateway: scenario.gateway,
       readThread: (threadId) =>
         scenario.current?.threadId === threadId ? scenario.current : undefined,
       recordHaltRequest: () => undefined,
@@ -191,7 +213,39 @@ function render(
     act(() => root.unmount());
   };
   cleanups.push(unmount);
-  return { scenario, setNotice, reportError, dispatch, dispatched, unmount };
+  const endSession = async (ending: AgentThread): Promise<AgentSessionEndResult | null> => {
+    const settled: { result: AgentSessionEndResult | null } = { result: null };
+    expect(latest.lifecycle).not.toBeNull();
+    await act(async () => {
+      settled.result = (await latest.lifecycle?.endSession(ending)) ?? null;
+    });
+    return settled.result;
+  };
+  const beginEndSession = (ending: AgentThread): Promise<AgentSessionEndResult | null> => {
+    const begun: { result: Promise<AgentSessionEndResult | null> } = {
+      result: Promise.resolve(null),
+    };
+    expect(latest.lifecycle).not.toBeNull();
+    act(() => {
+      begun.result = latest.lifecycle?.endSession(ending) ?? Promise.resolve(null);
+    });
+    return begun.result;
+  };
+  const replaceGateway = (next: AgentThreadSessionGateway): void => {
+    scenario.gateway = next;
+    act(() => root.render(createElement(Harness)));
+  };
+  return {
+    scenario,
+    setNotice,
+    reportError,
+    dispatch,
+    dispatched,
+    endSession,
+    beginEndSession,
+    replaceGateway,
+    unmount,
+  };
 }
 
 function runningTurn(turnId: string, prompt = "start the build in the background"): AgentTurn {
@@ -336,6 +390,122 @@ describe("useAgentThreadSessionLifecycle background turns", () => {
     expect(truncated?.streamMetrics?.complete).toBe(false);
     expect(incomplete?.eventsTruncated).toBe(false);
     expect(incomplete?.status).toEqual({ kind: "interrupted" });
+  });
+
+  it("records a reply cut off by the session the user ended as stopped, not interrupted", async () => {
+    const { fake, emit } = gateway();
+    const harness = render(thread(), fake);
+    await subscribed(fake);
+
+    expect(await harness.endSession(thread())).toBe("ended");
+    emit(event({ complete: false }));
+
+    const reply = harness.scenario.current?.turns[1];
+    expect(reply?.origin).toBe("background");
+    expect(reply?.status).toEqual({ kind: "stopped" });
+    expect(fake.endAgentThreadSession).toHaveBeenCalledExactlyOnceWith({
+      workspaceId: OWNER_ID,
+      threadId: THREAD_ID,
+    });
+  });
+
+  it("records the reply as stopped even when it is flushed before the end request is answered", async () => {
+    const { fake, emit } = gateway();
+    let answer: (ended: boolean) => void = () => undefined;
+    fake.endAgentThreadSession.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const harness = render(thread(), fake);
+    await subscribed(fake);
+    const ending = harness.endSession(thread());
+
+    emit(event({ complete: false }));
+    answer(true);
+
+    expect(await ending).toBe("ended");
+    expect(harness.scenario.current?.turns[1]?.status).toEqual({ kind: "stopped" });
+  });
+
+  it("keeps a completed reply completed whatever the user asked meanwhile", async () => {
+    const { fake, emit } = gateway();
+    const harness = render(thread(), fake);
+    await subscribed(fake);
+
+    await harness.endSession(thread());
+    emit(event());
+
+    expect(harness.scenario.current?.turns[1]?.status).toEqual({ kind: "exited", exitCode: 0 });
+  });
+
+  it("forgets the end request once the session ended, was missing or belonged to another owner or thread", async () => {
+    const { fake, emit, end } = gateway();
+    const harness = render(thread(), fake);
+    harness.scenario.mintedIds.push("agt-bg-0002", "agt-bg-0003", "agt-bg-0004");
+    await subscribed(fake);
+    const statusOf = (position: number) => harness.scenario.current?.turns[position]?.status.kind;
+
+    await harness.endSession(thread());
+    end("ws-other");
+    end(OWNER_ID, "agt-other-0a1c");
+    end();
+    emit(event({ complete: false }));
+    expect(statusOf(1)).toBe("interrupted");
+
+    fake.endAgentThreadSession.mockResolvedValueOnce(false);
+    expect(await harness.endSession(thread())).toBe("none");
+    emit(event({ complete: false }));
+    expect(statusOf(2)).toBe("interrupted");
+
+    fake.endAgentThreadSession.mockRejectedValueOnce(new Error("ipc unavailable"));
+    expect(await harness.endSession(thread())).toBe("failed");
+    emit(event({ complete: false }));
+    expect(statusOf(3)).toBe("interrupted");
+
+    await harness.endSession(thread({ threadId: "agt-other-0a1c" }));
+    await harness.endSession(thread({ owner: { ...thread().owner, ownerId: "ws-other" } }));
+    emit(event({ complete: false }));
+    expect(statusOf(4)).toBe("interrupted");
+  });
+
+  it("forgets End Session requests of a gateway that was replaced", async () => {
+    const first = gateway();
+    const harness = render(thread(), first.fake);
+    await subscribed(first.fake);
+    expect(await harness.endSession(thread())).toBe("ended");
+
+    const next = gateway();
+    harness.replaceGateway(next.fake);
+    await subscribed(next.fake);
+    next.emit(event({ complete: false }));
+
+    expect(harness.scenario.current?.turns[1]?.status).toEqual({ kind: "interrupted" });
+  });
+
+  it("keeps the new gateway's End Session request when the replaced gateway answers late", async () => {
+    const first = gateway();
+    let answerLate: (ended: boolean) => void = () => undefined;
+    first.fake.endAgentThreadSession.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        answerLate = resolve;
+      }),
+    );
+    const harness = render(thread(), first.fake);
+    await subscribed(first.fake);
+    const late = harness.beginEndSession(thread());
+
+    const next = gateway();
+    harness.replaceGateway(next.fake);
+    await subscribed(next.fake);
+    expect(await harness.endSession(thread())).toBe("ended");
+    await act(async () => {
+      answerLate(false);
+      expect(await late).toBe("none");
+    });
+    next.emit(event({ complete: false }));
+
+    expect(harness.scenario.current?.turns[1]?.status).toEqual({ kind: "stopped" });
   });
 
   it("tells the user when the reply cannot be added to the thread", async () => {

@@ -92,6 +92,7 @@ function reply(text: string): string {
 function sessionGateway() {
   let handler: ((event: AgentSessionBackgroundTurnEvent) => void) | null = null;
   const fake = {
+    listAgentSessionBackgrounds: vi.fn(async () => []),
     interruptAgentTask: vi.fn(async () => ({ kind: "interrupting" }) as const),
     inspectAgentThreadSession: vi.fn(async () => ({ kind: "none" }) as const),
     endAgentThreadSession: vi.fn(async () => true),
