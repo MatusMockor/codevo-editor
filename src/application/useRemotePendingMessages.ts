@@ -2,6 +2,10 @@ import { collectRemoteInstructions } from "./collectRemoteInstructions";
 import { admitStoredAgentLaunch } from "../domain/agentStoredLaunch";
 import type { RemoteRunnerInstructionSnapshot } from "../domain/remoteRunnerInstructions";
 import { agentLaunchWithoutBrowser } from "../domain/agentLaunch";
+import {
+  remoteRunnerEchoesLaunch,
+  remoteRunnerLaunchIdentity,
+} from "../domain/remoteRunnerLaunchEcho";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentFollowUpRequest, AgentSteerRequest, AgentThreadView } from "./agentThreadPorts";
 import type { DeferredFollowUp, DeferredFollowUps } from "./agentDeferredFollowUps";
@@ -27,29 +31,6 @@ interface Options {
   publish(serverId: string, threadId: string, items: RemotePendingUpdate): void;
   refresh(): Promise<void>;
   report(message: string): void;
-}
-function launchIdentity(
-  launch: NonNullable<RemoteRunnerPendingMessage["launch"]>,
-): readonly unknown[] {
-  return launch.provider === "claudeCode"
-    ? [
-        launch.provider,
-        launch.model,
-        launch.mode,
-        launch.effort,
-        launch.context ?? "200k",
-        launch.fastMode ?? false,
-        launch.thinkingMode ?? false,
-      ]
-    : [launch.provider, launch.model, launch.mode, launch.effort ?? "default"];
-}
-function sameLaunch(
-  left: RemoteRunnerPendingMessage["launch"],
-  right: RemoteRunnerPendingMessage["launch"],
-): boolean {
-  return left && right
-    ? JSON.stringify(launchIdentity(left)) === JSON.stringify(launchIdentity(right))
-    : left === right;
 }
 type Command = {
   taskId: string;
@@ -170,7 +151,7 @@ export function useRemotePendingMessages(options: Options) {
       commandKey = `${execution.serverId}:${execution.runnerId}:${execution.conversationId}`;
       const signature = JSON.stringify([
         request.prompt,
-        launchIdentity(launch),
+        remoteRunnerLaunchIdentity(launch),
         request.attachments ?? [],
         request.attachmentOwner ?? null,
       ]);
@@ -240,7 +221,7 @@ export function useRemotePendingMessages(options: Options) {
             ? expected?.type !== "text" || expected.text !== part.text
             : expected?.type !== "attachment" || expected.attachmentId !== part.attachmentId;
         }) ||
-        !sameLaunch(item.launch, launch)
+        !remoteRunnerEchoesLaunch(launch, item.launch)
       )
         throw new Error("The runner returned a different queued message.");
       uncertain.current.delete(commandKey);

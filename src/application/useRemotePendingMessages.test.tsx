@@ -687,3 +687,64 @@ it("queues a promoted stored default launch as full access only with confirmatio
   expect(sent).toContain('"mode":"dangerFullAccess"');
   expect(sent).not.toContain('"mode":"default"');
 });
+
+it.each([
+  ["a 1m context the editor never sent", {}, { context: "1m" }],
+  ["a different context than the chosen one", { context: "1m" }, { context: "200k" }],
+] as const)("rejects a queued message echoed with %s", async (_name, sent, echoed) => {
+  const { h, request } = setupClaude();
+  h.gateway.enqueueMessage.mockResolvedValue({
+    pending: pending({ launch: { ...request.launch, ...echoed } }),
+    created: true,
+  });
+  await act(async () => {
+    expect(await h.result.enqueue({ ...request, launch: { ...request.launch, ...sent } })).toBe(
+      false,
+    );
+  });
+  expect(h.options.publish).not.toHaveBeenCalled();
+  expect(h.options.report).toHaveBeenCalledWith(
+    "Queue delivery was not confirmed. Retry the same message to recover it safely.",
+  );
+});
+
+it.each([
+  ["an explicit 200k context", { context: "200k" }],
+  ["explicit false flags", { fastMode: false, thinkingMode: false }],
+] as const)(
+  "recovers an uncertain Claude queue delivery retried with %s under the original key",
+  async (_name, representation) => {
+    const { h, request } = setupClaude();
+    h.gateway.enqueueMessage.mockRejectedValueOnce(new Error("Connection lost"));
+    await act(async () => {
+      expect(await h.result.enqueue(request)).toBe(false);
+    });
+    await act(async () => {
+      expect(
+        await h.result.enqueue({ ...request, launch: { ...request.launch, ...representation } }),
+      ).toBe(true);
+    });
+    expect(h.gateway.enqueueMessage.mock.calls[1]![0].idempotencyKey).toBe(
+      h.gateway.enqueueMessage.mock.calls[0]![0].idempotencyKey,
+    );
+    expect(h.options.publish).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([
+  ["a 1m context", { context: "1m" }],
+  ["fast mode", { fastMode: true }],
+] as const)("blocks %s while a Claude queue delivery is uncertain", async (_name, changed) => {
+  const { h, request } = setupClaude();
+  h.gateway.enqueueMessage.mockRejectedValueOnce(new Error("Connection lost"));
+  await act(async () => {
+    expect(await h.result.enqueue(request)).toBe(false);
+  });
+  await act(async () => {
+    expect(await h.result.enqueue({ ...request, launch: { ...request.launch, ...changed } })).toBe(
+      false,
+    );
+  });
+  expect(h.gateway.enqueueMessage).toHaveBeenCalledTimes(1);
+  expect(h.options.publish).not.toHaveBeenCalled();
+});

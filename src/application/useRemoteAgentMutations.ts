@@ -16,12 +16,9 @@ import {
   isRemoteRunnerRequestRejectedError,
   remoteRunnerErrorMessage,
 } from "../domain/remoteRunnerErrors";
-import {
-  agentLaunchWithoutBrowser,
-  serializeAgentLaunchOptions,
-  type AgentLaunchOptions,
-} from "../domain/agentLaunch";
+import { agentLaunchWithoutBrowser, serializeAgentLaunchOptions } from "../domain/agentLaunch";
 import { isRemoteStartBase, type RemoteStartBase } from "../domain/remoteGitSyncWire";
+import { remoteRunnerEchoesLaunch } from "../domain/remoteRunnerLaunchEcho";
 
 export interface RemoteAgentMutationTarget {
   readonly serverId: string;
@@ -57,26 +54,6 @@ export const REMOTE_ORIGIN_BASE_UNSUPPORTED =
   "Update the server runner to start a conversation from an origin branch.";
 export const REMOTE_ORIGIN_BASE_NEEDS_WORKTREE =
   "Starting from an origin branch needs a new worktree on the server.";
-function sameLaunch(task: RemoteRunnerTask, expected: AgentLaunchOptions): boolean {
-  const actual = task.launch;
-  if (!actual) return false;
-  if (
-    actual.provider !== expected.provider ||
-    actual.model !== expected.model ||
-    actual.mode !== expected.mode
-  )
-    return false;
-  if (actual.provider === "codex" && expected.provider === "codex")
-    return (actual.effort ?? "default") === (expected.effort ?? "default");
-  return (
-    actual.provider !== "claudeCode" ||
-    expected.provider !== "claudeCode" ||
-    (actual.effort === expected.effort &&
-      (actual.context ?? "1m") === (expected.context ?? "1m") &&
-      (actual.fastMode ?? false) === (expected.fastMode ?? false) &&
-      (actual.thinkingMode ?? false) === (expected.thinkingMode ?? false))
-  );
-}
 type Pending = {
   readonly signature: string;
   readonly idempotencyKey: string;
@@ -337,7 +314,7 @@ export function useRemoteAgentMutations(options: Options) {
           (task.isolation ?? "worktree") !== command.isolation ||
           task.runnerId !== target.runnerId ||
           task.provider !== provider ||
-          !sameLaunch(task, launch) ||
+          !remoteRunnerEchoesLaunch(launch, task.launch) ||
           !sameParts(task.parts, command.parts) ||
           task.parentTaskId ||
           (task.conversationId !== undefined && task.conversationId !== task.id) ||
@@ -367,7 +344,7 @@ export function useRemoteAgentMutations(options: Options) {
         task.runnerId !== target.runnerId ||
         task.provider !== provider ||
         task.projectId !== target.projectId ||
-        !sameLaunch(task, launch) ||
+        !remoteRunnerEchoesLaunch(launch, task.launch) ||
         !sameParts(task.parts, command.parts)
       )
         throw new Error("The runner returned a different remote task.");
