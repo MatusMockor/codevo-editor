@@ -36,6 +36,7 @@ function queuedEdit(threadId = THREAD_ID): AgentComposerQueuedEdit {
           height: 1,
           storedPath: "/data/pripona.png",
         },
+        entry: "file",
       }),
     ],
     onRemoveAttachment: () => undefined,

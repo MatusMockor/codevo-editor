@@ -301,6 +301,11 @@
   font-size: var(--cv-t-xs);
 }
 
+.agent-composer-attachment--chip[data-agent-attachment-compact="true"] {
+  height: 24px;
+  padding-right: 28px;
+}
+
 .agent-composer-attachment__meta {
   display: grid;
   min-width: 0;
@@ -350,6 +355,11 @@
 
 .agent-composer-attachment--chip .agent-composer-attachment__remove {
   top: 6px;
+}
+
+.agent-composer-attachment--chip[data-agent-attachment-compact="true"]
+  .agent-composer-attachment__remove {
+  top: 2px;
 }
 
 .agent-composer-attachment__remove:hover {

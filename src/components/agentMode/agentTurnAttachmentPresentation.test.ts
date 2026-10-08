@@ -39,9 +39,20 @@ const REFERENCE: AgentAttachment = {
   bytes: 5_000_000,
 };
 
+const REFERENCE_PROMPT = 'watch\n\n[Attached file "clip.mp4" is at: /workspace/app/clip.mp4]';
+
+const FOLDER: AgentAttachment = {
+  kind: "reference",
+  name: "invoices",
+  path: "/Users/x/Documents/codevo s.r.o./invoices",
+  bytes: 0,
+};
+
+const FOLDER_LINE = '[Attached folder "invoices" is at: /Users/x/Documents/codevo s.r.o./invoices]';
+
 describe("agentTurnAttachmentViews", () => {
   it("keeps images inline and everything else as a named chip", () => {
-    expect(agentTurnAttachmentViews([IMAGE, FILE, REFERENCE])).toEqual([
+    expect(agentTurnAttachmentViews([IMAGE, FILE, REFERENCE], REFERENCE_PROMPT)).toEqual([
       {
         kind: "image",
         key: IMAGE_ID,
@@ -61,15 +72,49 @@ describe("agentTurnAttachmentViews", () => {
     ]);
   });
 
+  it("shows a reference as a folder only when its exact folder line sits in the prompt", () => {
+    expect(agentTurnAttachmentViews([FOLDER, REFERENCE], `summarise\n\n${FOLDER_LINE}`)).toEqual([
+      {
+        kind: "folder",
+        key: "reference-0-/Users/x/Documents/codevo s.r.o./invoices",
+        name: "invoices",
+        path: "/Users/x/Documents/codevo s.r.o./invoices",
+      },
+      {
+        kind: "chip",
+        key: "reference-1-/workspace/app/clip.mp4",
+        name: "clip.mp4",
+        glyph: "reference",
+      },
+    ]);
+  });
+
+  it.each([
+    ["no prompt text", ""],
+    ["the shipped file wording", FOLDER_LINE.replace("[Attached folder", "[Attached file")],
+    ["a folder line for another path", FOLDER_LINE.replace("/invoices]", "/invoices-2024]")],
+    ["a folder line for another name", FOLDER_LINE.replace('"invoices"', '"receipts"')],
+    ["a folder line that is not a whole line", `see ${FOLDER_LINE}`],
+  ])("falls back to a file reference for %s", (_label, prompt) => {
+    expect(agentTurnAttachmentViews([FOLDER], prompt)).toEqual([
+      {
+        kind: "chip",
+        key: "reference-0-/Users/x/Documents/codevo s.r.o./invoices",
+        name: "invoices",
+        glyph: "reference",
+      },
+    ]);
+  });
+
   it("returns nothing for a turn without attachments", () => {
-    expect(agentTurnAttachmentViews(undefined)).toEqual([]);
-    expect(agentTurnAttachmentViews([])).toEqual([]);
+    expect(agentTurnAttachmentViews(undefined, "")).toEqual([]);
+    expect(agentTurnAttachmentViews([], "")).toEqual([]);
   });
 
   it("bounds a turn to the per-turn attachment cap", () => {
     const many = Array.from({ length: 12 }, () => REFERENCE);
 
-    expect(agentTurnAttachmentViews(many)).toHaveLength(8);
+    expect(agentTurnAttachmentViews(many, "")).toHaveLength(8);
   });
 
   it("treats an unresolvable image id or mime as not resolvable", () => {
@@ -82,8 +127,8 @@ describe("agentTurnAttachmentViews", () => {
         mime: "image/png",
       }),
     ).toBe(false);
-    expect(agentAttachmentImageIsResolvable(agentTurnAttachmentViews([IMAGE])[0]!)).toBe(true);
-    expect(agentAttachmentImageIsResolvable(agentTurnAttachmentViews([FILE])[0]!)).toBe(false);
+    expect(agentAttachmentImageIsResolvable(agentTurnAttachmentViews([IMAGE], "")[0]!)).toBe(true);
+    expect(agentAttachmentImageIsResolvable(agentTurnAttachmentViews([FILE], "")[0]!)).toBe(false);
   });
 });
 

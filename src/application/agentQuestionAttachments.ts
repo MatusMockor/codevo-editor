@@ -1,6 +1,10 @@
 import { agentAttachmentPromptLines } from "../domain/agentAttachmentIntake";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
-import { AGENT_ATTACHMENTS_DISCARDED_NOTICE, claimTurnAttachments } from "./agentTurnAttachments";
+import {
+  AGENT_ATTACHMENTS_DISCARDED_NOTICE,
+  claimTurnAttachments,
+  intentReferenceEntries,
+} from "./agentTurnAttachments";
 import type {
   AgentComposerAttachmentsSurface,
   AgentComposerTurnAttachments,
@@ -48,7 +52,10 @@ export function createAgentQuestionAttachmentsPort(
             prepared.intents,
             "",
           );
-          return agentAttachmentPromptLines(claimed.attachments);
+          return agentAttachmentPromptLines(
+            claimed.attachments,
+            intentReferenceEntries(prepared.intents),
+          );
         },
       };
     },

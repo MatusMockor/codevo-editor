@@ -105,6 +105,7 @@ import {
   agentThreadActivitySummary,
 } from "./agentThreadActivityPresentation";
 import { useSidebarFocusHandoff } from "./useSidebarFocusHandoff";
+import { AgentAttachmentDropColumn } from "./AgentAttachmentDropColumn";
 import { AgentThreadHeader } from "./AgentThreadHeader";
 import { RemotePortPreviewMenu } from "./RemotePortPreviewMenu";
 import { useAgentServerPorts, type AgentRemotePortPreviewWiring } from "./useAgentServerPorts";
@@ -1206,10 +1207,9 @@ function LocalAgentModeView({
               />
             )}
 
-            <div
-              className="agent-mode__center"
-              inert={layout.rightPanelMaximized || undefined}
-              ref={navigation.centerRef}
+            <AgentAttachmentDropColumn
+              columnRef={navigation.centerRef}
+              inert={layout.rightPanelMaximized}
             >
               <AgentThreadHeader
                 bottomPanelOpen={chrome.bottomPanelVisible}
@@ -1486,7 +1486,7 @@ function LocalAgentModeView({
                   />
                 </AgentQuestionAttachmentsContext.Provider>
               )}
-            </div>
+            </AgentAttachmentDropColumn>
           </div>
         </AgentClockProvider>
         <ProjectOnboardingLayer

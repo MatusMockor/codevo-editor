@@ -40,6 +40,7 @@ describe("attachment path intake", () => {
       expect(result).toEqual({
         source: { kind: "path", path: directory },
         candidate: { name: "September", mime: "inode/directory", hasPath: true, bytes: 0 },
+        entry: "directory",
       });
       expect(inspect).toHaveBeenCalledTimes(2);
       expect(reportError).not.toHaveBeenCalled();
@@ -65,6 +66,7 @@ describe("attachment path intake", () => {
       );
       expect(result?.source).toEqual({ kind: "path", path: literal });
       expect(result?.candidate.mime).toBe("inode/directory");
+      expect(result?.entry).toBe("directory");
       expect(inspect).toHaveBeenCalledTimes(1);
       expect(
         await describeAgentAttachmentSource(

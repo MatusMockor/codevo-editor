@@ -1,6 +1,9 @@
 import type { AgentComposerAttachmentDraft } from "../../application/useAgentComposerAttachments";
 import type { AgentCliKind } from "../../domain/agentTask";
-import type { AgentTurnAttachmentView } from "./agentTurnAttachmentPresentation";
+import {
+  agentReferenceAttachmentView,
+  type AgentTurnAttachmentView,
+} from "./agentTurnAttachmentPresentation";
 
 export const MAX_AGENT_PENDING_SENDS = 16;
 
@@ -102,6 +105,16 @@ function pendingSendAttachment(draft: AgentComposerAttachmentDraft): AgentPendin
         ...(draft.height === null ? {} : { height: draft.height }),
       },
       previewUrl: draft.previewUrl,
+    };
+  }
+  if (draft.kind === "reference" && draft.path !== null) {
+    return {
+      view: agentReferenceAttachmentView(
+        draft.draftId,
+        { name: draft.name, path: draft.path },
+        draft.entry,
+      ),
+      previewUrl: null,
     };
   }
   return {

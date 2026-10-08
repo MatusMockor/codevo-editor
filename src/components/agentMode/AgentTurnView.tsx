@@ -142,7 +142,10 @@ export const AgentTurnView = memo(function AgentTurnView({
 }: AgentTurnViewProps) {
   renderProbe?.(turn.turnId);
   const prose = useAgentTurnProse(threadProse, inlineImages, turn.turnId);
-  const attachments = useMemo(() => agentTurnAttachmentViews(turn.attachments), [turn.attachments]);
+  const attachments = useMemo(
+    () => agentTurnAttachmentViews(turn.attachments, turn.prompt),
+    [turn.attachments, turn.prompt],
+  );
   const revealEventIndex =
     highlight?.current?.kind === "event" ? highlight.current.eventIndex : null;
   const settlement = agentTurnSettlement(turn.status);

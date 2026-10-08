@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_AGENT_IMAGE_SOURCE_BYTES } from "../domain/agentAttachmentIntake";
-import { readAgentAttachmentImagePath } from "./tauriAgentImageSource";
+import contract from "../../contracts/agent-image-source-errors.json";
+import {
+  AgentAttachmentFolderSourceError,
+  MAX_AGENT_IMAGE_SOURCE_BYTES,
+} from "../domain/agentAttachmentIntake";
+import {
+  AGENT_IMAGE_SOURCE_DIRECTORY_ERROR,
+  readAgentAttachmentImagePath,
+} from "./tauriAgentImageSource";
 const { invoke, isTauri } = vi.hoisted(() => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke, isTauri }));
 beforeEach(() => {
@@ -46,6 +53,23 @@ describe("explicit native image sources", () => {
       await expect(readAgentAttachmentImagePath("/tmp/a.png")).rejects.toThrow("safely");
     },
   );
+  it("maps the native directory refusal to the closed folder error", async () => {
+    expect(AGENT_IMAGE_SOURCE_DIRECTORY_ERROR).toBe(contract.directorySource);
+    for (const refusal of [contract.directorySource, new Error(contract.directorySource)]) {
+      invoke.mockRejectedValue(refusal);
+      await expect(readAgentAttachmentImagePath("/tmp/invoices")).rejects.toBeInstanceOf(
+        AgentAttachmentFolderSourceError,
+      );
+    }
+  });
+  it("keeps every other native refusal an ordinary error", async () => {
+    invoke.mockRejectedValue("Choose a regular image file, not a folder or symbolic link.");
+    const failure = await readAgentAttachmentImagePath("/tmp/link.png").catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(AgentAttachmentFolderSourceError);
+  });
   it("preserves native refusal", async () => {
     invoke.mockRejectedValue(new Error("The file does not contain the selected image format."));
     await expect(readAgentAttachmentImagePath("/tmp/a.png")).rejects.toThrow("format");

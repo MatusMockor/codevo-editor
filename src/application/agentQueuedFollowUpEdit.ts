@@ -9,6 +9,13 @@ import {
   AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL,
   agentEffectivePrompt,
 } from "../domain/agentAttachmentIntake";
+import {
+  agentDirectoryReferenceEntries,
+  agentReferenceEntriesInPrompt,
+  anyAgentReferenceDirectory,
+  type AgentReferenceEntry,
+  type AgentReferenceEntryResolver,
+} from "../domain/agentReferenceEntry";
 import { MAX_AGENT_TASK_PROMPT_BYTES, type StartAgentTaskAttachment } from "../domain/agentTask";
 import type {
   AgentFollowUpRequest,
@@ -27,6 +34,7 @@ export const AGENT_QUEUED_EDIT_UNAVAILABLE_NOTICE =
 export interface AgentQueuedEditAttachment {
   readonly key: string;
   readonly attachment: AgentAttachment;
+  readonly entry: AgentReferenceEntry;
 }
 
 export interface AgentQueuedEditSession {
@@ -50,26 +58,28 @@ export function queuedEditAttachments(
   prepared: ClaimedTurnAttachments | undefined,
 ): ReadonlyArray<AgentQueuedEditAttachment> {
   if (prepared === undefined) return [];
-  return prepared.attachments
-    .slice(0, MAX_AGENT_TURN_ATTACHMENTS)
-    .map((attachment, index) => ({ key: `attachment-${index}`, attachment }));
+  const entryOf = agentReferenceEntriesInPrompt(prepared.prompt);
+  return prepared.attachments.slice(0, MAX_AGENT_TURN_ATTACHMENTS).map((attachment, index) => ({
+    key: `attachment-${index}`,
+    attachment,
+    entry: queuedEditEntry(attachment, entryOf),
+  }));
 }
 
 export function keptQueuedEditAttachments(
   session: AgentQueuedEditSession,
   keys: ReadonlyArray<string>,
-): ReadonlyArray<AgentAttachment> {
+): ReadonlyArray<AgentQueuedEditAttachment> {
   const wanted = new Set(keys);
-  return session.attachments
-    .filter((entry) => wanted.has(entry.key))
-    .map((entry) => entry.attachment);
+  return session.attachments.filter((entry) => wanted.has(entry.key));
 }
 
 export function admitQueuedEdit(
   rawPrompt: string,
-  kept: ReadonlyArray<AgentAttachment>,
+  keptEntries: ReadonlyArray<AgentQueuedEditAttachment>,
   added: ReadonlyArray<AgentTurnAttachmentIntent>,
 ): AgentQueuedEditAdmission {
+  const kept = keptEntries.map((entry) => entry.attachment);
   const prompt = rawPrompt.trim();
   if (prompt === "" && kept.length + added.length === 0) {
     return { kind: "refused", reason: AGENT_QUEUED_EDIT_EMPTY_NOTICE };
@@ -88,12 +98,17 @@ export function admitQueuedEdit(
 
 export function mergeQueuedEditClaim(
   prompt: string,
-  kept: ReadonlyArray<AgentAttachment>,
+  keptEntries: ReadonlyArray<AgentQueuedEditAttachment>,
   added: ClaimedTurnAttachments,
 ): ClaimedTurnAttachments {
+  const kept = keptEntries.map((entry) => entry.attachment);
   const attachments = [...kept, ...added.attachments];
+  const entryOf = anyAgentReferenceDirectory([
+    keptReferenceEntries(keptEntries),
+    agentReferenceEntriesInPrompt(added.prompt),
+  ]);
   return {
-    prompt: agentEffectivePrompt(prompt, attachments),
+    prompt: agentEffectivePrompt(prompt, attachments, entryOf),
     attachments,
     references: [...kept.map(queuedEditReference), ...added.references],
     notice: null,
@@ -103,7 +118,7 @@ export function mergeQueuedEditClaim(
 export function editedFollowUpRequest(
   original: AgentFollowUpRequest,
   prompt: string,
-  kept: ReadonlyArray<AgentAttachment>,
+  kept: ReadonlyArray<AgentQueuedEditAttachment>,
   commit: AgentQueuedEditCommit,
 ): AgentFollowUpRequest {
   const { attachments: _previous, attachmentOwner, ...base } = original;
@@ -114,7 +129,28 @@ export function editedFollowUpRequest(
   return { ...base, prompt, attachments: intents, attachmentOwner: owner };
 }
 
-function queuedEditIntent(attachment: AgentAttachment): AgentTurnAttachmentIntent {
+function queuedEditEntry(
+  attachment: AgentAttachment,
+  entryOf: AgentReferenceEntryResolver,
+): AgentReferenceEntry {
+  if (attachment.kind !== "reference") return "file";
+  return entryOf(attachment);
+}
+
+function keptReferenceEntries(
+  kept: ReadonlyArray<AgentQueuedEditAttachment>,
+): AgentReferenceEntryResolver {
+  return agentDirectoryReferenceEntries(
+    kept.flatMap(({ attachment, entry }) =>
+      attachment.kind === "reference" && entry === "directory" ? [attachment] : [],
+    ),
+  );
+}
+
+function queuedEditIntent({
+  attachment,
+  entry,
+}: AgentQueuedEditAttachment): AgentTurnAttachmentIntent {
   switch (attachment.kind) {
     case "reference":
       return {
@@ -122,6 +158,7 @@ function queuedEditIntent(attachment: AgentAttachment): AgentTurnAttachmentInten
         name: attachment.name,
         path: attachment.path,
         bytes: attachment.bytes,
+        entry,
       };
     case "image":
       return {

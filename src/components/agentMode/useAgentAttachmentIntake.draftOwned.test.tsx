@@ -2,7 +2,7 @@
 
 import { act, createElement, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_ATTACHMENT_CARRY_UNAVAILABLE_NOTICE,
   carryAgentAttachmentDrafts,
@@ -16,7 +16,11 @@ import {
   type Machine,
 } from "../../application/agentAttachmentMachineTestSupport";
 import { MAX_AGENT_TURN_ATTACHMENTS } from "../../domain/agentAttachment";
-import { AGENT_ATTACHMENT_COUNT_REFUSAL } from "../../domain/agentAttachmentIntake";
+import {
+  AGENT_ATTACHMENT_COUNT_REFUSAL,
+  AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL,
+  AgentAttachmentFolderSourceError,
+} from "../../domain/agentAttachmentIntake";
 import { useAgentAttachmentIntake } from "./useAgentAttachmentIntake";
 
 const LOCAL_ROOT = "/workspace/app";
@@ -25,6 +29,7 @@ const SERVER_ROOT = "remote:server:runner:project";
 const LOCAL_KEY = `new:${LOCAL_ROOT}`;
 const OTHER_KEY = `new:${OTHER_ROOT}`;
 const SERVER_KEY = `new:${SERVER_ROOT}`;
+const UNREADABLE_IMAGE = "Choose a PNG, JPEG, GIF or WebP image.";
 
 type MachineName = "local" | "server";
 
@@ -109,6 +114,12 @@ describe("attachment intake owned by its draft", () => {
     const pending = imageReads.get(path) ?? deferred<ArrayBuffer>();
     imageReads.set(path, pending);
     return pending;
+  }
+
+  function failImageRead(path: string, error: Error): void {
+    const promise = Promise.reject<ArrayBuffer>(error);
+    promise.catch(() => undefined);
+    imageReads.set(path, { promise, resolve: () => undefined });
   }
 
   function Probe({ scene }: { readonly scene: Scene }) {
@@ -278,6 +289,116 @@ describe("attachment intake owned by its draft", () => {
     ]);
     expect(serverDraft()).toEqual([]);
     expect(imageReads.has("/Users/dev/two.pdf")).toBe(false);
+  });
+
+  it("refuses a folder dropped on a server draft and still attaches the images around it", async () => {
+    const folder = "/Users/x/Documents/codevo s.r.o./invoices";
+    show(SERVER);
+    failImageRead(folder, new AgentAttachmentFolderSourceError());
+    imageRead("/Users/dev/one.png").resolve(new ArrayBuffer(4));
+    imageRead("/Users/dev/two.png").resolve(new ArrayBuffer(4));
+
+    await act(() => hook().drop(["/Users/dev/one.png", folder, "/Users/dev/two.png"]));
+    await settle(() => expect(serverDraft()).toEqual(["one.png:ready", "two.png:ready"]));
+
+    expect(machines.server.scope(SERVER_KEY).refusal).toBe(AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL);
+    expect([...imageReads.keys()]).toEqual([folder, "/Users/dev/one.png", "/Users/dev/two.png"]);
+    expect(localDraft()).toEqual([]);
+    expect(machines.server.gateway.inspectAgentAttachmentCandidate).not.toHaveBeenCalled();
+  });
+
+  it("reports an unreadable server path through the refusal and keeps reading the rest", async () => {
+    show(SERVER);
+    failImageRead("/Users/dev/notes.txt", new Error("Choose a PNG, JPEG, GIF or WebP image."));
+    imageRead("/Users/dev/two.png").resolve(new ArrayBuffer(4));
+
+    await act(() => hook().drop(["/Users/dev/notes.txt", "/Users/dev/two.png"]));
+    await settle(() => expect(serverDraft()).toEqual(["two.png:ready"]));
+
+    expect(machines.server.scope(SERVER_KEY).refusal).toBe(
+      "Choose a PNG, JPEG, GIF or WebP image.",
+    );
+  });
+
+  it("reports every distinct failure of one server drop together and still attaches the rest", async () => {
+    const folder = "/Users/x/Documents/codevo s.r.o./invoices";
+    show(SERVER);
+    failImageRead(folder, new AgentAttachmentFolderSourceError());
+    failImageRead("/Users/dev/notes.txt", new Error(UNREADABLE_IMAGE));
+    imageRead("/Users/dev/one.png").resolve(new ArrayBuffer(4));
+
+    await act(() => hook().drop([folder, "/Users/dev/notes.txt", "/Users/dev/one.png"]));
+    await settle(() => expect(serverDraft()).toEqual(["one.png:ready"]));
+
+    expect(machines.server.scope(SERVER_KEY).refusal).toBe(
+      `${AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL} ${UNREADABLE_IMAGE}`,
+    );
+  });
+
+  it("names a repeated server drop failure once and keeps the first three distinct ones", async () => {
+    const folders = ["/Users/dev/first", "/Users/dev/second"];
+    show(SERVER);
+    for (const folder of folders) failImageRead(folder, new AgentAttachmentFolderSourceError());
+    failImageRead("/Users/dev/notes.txt", new Error(UNREADABLE_IMAGE));
+    failImageRead("/Users/dev/huge.png", new Error("Image is larger than 50 MiB."));
+    failImageRead("/Users/dev/gone.png", new Error("The image is no longer there."));
+
+    await act(() =>
+      hook().drop([
+        folders[0],
+        "/Users/dev/notes.txt",
+        folders[1],
+        "/Users/dev/huge.png",
+        "/Users/dev/gone.png",
+      ]),
+    );
+
+    expect(machines.server.scope(SERVER_KEY).refusal).toBe(
+      `${AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL} ${UNREADABLE_IMAGE} Image is larger than 50 MiB.`,
+    );
+    expect(serverDraft()).toEqual([]);
+  });
+
+  it("keeps the failures of a server drop to itself once the user navigated away", async () => {
+    show(SERVER);
+    failImageRead("/Users/dev/notes.txt", new Error(UNREADABLE_IMAGE));
+    let dropping: Promise<void> = Promise.resolve();
+    act(() => {
+      dropping = hook().drop(["/Users/dev/notes.txt", "/Users/dev/one.png"]);
+    });
+    await act(async () => undefined);
+    expect(imageReads.has("/Users/dev/one.png")).toBe(true);
+
+    show(OTHER_PROJECT);
+    await act(async () => {
+      imageRead("/Users/dev/one.png").resolve(new ArrayBuffer(4));
+      await dropping;
+    });
+
+    expect(machines.server.scope(SERVER_KEY).refusal).toBeNull();
+    expect(machines.local.scope(OTHER_KEY).refusal).toBeNull();
+    expect(serverDraft()).toEqual([]);
+    expect(states(machines.local.scope(OTHER_KEY))).toEqual([]);
+  });
+
+  it("attaches a folder dropped on this computer's draft as a folder", async () => {
+    const folder = "/Users/x/Documents/codevo s.r.o./invoices";
+    vi.mocked(machines.local.gateway.inspectAgentAttachmentCandidate).mockResolvedValue({
+      bytes: 0,
+      isRegularFile: false,
+      isDirectory: true,
+      extensionMime: null,
+    });
+    show(LOCAL);
+
+    await act(() => hook().drop([folder]));
+    await settle(() => expect(localDraft()).toEqual(["invoices:ready"]));
+
+    expect(machines.local.scope(LOCAL_KEY).drafts).toMatchObject([
+      { kind: "reference", entry: "directory", name: "invoices", path: folder, notice: null },
+    ]);
+    expect(machines.local.scope(LOCAL_KEY).refusal).toBeNull();
+    expect(imageReads.size).toBe(0);
   });
 
   it.each([

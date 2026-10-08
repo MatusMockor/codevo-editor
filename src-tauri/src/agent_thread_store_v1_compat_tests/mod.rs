@@ -13,6 +13,8 @@ use std::{
 };
 
 const DOCUMENTS: &str = include_str!("../../../contracts/agent-thread-v1-compat-documents.json");
+const FOLDER_REFERENCE_THREAD: &str =
+    include_str!("../../../src/domain/fixtures/agent-thread-with-folder-reference.json");
 const SHIPPED_COMMIT: &str = "c33d0d03";
 const MIN_DOCUMENTS: usize = 6;
 const SHIPPED_LIFECYCLE_ENTRY_KEYS: [&str; 13] = [
@@ -147,6 +149,37 @@ fn the_shipped_loader_reads_what_the_current_store_saves_and_evicts_nothing() {
     assert!(loaded.unreadable.is_empty());
     assert_eq!(loaded.evicted, 0);
     assert_eq!(loaded.threads.len(), fixture.threads.len());
+}
+
+#[test]
+fn the_shipped_loader_reads_a_folder_reference_saved_by_the_current_store() {
+    let thread: Value = serde_json::from_str(FOLDER_REFERENCE_THREAD).expect("folder fixture");
+    let root_key = thread["owner"]["rootKey"].as_str().expect("root key");
+    let shipped: shipped_store::AgentThreadDocument = serde_json::from_value(envelope(&thread))
+        .unwrap_or_else(|error| {
+            panic!("folder reference is unreadable for {SHIPPED_COMMIT}: {error}")
+        });
+    shipped_store::validate_agent_thread_document(root_key, &shipped).unwrap_or_else(|error| {
+        panic!("folder reference is rejected by {SHIPPED_COMMIT}: {error}")
+    });
+
+    let temp = TempBase::create("folder-reference");
+    let document: AgentThreadDocument =
+        serde_json::from_value(envelope(&thread)).expect("current build decodes the folder turn");
+    AgentThreadStore::new(temp.path.clone())
+        .save(root_key, &document)
+        .expect("current store saves the folder turn");
+    let loaded = shipped_store::AgentThreadStore::new(temp.path.clone())
+        .load(root_key)
+        .expect("shipped load");
+
+    assert!(loaded.unreadable.is_empty());
+    assert_eq!(loaded.evicted, 0);
+    assert_eq!(loaded.threads.len(), 1);
+    assert_eq!(
+        serde_json::to_value(&loaded.threads[0].turns[0].attachments).expect("shipped attachments"),
+        thread["turns"][0]["attachments"]
+    );
 }
 
 #[test]

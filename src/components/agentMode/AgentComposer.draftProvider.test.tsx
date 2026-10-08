@@ -24,6 +24,7 @@ it("switches providers on an unsent draft without changing text or staged attach
         {
           draftId: "shot",
           kind: "image",
+          entry: "file",
           state: "ready",
           name: "screenshot.png",
           bytes: 1024,

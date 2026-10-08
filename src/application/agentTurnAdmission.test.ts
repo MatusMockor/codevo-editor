@@ -304,7 +304,13 @@ describe("admitSteer", () => {
         steerRequest({
           prompt: "look",
           attachments: [
-            { kind: "reference", name: "clip.mp4", path: "/Movies/clip.mp4", bytes: 0 },
+            {
+              kind: "reference",
+              name: "clip.mp4",
+              path: "/Movies/clip.mp4",
+              bytes: 0,
+              entry: "file",
+            },
           ],
         }),
         new Set(),
@@ -319,7 +325,15 @@ describe("admitSteer", () => {
       deps,
       steerRequest({
         prompt: "",
-        attachments: [{ kind: "reference", name: "clip.mp4", path: "/Movies/clip.mp4", bytes: 0 }],
+        attachments: [
+          {
+            kind: "reference",
+            name: "clip.mp4",
+            path: "/Movies/clip.mp4",
+            bytes: 0,
+            entry: "file",
+          },
+        ],
       }),
       new Set(),
     );

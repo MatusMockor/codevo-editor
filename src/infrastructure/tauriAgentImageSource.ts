@@ -1,6 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { isAgentAttachmentPath, MAX_AGENT_ATTACHMENT_PATH_BYTES } from "../domain/agentAttachment";
-import { MAX_AGENT_IMAGE_SOURCE_BYTES } from "../domain/agentAttachmentIntake";
+import {
+  AgentAttachmentFolderSourceError,
+  MAX_AGENT_IMAGE_SOURCE_BYTES,
+} from "../domain/agentAttachmentIntake";
+
+export const AGENT_IMAGE_SOURCE_DIRECTORY_ERROR = "Choose an image file, not a folder.";
 
 /** Reads only an explicit picker/drop source; the destination owns staging and upload. */
 export async function readAgentAttachmentImagePath(path: string): Promise<ArrayBuffer> {
@@ -31,6 +36,7 @@ export async function readAgentAttachmentImagePath(path: string): Promise<ArrayB
 
 function nativeImageError(error: unknown): Error {
   const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  if (message === AGENT_IMAGE_SOURCE_DIRECTORY_ERROR) return new AgentAttachmentFolderSourceError();
   return new Error(
     message.trim().length > 0 &&
       new TextEncoder().encode(message).byteLength <= 512 &&

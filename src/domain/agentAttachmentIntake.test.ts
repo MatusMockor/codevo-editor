@@ -16,8 +16,10 @@ import {
   AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
   AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL,
   FALLBACK_AGENT_ATTACHMENT_NAME,
+  MAX_AGENT_ATTACHMENT_INTAKE_FAILURE_MESSAGES,
   MAX_AGENT_IMAGE_SOURCE_BYTES,
   admitAgentAttachmentToTurn,
+  agentAttachmentIntakeFailureSummary,
   agentAttachmentPromptLine,
   agentEffectivePrompt,
   agentEffectivePromptByteLength,
@@ -34,6 +36,7 @@ import { MAX_AGENT_TASK_PROMPT_BYTES } from "./agentTask";
 function candidate(overrides: Partial<AgentAttachmentCandidate> = {}): AgentAttachmentCandidate {
   return { name: "shot.png", mime: "image/png", hasPath: false, bytes: 1_024, ...overrides };
 }
+import { agentDirectoryReferenceEntries, agentReferencesAreFiles } from "./agentReferenceEntry";
 
 const IMAGE: AgentAttachment = {
   kind: "image",
@@ -251,47 +254,122 @@ describe("sanitizeAgentAttachmentName", () => {
 
 describe("agentAttachmentPromptLine", () => {
   it("writes the exact line for every kind", () => {
-    expect(agentAttachmentPromptLine(IMAGE)).toBe(
+    expect(agentAttachmentPromptLine(IMAGE, agentReferencesAreFiles)).toBe(
       `[Attached image "shot.png" is saved at: ${IMAGE.storedPath}]`,
     );
-    expect(agentAttachmentPromptLine(FILE)).toBe(
+    expect(agentAttachmentPromptLine(FILE, agentReferencesAreFiles)).toBe(
       `[Attached file "notes.txt" is saved at: ${FILE.storedPath}]`,
     );
-    expect(agentAttachmentPromptLine(REFERENCE)).toBe(
+    expect(agentAttachmentPromptLine(REFERENCE, agentReferencesAreFiles)).toBe(
       '[Attached file "clip.mp4" is at: /Users/dev/clip.mp4]',
     );
   });
 
   it("rejects an unsupported kind", () => {
     expect(() =>
-      agentAttachmentPromptLine({ kind: "video" } as unknown as AgentAttachment),
+      agentAttachmentPromptLine(
+        { kind: "video" } as unknown as AgentAttachment,
+        agentReferencesAreFiles,
+      ),
     ).toThrow(TypeError);
   });
 });
 
 describe("agentEffectivePrompt", () => {
   it("joins the text and the lines with a blank line", () => {
-    expect(agentEffectivePrompt("look", [IMAGE, REFERENCE])).toBe(
-      `look\n\n${agentAttachmentPromptLine(IMAGE)}\n${agentAttachmentPromptLine(REFERENCE)}`,
+    expect(agentEffectivePrompt("look", [IMAGE, REFERENCE], agentReferencesAreFiles)).toBe(
+      `look\n\n${agentAttachmentPromptLine(IMAGE, agentReferencesAreFiles)}\n${agentAttachmentPromptLine(REFERENCE, agentReferencesAreFiles)}`,
     );
   });
 
   it("allows an attachment-only turn", () => {
-    expect(agentEffectivePrompt("", [IMAGE])).toBe(agentAttachmentPromptLine(IMAGE));
+    expect(agentEffectivePrompt("", [IMAGE], agentReferencesAreFiles)).toBe(
+      agentAttachmentPromptLine(IMAGE, agentReferencesAreFiles),
+    );
   });
 
   it("returns the text unchanged with no attachments", () => {
-    expect(agentEffectivePrompt("look", [])).toBe("look");
+    expect(agentEffectivePrompt("look", [], agentReferencesAreFiles)).toBe("look");
   });
 
   it("counts the effective prompt against the spawner cap", () => {
     const text = "x".repeat(MAX_AGENT_TASK_PROMPT_BYTES - 1);
 
-    expect(agentEffectivePromptWithinCap(text, [])).toBe(true);
-    expect(agentEffectivePromptWithinCap(text, [IMAGE])).toBe(false);
-    expect(agentEffectivePromptByteLength("", [IMAGE])).toBe(
-      new TextEncoder().encode(agentAttachmentPromptLine(IMAGE)).byteLength,
+    expect(agentEffectivePromptWithinCap(text, [], agentReferencesAreFiles)).toBe(true);
+    expect(agentEffectivePromptWithinCap(text, [IMAGE], agentReferencesAreFiles)).toBe(false);
+    expect(agentEffectivePromptByteLength("", [IMAGE], agentReferencesAreFiles)).toBe(
+      new TextEncoder().encode(agentAttachmentPromptLine(IMAGE, agentReferencesAreFiles))
+        .byteLength,
     );
+  });
+});
+
+describe("folder references in the effective prompt", () => {
+  const FOLDER: AgentAttachment = {
+    kind: "reference",
+    name: "invoices",
+    path: "/Users/x/Documents/codevo s.r.o./invoices",
+    bytes: 0,
+  };
+  const FOLDER_LINE =
+    '[Attached folder "invoices" is at: /Users/x/Documents/codevo s.r.o./invoices]';
+  const FILE_LINE = '[Attached file "invoices" is at: /Users/x/Documents/codevo s.r.o./invoices]';
+  const asFolder = agentDirectoryReferenceEntries([{ name: "invoices", path: FOLDER.path }]);
+
+  it("calls an inspected directory a folder and any other reference a file", () => {
+    expect(agentAttachmentPromptLine(FOLDER, asFolder)).toBe(FOLDER_LINE);
+    expect(agentAttachmentPromptLine(FOLDER, agentReferencesAreFiles)).toBe(FILE_LINE);
+    expect(agentAttachmentPromptLine(REFERENCE, asFolder)).toBe(
+      '[Attached file "clip.mp4" is at: /Users/dev/clip.mp4]',
+    );
+    expect(agentEffectivePrompt("summarise", [FOLDER, REFERENCE], asFolder)).toBe(
+      `summarise\n\n${FOLDER_LINE}\n[Attached file "clip.mp4" is at: /Users/dev/clip.mp4]`,
+    );
+  });
+
+  it("never lets the entry change the wording of a stored image or file", () => {
+    const everythingIsAFolder = () => "directory" as const;
+
+    expect(agentAttachmentPromptLine(IMAGE, everythingIsAFolder)).toBe(
+      agentAttachmentPromptLine(IMAGE, agentReferencesAreFiles),
+    );
+    expect(agentAttachmentPromptLine(FILE, everythingIsAFolder)).toBe(
+      agentAttachmentPromptLine(FILE, agentReferencesAreFiles),
+    );
+  });
+
+  it("accounts the folder wording byte for byte against the cap", () => {
+    const encoded = (value: string) => new TextEncoder().encode(value).byteLength;
+
+    expect(agentEffectivePromptByteLength("", [FOLDER], asFolder)).toBe(encoded(FOLDER_LINE));
+    expect(agentEffectivePromptByteLength("", [FOLDER], asFolder)).toBe(
+      agentEffectivePromptByteLength("", [FOLDER], agentReferencesAreFiles) + 2,
+    );
+
+    const text = "x".repeat(MAX_AGENT_TASK_PROMPT_BYTES - encoded(`\n\n${FILE_LINE}`));
+
+    expect(agentEffectivePromptWithinCap(text, [FOLDER], agentReferencesAreFiles)).toBe(true);
+    expect(agentEffectivePromptWithinCap(text, [FOLDER], asFolder)).toBe(false);
+    expect(agentEffectivePromptWithinCap(text.slice(2), [FOLDER], asFolder)).toBe(true);
+  });
+});
+
+describe("agentAttachmentIntakeFailureSummary", () => {
+  it("has nothing to report without a failure", () => {
+    expect(agentAttachmentIntakeFailureSummary([])).toBeNull();
+  });
+
+  it("joins distinct failures in the order they happened", () => {
+    expect(agentAttachmentIntakeFailureSummary(["Folder.", "Unreadable.", "Folder."])).toBe(
+      "Folder. Unreadable.",
+    );
+  });
+
+  it("keeps only the first distinct failures up to its bound", () => {
+    const failures = ["One.", "Two.", "One.", "Three.", "Four.", "Five."];
+
+    expect(MAX_AGENT_ATTACHMENT_INTAKE_FAILURE_MESSAGES).toBe(3);
+    expect(agentAttachmentIntakeFailureSummary(failures)).toBe("One. Two. Three.");
   });
 });
 

@@ -327,6 +327,7 @@ describe("useAgentComposerAttachments staging", () => {
       name: "clip.mp4",
       path: "/Users/dev/clip.mp4",
       notice: null,
+      entry: "file",
     });
     expect(harness.hook().promptLineBytes).toBe(53);
     harness.unmount();
@@ -443,11 +444,22 @@ describe("useAgentComposerAttachments staging", () => {
       bytes: 0,
       path: "/Users/dev/invoices.png/",
       missing: false,
-      notice: "Folder path",
+      notice: null,
+      entry: "directory",
+      promptLineBytesMax: new TextEncoder().encode(
+        '[Attached folder "invoices.png" is at: /Users/dev/invoices.png/]',
+      ).byteLength,
     });
+    expect(harness.hook().promptLineBytes).toBe(harness.hook().drafts[0]?.promptLineBytesMax);
     const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
     expect(prepared?.intents).toEqual([
-      { kind: "reference", name: "invoices.png", path: "/Users/dev/invoices.png/", bytes: 0 },
+      {
+        kind: "reference",
+        name: "invoices.png",
+        path: "/Users/dev/invoices.png/",
+        bytes: 0,
+        entry: "directory",
+      },
     ]);
     expect(harness.hook().drafts[0]?.missing).toBe(false);
     expect(harness.gateway.readAgentAttachmentCandidate).not.toHaveBeenCalled();
@@ -471,6 +483,8 @@ describe("useAgentComposerAttachments staging", () => {
       path: decoded,
       name: "September",
       bytes: 0,
+      entry: "directory",
+      notice: null,
     });
     expect(harness.errors).toEqual([]);
     await act(() => harness.hook().add(ROOT_A, [{ kind: "path", path: decoded }]));
@@ -481,7 +495,7 @@ describe("useAgentComposerAttachments staging", () => {
     expect(harness.hook().refusal).toBe(agentAttachmentDuplicateRefusal("September"));
     const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
     expect(prepared?.intents).toEqual([
-      { kind: "reference", path: decoded, name: "September", bytes: 0 },
+      { kind: "reference", path: decoded, name: "September", bytes: 0, entry: "directory" },
     ]);
     harness.unmount();
   });
@@ -494,9 +508,16 @@ describe("useAgentComposerAttachments staging", () => {
     harness.gateway.inspectAgentAttachmentCandidate = vi.fn(async () => null);
     const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
     expect(prepared?.intents).toEqual([
-      { kind: "reference", name: "September", path: "/Users/dev/September", bytes: 0 },
+      {
+        kind: "reference",
+        name: "September",
+        path: "/Users/dev/September",
+        bytes: 0,
+        entry: "directory",
+      },
     ]);
     expect(harness.hook().drafts[0]).toMatchObject({
+      entry: "directory",
       missing: true,
       notice: AGENT_ATTACHMENT_MISSING_SOURCE_NOTICE,
     });
@@ -793,7 +814,13 @@ describe("useAgentComposerAttachments ownership", () => {
     const prepared = await act(() => harness.hook().prepareTurn(ROOT_A));
 
     expect(prepared?.intents).toEqual([
-      { kind: "reference", name: "clip.mp4", path: "/Users/dev/clip.mp4", bytes: 4_096 },
+      {
+        kind: "reference",
+        name: "clip.mp4",
+        path: "/Users/dev/clip.mp4",
+        bytes: 4_096,
+        entry: "file",
+      },
     ]);
     expect(harness.hook().drafts[0]).toMatchObject({
       missing: true,

@@ -7,6 +7,11 @@ import type {
   AgentAttachmentSource,
   AgentComposerAttachmentsSurface,
 } from "../../application/useAgentComposerAttachments";
+import {
+  AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL,
+  AgentAttachmentFolderSourceError,
+  agentAttachmentIntakeFailureSummary,
+} from "../../domain/agentAttachmentIntake";
 import { readAgentAttachmentImagePath } from "../../infrastructure/tauriAgentImageSource";
 import {
   agentAttachmentPasteFailureMessage,
@@ -113,28 +118,44 @@ export function useAgentAttachmentIntake(options: Options) {
       release: () => undefined,
     };
   };
-  const readPaths = async (paths: ReadonlyArray<string>, captured: Captured) => {
-    const pending = paths.slice(0, MAX_AGENT_COMPOSER_PASTED_FILES);
-    const read = options.readImagePath ?? readAgentAttachmentImagePath;
-    for (let index = 0; index < pending.length; index += 1) {
-      if (!captured.isCurrent()) return;
-      if (captured.serverId() === null) {
-        await captured.intake(agentAttachmentSourcesFromPaths(pending.slice(index)));
-        return;
-      }
-      const path = pending[index];
+  const fail = (captured: Captured, error: unknown) => {
+    if (captured.isCurrent()) captured.refuse(attachmentIntakeFailureMessage(error));
+  };
+  const readServerPath = async (
+    path: string,
+    captured: Captured,
+    read: (path: string) => Promise<ArrayBuffer>,
+  ): Promise<string | null> => {
+    try {
       const bytes = await read(path);
-      if (!captured.isCurrent()) return;
+      if (!captured.isCurrent()) return null;
       const segments = path.split(/[/\\]/u);
       const name = segments[segments.length - 1] ?? "image";
       await captured.intake([{ kind: "bytes", name, mime: "", bytes }]);
+      return null;
+    } catch (error: unknown) {
+      return attachmentIntakeFailureMessage(error);
     }
   };
-  const fail = (captured: Captured, error: unknown) => {
-    if (captured.isCurrent())
-      captured.refuse(
-        error instanceof Error ? error.message : agentAttachmentPasteFailureMessage(error),
-      );
+  const refuseTogether = (captured: Captured, failures: ReadonlyArray<string>) => {
+    const refusal = agentAttachmentIntakeFailureSummary(failures);
+    if (refusal !== null && captured.isCurrent()) captured.refuse(refusal);
+  };
+  const readPaths = async (paths: ReadonlyArray<string>, captured: Captured) => {
+    const pending = paths.slice(0, MAX_AGENT_COMPOSER_PASTED_FILES);
+    const read = options.readImagePath ?? readAgentAttachmentImagePath;
+    const failures: string[] = [];
+    for (let index = 0; index < pending.length; index += 1) {
+      if (!captured.isCurrent()) return;
+      if (captured.serverId() === null) {
+        refuseTogether(captured, failures);
+        await captured.intake(agentAttachmentSourcesFromPaths(pending.slice(index)));
+        return;
+      }
+      const failure = await readServerPath(pending[index], captured, read);
+      if (failure !== null) failures.push(failure);
+    }
+    refuseTogether(captured, failures);
   };
   const withIntake = async (work: (captured: Captured) => Promise<void>): Promise<void> => {
     const captured = capture();
@@ -188,4 +209,12 @@ export function useAgentAttachmentIntake(options: Options) {
       }
     });
   return { open, drop, paste, pasteText };
+}
+
+function attachmentIntakeFailureMessage(error: unknown): string {
+  if (error instanceof AgentAttachmentFolderSourceError) {
+    return AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL;
+  }
+  if (error instanceof Error) return error.message;
+  return agentAttachmentPasteFailureMessage(error);
 }

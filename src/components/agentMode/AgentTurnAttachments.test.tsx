@@ -63,6 +63,16 @@ const REFERENCE_ATTACHMENT: AgentAttachment = {
   bytes: 5_000_000,
 };
 
+const FOLDER_PATH = "/Users/x/Documents/codevo s.r.o./invoices";
+
+const FOLDER_ATTACHMENT: AgentAttachment = {
+  kind: "reference",
+  name: "invoices",
+  path: FOLDER_PATH,
+  bytes: 0,
+};
+
+const FOLDER_LINE = `[Attached folder "invoices" is at: ${FOLDER_PATH}]`;
 const IMAGE_LINE = `[Attached image "shot.png" is saved at: ${STORED_IMAGE}]`;
 const FILE_LINE = `[Attached file "notes.txt" is saved at: ${STORED_FILE}]`;
 const REFERENCE_LINE = `[Attached file "clip.mp4" is at: ${REFERENCE_PATH}]`;
@@ -266,6 +276,61 @@ describe("agent turn attachments", () => {
         chip.getAttribute("data-agent-attachment"),
       ),
     ).toEqual(["file", "reference"]);
+  });
+
+  it("renders a sent folder as a folder pill with its path and a shipped reference as a link chip", () => {
+    render({
+      thread: liveThread([
+        turn(`Summarise\n\n${FOLDER_LINE}\n${REFERENCE_LINE}`, [
+          FOLDER_ATTACHMENT,
+          REFERENCE_ATTACHMENT,
+        ]),
+      ]),
+    });
+
+    const chips = [...host.querySelectorAll<HTMLElement>(".agent-attachments__chip")];
+    expect(chipNames()).toEqual(["invoices", "clip.mp4"]);
+    expect(chips.map((chip) => chip.getAttribute("data-agent-attachment"))).toEqual([
+      "folder",
+      "reference",
+    ]);
+    expect(chips.map((chip) => chip.title)).toEqual([FOLDER_PATH, "clip.mp4"]);
+    expect(chips[0]?.querySelector(".lucide-folder")).not.toBeNull();
+    expect(chips[1]?.querySelector(".lucide-folder")).toBeNull();
+  });
+
+  it("renders a reference whose turn carries no folder line as a file reference", () => {
+    render({
+      thread: liveThread([
+        turn(`Summarise\n\n[Attached file "invoices" is at: ${FOLDER_PATH}]`, [FOLDER_ATTACHMENT]),
+      ]),
+    });
+
+    const chip = host.querySelector<HTMLElement>(".agent-attachments__chip");
+    expect(chip?.getAttribute("data-agent-attachment")).toBe("reference");
+    expect(chip?.querySelector(".lucide-folder")).toBeNull();
+  });
+
+  it("renders a folder sent with a steering message as a folder pill", () => {
+    const steered: AgentTurn = {
+      ...turn("Start", []),
+      attachments: undefined,
+      events: [
+        { kind: "assistantText", text: "working" },
+        {
+          kind: "userMessage",
+          text: `Also this\n\n${FOLDER_LINE}`,
+          attachments: [FOLDER_ATTACHMENT],
+        },
+        { kind: "assistantText", text: "done" },
+      ],
+    };
+    render({ thread: liveThread([steered]) });
+
+    const chip = host.querySelector<HTMLElement>(".agent-attachments__chip");
+    expect(chip?.getAttribute("data-agent-attachment")).toBe("folder");
+    expect(chip?.title).toBe(FOLDER_PATH);
+    expect(chipNames()).toEqual(["invoices"]);
   });
 
   it("renders an imported exchange attachment through the same chip markup as a live turn", () => {

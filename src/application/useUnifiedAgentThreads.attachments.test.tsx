@@ -163,7 +163,7 @@ function TurnImages({
   readonly attachments: ReadonlyArray<AgentAttachment> | undefined;
   readonly images: AgentTurnAttachmentImageViewer | null;
 }) {
-  const views = useMemo(() => agentTurnAttachmentViews(attachments), [attachments]);
+  const views = useMemo(() => agentTurnAttachmentViews(attachments, ""), [attachments]);
   return <AgentTurnAttachments attachments={views} images={images} />;
 }
 

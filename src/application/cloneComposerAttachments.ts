@@ -129,6 +129,7 @@ export function createCloneComposerAttachments() {
             draftId,
             kind:
               classified.kind === "image" ? "image" : source.kind === "path" ? "reference" : "file",
+            entry: "file",
             state: "ready",
             name,
             bytes,

@@ -11,6 +11,7 @@ use std::{
 };
 
 const MAX_SOURCE_BYTES: u64 = 50 * 1024 * 1024;
+pub(crate) const IMAGE_SOURCE_DIRECTORY_ERROR: &str = "Choose an image file, not a folder.";
 static ACTIVE_READS: AtomicUsize = AtomicUsize::new(0);
 struct ReadPermit;
 impl ReadPermit {
@@ -55,6 +56,9 @@ fn read_image_source(path: &str) -> Result<Vec<u8>, String> {
         return Err("Choose an image using an absolute local file path.".into());
     }
     let path = Path::new(path);
+    if is_directory(path) {
+        return Err(IMAGE_SOURCE_DIRECTORY_ERROR.into());
+    }
     let mime = path
         .extension()
         .and_then(|value| value.to_str())
@@ -101,6 +105,10 @@ fn read_image_source(path: &str) -> Result<Vec<u8>, String> {
         return Err("The file does not contain the selected image format.".into());
     }
     Ok(bytes)
+}
+
+fn is_directory(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
 }
 
 pub(super) fn same_file(left: &fs::Metadata, right: &fs::Metadata) -> bool {

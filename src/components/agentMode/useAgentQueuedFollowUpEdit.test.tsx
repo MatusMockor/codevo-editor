@@ -19,6 +19,7 @@ const SESSION: AgentQueuedEditSession = {
     {
       key: "attachment-0",
       attachment: { kind: "reference", name: "notes.md", path: "/work/notes.md", bytes: 12 },
+      entry: "file",
     },
   ],
 };

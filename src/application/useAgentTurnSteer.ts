@@ -4,6 +4,7 @@ import {
   type StoredAgentLaunchAdmission,
 } from "../domain/agentStoredLaunch";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import { agentReferenceEntriesInPrompt } from "../domain/agentReferenceEntry";
 import type {
   AgentSessionRestartPolicy,
   AgentTaskGateway,
@@ -564,7 +565,8 @@ export function useAgentTurnSteer(options: AgentTurnSteerOptions): AgentTurnStee
         return false;
       }
       const prepared = mergeQueuedEditClaim(admission.prompt, kept, added);
-      if (!turnAttachmentsWithinPromptCap(admission.prompt, prepared.attachments)) {
+      const entryOf = agentReferenceEntriesInPrompt(prepared.prompt);
+      if (!turnAttachmentsWithinPromptCap(admission.prompt, prepared.attachments, entryOf)) {
         dependenciesRef.current.setNotice(warning(AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE));
         await releaseAdded();
         return false;

@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { AlertTriangle, FileText, ImageIcon, Link2, X } from "lucide-react";
+import { AlertTriangle, FileText, Folder, ImageIcon, Link2, X } from "lucide-react";
 import { Spinner } from "../../ui/foundation/Spinner";
 import type { AgentComposerAttachmentDraft } from "../../application/useAgentComposerAttachments";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
@@ -82,6 +82,8 @@ function AgentComposerAttachment({
           ? "agent-composer-attachment agent-composer-attachment--image"
           : "agent-composer-attachment agent-composer-attachment--chip"
       }
+      data-agent-attachment-compact={!image && isCompactFolder(draft) ? "true" : undefined}
+      data-agent-attachment-entry={isFolder(draft) ? "directory" : undefined}
       data-agent-attachment-kind={draft.kind}
       data-agent-attachment-missing={draft.missing ? "true" : undefined}
       data-agent-attachment-state={draft.state}
@@ -169,6 +171,7 @@ function AgentComposerAttachmentDetail({
   if (draft.state === "staging") {
     return <span className="agent-composer-attachment__size">Saving…</span>;
   }
+  if (isFolder(draft)) return null;
   return (
     <span className="agent-composer-attachment__size agent-num">
       {formatAgentAttachmentBytes(draft.bytes)}
@@ -181,8 +184,19 @@ function AgentComposerAttachmentGlyph({ draft }: { readonly draft: AgentComposer
   if (draft.state === "staging") return <Spinner />;
   if (draft.state === "failed") return <AlertTriangle aria-hidden="true" size={size} />;
   if (draft.kind === "image") return <ImageIcon aria-hidden="true" size={20} />;
+  if (isFolder(draft)) return <Folder aria-hidden="true" size={size} />;
   if (draft.kind === "reference") return <Link2 aria-hidden="true" size={size} />;
   return <FileText aria-hidden="true" size={size} />;
+}
+
+function isFolder(draft: AgentComposerAttachmentDraft): boolean {
+  return draft.kind === "reference" && draft.entry === "directory";
+}
+
+function isCompactFolder(draft: AgentComposerAttachmentDraft): boolean {
+  if (!isFolder(draft)) return false;
+  if (draft.state !== "ready") return false;
+  return draft.notice === null;
 }
 
 function attachmentTitle(draft: AgentComposerAttachmentDraft): string {

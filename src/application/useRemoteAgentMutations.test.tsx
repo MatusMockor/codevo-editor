@@ -322,7 +322,13 @@ describe("remote agent mutations", () => {
     const imageRequest = {
       ...request,
       attachments: [
-        { kind: "reference" as const, path: "/image.png", name: "image.png", bytes: 10 },
+        {
+          kind: "reference" as const,
+          path: "/image.png",
+          name: "image.png",
+          bytes: 10,
+          entry: "file" as const,
+        },
       ],
     };
     await act(async () => {

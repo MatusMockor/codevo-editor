@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentAttachment } from "./agentAttachment";
 import { agentAttachmentPromptLine, agentEffectivePrompt } from "./agentAttachmentIntake";
 import { agentPromptDisplayText, isAttachedImagePromptLine } from "./agentPromptDisplay";
+import { agentReferencesAreFiles } from "./agentReferenceEntry";
 
 const STORE = "/Users/me/Library/Application Support/dev.mockor.editor/agent-attachments/threads";
 const IMAGE: AgentAttachment = {
@@ -30,9 +31,15 @@ const REFERENCE: AgentAttachment = {
 
 describe("isAttachedImagePromptLine", () => {
   it("recognises exactly the store's image line", () => {
-    expect(isAttachedImagePromptLine(agentAttachmentPromptLine(IMAGE))).toBe(true);
-    expect(isAttachedImagePromptLine(agentAttachmentPromptLine(FILE))).toBe(false);
-    expect(isAttachedImagePromptLine(agentAttachmentPromptLine(REFERENCE))).toBe(false);
+    expect(
+      isAttachedImagePromptLine(agentAttachmentPromptLine(IMAGE, agentReferencesAreFiles)),
+    ).toBe(true);
+    expect(
+      isAttachedImagePromptLine(agentAttachmentPromptLine(FILE, agentReferencesAreFiles)),
+    ).toBe(false);
+    expect(
+      isAttachedImagePromptLine(agentAttachmentPromptLine(REFERENCE, agentReferencesAreFiles)),
+    ).toBe(false);
   });
 
   it("rejects prose that only resembles the line", () => {
@@ -47,37 +54,49 @@ describe("isAttachedImagePromptLine", () => {
 
 describe("agentPromptDisplayText", () => {
   it("hides the image store line and keeps file and reference lines", () => {
-    const prompt = agentEffectivePrompt("napis ahoj", [IMAGE, FILE, REFERENCE]);
+    const prompt = agentEffectivePrompt(
+      "napis ahoj",
+      [IMAGE, FILE, REFERENCE],
+      agentReferencesAreFiles,
+    );
 
     expect(agentPromptDisplayText(prompt)).toBe(
       [
         "napis ahoj",
         "",
-        agentAttachmentPromptLine(FILE),
-        agentAttachmentPromptLine(REFERENCE),
+        agentAttachmentPromptLine(FILE, agentReferencesAreFiles),
+        agentAttachmentPromptLine(REFERENCE, agentReferencesAreFiles),
       ].join("\n"),
     );
   });
 
   it("drops the blank separator when only image lines followed the text", () => {
-    expect(agentPromptDisplayText(agentEffectivePrompt("napis ahoj", [IMAGE, IMAGE]))).toBe(
-      "napis ahoj",
-    );
+    expect(
+      agentPromptDisplayText(
+        agentEffectivePrompt("napis ahoj", [IMAGE, IMAGE], agentReferencesAreFiles),
+      ),
+    ).toBe("napis ahoj");
   });
 
   it("yields an empty display for a prompt that was only an image", () => {
-    expect(agentPromptDisplayText(agentEffectivePrompt("", [IMAGE]))).toBe("");
+    expect(agentPromptDisplayText(agentEffectivePrompt("", [IMAGE], agentReferencesAreFiles))).toBe(
+      "",
+    );
   });
 
   it("returns the same string when nothing is hidden", () => {
-    const prompt = agentEffectivePrompt("read this", [FILE, REFERENCE]);
+    const prompt = agentEffectivePrompt("read this", [FILE, REFERENCE], agentReferencesAreFiles);
 
     expect(agentPromptDisplayText(prompt)).toBe(prompt);
     expect(agentPromptDisplayText("plain\n\n")).toBe("plain\n\n");
   });
 
   it("hides an image line wherever it sits without touching neighbouring lines", () => {
-    const prompt = ["first", agentAttachmentPromptLine(IMAGE), "last"].join("\n");
+    const prompt = [
+      "first",
+      agentAttachmentPromptLine(IMAGE, agentReferencesAreFiles),
+      "last",
+    ].join("\n");
 
     expect(agentPromptDisplayText(prompt)).toBe("first\nlast");
   });

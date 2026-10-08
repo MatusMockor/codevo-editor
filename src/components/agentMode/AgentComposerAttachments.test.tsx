@@ -9,6 +9,7 @@ import type {
   AgentComposerAttachmentsSurface,
 } from "../../application/useAgentComposerAttachments";
 import { MAX_AGENT_FILE_BYTES } from "../../domain/agentAttachment";
+import { installElementFromPoint } from "../../test/elementFromPointTestSupport";
 import {
   AGENT_ATTACHMENT_COUNT_REFUSAL,
   AGENT_ATTACHMENT_IMAGE_SOURCE_BYTES_REFUSAL,
@@ -28,9 +29,11 @@ const PREVIEW_URL = "blob:preview-1";
 describe("AgentComposer attachments", () => {
   let host: HTMLDivElement;
   let root: Root;
+  let restoreElementFromPoint: () => void;
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    restoreElementFromPoint = installElementFromPoint();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -39,6 +42,7 @@ describe("AgentComposer attachments", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    restoreElementFromPoint();
     Reflect.deleteProperty(window, "matchMedia");
   });
 
@@ -396,6 +400,28 @@ describe("AgentComposer attachments", () => {
     stubComposerBounds();
 
     act(() => listener({ kind: "drop", x: 900, y: 900, paths: [ABSOLUTE_VIDEO] }));
+
+    expect(add).not.toHaveBeenCalled();
+  });
+
+  it("ignores a hover and a drop over a surface that covers the composer", async () => {
+    const add = vi.fn<AgentComposerAttachmentsSurface["add"]>(async () => undefined);
+    let listener: AgentComposerDragDropListener = () => undefined;
+    const subscribe: AgentComposerDragDropSubscribe = async (next) => {
+      listener = next;
+      return () => undefined;
+    };
+    render({ attachments: surface({ add }), attachmentDragDrop: subscribe });
+    await act(async () => undefined);
+    stubComposerBounds();
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.getBoundingClientRect = () => new DOMRect(0, 0, 400, 200);
+    host.append(dialog);
+
+    act(() => listener({ kind: "over", x: 50, y: 50, paths: [] }));
+    expect(host.querySelector("[data-agent-composer-drop='active']")).toBeNull();
+    act(() => listener({ kind: "drop", x: 50, y: 50, paths: [ABSOLUTE_VIDEO] }));
 
     expect(add).not.toHaveBeenCalled();
   });
@@ -823,6 +849,7 @@ function draft(overrides: Partial<AgentComposerAttachmentDraft>): AgentComposerA
   return {
     draftId: "draft-1",
     kind: "file",
+    entry: "file",
     state: "ready",
     name: "notes.txt",
     bytes: 1_024,

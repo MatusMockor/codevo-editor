@@ -224,7 +224,10 @@ function AgentSteeredMessage({
   readonly openExternalLink: AgentExternalLinkOpener;
   readonly textClipboard: TextClipboardGateway | null;
 }) {
-  const attachments = useMemo(() => agentTurnAttachmentViews(item.attachments), [item.attachments]);
+  const attachments = useMemo(
+    () => agentTurnAttachmentViews(item.attachments, item.text),
+    [item.attachments, item.text],
+  );
 
   return (
     <AgentTurnPrompt

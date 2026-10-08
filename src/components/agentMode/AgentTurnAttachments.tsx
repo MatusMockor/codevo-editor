@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, ImageIcon, ImageOff, Link2 } from "lucide-react";
+import { FileText, Folder, ImageIcon, ImageOff, Link2 } from "lucide-react";
 import type { AgentAttachmentImageState } from "../../application/useAgentAttachmentImages";
 import type { AgentImageMime } from "../../domain/agentAttachment";
 import {
@@ -71,17 +71,13 @@ export const AgentTurnAttachments = memo(function AgentTurnAttachments({
     <ul aria-label="Attachments" className="agent-attachments">
       {attachments.map((attachment) => (
         <li className="agent-attachments__item" key={attachment.key}>
-          {attachment.kind === "chip" ? (
-            <AgentAttachmentChip glyph={attachment.glyph} name={attachment.name} />
-          ) : (
-            <AgentAttachmentImage
-              attachment={attachment}
-              brokenUrl={broken.get(attachment.attachmentId) ?? null}
-              images={images}
-              onBroken={markBroken}
-              siblings={siblings}
-            />
-          )}
+          <AgentTurnAttachment
+            attachment={attachment}
+            broken={broken}
+            images={images}
+            onBroken={markBroken}
+            siblings={siblings}
+          />
         </li>
       ))}
     </ul>
@@ -89,6 +85,45 @@ export const AgentTurnAttachments = memo(function AgentTurnAttachments({
 });
 
 const EMPTY_BROKEN: ReadonlyMap<string, string> = new Map();
+
+function AgentTurnAttachment({
+  attachment,
+  broken,
+  images,
+  onBroken,
+  siblings,
+}: {
+  readonly attachment: AgentTurnAttachmentView;
+  readonly broken: ReadonlyMap<string, string>;
+  readonly images: AgentTurnAttachmentImageViewer | null;
+  readonly siblings: ReadonlyArray<AgentTurnAttachmentImageView>;
+  onBroken(attachmentId: string, url: string): void;
+}) {
+  switch (attachment.kind) {
+    case "chip":
+      return <AgentAttachmentChip glyph={attachment.glyph} name={attachment.name} />;
+    case "folder":
+      return (
+        <AgentAttachmentChip description={attachment.path} glyph="folder" name={attachment.name} />
+      );
+    case "image":
+      return (
+        <AgentAttachmentImage
+          attachment={attachment}
+          brokenUrl={broken.get(attachment.attachmentId) ?? null}
+          images={images}
+          onBroken={onBroken}
+          siblings={siblings}
+        />
+      );
+    default:
+      return unsupportedAttachmentView(attachment);
+  }
+}
+
+function unsupportedAttachmentView(attachment: never): never {
+  throw new TypeError(`Unsupported agent attachment view: ${JSON.stringify(attachment)}.`);
+}
 
 function isImageView(view: AgentTurnAttachmentView): view is AgentTurnAttachmentImageView {
   return view.kind === "image";
@@ -180,7 +215,7 @@ function AgentAttachmentChip({
   name,
 }: {
   readonly description?: string | null;
-  readonly glyph: AgentTurnAttachmentGlyph | "unavailable";
+  readonly glyph: AgentAttachmentChipGlyph;
   readonly name: string;
 }) {
   return (
@@ -196,13 +231,12 @@ function AgentAttachmentChip({
   );
 }
 
-function AgentAttachmentGlyph({
-  glyph,
-}: {
-  readonly glyph: AgentTurnAttachmentGlyph | "unavailable";
-}) {
+type AgentAttachmentChipGlyph = AgentTurnAttachmentGlyph | "unavailable" | "folder";
+
+function AgentAttachmentGlyph({ glyph }: { readonly glyph: AgentAttachmentChipGlyph }) {
   const size = 14;
   if (glyph === "unavailable") return <ImageOff aria-hidden="true" size={size} />;
+  if (glyph === "folder") return <Folder aria-hidden="true" size={size} />;
   if (glyph === "image") return <ImageIcon aria-hidden="true" size={size} />;
   if (glyph === "reference") return <Link2 aria-hidden="true" size={size} />;
   return <FileText aria-hidden="true" size={size} />;

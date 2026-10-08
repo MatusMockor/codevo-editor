@@ -78,7 +78,15 @@ describe("AgentThreadSession", () => {
           request: {
             threadId: "agt-1",
             prompt: "Next task",
-            attachments: [{ kind: "reference", name: "example.ts", path: "example.ts", bytes: 42 }],
+            attachments: [
+              {
+                kind: "reference",
+                name: "example.ts",
+                path: "example.ts",
+                bytes: 42,
+                entry: "file",
+              },
+            ],
             launch: {
               provider: "claudeCode",
               model: "default",

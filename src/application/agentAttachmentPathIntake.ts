@@ -3,12 +3,14 @@ import {
   sanitizeAgentAttachmentName,
   type AgentAttachmentCandidate,
 } from "../domain/agentAttachmentIntake";
+import { agentReferenceEntryOf, type AgentReferenceEntry } from "../domain/agentReferenceEntry";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import type { AgentAttachmentSource } from "./useAgentComposerAttachments";
 
 export interface DescribedAgentAttachmentSource {
   readonly source: AgentAttachmentSource;
   readonly candidate: AgentAttachmentCandidate;
+  readonly entry: AgentReferenceEntry;
 }
 
 export async function describeAgentAttachmentSource(
@@ -28,6 +30,7 @@ export async function describeAgentAttachmentSource(
         hasPath: false,
         bytes: source.bytes.byteLength,
       },
+      entry: "file",
     };
   }
   for (const path of agentAttachmentPathCandidates(source.path)) {
@@ -45,6 +48,7 @@ export async function describeAgentAttachmentSource(
           hasPath: true,
           bytes: inspected.isDirectory ? 0 : inspected.bytes,
         },
+        entry: agentReferenceEntryOf(inspected),
       };
     } catch (error) {
       if (!isCurrent()) return null;

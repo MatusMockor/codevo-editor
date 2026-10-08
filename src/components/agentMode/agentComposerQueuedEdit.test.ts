@@ -27,6 +27,7 @@ function edit(): AgentComposerQueuedEdit {
           height: 1,
           storedPath: "/data/pripona.png",
         },
+        entry: "file",
       }),
       queuedEditAttachmentDraft({
         key: "attachment-1",
@@ -37,6 +38,7 @@ function edit(): AgentComposerQueuedEdit {
           bytes: 5,
           storedPath: "/data/notes.txt",
         },
+        entry: "file",
       }),
     ],
     onRemoveAttachment: () => undefined,
@@ -68,5 +70,35 @@ describe("queued edit image previews", () => {
     expect(
       withQueuedEditImagePreviews(original, () => ({ kind: "unavailable", reason: "gone" })),
     ).toBe(original);
+  });
+});
+
+describe("queued edit reference drafts", () => {
+  const reference = {
+    kind: "reference",
+    name: "invoices",
+    path: "/Users/x/Documents/codevo s.r.o./invoices",
+    bytes: 0,
+  } as const;
+
+  it("restores a queued folder as a folder draft with its path", () => {
+    expect(
+      queuedEditAttachmentDraft({ key: "attachment-0", attachment: reference, entry: "directory" }),
+    ).toMatchObject({
+      draftId: "queued-edit:attachment-0",
+      kind: "reference",
+      entry: "directory",
+      state: "ready",
+      name: "invoices",
+      path: "/Users/x/Documents/codevo s.r.o./invoices",
+      notice: null,
+      missing: false,
+    });
+  });
+
+  it("restores a queued file reference as a file draft", () => {
+    expect(
+      queuedEditAttachmentDraft({ key: "attachment-1", attachment: reference, entry: "file" }),
+    ).toMatchObject({ kind: "reference", entry: "file", path: reference.path });
   });
 });

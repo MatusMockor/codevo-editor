@@ -1,5 +1,9 @@
 import type { AgentAttachmentKind } from "../domain/agentAttachment";
-import { agentAttachmentPromptLine } from "../domain/agentAttachmentIntake";
+import {
+  agentReferencePromptLine,
+  type AgentReferenceEntry,
+  type AgentReferenceIdentity,
+} from "../domain/agentReferenceEntry";
 import {
   agentAttachmentCarrySourceBytes,
   type AgentAttachmentCarrySource,
@@ -174,10 +178,12 @@ export function referenceDraft(
   bytes: number,
   path: string,
   notice: string | null,
+  entry: AgentReferenceEntry,
 ): AttachmentDraft {
   return {
     ...pending,
     kind: "reference",
+    entry,
     state: "ready",
     bytes,
     path,
@@ -188,12 +194,7 @@ export function referenceDraft(
     height: null,
     failure: null,
     notice,
-    promptLineBytesMax: promptLineBytes({
-      kind: "reference",
-      name: pending.name,
-      path,
-      bytes,
-    }),
+    promptLineBytesMax: referencePromptLineBytes({ name: pending.name, path }, entry),
   };
 }
 
@@ -239,6 +240,7 @@ export function blankDraft(
     draftId,
     owner,
     kind,
+    entry: "file",
     state: "staging",
     name,
     bytes: 0,
@@ -255,13 +257,11 @@ export function blankDraft(
   };
 }
 
-export function promptLineBytes(attachment: {
-  readonly kind: "reference";
-  readonly name: string;
-  readonly path: string;
-  readonly bytes: number;
-}): number {
-  return UTF8_ENCODER.encode(agentAttachmentPromptLine(attachment)).byteLength;
+export function referencePromptLineBytes(
+  reference: AgentReferenceIdentity,
+  entry: AgentReferenceEntry,
+): number {
+  return UTF8_ENCODER.encode(agentReferencePromptLine(reference, entry)).byteLength;
 }
 
 export function sameOwner(left: AgentAttachmentOwner, right: AgentAttachmentOwner): boolean {

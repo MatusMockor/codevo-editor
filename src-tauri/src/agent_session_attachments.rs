@@ -12,8 +12,9 @@ const MAX_RETAINED_CONTENT_BLOCKS: usize = 1024;
 const MAX_SCANNED_DATA_URL_PREFIX_BYTES: usize = 128;
 const MAX_SCANNED_TEXT_LINES: usize = 256;
 
-const ATTACHED_LINE_PREFIXES: [(&str, AttachedLineKind); 2] = [
+const ATTACHED_LINE_PREFIXES: [(&str, AttachedLineKind); 3] = [
     ("[Attached file \"", AttachedLineKind::File),
+    ("[Attached folder \"", AttachedLineKind::File),
     ("[Attached image \"", AttachedLineKind::Image),
 ];
 const ATTACHED_FILE_STORED_SEPARATOR: &str = "\" is saved at: ";

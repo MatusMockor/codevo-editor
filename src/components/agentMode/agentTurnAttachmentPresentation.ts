@@ -5,6 +5,12 @@ import {
   type AgentAttachment,
   type AgentImageMime,
 } from "../../domain/agentAttachment";
+import {
+  agentReferenceEntriesInPrompt,
+  type AgentReferenceAttachment,
+  type AgentReferenceEntry,
+  type AgentReferenceEntryResolver,
+} from "../../domain/agentReferenceEntry";
 import type {
   ExternalSessionAttachment,
   ExternalSessionExchange,
@@ -36,6 +42,12 @@ export type AgentTurnAttachmentView =
       readonly key: string;
       readonly name: string;
       readonly glyph: AgentTurnAttachmentGlyph;
+    }
+  | {
+      readonly kind: "folder";
+      readonly key: string;
+      readonly name: string;
+      readonly path: string;
     };
 
 export type AgentTurnAttachmentImageView = Extract<
@@ -45,11 +57,13 @@ export type AgentTurnAttachmentImageView = Extract<
 
 export function agentTurnAttachmentViews(
   attachments: ReadonlyArray<AgentAttachment> | undefined,
+  prompt: string,
 ): ReadonlyArray<AgentTurnAttachmentView> {
   if (attachments === undefined) return NO_ATTACHMENT_VIEWS;
+  const entryOf = agentReferenceEntriesInPrompt(prompt);
   return attachments
     .slice(0, MAX_AGENT_TURN_ATTACHMENTS)
-    .map((attachment, index) => turnAttachmentView(attachment, index));
+    .map((attachment, index) => turnAttachmentView(attachment, index, entryOf));
 }
 
 export function agentImportedAttachmentViews(
@@ -113,7 +127,11 @@ function isPositiveDimension(value: number): boolean {
 
 const NO_ATTACHMENT_VIEWS: ReadonlyArray<AgentTurnAttachmentView> = [];
 
-function turnAttachmentView(attachment: AgentAttachment, index: number): AgentTurnAttachmentView {
+function turnAttachmentView(
+  attachment: AgentAttachment,
+  index: number,
+  entryOf: AgentReferenceEntryResolver,
+): AgentTurnAttachmentView {
   switch (attachment.kind) {
     case "image":
       return {
@@ -133,14 +151,28 @@ function turnAttachmentView(attachment: AgentAttachment, index: number): AgentTu
         glyph: "file",
       };
     case "reference":
-      return {
-        kind: "chip",
-        key: `reference-${index}-${attachment.path}`,
-        name: attachment.name,
-        glyph: "reference",
-      };
+      return agentReferenceAttachmentView(
+        `reference-${index}-${attachment.path}`,
+        attachment,
+        entryOf(attachment),
+      );
     default:
       return unsupportedAttachment(attachment);
+  }
+}
+
+export function agentReferenceAttachmentView(
+  key: string,
+  reference: Pick<AgentReferenceAttachment, "name" | "path">,
+  entry: AgentReferenceEntry,
+): AgentTurnAttachmentView {
+  switch (entry) {
+    case "directory":
+      return { kind: "folder", key, name: reference.name, path: reference.path };
+    case "file":
+      return { kind: "chip", key, name: reference.name, glyph: "reference" };
+    default:
+      return unsupportedAttachment(entry);
   }
 }
 

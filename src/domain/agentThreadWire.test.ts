@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_EFFORT_CHOICES } from "./agentLaunch";
+import { agentReferenceEntriesInPrompt } from "./agentReferenceEntry";
 import { mergeTurnEvents, type AgentTurnEvent } from "./agentThread";
 import {
   parseAgentThread,
@@ -413,6 +414,65 @@ describe("agentThreadWire attachments", () => {
       },
     ]);
     expect(`${JSON.stringify(serializeAgentThread(parsed), null, 2)}\n`).toBe(raw);
+  });
+
+  it("keeps a folder in the shipped reference shape and restores it from its prompt line", () => {
+    const raw = readFixture("agent-thread-with-folder-reference.json");
+    const parsed = parseAgentThread(JSON.parse(raw));
+    const turn = parsed.turns[0];
+    const entryOf = agentReferenceEntriesInPrompt(turn.prompt);
+
+    expect(turn.attachments).toEqual([
+      {
+        kind: "reference",
+        name: "invoices",
+        path: "/Users/x/Documents/codevo s.r.o./invoices",
+        bytes: 0,
+      },
+      {
+        kind: "reference",
+        name: "clip.mp4",
+        path: "/Users/dev/Movies/clip.mp4",
+        bytes: 73_400_320,
+      },
+    ]);
+    expect(
+      (turn.attachments ?? []).map((attachment) =>
+        attachment.kind === "reference" ? entryOf(attachment) : null,
+      ),
+    ).toEqual(["directory", "file"]);
+    expect(`${JSON.stringify(serializeAgentThread(parsed), null, 2)}\n`).toBe(raw);
+  });
+
+  it("reads a reference saved by a shipped build as a file", () => {
+    const parsed = parseAgentThread(JSON.parse(readFixture("agent-thread-with-attachments.json")));
+    const turn = parsed.turns[0];
+    const entryOf = agentReferenceEntriesInPrompt(turn.prompt);
+
+    expect(
+      (turn.attachments ?? []).flatMap((attachment) =>
+        attachment.kind === "reference" ? [entryOf(attachment)] : [],
+      ),
+    ).toEqual(["file"]);
+  });
+
+  it("refuses a folder marker on the persisted reference", () => {
+    for (const marker of [{ entry: "directory" }, { isDirectory: true }, { target: "directory" }]) {
+      expect(() =>
+        parseAgentThread(
+          storedWithAttachments([
+            { kind: "reference", name: "invoices", path: "/x/invoices", bytes: 0, ...marker },
+          ]),
+        ),
+      ).toThrow();
+    }
+    expect(() =>
+      parseAgentThread(
+        storedWithAttachments([
+          { kind: "folder", name: "invoices", path: "/x/invoices", bytes: 0 },
+        ]),
+      ),
+    ).toThrow();
   });
 
   it("re-serialises the legacy fixture byte-for-byte and adds no attachment key", () => {

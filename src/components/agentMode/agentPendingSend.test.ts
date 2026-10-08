@@ -28,6 +28,7 @@ function draft(patch: Partial<AgentComposerAttachmentDraft>): AgentComposerAttac
   return {
     draftId: "d1",
     kind: "image",
+    entry: "file",
     state: "ready",
     name: "shot.png",
     bytes: 10,
@@ -110,6 +111,36 @@ describe("agent pending sends", () => {
     }
     expect(many).toHaveLength(MAX_AGENT_PENDING_SENDS);
     expect(many[0]?.id).toBe(4);
+  });
+
+  it("renders a held folder as a folder pill and a held file reference as a link chip", () => {
+    const held = { kind: "reference", mime: null, previewUrl: null } as const;
+    expect(
+      agentPendingSendAttachments([
+        draft({
+          ...held,
+          draftId: "d5",
+          entry: "directory",
+          name: "invoices",
+          path: "/Users/x/Documents/codevo s.r.o./invoices",
+        }),
+        draft({ ...held, draftId: "d6", name: "clip.mp4", path: "/Users/dev/clip.mp4" }),
+      ]),
+    ).toEqual([
+      {
+        view: {
+          kind: "folder",
+          key: "d5",
+          name: "invoices",
+          path: "/Users/x/Documents/codevo s.r.o./invoices",
+        },
+        previewUrl: null,
+      },
+      {
+        view: { kind: "chip", key: "d6", name: "clip.mp4", glyph: "reference" },
+        previewUrl: null,
+      },
+    ]);
   });
 
   it("renders held image previews as thumbnails and everything else as chips", () => {

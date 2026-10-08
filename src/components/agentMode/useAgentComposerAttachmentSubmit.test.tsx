@@ -327,6 +327,7 @@ function draft(overrides: Partial<AgentComposerAttachmentDraft>): AgentComposerA
   return {
     draftId: "draft-1",
     kind: "file",
+    entry: "file",
     state: "ready",
     name: "notes.txt",
     bytes: 1_024,

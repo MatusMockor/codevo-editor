@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { agentAttachmentPromptLine } from "../domain/agentAttachmentIntake";
+import { agentReferencesAreFiles } from "../domain/agentReferenceEntry";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "../domain/agentTask";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import type { AgentTasksNotice, AgentTurnAttachmentIntent } from "./agentThreadPorts";
@@ -52,7 +53,18 @@ const REFERENCE_INTENT: AgentTurnAttachmentIntent = {
   name: "clip.mp4",
   path: "/Users/dev/clip.mp4",
   bytes: 4_096,
+  entry: "file",
 };
+
+const FOLDER_INTENT: AgentTurnAttachmentIntent = {
+  kind: "reference",
+  name: "invoices",
+  path: "/Users/x/Documents/codevo s.r.o./invoices",
+  bytes: 0,
+  entry: "directory",
+};
+
+const FOLDER_LINE = '[Attached folder "invoices" is at: /Users/x/Documents/codevo s.r.o./invoices]';
 
 function owner(overrides: Partial<AgentTurnAttachmentAuthority> = {}) {
   const merged = { ...AUTHORITY, ...overrides };
@@ -160,7 +172,9 @@ describe("claimTurnAttachments", () => {
       { kind: "reference", name: "clip.mp4", path: "/Users/dev/clip.mp4" },
     ]);
     expect(claimed.prompt).toBe(
-      `look at this\n\n${claimed.attachments.map(agentAttachmentPromptLine).join("\n")}`,
+      `look at this\n\n${claimed.attachments
+        .map((attachment) => agentAttachmentPromptLine(attachment, agentReferencesAreFiles))
+        .join("\n")}`,
     );
     expect(port.claimAgentAttachments).toHaveBeenCalledWith({
       workspaceId: "ws-1",
@@ -176,6 +190,39 @@ describe("claimTurnAttachments", () => {
 
     expect(port.claimAgentAttachments).not.toHaveBeenCalled();
     expect(claimed.prompt).toBe('[Attached file "clip.mp4" is at: /Users/dev/clip.mp4]');
+  });
+
+  it("words a folder truthfully while the claimed reference keeps the shipped shape", async () => {
+    const port = gateway();
+
+    const claimed = await claimTurnAttachments(
+      port,
+      "ws-1",
+      THREAD_ID,
+      [FOLDER_INTENT, REFERENCE_INTENT],
+      "summarise",
+    );
+
+    expect(claimed.prompt).toBe(
+      `summarise\n\n${FOLDER_LINE}\n[Attached file "clip.mp4" is at: /Users/dev/clip.mp4]`,
+    );
+    expect(claimed.attachments).toEqual([
+      {
+        kind: "reference",
+        name: "invoices",
+        path: "/Users/x/Documents/codevo s.r.o./invoices",
+        bytes: 0,
+      },
+      { kind: "reference", name: "clip.mp4", path: "/Users/dev/clip.mp4", bytes: 4_096 },
+    ]);
+    expect(claimed.attachments.map((attachment) => Object.keys(attachment))).toEqual([
+      ["kind", "name", "path", "bytes"],
+      ["kind", "name", "path", "bytes"],
+    ]);
+    expect(claimed.references).toEqual([
+      { kind: "reference", name: "invoices", path: "/Users/x/Documents/codevo s.r.o./invoices" },
+      { kind: "reference", name: "clip.mp4", path: "/Users/dev/clip.mp4" },
+    ]);
   });
 });
 
@@ -252,6 +299,33 @@ describe("prepareTurnAttachments", () => {
       ),
     ).toBeNull();
     expect(lastMessage(sink.notices)).toBe(AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE);
+  });
+
+  it("counts the folder wording against the spawner cap", async () => {
+    const fileLine = FOLDER_LINE.replace("[Attached folder", "[Attached file");
+    const text = "x".repeat(MAX_AGENT_TASK_PROMPT_BYTES - `\n\n${fileLine}`.length);
+    const asFile = recorder();
+    const asFolder = recorder();
+
+    const file = await prepareTurnAttachments(
+      { agentAttachmentGateway: gateway(), ...asFile },
+      { attachments: [{ ...FOLDER_INTENT, entry: "file" }], attachmentOwner: owner() },
+      AUTHORITY,
+      THREAD_ID,
+      text,
+    );
+    const folder = await prepareTurnAttachments(
+      { agentAttachmentGateway: gateway(), ...asFolder },
+      { attachments: [FOLDER_INTENT], attachmentOwner: owner() },
+      AUTHORITY,
+      THREAD_ID,
+      text,
+    );
+
+    expect(file?.prompt).toBe(`${text}\n\n${fileLine}`);
+    expect(asFile.notices).toHaveLength(0);
+    expect(folder).toBeNull();
+    expect(lastMessage(asFolder.notices)).toBe(AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE);
   });
 
   it("passes a turn with no attachments through untouched", async () => {

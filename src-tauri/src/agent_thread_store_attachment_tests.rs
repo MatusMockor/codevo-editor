@@ -52,6 +52,8 @@ fn document_value() -> Value {
 
 const ATTACHMENT_FIXTURE: &str =
     include_str!("../../src/domain/fixtures/agent-thread-with-attachments.json");
+const FOLDER_FIXTURE: &str =
+    include_str!("../../src/domain/fixtures/agent-thread-with-folder-reference.json");
 const LEGACY_FIXTURE: &str =
     include_str!("../../src/domain/fixtures/agent-thread-legacy-no-attachments.json");
 
@@ -103,6 +105,56 @@ fn the_shared_attachment_fixture_round_trips_the_typescript_wire_shape() {
     let reencoded = serde_json::to_string_pretty(&document.thread).expect("re-encode fixture");
     assert_eq!(format!("{reencoded}\n"), ATTACHMENT_FIXTURE);
     validate_agent_thread_document("/workspace", &document).expect("fixture is within bounds");
+}
+
+#[test]
+fn a_folder_reference_persists_in_the_shipped_reference_shape() {
+    let document = fixture_document(FOLDER_FIXTURE);
+    let turn = &document.thread.turns[0];
+
+    assert!(turn.prompt.contains(
+        "[Attached folder \"invoices\" is at: /Users/x/Documents/codevo s.r.o./invoices]"
+    ));
+    assert_eq!(
+        turn.attachments[0],
+        AgentAttachment::Reference {
+            name: "invoices".to_string(),
+            path: "/Users/x/Documents/codevo s.r.o./invoices".to_string(),
+            bytes: 0,
+        }
+    );
+    let encoded = serde_json::to_value(&turn.attachments[0]).expect("encode folder reference");
+    let mut keys: Vec<&str> = encoded
+        .as_object()
+        .expect("reference object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["bytes", "kind", "name", "path"]);
+    let reencoded = serde_json::to_string_pretty(&document.thread).expect("re-encode fixture");
+    assert_eq!(format!("{reencoded}\n"), FOLDER_FIXTURE);
+    validate_agent_thread_document("/workspace", &document).expect("fixture is within bounds");
+
+    let store = TempStore::create("folder-reference");
+    store
+        .store()
+        .save(ROOT_KEY, &document)
+        .expect("save folder reference");
+    let loaded = store.store().load(ROOT_KEY).expect("load folder reference");
+    assert!(loaded.unreadable.is_empty());
+    assert_eq!(loaded.threads, vec![document.thread]);
+}
+
+#[test]
+fn a_folder_marker_on_the_persisted_reference_is_refused() {
+    for attachment in [
+        json!({ "kind": "reference", "name": "n", "path": "/n", "bytes": 0, "entry": "directory" }),
+        json!({ "kind": "reference", "name": "n", "path": "/n", "bytes": 0, "isDirectory": true }),
+        json!({ "kind": "folder", "name": "n", "path": "/n", "bytes": 0 }),
+    ] {
+        assert!(serde_json::from_value::<AgentAttachment>(attachment).is_err());
+    }
 }
 
 #[test]

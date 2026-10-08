@@ -377,12 +377,10 @@ export function AgentComposer({
     readImagePath: attachmentImageReader,
   });
   const attachmentsEnabled = attachments !== null && attachmentTargetKey !== null;
-  const dropPaths = useCallback(
-    (paths: ReadonlyArray<string>): void => {
-      void attachmentIntake.drop(paths);
-    },
-    [attachmentIntake],
-  );
+  const dropPaths = (paths: ReadonlyArray<string>): void => {
+    void attachmentIntake.drop(paths);
+    focusPrompt();
+  };
   const refuseAttachments = useCallback(
     (reason: string): void => {
       attachments?.refuse(reason);
@@ -394,7 +392,7 @@ export function AgentComposer({
     [refuseAttachments],
   );
   const dropActive = useAgentComposerDragDrop({
-    enabled: attachmentsEnabled && !dispatching,
+    enabled: attachmentsEnabled && !dispatching && !interactionActive,
     onDropPaths: dropPaths,
     onUnavailable: dropUnavailable,
     subscribe: attachmentDragDrop,

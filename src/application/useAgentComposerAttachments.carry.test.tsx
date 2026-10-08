@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AGENT_IMAGE_MAX_MODEL_BYTES, MAX_AGENT_TURN_ATTACHMENTS } from "../domain/agentAttachment";
 import {
   AGENT_ATTACHMENT_COUNT_REFUSAL,
@@ -205,6 +205,51 @@ describe("carrying attachment drafts between execution machines", () => {
       kind: "reference",
       path: "/Users/dev/spec.pdf",
     });
+  });
+
+  it("keeps a carried folder a folder by inspecting it again at the destination", async () => {
+    const directory = { bytes: 0, isRegularFile: false, isDirectory: true, extensionMime: null };
+    const path = "/Users/x/Documents/codevo s.r.o./invoices";
+    vi.mocked(local.gateway.inspectAgentAttachmentCandidate).mockResolvedValue(directory);
+    vi.mocked(server.gateway.inspectAgentAttachmentCandidate).mockResolvedValue(directory);
+    await act(() => local.scope(LOCAL_KEY).add(LOCAL_ROOT, [{ kind: "path", path }]));
+    expect(local.scope(LOCAL_KEY).drafts).toMatchObject([
+      { kind: "reference", entry: "directory", name: "invoices", notice: null },
+    ]);
+
+    carryToServer();
+    expect(server.scope(SERVER_KEY).drafts).toMatchObject([{ entry: "file", state: "staging" }]);
+    await settle(() => expect(states(server.scope(SERVER_KEY))).toEqual(["invoices:ready"]));
+
+    const carried = server.scope(SERVER_KEY).drafts[0];
+    expect(carried).toMatchObject({ kind: "reference", entry: "directory", path, notice: null });
+    expect(carried?.promptLineBytesMax).toBe(
+      new TextEncoder().encode(`[Attached folder "invoices" is at: ${path}]`).byteLength,
+    );
+    let prepared: Awaited<ReturnType<AgentComposerAttachmentsSurface["prepareTurn"]>> = null;
+    await act(async () => {
+      prepared = await server.scope(SERVER_KEY).prepareTurn(SERVER_ROOT);
+    });
+    expect(prepared).toMatchObject({
+      intents: [{ kind: "reference", name: "invoices", path, bytes: 0, entry: "directory" }],
+    });
+  });
+
+  it("carries a folder that is now a file as a file reference", async () => {
+    const path = "/Users/dev/notes";
+    vi.mocked(local.gateway.inspectAgentAttachmentCandidate).mockResolvedValue({
+      bytes: 0,
+      isRegularFile: false,
+      isDirectory: true,
+      extensionMime: null,
+    });
+    await act(() => local.scope(LOCAL_KEY).add(LOCAL_ROOT, [{ kind: "path", path }]));
+    expect(local.scope(LOCAL_KEY).drafts[0]?.entry).toBe("directory");
+
+    carryToServer();
+    await settle(() => expect(states(server.scope(SERVER_KEY))).toEqual(["notes:ready"]));
+
+    expect(server.scope(SERVER_KEY).drafts[0]).toMatchObject({ kind: "reference", entry: "file" });
   });
 
   it("keeps attachments beyond the destination's limit visible instead of dropping them", async () => {

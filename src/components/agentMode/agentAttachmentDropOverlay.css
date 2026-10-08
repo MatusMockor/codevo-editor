@@ -1,0 +1,47 @@
+.agent-attachment-drop-column {
+  position: relative;
+}
+
+.agent-attachment-drop-overlay {
+  position: absolute;
+  z-index: 31;
+  inset: var(--cv-space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--cv-r-group);
+  background: var(--cv-tint-2);
+  pointer-events: none;
+}
+
+.agent-attachment-drop-overlay__frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  fill: none;
+  stroke: var(--cv-fg-subtle);
+  stroke-dasharray: 6 5;
+  stroke-width: 1.5;
+}
+
+.agent-attachment-drop-overlay__pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cv-space-3);
+  padding: var(--cv-space-3) var(--cv-space-5);
+  border-radius: var(--cv-r-pill);
+  background: var(--cv-popover);
+  box-shadow: var(--cv-shadow-pop);
+  color: var(--cv-fg);
+  font-family: var(--cv-font-ui);
+  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
+  font-weight: 500;
+}
+
+.agent-attachment-drop-overlay__pill svg {
+  flex: none;
+  color: var(--cv-fg-subtle);
+}

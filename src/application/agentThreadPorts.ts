@@ -21,6 +21,7 @@ import type {
 import type { AgentThreadHistorySurface } from "./useAgentThreadHistory";
 import type { AgentSubagentLifecycle } from "@codevo/agent-events";
 import type { AgentImageMime } from "../domain/agentAttachment";
+import type { AgentReferenceEntry } from "../domain/agentReferenceEntry";
 import type { DeferredFollowUps } from "./agentDeferredFollowUps";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import type { AgentAttachmentImagesSurface } from "./useAgentAttachmentImages";
@@ -322,6 +323,7 @@ export type AgentTurnAttachmentIntent =
       readonly name: string;
       readonly path: string;
       readonly bytes: number;
+      readonly entry: AgentReferenceEntry;
     };
 
 export interface AgentTurnAttachmentRequest {

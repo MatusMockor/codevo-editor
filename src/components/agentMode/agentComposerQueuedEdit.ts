@@ -23,6 +23,7 @@ export function queuedEditAttachmentDraft(
   const base = {
     draftId: `${QUEUED_EDIT_DRAFT_PREFIX}${key}`,
     kind: attachment.kind,
+    entry: entry.entry,
     state: "ready" as const,
     name: attachment.name,
     bytes: attachment.bytes,

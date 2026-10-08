@@ -957,6 +957,7 @@ describe("AgentModeView", () => {
             height: 600,
             storedPath: `/data/threads/agt-1/${QUEUED_ATTACHMENT_ID}.png`,
           },
+          entry: "file",
         },
       ],
     };

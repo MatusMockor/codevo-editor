@@ -10,6 +10,7 @@ import {
   type AgentAttachmentKind,
   type AgentImageMime,
 } from "./agentAttachment";
+import { agentReferencePromptLine, type AgentReferenceEntryResolver } from "./agentReferenceEntry";
 import { MAX_AGENT_TASK_PROMPT_BYTES } from "./agentTask";
 
 export const MAX_AGENT_IMAGE_SOURCE_BYTES = 50 * 1_024 * 1_024;
@@ -21,12 +22,25 @@ export const AGENT_ATTACHMENT_FILE_BYTES_REFUSAL = "File is larger than 50 MiB."
 export const AGENT_ATTACHMENT_IMAGE_SOURCE_BYTES_REFUSAL = "Image is larger than 50 MiB.";
 export const AGENT_ATTACHMENT_IMAGE_DIMENSIONS_REFUSAL = "Image is larger than 16384 px.";
 export const AGENT_ATTACHMENT_PATH_REFUSAL = "Path is not attachable.";
+export const AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL =
+  "Folders can't be attached to a remote thread.";
 export const AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE =
   "Too large to attach as an image, inserted as a path";
 export const AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE =
   "Could not be read as an image, inserted as a path";
 
+export const AGENT_ATTACHMENT_FOLDER_SOURCE_ERROR = "Choose a file, not a folder.";
+
+export const MAX_AGENT_ATTACHMENT_INTAKE_FAILURE_MESSAGES = 3;
+
 export const FALLBACK_AGENT_ATTACHMENT_NAME = "attachment";
+
+export class AgentAttachmentFolderSourceError extends Error {
+  constructor() {
+    super(AGENT_ATTACHMENT_FOLDER_SOURCE_ERROR);
+    this.name = "AgentAttachmentFolderSourceError";
+  }
+}
 
 export type AgentIntakeImageMime = AgentImageMime | "image/heic" | "image/heif";
 
@@ -143,7 +157,10 @@ export function sanitizeAgentAttachmentName(raw: string): string {
   return truncated === "" ? FALLBACK_AGENT_ATTACHMENT_NAME : truncated;
 }
 
-export function agentAttachmentPromptLine(attachment: AgentAttachment): string {
+export function agentAttachmentPromptLine(
+  attachment: AgentAttachment,
+  entryOf: AgentReferenceEntryResolver,
+): string {
   switch (attachment.kind) {
     case "image":
       if (attachment.remote !== undefined)
@@ -154,7 +171,7 @@ export function agentAttachmentPromptLine(attachment: AgentAttachment): string {
         throw new TypeError("Remote files cannot be serialized as local file references.");
       return `[Attached file "${attachment.name}" is saved at: ${attachment.storedPath}]`;
     case "reference":
-      return `[Attached file "${attachment.name}" is at: ${attachment.path}]`;
+      return agentReferencePromptLine(attachment, entryOf(attachment));
     default:
       return unsupportedAttachment(attachment);
   }
@@ -162,16 +179,18 @@ export function agentAttachmentPromptLine(attachment: AgentAttachment): string {
 
 export function agentAttachmentPromptLines(
   attachments: ReadonlyArray<AgentAttachment>,
+  entryOf: AgentReferenceEntryResolver,
 ): ReadonlyArray<string> {
-  return attachments.map(agentAttachmentPromptLine);
+  return attachments.map((attachment) => agentAttachmentPromptLine(attachment, entryOf));
 }
 
 export function agentEffectivePrompt(
   text: string,
   attachments: ReadonlyArray<AgentAttachment>,
+  entryOf: AgentReferenceEntryResolver,
 ): string {
   if (attachments.length === 0) return text;
-  const lines = agentAttachmentPromptLines(attachments).join("\n");
+  const lines = agentAttachmentPromptLines(attachments, entryOf).join("\n");
   if (text === "") return lines;
   return `${text}\n\n${lines}`;
 }
@@ -179,19 +198,29 @@ export function agentEffectivePrompt(
 export function agentEffectivePromptByteLength(
   text: string,
   attachments: ReadonlyArray<AgentAttachment>,
+  entryOf: AgentReferenceEntryResolver,
 ): number {
-  return UTF8_ENCODER.encode(agentEffectivePrompt(text, attachments)).byteLength;
+  return UTF8_ENCODER.encode(agentEffectivePrompt(text, attachments, entryOf)).byteLength;
 }
 
 export function agentEffectivePromptWithinCap(
   text: string,
   attachments: ReadonlyArray<AgentAttachment>,
+  entryOf: AgentReferenceEntryResolver,
 ): boolean {
-  return agentEffectivePromptByteLength(text, attachments) <= MAX_AGENT_TASK_PROMPT_BYTES;
+  return agentEffectivePromptByteLength(text, attachments, entryOf) <= MAX_AGENT_TASK_PROMPT_BYTES;
 }
 
 export function agentAttachmentPromptLineIsPresent(prompt: string, line: string): boolean {
   return prompt.split("\n").includes(line);
+}
+
+export function agentAttachmentIntakeFailureSummary(
+  messages: ReadonlyArray<string>,
+): string | null {
+  const distinct = [...new Set(messages)].slice(0, MAX_AGENT_ATTACHMENT_INTAKE_FAILURE_MESSAGES);
+  if (distinct.length === 0) return null;
+  return distinct.join(" ");
 }
 
 export function isAttachableAgentReferencePath(path: string): boolean {

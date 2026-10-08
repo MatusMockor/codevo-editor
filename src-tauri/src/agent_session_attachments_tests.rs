@@ -204,6 +204,33 @@ fn attached_file_lines_in_the_prompt_become_file_attachments() {
 }
 
 #[test]
+fn attached_folder_lines_in_the_prompt_become_file_attachments() {
+    let text = [
+        "Summarise this folder",
+        "[Attached folder \"invoices\" is at: /Users/x/Documents/codevo s.r.o./invoices]",
+        "[Attached folder \"bad/name\" is at: /Users/dev/bad]",
+        "[Attached folder \"relative\" is at: Users/dev/relative]",
+    ]
+    .join("\n");
+    let line = claude_user_line(json!([{"type": "text", "text": text}]));
+
+    let draft = claude_draft(&line);
+
+    assert_eq!(
+        draft.attachments,
+        vec![ExternalSessionAttachment::File {
+            name: "invoices".to_string(),
+            path: Some("/Users/x/Documents/codevo s.r.o./invoices".to_string()),
+        }]
+    );
+
+    let codex = codex_draft(&codex_user_line(
+        json!([{"type": "input_text", "text": text}]),
+    ));
+    assert_eq!(codex.attachments, draft.attachments);
+}
+
+#[test]
 fn attachments_are_capped_at_eight_per_exchange() {
     let mut blocks: Vec<Value> = (0..12).map(|_| image_block("image/png")).collect();
     blocks.push(json!({"type": "text", "text": "Look"}));

@@ -11,6 +11,7 @@ import {
   keptQueuedEditAttachments,
   mergeQueuedEditClaim,
   queuedEditAttachments,
+  type AgentQueuedEditAttachment,
   type AgentQueuedEditSession,
 } from "./agentQueuedFollowUpEdit";
 import type { AgentFollowUpRequest, AgentTurnAttachmentIntent } from "./agentThreadPorts";
@@ -31,6 +32,21 @@ const REFERENCE: AgentAttachment = {
   name: "notes.md",
   path: "/work/notes.md",
   bytes: 12,
+};
+
+const FOLDER: AgentAttachment = {
+  kind: "reference",
+  name: "invoices",
+  path: "/Users/x/Documents/codevo s.r.o./invoices",
+  bytes: 0,
+};
+
+const FOLDER_LINE = '[Attached folder "invoices" is at: /Users/x/Documents/codevo s.r.o./invoices]';
+
+const KEPT_IMAGE: AgentQueuedEditAttachment = {
+  key: "attachment-0",
+  attachment: IMAGE,
+  entry: "file",
 };
 
 const OWNER = {
@@ -54,7 +70,7 @@ const ORIGINAL: AgentFollowUpRequest = {
       width: 800,
       height: 600,
     },
-    { kind: "reference", name: "notes.md", path: "/work/notes.md", bytes: 12 },
+    { kind: "reference", name: "notes.md", path: "/work/notes.md", bytes: 12, entry: "file" },
   ],
   attachmentOwner: OWNER,
 };
@@ -79,7 +95,9 @@ describe("agentQueuedFollowUpEdit", () => {
     const edit = session();
 
     expect(edit.attachments.map((entry) => entry.key)).toEqual(["attachment-0", "attachment-1"]);
-    expect(keptQueuedEditAttachments(edit, ["attachment-1", "unknown"])).toEqual([REFERENCE]);
+    expect(keptQueuedEditAttachments(edit, ["attachment-1", "unknown"])).toEqual([
+      { key: "attachment-1", attachment: REFERENCE, entry: "file" },
+    ]);
     expect(queuedEditAttachments(undefined)).toEqual([]);
   });
 
@@ -88,7 +106,7 @@ describe("agentQueuedFollowUpEdit", () => {
       kind: "accepted",
       prompt: "keep going",
     });
-    expect(admitQueuedEdit("   ", [IMAGE], [])).toEqual({ kind: "accepted", prompt: "" });
+    expect(admitQueuedEdit("   ", [KEPT_IMAGE], [])).toEqual({ kind: "accepted", prompt: "" });
     expect(admitQueuedEdit(" ", [], [])).toEqual({
       kind: "refused",
       reason: AGENT_QUEUED_EDIT_EMPTY_NOTICE,
@@ -105,21 +123,21 @@ describe("agentQueuedFollowUpEdit", () => {
     expect(
       admitQueuedEdit(
         "many",
-        [IMAGE],
+        [KEPT_IMAGE],
         Array.from({ length: 8 }, (_, index) => staged(index, 1)),
       ),
     ).toEqual({ kind: "refused", reason: AGENT_ATTACHMENT_COUNT_REFUSAL });
     expect(
       admitQueuedEdit(
         "heavy",
-        [IMAGE],
+        [KEPT_IMAGE],
         Array.from({ length: 2 }, (_, index) => staged(index, 10 * 1_024 * 1_024)),
       ),
     ).toEqual({ kind: "refused", reason: AGENT_ATTACHMENT_TURN_IMAGE_BYTES_REFUSAL });
   });
 
   it("rebuilds the claimed turn payload from kept and newly claimed attachments", () => {
-    const merged = mergeQueuedEditClaim("closer", [IMAGE], {
+    const merged = mergeQueuedEditClaim("closer", [KEPT_IMAGE], {
       prompt: "",
       attachments: [REFERENCE],
       references: [{ kind: "reference", name: "notes.md", path: "/work/notes.md" }],
@@ -137,7 +155,7 @@ describe("agentQueuedFollowUpEdit", () => {
 
   it("rewrites the queued request with kept intents and drops the owner without attachments", () => {
     expect(
-      editedFollowUpRequest(ORIGINAL, "closer", [IMAGE], {
+      editedFollowUpRequest(ORIGINAL, "closer", [KEPT_IMAGE], {
         prompt: "closer",
         keptAttachmentKeys: ["attachment-0"],
       }),
@@ -147,5 +165,97 @@ describe("agentQueuedFollowUpEdit", () => {
       keptAttachmentKeys: [],
     });
     expect(textOnly).toEqual({ threadId: "agt-1", prompt: "text", launch: ORIGINAL.launch });
+  });
+
+  it("restores a queued folder from its prompt line and keeps the folder wording on commit", () => {
+    const edit: AgentQueuedEditSession = {
+      threadId: "agt-1",
+      entryId: "deferred-1",
+      lease: 1,
+      prompt: "summarise",
+      attachments: queuedEditAttachments({
+        prompt: `summarise\n\n${FOLDER_LINE}\n[Attached file "notes.md" is at: /work/notes.md]`,
+        attachments: [FOLDER, REFERENCE],
+        references: [],
+        notice: null,
+      }),
+    };
+
+    expect(edit.attachments.map((entry) => entry.entry)).toEqual(["directory", "file"]);
+
+    const kept = keptQueuedEditAttachments(edit, ["attachment-0", "attachment-1"]);
+    const merged = mergeQueuedEditClaim("again", kept, {
+      prompt: "",
+      attachments: [],
+      references: [],
+      notice: null,
+    });
+
+    expect(merged.prompt).toBe(
+      `again\n\n${FOLDER_LINE}\n[Attached file "notes.md" is at: /work/notes.md]`,
+    );
+    expect(
+      editedFollowUpRequest(ORIGINAL, "again", kept, {
+        prompt: "again",
+        keptAttachmentKeys: ["attachment-0", "attachment-1"],
+      }).attachments,
+    ).toEqual([
+      {
+        kind: "reference",
+        name: "invoices",
+        path: FOLDER.kind === "reference" ? FOLDER.path : "",
+        bytes: 0,
+        entry: "directory",
+      },
+      { kind: "reference", name: "notes.md", path: "/work/notes.md", bytes: 12, entry: "file" },
+    ]);
+  });
+
+  it("keeps the folder wording of a folder added while editing a queued message", () => {
+    const merged = mergeQueuedEditClaim("closer", [KEPT_IMAGE], {
+      prompt: FOLDER_LINE,
+      attachments: [FOLDER],
+      references: [
+        { kind: "reference", name: "invoices", path: "/Users/x/Documents/codevo s.r.o./invoices" },
+      ],
+      notice: null,
+    });
+
+    expect(merged.prompt).toBe(
+      `closer\n\n[Attached image "shot.png" is saved at: ${IMAGE.kind === "image" ? IMAGE.storedPath : ""}]\n${FOLDER_LINE}`,
+    );
+  });
+
+  it("reads a queued reference without a folder line as a file", () => {
+    const attachments = queuedEditAttachments({
+      prompt: 'look\n\n[Attached file "invoices" is at: /Users/x/Documents/codevo s.r.o./invoices]',
+      attachments: [FOLDER],
+      references: [],
+      notice: null,
+    });
+
+    expect(attachments.map((entry) => entry.entry)).toEqual(["file"]);
+  });
+
+  it("keeps the file wording of a queued file whose folder line was typed into the prompt", () => {
+    const typedFolderLine = '[Attached folder "notes.md" is at: /work/notes.md]';
+    const fileLine = '[Attached file "notes.md" is at: /work/notes.md]';
+    const attachments = queuedEditAttachments({
+      prompt: `${typedFolderLine}\n\n${fileLine}`,
+      attachments: [REFERENCE],
+      references: [],
+      notice: null,
+    });
+
+    expect(attachments.map((entry) => entry.entry)).toEqual(["file"]);
+
+    const merged = mergeQueuedEditClaim(typedFolderLine, attachments, {
+      prompt: "",
+      attachments: [],
+      references: [],
+      notice: null,
+    });
+
+    expect(merged.prompt).toBe(`${typedFolderLine}\n\n${fileLine}`);
   });
 });

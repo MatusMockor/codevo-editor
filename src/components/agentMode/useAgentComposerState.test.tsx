@@ -57,6 +57,7 @@ function keptAttachmentDraft(): AgentComposerAttachmentDraft {
   return {
     draftId: "queued-edit:attachment-0",
     kind: "image",
+    entry: "file",
     state: "ready",
     name: "shot.png",
     bytes: 2_048,

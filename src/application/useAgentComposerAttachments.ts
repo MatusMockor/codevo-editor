@@ -13,6 +13,7 @@ import {
   type AgentAttachmentCandidate,
   type AgentPasteClaim,
 } from "../domain/agentAttachmentIntake";
+import type { AgentReferenceEntry } from "../domain/agentReferenceEntry";
 import {
   shrinkAgentImageToFit,
   type AgentImageOutputPolicy,
@@ -97,6 +98,7 @@ export type AgentAttachmentDraftState = "staging" | "ready" | "failed";
 export interface AgentComposerAttachmentDraft {
   readonly draftId: string;
   readonly kind: AgentAttachmentKind;
+  readonly entry: AgentReferenceEntry;
   readonly state: AgentAttachmentDraftState;
   readonly name: string;
   readonly bytes: number;
@@ -613,7 +615,8 @@ async function intakeAgentAttachmentSource(
         blankDraft(draftId, owner, "reference", candidate.name),
         candidate.bytes,
         source.path,
-        candidate.mime === "inode/directory" ? "Folder path" : plan.notice,
+        plan.notice,
+        described.entry,
       ),
       source,
     );
@@ -883,6 +886,7 @@ function refusedImageDraft(
             candidate.bytes,
             source.path,
             AGENT_ATTACHMENT_UNDECODABLE_IMAGE_NOTICE,
+            "file",
           )
         : failed(pending, AGENT_ATTACHMENT_UNREADABLE_REFUSAL);
     case "oversized":
@@ -892,6 +896,7 @@ function refusedImageDraft(
             candidate.bytes,
             source.path,
             AGENT_ATTACHMENT_OVERSIZED_IMAGE_NOTICE,
+            "file",
           )
         : failed(pending, AGENT_ATTACHMENT_IMAGE_DIMENSIONS_REFUSAL);
     case "too-large":
@@ -907,7 +912,13 @@ function unsupportedImageRefusal(reason: never): never {
 
 function turnAttachmentIntent(draft: AttachmentDraft): AgentTurnAttachmentIntent {
   if (draft.kind === "reference") {
-    return { kind: "reference", name: draft.name, path: draft.path ?? "", bytes: draft.bytes };
+    return {
+      kind: "reference",
+      name: draft.name,
+      path: draft.path ?? "",
+      bytes: draft.bytes,
+      entry: draft.entry,
+    };
   }
   return {
     kind: "staged",

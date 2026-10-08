@@ -71,9 +71,10 @@ fn rejects_nonimage_empty_oversized_and_directory_sources() {
         .contains("50 MB"));
     let directory = fixture.0.join("directory.png");
     fs::create_dir(&directory).unwrap();
-    assert!(read_image_source(directory.to_str().unwrap())
-        .unwrap_err()
-        .contains("regular"));
+    assert_eq!(
+        read_image_source(directory.to_str().unwrap()).unwrap_err(),
+        IMAGE_SOURCE_DIRECTORY_ERROR
+    );
     let unsupported = fixture.0.join("secret.txt");
     fs::write(&unsupported, b"secret").unwrap();
     assert!(read_image_source(unsupported.to_str().unwrap())
@@ -92,4 +93,38 @@ fn rejects_symlink_and_fifo_without_opening_them() {
     let name = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
     assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
     assert!(read_image_source(fifo.to_str().unwrap()).is_err());
+}
+#[test]
+fn a_folder_is_refused_with_the_dedicated_error_whatever_its_name() {
+    let fixture = Fixture::new();
+    for name in ["invoices", "codevo s.r.o.", "shots.png"] {
+        let directory = fixture.0.join(name);
+        fs::create_dir(&directory).unwrap();
+        assert_eq!(
+            read_image_source(directory.to_str().unwrap()).unwrap_err(),
+            IMAGE_SOURCE_DIRECTORY_ERROR
+        );
+    }
+}
+#[test]
+fn a_missing_or_non_image_file_keeps_its_previous_refusal() {
+    let fixture = Fixture::new();
+    let missing = fixture.0.join("missing");
+    assert!(read_image_source(missing.to_str().unwrap())
+        .unwrap_err()
+        .contains("PNG"));
+    let missing_image = fixture.0.join("missing.png");
+    assert_eq!(
+        read_image_source(missing_image.to_str().unwrap()).unwrap_err(),
+        "The image could not be read."
+    );
+}
+#[test]
+fn the_directory_error_matches_the_shared_contract() {
+    let contract: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../contracts/agent-image-source-errors.json"
+    ))
+    .unwrap();
+    assert_eq!(contract["schemaVersion"], 1);
+    assert_eq!(contract["directorySource"], IMAGE_SOURCE_DIRECTORY_ERROR);
 }

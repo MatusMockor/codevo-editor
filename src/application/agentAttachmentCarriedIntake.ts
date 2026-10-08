@@ -5,6 +5,7 @@ import {
   planAgentAttachmentIntake,
   type AgentAttachmentCandidate,
 } from "../domain/agentAttachmentIntake";
+import type { AgentReferenceEntry } from "../domain/agentReferenceEntry";
 import {
   AGENT_ATTACHMENT_CARRY_LOST_REFUSAL,
   agentAttachmentCarryIntakeSource,
@@ -157,7 +158,11 @@ async function stageCarriedDraft(
   }
   const { source, candidate } = described;
   if (plan.kind === "reference") {
-    settleDraft(context, pending, referenceDraft(pending, candidate.bytes, plan.path, plan.notice));
+    settleDraft(
+      context,
+      pending,
+      referenceDraft(pending, candidate.bytes, plan.path, plan.notice, plan.entry),
+    );
     return;
   }
   const placeholder = {
@@ -175,7 +180,12 @@ async function stageCarriedDraft(
 
 type CarriedStagingPlan =
   | { readonly kind: "refused"; readonly reason: string }
-  | { readonly kind: "reference"; readonly path: string; readonly notice: string | null }
+  | {
+      readonly kind: "reference";
+      readonly path: string;
+      readonly notice: string | null;
+      readonly entry: AgentReferenceEntry;
+    }
   | { readonly kind: "file" | "image" };
 
 function planCarriedStaging(
@@ -191,11 +201,7 @@ function planCarriedStaging(
   if (plan.kind === "refused") return plan;
   if (plan.kind !== "reference") return { kind: plan.kind };
   if (source.kind !== "path") return { kind: "refused", reason: AGENT_ATTACHMENT_PATH_REFUSAL };
-  return {
-    kind: "reference",
-    path: source.path,
-    notice: candidate.mime === "inode/directory" ? "Folder path" : plan.notice,
-  };
+  return { kind: "reference", path: source.path, notice: plan.notice, entry: described.entry };
 }
 
 function failCarriedDraft(

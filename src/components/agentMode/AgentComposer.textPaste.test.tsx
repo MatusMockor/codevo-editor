@@ -16,6 +16,7 @@ function draft(name = "pasted-text.txt"): AgentComposerAttachmentDraft {
   return {
     draftId: name,
     kind: "file",
+    entry: "file",
     state: "ready",
     name,
     bytes: 38000,

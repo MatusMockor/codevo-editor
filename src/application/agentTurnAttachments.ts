@@ -3,6 +3,10 @@ import {
   agentEffectivePrompt,
   agentEffectivePromptWithinCap,
 } from "../domain/agentAttachmentIntake";
+import {
+  agentDirectoryReferenceEntries,
+  type AgentReferenceEntryResolver,
+} from "../domain/agentReferenceEntry";
 import type { StartAgentTaskAttachment } from "../domain/agentTask";
 import type { AgentAttachmentGateway, ClaimedAgentAttachment } from "./agentAttachmentPorts";
 import {
@@ -96,18 +100,29 @@ export async function claimTurnAttachments(
   const byId = new Map(claimed.map((entry) => [entry.attachmentId, entry]));
   const attachments = intents.map((intent) => turnAttachment(intent, byId));
   return {
-    prompt: agentEffectivePrompt(text, attachments),
+    prompt: agentEffectivePrompt(text, attachments, intentReferenceEntries(intents)),
     attachments,
     references: intents.map(startAgentTaskAttachment),
     notice: null,
   };
 }
 
+export function intentReferenceEntries(
+  intents: ReadonlyArray<AgentTurnAttachmentIntent>,
+): AgentReferenceEntryResolver {
+  return agentDirectoryReferenceEntries(
+    intents.flatMap((intent) =>
+      intent.kind === "reference" && intent.entry === "directory" ? [intent] : [],
+    ),
+  );
+}
+
 export function turnAttachmentsWithinPromptCap(
   text: string,
   attachments: ReadonlyArray<AgentAttachment>,
+  entryOf: AgentReferenceEntryResolver,
 ): boolean {
-  return agentEffectivePromptWithinCap(text, attachments);
+  return agentEffectivePromptWithinCap(text, attachments, entryOf);
 }
 
 export interface TurnAttachmentDependencies {
@@ -151,7 +166,8 @@ export async function prepareTurnAttachments(
     deps.setNotice(failure(AGENT_ATTACHMENT_UNAVAILABLE_NOTICE));
     return null;
   }
-  if (!turnAttachmentsWithinPromptCap(text, claimed.value.attachments)) {
+  const entryOf = intentReferenceEntries(admitted.intents);
+  if (!turnAttachmentsWithinPromptCap(text, claimed.value.attachments, entryOf)) {
     deps.setNotice(warning(AGENT_ATTACHMENT_PROMPT_TOO_LONG_NOTICE));
     return null;
   }
