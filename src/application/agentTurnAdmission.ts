@@ -92,6 +92,10 @@ export const AGENT_THREAD_PROJECT_CLOSED_NOTICE =
 export const AGENT_THREAD_TURN_FULL_NOTICE =
   "This turn is full. Wait for it to finish, then send your message.";
 export const AGENT_THREAD_STARTING_NOTICE = "The agent is still starting. Try again in a moment.";
+export const AGENT_PROVIDER_CHANGED_BEFORE_SEND_NOTICE =
+  "The message was not sent because the agent provider changed or was rechecked while it was being prepared. Send it again.";
+export const AGENT_FOLLOW_UP_NOT_PREPARED_NOTICE =
+  "The message was not sent because this conversation changed or could not be saved while it was being prepared. Send it again.";
 export const AGENT_THREAD_ARCHIVED_NOTICE =
   "This thread is archived. Unarchive it from the thread menu to continue.";
 const UTF8_ENCODER = new TextEncoder();
@@ -428,6 +432,22 @@ export function providerAdmissionIsCurrent(
   const read = (provider: AgentCliKind): AgentProviderAdmissionAuthority =>
     readProviderAdmissionAuthority(deps, provider);
   return isCurrentAgentProviderAdmissionAuthority(read, captured);
+}
+
+export function providerAdmissionHolds(
+  deps: AdmissionDependencies,
+  captured: ReadyAgentProviderAdmissionAuthority,
+  surfaceIsCurrent: () => boolean,
+): boolean {
+  if (providerAdmissionIsCurrent(deps, captured)) return true;
+  if (surfaceIsCurrent()) deps.setNotice(warning(providerDriftNotice(deps, captured.provider)));
+  return false;
+}
+
+function providerDriftNotice(deps: AdmissionDependencies, provider: AgentCliKind): string {
+  const decision = decideAgentProviderAdmission(readProviderAdmissionAuthority(deps, provider));
+  if (decision.kind === "rejected") return decision.message;
+  return AGENT_PROVIDER_CHANGED_BEFORE_SEND_NOTICE;
 }
 
 function readProviderAdmissionAuthority(

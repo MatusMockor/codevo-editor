@@ -192,6 +192,6 @@ function isBidiControl(code: number): boolean {
   );
 }
 
-function orphanedWorktreeNotice(prefix: string): string {
+export function orphanedWorktreeNotice(prefix: string): string {
   return `${prefix} Cleanup could not be confirmed, so its worktree may remain orphaned.`;
 }

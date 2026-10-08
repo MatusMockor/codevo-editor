@@ -25,6 +25,7 @@ import {
   compensateCreatedWorktree,
   isAgentDispatchTrustRejection,
   noteTrustRejection,
+  orphanedWorktreeNotice,
   type CreatedAgentWorktree,
 } from "./agentThreadWorktreeProvisioning";
 import { providerAdmissionIsCurrent } from "./agentTurnAdmission";
@@ -179,7 +180,8 @@ async function runOwnedTurnStart(
       registeredTurnAlive(context, start);
     return stopHandedToBackend ? stopStartedTurn(acknowledged) : abandon();
   };
-  if (!turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
+  if (!turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
+  if (!providerAdmissionIsCurrent(deps, start.providerAuthority)) return false;
   const cliVersion = deps.currentCliVersion?.(start.agentCliKind) ?? null;
   const turn = pendingTurn(
     turnId,
@@ -229,7 +231,7 @@ async function runOwnedTurnStart(
   }
   if (!started.ok && start.createdWorktree === null && sessionRestartRefused(started.error)) {
     settleRegisteredTurn(context, start, { kind: "stopped" });
-    if (turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) {
+    if (turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start)) {
       start.onSessionRestartRefused?.();
     }
     return false;
@@ -243,7 +245,7 @@ async function runOwnedTurnStart(
     const stopped = await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
     retainUncertain();
     settleRegisteredTurn(context, start, { kind: "failed", message: UNEXPECTED_TASK_ID_MESSAGE });
-    if (turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) {
+    if (turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start)) {
       const currentDeps = dependenciesRef.current;
       if (!stopped.ok) currentDeps.reportError(AGENT_TASKS_SOURCE, stopped.error);
       currentDeps.setNotice(
@@ -335,26 +337,24 @@ async function reportStartFailure(
     message: definite ? errorMessageOf(error) : UNCERTAIN_START_MESSAGE,
   });
   if (!definite) retainUncertain();
-  if (definite && start.createdWorktree !== null) {
-    await compensateCreatedWorktree(dependenciesRef, mountedRef, authority, start.createdWorktree);
-  }
-  if (!turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return;
+  const worktreeOrphaned =
+    definite &&
+    start.createdWorktree !== null &&
+    !(await compensateCreatedWorktree(
+      dependenciesRef,
+      mountedRef,
+      authority,
+      start.createdWorktree,
+    ));
+  if (!turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return;
   const currentDeps = dependenciesRef.current;
   if (trustRejected) {
+    if (!providerAdmissionIsCurrent(currentDeps, start.providerAuthority)) return;
     noteTrustRejection(currentDeps, authority, error);
     return;
   }
   currentDeps.reportError(AGENT_TASKS_SOURCE, error);
-  currentDeps.setNotice(failure(startFailureNotice(start, error, definite)));
-}
-
-function turnStartAuthorityIsCurrent(
-  dependenciesRef: { readonly current: AgentTurnDispatchDependencies },
-  mountedRef: { readonly current: boolean },
-  start: AgentTurnStart,
-): boolean {
-  if (!turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
-  return providerAdmissionIsCurrent(dependenciesRef.current, start.providerAuthority);
+  currentDeps.setNotice(failure(startFailureNotice(start, error, definite, worktreeOrphaned)));
 }
 
 function turnLaunchAuthorityIsCurrent(
@@ -417,10 +417,16 @@ function turnRecord(
   };
 }
 
-function startFailureNotice(start: AgentTurnStart, error: unknown, definite: boolean): string {
+function startFailureNotice(
+  start: AgentTurnStart,
+  error: unknown,
+  definite: boolean,
+  worktreeOrphaned: boolean,
+): string {
   if (definite) {
     const message = errorMessageOf(error);
-    return message === "" ? "The agent could not be started." : message;
+    const reason = message === "" ? "The agent could not be started." : message;
+    return worktreeOrphaned ? orphanedWorktreeNotice(reason) : reason;
   }
   if (start.createdWorktree === null) {
     return "The agent start result was uncertain, so a task may still be running.";

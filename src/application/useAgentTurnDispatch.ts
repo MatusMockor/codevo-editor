@@ -50,10 +50,12 @@ import { compensateCreatedWorktree, createThreadWorktree } from "./agentThreadWo
 import { admitPreviousWorktreeReuse, claimPreviousWorktree } from "./agentPreviousWorktreeReuse";
 import type { AgentWorktreeStartLease, AgentWorktreeUseRegistry } from "./agentWorktreeUseRegistry";
 import {
+  AGENT_FOLLOW_UP_NOT_PREPARED_NOTICE,
   admitFollowUp,
   admitStart,
   ensureLease,
   mintUnusedId,
+  providerAdmissionHolds,
   providerAdmissionIsCurrent,
   reportPreflight,
   usedTurnIds,
@@ -473,6 +475,10 @@ export function useAgentTurnDispatch(
       if (admitted === null) return null;
       const { authority, project, prompt, agentCliKind, providerAuthority, launch } = admitted;
       const repositoryRoot = request.repositoryRoot;
+      const providerHolds = (): boolean =>
+        providerAdmissionHolds(dependenciesRef.current, providerAuthority, () =>
+          isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot),
+        );
       const reuse = request.reuseWorktree ?? null;
       const reuseClaim =
         reuse === null ? null : { authority, repositoryRoot, isolation: request.isolation, reuse };
@@ -511,10 +517,10 @@ export function useAgentTurnDispatch(
           project,
           authority,
           repositoryRoot,
-          () => providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority),
+          providerHolds,
         );
         if (!leased) return null;
-        if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) return null;
+        if (!providerHolds()) return null;
         const admission = await deps.store.reserveThreadSlot?.(threadId, {
           rootKey: authority.rootKey,
           ownerId: authority.workspaceId,
@@ -535,7 +541,7 @@ export function useAgentTurnDispatch(
         releaseSlot = admission;
         if (
           !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
-          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+          !providerHolds()
         )
           return null;
         if (request.isolation === "in-place") {
@@ -544,7 +550,8 @@ export function useAgentTurnDispatch(
             authority,
             request.unsafeInPlaceConfirmationKey,
           );
-          if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) return null;
+          if (preflight.kind === "owner-lost" || preflight.kind === "superseded") return null;
+          if (!providerHolds()) return null;
           if (!reportPreflight(deps, preflight)) return null;
         }
         const createdWorktree =
@@ -569,7 +576,7 @@ export function useAgentTurnDispatch(
         }
         if (
           !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
-          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+          !providerHolds()
         ) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
@@ -582,7 +589,7 @@ export function useAgentTurnDispatch(
           return null;
         }
         const worktreePath = createdWorktree?.receipt.worktreePath ?? reuse?.worktreePath ?? null;
-        if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) {
+        if (!providerHolds()) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
               dependenciesRef,
@@ -600,7 +607,7 @@ export function useAgentTurnDispatch(
             createdWorktree.receipt.worktreePath,
           );
         }
-        if (!providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)) {
+        if (!providerHolds()) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
               dependenciesRef,
@@ -625,7 +632,7 @@ export function useAgentTurnDispatch(
         if (
           prepared === null ||
           !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
-          !providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority)
+          !providerHolds()
         ) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
@@ -779,7 +786,10 @@ export function useAgentTurnDispatch(
         });
       }
       const reboundThread = deps.store.currentState().threads.get(thread.threadId);
-      if (reboundThread?.owner.ownerId !== thread.owner.ownerId) return false;
+      if (reboundThread?.owner.ownerId !== thread.owner.ownerId) {
+        deps.setNotice(warning(AGENT_FOLLOW_UP_NOT_PREPARED_NOTICE));
+        return false;
+      }
       const turnId = mintUnusedId(
         deps,
         new Set([...usedTurnIds(deps.store.state), ...mintedIdsRef.current]),
@@ -797,16 +807,21 @@ export function useAgentTurnDispatch(
       mintedIdsRef.current.add(turnId);
       inFlightThreadsRef.current.add(reboundThread.threadId);
       beginPendingTurn(reboundThread.provider.kind);
+      const surfaceIsCurrent = (): boolean =>
+        isCurrent() && isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority);
       const stillCurrent = (): boolean =>
-        isCurrent() &&
-        isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority) &&
-        providerAdmissionIsCurrent(dependenciesRef.current, providerAuthority);
+        surfaceIsCurrent() &&
+        providerAdmissionHolds(dependenciesRef.current, providerAuthority, surfaceIsCurrent);
       try {
         const [flushed, verdict] = await Promise.all([
           deps.store.flushThread?.(reboundThread.threadId),
           inspectFollowUpRestart(deps, reboundThread, { ...request, launch }),
         ]);
-        if (flushed === false || !stillCurrent()) return false;
+        if (!stillCurrent()) return false;
+        if (flushed === false) {
+          dependenciesRef.current.setNotice(warning(AGENT_FOLLOW_UP_NOT_PREPARED_NOTICE));
+          return false;
+        }
         if (verdict === "confirm") {
           refuseFollowUpBeforeStart(
             dependenciesRef.current,

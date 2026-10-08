@@ -67,6 +67,8 @@ import {
   type AgentProviderAdmissionDisposition,
 } from "./agentProviderAdmissionAuthority";
 import {
+  AGENT_FOLLOW_UP_NOT_PREPARED_NOTICE,
+  AGENT_PROVIDER_CHANGED_BEFORE_SEND_NOTICE,
   AGENT_THREAD_STARTING_NOTICE,
   AGENT_THREAD_STEER_LIMIT_NOTICE,
   DANGEROUS_LAUNCH_UNCONFIRMED_NOTICE,
@@ -122,6 +124,31 @@ const ROOT_B = "/workspace/other";
 const OWNER_A = "workspace-a";
 const OWNER_B = "workspace-b";
 const SESSION_ID = "sess-0001-abcd";
+const PROVIDER_CHANGED_NOTICE: AgentTasksNotice = {
+  kind: "warning",
+  message: AGENT_PROVIDER_CHANGED_BEFORE_SEND_NOTICE,
+  action: null,
+};
+type DispatchHarness = ReturnType<typeof renderDispatch>;
+const STALE_SURFACES = [
+  [
+    "the hook unmounted",
+    (harness: DispatchHarness): (() => void) => {
+      harness.unmount();
+      return () => undefined;
+    },
+  ],
+  [
+    "the workspace went A to B to A",
+    (harness: DispatchHarness): (() => void) => {
+      harness.environment.workspaceId = OWNER_B;
+      harness.environment.workspaceGeneration += 1;
+      harness.environment.workspaceId = OWNER_A;
+      harness.environment.workspaceGeneration += 1;
+      return () => harness.unmount();
+    },
+  ],
+] as const;
 const RESTART_REFUSAL =
   "sessionRestartRequiresConfirmation: Restarting ends this Claude session. Background tasks it started may stop.";
 
@@ -447,6 +474,7 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(result).toBeNull();
     expect(harness.preflightInPlace).not.toHaveBeenCalled();
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual(PROVIDER_CHANGED_NOTICE);
     harness.unmount();
   });
 
@@ -466,6 +494,175 @@ describe("useAgentTurnDispatch startThread", () => {
 
     expect(result).toBeNull();
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual(PROVIDER_CHANGED_NOTICE);
+    harness.unmount();
+  });
+
+  it("stays silent about a provider revision when the project was replaced during in-place preflight", async () => {
+    const preflight = createDeferred<InPlacePreflight>();
+    const harness = renderDispatch();
+    harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+      await waitForReact(() => expect(harness.preflightInPlace).toHaveBeenCalledTimes(1));
+      replaceProviderAtoBtoA(harness.environment);
+      harness.environment.generation += 1;
+      preflight.resolve({ kind: "ok" });
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it.each([["superseded"], ["owner-lost"]] as const)(
+    "stays silent about a provider revision when the in-place preflight was %s",
+    async (kind) => {
+      const preflight = createDeferred<InPlacePreflight>();
+      const harness = renderDispatch();
+      harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
+
+      let result: AgentThreadStartResult | null = null;
+      await act(async () => {
+        const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+        await waitForReact(() => expect(harness.preflightInPlace).toHaveBeenCalledTimes(1));
+        replaceProviderAtoBtoA(harness.environment);
+        preflight.resolve({ kind });
+        result = await starting;
+      });
+
+      expect(result).toBeNull();
+      expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+      expect(harness.notice()).toBeNull();
+      harness.unmount();
+    },
+  );
+
+  it("names the provider's own reason when it stopped being ready during in-place preflight", async () => {
+    const preflight = createDeferred<InPlacePreflight>();
+    const harness = renderDispatch();
+    harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+      await waitForReact(() => expect(harness.preflightInPlace).toHaveBeenCalledTimes(1));
+      harness.environment.providerDisposition.claudeCode = { kind: "disabled" };
+      harness.environment.providerRevision.claudeCode += 1;
+      preflight.resolve({ kind: "ok" });
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual({
+      kind: "warning",
+      message: AGENT_PROVIDER_DISABLED_NOTICE,
+      action: null,
+    });
+    harness.unmount();
+  });
+
+  it.each(STALE_SURFACES)(
+    "posts no provider notice for a new thread once %s",
+    async (_label, loseSurface) => {
+      const preflight = createDeferred<InPlacePreflight>();
+      const harness = renderDispatch();
+      harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
+
+      let result: AgentThreadStartResult | null = null;
+      let cleanUp = (): void => undefined;
+      await act(async () => {
+        const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
+        await waitForReact(() => expect(harness.preflightInPlace).toHaveBeenCalledTimes(1));
+        replaceProviderAtoBtoA(harness.environment);
+        cleanUp = loseSurface(harness);
+        preflight.resolve({ kind: "ok" });
+        result = await starting;
+      });
+
+      expect(result).toBeNull();
+      expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+      expect(harness.notice()).toBeNull();
+      cleanUp();
+    },
+  );
+
+  it.each([
+    ["the provider is unchanged", (): void => undefined],
+    [
+      "the provider republished its revision",
+      (environment: Environment): void => {
+        environment.providerRevision.claudeCode += 1;
+      },
+    ],
+  ] as const)(
+    "keeps the orphaned worktree warning with the rejection reason when %s",
+    async (_label, driftProvider) => {
+      const started = createDeferred<{ taskId: string }>();
+      const harness = renderDispatch();
+      harness.agent.startAgentTask.mockImplementationOnce(
+        async (request: StartAgentTaskRequest) => {
+          harness.startedRequests.push(request);
+          return started.promise;
+        },
+      );
+      harness.worktree.removeWorktree.mockRejectedValueOnce(new Error("worktree is busy"));
+
+      let result: AgentThreadStartResult | null = null;
+      await act(async () => {
+        const starting = harness.hook().startThread(startRequest());
+        await harness.waitForStartedRequests(1);
+        driftProvider(harness.environment);
+        started.reject(
+          new AgentTaskStartRejectedError(
+            "An agent task is already running in this working directory.",
+          ),
+        );
+        result = await starting;
+      });
+
+      expect(result).toBeNull();
+      expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
+      expect(harness.notice()).toEqual({
+        kind: "error",
+        message:
+          "An agent task is already running in this working directory. Cleanup could not be confirmed, so its worktree may remain orphaned.",
+        action: null,
+      });
+      harness.unmount();
+    },
+  );
+
+  it("reports a rejected start even when the provider republished its revision during it", async () => {
+    const started = createDeferred<{ taskId: string }>();
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness.hook().startThread(startRequest());
+      await harness.waitForStartedRequests(1);
+      harness.environment.providerRevision.claudeCode += 1;
+      started.reject(
+        new AgentTaskStartRejectedError("Agent provider settings changed. Retry the operation."),
+      );
+      result = await starting;
+    });
+
+    expect(result).toBeNull();
+    expect(harness.notice()).toEqual({
+      kind: "error",
+      message: "Agent provider settings changed. Retry the operation.",
+      action: null,
+    });
     harness.unmount();
   });
 
@@ -498,6 +695,7 @@ describe("useAgentTurnDispatch startThread", () => {
       false,
     );
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual(PROVIDER_CHANGED_NOTICE);
     harness.unmount();
   });
 
@@ -512,6 +710,7 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(result).toBeNull();
     expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual(PROVIDER_CHANGED_NOTICE);
     harness.unmount();
   });
 
@@ -1697,6 +1896,181 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       ),
     ).toBe(false);
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.notice()).toEqual({
+      kind: "warning",
+      message: AGENT_FOLLOW_UP_NOT_PREPARED_NOTICE,
+      action: null,
+    });
+    harness.unmount();
+  });
+
+  it("tells the user a follow-up was not sent when its provider republished while it was prepared", async () => {
+    const verdict = createDeferred<AgentSessionRestartVerdict>();
+    const inspectSessionRestart = vi.fn(() => verdict.promise);
+    const harness = renderDispatch({ inspectSessionRestart });
+    const threadId = await harness.settleThreadWithSession();
+
+    let sent = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await waitForReact(() => expect(inspectSessionRestart).toHaveBeenCalledTimes(1));
+      harness.environment.providerRevision.claudeCode += 1;
+      verdict.resolve("proceed");
+      sent = await sending;
+    });
+
+    expect(sent).toBe(false);
+    expect(harness.notice()).toEqual(PROVIDER_CHANGED_NOTICE);
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.thread(threadId).turns).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it("stays silent about a provider revision when the follow-up's project was replaced", async () => {
+    const verdict = createDeferred<AgentSessionRestartVerdict>();
+    const inspectSessionRestart = vi.fn(() => verdict.promise);
+    const harness = renderDispatch({ inspectSessionRestart });
+    const threadId = await harness.settleThreadWithSession();
+
+    let sent = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await waitForReact(() => expect(inspectSessionRestart).toHaveBeenCalledTimes(1));
+      harness.environment.providerRevision.claudeCode += 1;
+      harness.environment.generation += 1;
+      verdict.resolve("proceed");
+      sent = await sending;
+    });
+
+    expect(sent).toBe(false);
+    expect(harness.notice()).toBeNull();
+    expect(harness.thread(threadId).turns).toHaveLength(1);
+    harness.unmount();
+  });
+
+  it.each([
+    ["disabled", { kind: "disabled" }, AGENT_PROVIDER_DISABLED_NOTICE],
+    [
+      "no longer configured",
+      { kind: "policyUnavailable", reason: "notConfigured" },
+      AGENT_PROVIDER_NOT_CONFIGURED_NOTICE,
+    ],
+  ] as const)(
+    "names the provider's own reason when it became %s while a follow-up was prepared",
+    async (_label, disposition, message) => {
+      const verdict = createDeferred<AgentSessionRestartVerdict>();
+      const inspectSessionRestart = vi.fn(() => verdict.promise);
+      const harness = renderDispatch({ inspectSessionRestart });
+      const threadId = await harness.settleThreadWithSession();
+
+      let sent = true;
+      await act(async () => {
+        const sending = harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: concreteLaunch("claudeCode"),
+        });
+        await waitForReact(() => expect(inspectSessionRestart).toHaveBeenCalledTimes(1));
+        harness.environment.providerDisposition.claudeCode = disposition;
+        harness.environment.providerRevision.claudeCode += 1;
+        verdict.resolve("proceed");
+        sent = await sending;
+      });
+
+      expect(sent).toBe(false);
+      expect(harness.notice()).toEqual({ kind: "warning", message, action: null });
+      expect(harness.thread(threadId).turns).toHaveLength(1);
+      harness.unmount();
+    },
+  );
+
+  it.each(STALE_SURFACES)(
+    "posts no provider notice for a follow-up once %s",
+    async (_label, loseSurface) => {
+      const verdict = createDeferred<AgentSessionRestartVerdict>();
+      const inspectSessionRestart = vi.fn(() => verdict.promise);
+      const harness = renderDispatch({ inspectSessionRestart });
+      const threadId = await harness.settleThreadWithSession();
+
+      let sent = true;
+      let cleanUp = (): void => undefined;
+      await act(async () => {
+        const sending = harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: concreteLaunch("claudeCode"),
+        });
+        await waitForReact(() => expect(inspectSessionRestart).toHaveBeenCalledTimes(1));
+        harness.environment.providerRevision.claudeCode += 1;
+        cleanUp = loseSurface(harness);
+        verdict.resolve("proceed");
+        sent = await sending;
+      });
+
+      expect(sent).toBe(false);
+      expect(harness.notice()).toBeNull();
+      expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+      cleanUp();
+    },
+  );
+
+  it("tells the user a follow-up was not sent when its thread vanished as it was sent", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+
+    let sent = true;
+    await act(async () => {
+      harness.dropThread(threadId);
+      sent = await harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+    });
+
+    expect(sent).toBe(false);
+    expect(harness.notice()).toEqual({
+      kind: "warning",
+      message: AGENT_FOLLOW_UP_NOT_PREPARED_NOTICE,
+      action: null,
+    });
+    expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("still offers Restart and send when the provider republished during a refused start", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const started = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
+      harness.startedRequests.push(request);
+      return started.promise;
+    });
+
+    let sent = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      harness.environment.providerRevision.claudeCode += 1;
+      started.reject(new AgentTaskStartRejectedError(RESTART_REFUSAL));
+      sent = await sending;
+    });
+
+    expect(sent).toBe(false);
+    expect(harness.hook().followUpNeedsSessionRestart(threadId)).toBe(true);
+    expect(harness.notice()?.action).toMatchObject({ kind: "restartFollowUp", threadId });
     harness.unmount();
   });
 
