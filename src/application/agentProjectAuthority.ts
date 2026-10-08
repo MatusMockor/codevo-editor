@@ -104,22 +104,88 @@ export function sameOptionalProjectAuthority(
   return left !== undefined && sameProjectAuthority(left, right);
 }
 
+export type AgentLaunchAuthorityLoss =
+  | "surfaceClosed"
+  | "projectClosed"
+  | "projectReopened"
+  | "projectOwnerReplaced"
+  | "repositoryRemoved"
+  | "workspaceUnregistered"
+  | "workspaceReplaced";
+
+function projectOwnerLoss(
+  dependenciesRef: AgentProjectsRef,
+  mountedRef: MountedRef,
+  authority: AgentProjectAuthority,
+): AgentLaunchAuthorityLoss | null {
+  if (!mountedRef.current) return "surfaceClosed";
+  const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
+  if (project === undefined) return "projectClosed";
+  if (project.generation !== authority.generation) return "projectReopened";
+  if (
+    project.ownerId !== authority.ownerId &&
+    project.runtimeOwnerIds?.includes(authority.ownerId) !== true
+  )
+    return "projectOwnerReplaced";
+  return null;
+}
+
+function repositoryLoss(
+  dependenciesRef: AgentProjectsRef,
+  authority: AgentProjectAuthority,
+  repositoryRoot: string,
+): AgentLaunchAuthorityLoss | null {
+  const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
+  if (project !== undefined && agentProjectOwnsLaunchRoot(project, repositoryRoot)) return null;
+  return "repositoryRemoved";
+}
+
+function workspaceIdentityLoss(
+  dependenciesRef: AgentLaunchProjectsRef,
+  authority: AgentTaskLaunchAuthority,
+): AgentLaunchAuthorityLoss | null {
+  const identity = dependenciesRef.current.launchIdentityForProject(authority.rootKey);
+  if (identity === null) return "workspaceUnregistered";
+  if (
+    identity.workspaceId !== authority.workspaceId ||
+    identity.generation !== authority.workspaceGeneration
+  )
+    return "workspaceReplaced";
+  return null;
+}
+
 export function isCurrentProjectOwner(
   dependenciesRef: AgentProjectsRef,
   mountedRef: MountedRef,
   authority: AgentProjectAuthority,
   repositoryRoot: string,
 ): boolean {
-  if (!mountedRef.current) return false;
-  const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
-  if (project === undefined) return false;
-  if (project.generation !== authority.generation) return false;
-  if (
-    project.ownerId !== authority.ownerId &&
-    project.runtimeOwnerIds?.includes(authority.ownerId) !== true
-  )
-    return false;
-  return agentProjectOwnsLaunchRoot(project, repositoryRoot);
+  if (projectOwnerLoss(dependenciesRef, mountedRef, authority) !== null) return false;
+  return repositoryLoss(dependenciesRef, authority, repositoryRoot) === null;
+}
+
+export function taskLaunchAuthorityLoss(
+  dependenciesRef: AgentLaunchProjectsRef,
+  mountedRef: MountedRef,
+  authority: AgentTaskLaunchAuthority,
+  repositoryRoot: string,
+): AgentLaunchAuthorityLoss | null {
+  return (
+    projectOwnerLoss(dependenciesRef, mountedRef, authority) ??
+    repositoryLoss(dependenciesRef, authority, repositoryRoot) ??
+    workspaceIdentityLoss(dependenciesRef, authority)
+  );
+}
+
+export function threadLaunchAuthorityLoss(
+  dependenciesRef: AgentLaunchProjectsRef,
+  mountedRef: MountedRef,
+  authority: AgentTaskLaunchAuthority,
+): AgentLaunchAuthorityLoss | null {
+  return (
+    projectOwnerLoss(dependenciesRef, mountedRef, authority) ??
+    workspaceIdentityLoss(dependenciesRef, authority)
+  );
 }
 
 export function isCurrentTaskLaunchAuthority(
@@ -128,13 +194,7 @@ export function isCurrentTaskLaunchAuthority(
   authority: AgentTaskLaunchAuthority,
   repositoryRoot: string,
 ): boolean {
-  if (!isCurrentProjectOwner(dependenciesRef, mountedRef, authority, repositoryRoot)) return false;
-  const identity = dependenciesRef.current.launchIdentityForProject(authority.rootKey);
-  if (identity === null) return false;
-  return (
-    identity.workspaceId === authority.workspaceId &&
-    identity.generation === authority.workspaceGeneration
-  );
+  return taskLaunchAuthorityLoss(dependenciesRef, mountedRef, authority, repositoryRoot) === null;
 }
 
 export function sameLaunchAuthority(
@@ -155,21 +215,7 @@ export function isCurrentThreadLaunchAuthority(
   mountedRef: MountedRef,
   authority: AgentTaskLaunchAuthority,
 ): boolean {
-  if (!mountedRef.current) return false;
-  const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
-  if (project === undefined || project.generation !== authority.generation) return false;
-  if (
-    project.ownerId !== authority.ownerId &&
-    project.runtimeOwnerIds?.includes(authority.ownerId) !== true
-  ) {
-    return false;
-  }
-  const identity = dependenciesRef.current.launchIdentityForProject(authority.rootKey);
-  return (
-    identity !== null &&
-    identity.workspaceId === authority.workspaceId &&
-    identity.generation === authority.workspaceGeneration
-  );
+  return threadLaunchAuthorityLoss(dependenciesRef, mountedRef, authority) === null;
 }
 
 export async function tryOrReport<TValue>(

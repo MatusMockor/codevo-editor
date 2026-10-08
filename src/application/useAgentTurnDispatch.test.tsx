@@ -90,7 +90,7 @@ import {
   AGENT_SESSION_LOST_NOTICE,
 } from "./agentTurnDispatchPolicy";
 import { AGENT_DISPATCH_IN_PROGRESS_NOTICE } from "./agentDispatchKeys";
-import { AGENT_TURN_START_ABANDONED_MESSAGE } from "./agentTurnStartRunner";
+import { agentTurnStartAbandonedMessage } from "./agentTurnStartRunner";
 import { DEFERRED_NEXT_TURN_NOTICE } from "./agentDeferredFollowUps";
 import { DEFERRED_SEND_FAILED_NOTICE } from "./agentDeferredFollowUpSend";
 import { DEFERRED_SESSION_RESTART_NOTICE } from "./agentSessionRestartConsent";
@@ -2567,7 +2567,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     expect(result).toBe(false);
     expect(harness.turn(threadId, 1).status).toEqual({
       kind: "failed",
-      message: AGENT_TURN_START_ABANDONED_MESSAGE,
+      message: agentTurnStartAbandonedMessage("projectReopened"),
     });
     expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
       taskId: harness.startedRequests[1]?.taskId,
@@ -2663,7 +2663,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     expect(result).toBe(false);
     expect(harness.turn(threadId, 1).status).toEqual({
       kind: "failed",
-      message: AGENT_TURN_START_ABANDONED_MESSAGE,
+      message: agentTurnStartAbandonedMessage("projectReopened"),
     });
     expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
     harness.unmount();
@@ -2702,7 +2702,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
     expect(harness.turn(threadId, 1).status).toEqual({
       kind: "failed",
-      message: AGENT_TURN_START_ABANDONED_MESSAGE,
+      message: agentTurnStartAbandonedMessage("projectReopened"),
     });
     expect(harness.onTurnTerminal).toHaveBeenCalledTimes(1);
     harness.unmount();

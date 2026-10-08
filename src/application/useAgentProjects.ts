@@ -108,6 +108,7 @@ interface AgentProjectEntry {
   readonly rootKey: string;
   readonly rootPath: string;
   readonly ownerId: string;
+  readonly supersededOwnerId: string | null;
   readonly workspaceId: string | null;
   readonly observedWorkspaceId: string | null;
   readonly workspaceGeneration: number;
@@ -203,7 +204,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         entry.releasing ||
         !entry.admitted ||
         entry.trust !== "trusted" ||
-        entry.ownerId !== authority.ownerId ||
+        !entryOwnerIds(entry).includes(authority.ownerId) ||
         entry.generation !== authority.generation
       ) {
         return false;
@@ -638,9 +639,12 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
             entry.ownerId !== currentWorkspaceId &&
             !deps.hasLiveTasksForOwner(entry.ownerId);
           if (replaceOwnerId && currentWorkspaceId !== null) {
-            deps.releaseProjectTasks(entry.ownerId);
             ownerIdsRef.current.set(candidate.rootKey, currentWorkspaceId);
-            entry = { ...entry, ownerId: currentWorkspaceId };
+            entry = {
+              ...entry,
+              ownerId: currentWorkspaceId,
+              supersededOwnerId: entry.ownerId,
+            };
             scheduled.push({ rootKey: candidate.rootKey, generation: entry.generation });
             changed = true;
           }
@@ -686,6 +690,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
         rootKey: candidate.rootKey,
         rootPath: candidate.rootPath,
         ownerId,
+        supersededOwnerId: null,
         workspaceId: preferredOwnerId,
         observedWorkspaceId: preferredOwnerId,
         workspaceGeneration: 1,
@@ -1180,6 +1185,7 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
 
 function entryOwnerIds(entry: AgentProjectEntry): ReadonlyArray<string> {
   const ownerIds = new Set(entry.retiredWorkspaceIds);
+  if (entry.supersededOwnerId !== null) ownerIds.add(entry.supersededOwnerId);
   ownerIds.add(entry.ownerId);
   if (entry.workspaceId !== null) ownerIds.add(entry.workspaceId);
   return [...ownerIds];

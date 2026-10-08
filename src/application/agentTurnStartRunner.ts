@@ -16,9 +16,10 @@ import {
   attempt,
   errorMessageOf,
   failure,
-  isCurrentTaskLaunchAuthority,
-  isCurrentThreadLaunchAuthority,
+  taskLaunchAuthorityLoss,
+  threadLaunchAuthorityLoss,
   warning,
+  type AgentLaunchAuthorityLoss,
   type AgentTaskLaunchAuthority,
 } from "./agentProjectAuthority";
 import {
@@ -38,6 +39,48 @@ const UNCERTAIN_START_MESSAGE = "The agent start result was uncertain.";
 export const AGENT_TASK_STOPPED_BEFORE_START_MESSAGE = "The agent was stopped before it started.";
 export const AGENT_TURN_START_ABANDONED_MESSAGE =
   "This turn was cancelled while it was starting because its thread, project or agent provider changed. The agent may have received the message; check before sending it again.";
+
+export type AgentTurnStartAbandonment =
+  AgentLaunchAuthorityLoss | "sendSuperseded" | "providerChanged" | "threadClosed" | "turnRemoved";
+
+export function agentTurnStartAbandonedMessage(reason: AgentTurnStartAbandonment | null): string {
+  if (reason === null) return AGENT_TURN_START_ABANDONED_MESSAGE;
+  return `${AGENT_TURN_START_ABANDONED_MESSAGE} Reason: ${abandonmentDetail(reason)}.`;
+}
+
+function abandonmentDetail(reason: AgentTurnStartAbandonment): string {
+  switch (reason) {
+    case "surfaceClosed":
+      return "the agent view was closed";
+    case "projectClosed":
+      return "its project was closed";
+    case "projectReopened":
+      return "its project was closed and opened again";
+    case "projectOwnerReplaced":
+      return "its project changed owner";
+    case "repositoryRemoved":
+      return "its repository left the project";
+    case "workspaceUnregistered":
+      return "its workspace is closing or no longer registered";
+    case "workspaceReplaced":
+      return "its workspace was registered again";
+    case "sendSuperseded":
+      return "the queued send was cancelled";
+    case "providerChanged":
+      return "the agent provider changed before the start was issued";
+    case "threadClosed":
+      return "its thread was archived or removed";
+    case "turnRemoved":
+      return "its turn was removed from the thread";
+    default:
+      return unsupportedAbandonment(reason);
+  }
+}
+
+function unsupportedAbandonment(reason: never): never {
+  throw new TypeError(`Unsupported turn start abandonment: ${String(reason)}.`);
+}
+
 const UNEXPECTED_TASK_ID_MESSAGE = "The agent returned an unexpected task id.";
 const OUTPUT_NOT_ATTACHED_MESSAGE = "The agent started but its live output could not be attached.";
 
@@ -139,14 +182,16 @@ async function runOwnedTurnStart(
     deps.retainUncertainWorktree(worktreePath);
   };
   let turnRegistered = false;
-  const stillOwned = (): boolean =>
-    !intent.stopRequested &&
-    turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start) &&
-    (!turnRegistered || registeredTurnAlive(context, start));
-  const abandonedStatus = (): AgentTaskStatus =>
+  const ownershipLoss = (): AgentTurnStartAbandonment | null =>
+    turnLaunchAuthorityLoss(dependenciesRef, mountedRef, start) ??
+    (turnRegistered ? registeredTurnLoss(context, start) : null);
+  const stillOwned = (): boolean => !intent.stopRequested && ownershipLoss() === null;
+  const abandonedStatus = (
+    reason: AgentTurnStartAbandonment | null = ownershipLoss(),
+  ): AgentTaskStatus =>
     intent.stopRequested
       ? { kind: "stopped" }
-      : { kind: "failed", message: AGENT_TURN_START_ABANDONED_MESSAGE };
+      : { kind: "failed", message: agentTurnStartAbandonedMessage(reason) };
   const abandon = async (): Promise<false> => {
     const stoppedByUser = intent.stopRequested;
     if (!stoppedByUser) settleRegisteredTurn(context, start, abandonedStatus());
@@ -177,7 +222,7 @@ async function runOwnedTurnStart(
       intent.stopRequested &&
       turnRegistered &&
       turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start) &&
-      registeredTurnAlive(context, start);
+      registeredTurnLoss(context, start) === null;
     return stopHandedToBackend ? stopStartedTurn(acknowledged) : abandon();
   };
   if (!turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
@@ -196,11 +241,12 @@ async function runOwnedTurnStart(
     start.register(turn);
     turnRegistered = true;
   }
-  if (
-    !stillOwned() ||
-    !providerAdmissionIsCurrent(dependenciesRef.current, start.providerAuthority)
-  ) {
+  if (!stillOwned()) {
     settleRegisteredTurn(context, start, abandonedStatus());
+    return false;
+  }
+  if (!providerAdmissionIsCurrent(dependenciesRef.current, start.providerAuthority)) {
+    settleRegisteredTurn(context, start, abandonedStatus("providerChanged"));
     return false;
   }
   const started = await attempt(() =>
@@ -289,10 +335,14 @@ function startEndedWithoutTask(error: unknown): boolean {
   return errorMessageOf(error) === AGENT_TASK_STOPPED_BEFORE_START_MESSAGE;
 }
 
-function registeredTurnAlive(context: AgentTurnStartContext, start: AgentTurnStart): boolean {
+function registeredTurnLoss(
+  context: AgentTurnStartContext,
+  start: AgentTurnStart,
+): AgentTurnStartAbandonment | null {
   const thread = context.dependenciesRef.current.store.currentState().threads.get(start.threadId);
-  if (thread === undefined || thread.archived) return false;
-  return thread.turns.some((turn) => turn.turnId === start.turnId);
+  if (thread === undefined || thread.archived) return "threadClosed";
+  if (thread.turns.some((turn) => turn.turnId === start.turnId)) return null;
+  return "turnRemoved";
 }
 
 function settleRegisteredTurn(
@@ -357,21 +407,29 @@ async function reportStartFailure(
   currentDeps.setNotice(failure(startFailureNotice(start, error, definite, worktreeOrphaned)));
 }
 
-function turnLaunchAuthorityIsCurrent(
+function turnLaunchAuthorityLoss(
   dependenciesRef: { readonly current: AgentTurnDispatchDependencies },
   mountedRef: { readonly current: boolean },
   start: AgentTurnStart,
-): boolean {
-  if (start.isCurrent?.() === false) return false;
+): AgentTurnStartAbandonment | null {
+  if (start.isCurrent?.() === false) return "sendSuperseded";
   if (start.authorityScope === "thread") {
-    return isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, start.authority);
+    return threadLaunchAuthorityLoss(dependenciesRef, mountedRef, start.authority);
   }
-  return isCurrentTaskLaunchAuthority(
+  return taskLaunchAuthorityLoss(
     dependenciesRef,
     mountedRef,
     start.authority,
     start.repositoryRoot,
   );
+}
+
+function turnLaunchAuthorityIsCurrent(
+  dependenciesRef: { readonly current: AgentTurnDispatchDependencies },
+  mountedRef: { readonly current: boolean },
+  start: AgentTurnStart,
+): boolean {
+  return turnLaunchAuthorityLoss(dependenciesRef, mountedRef, start) === null;
 }
 
 function pendingTurn(
