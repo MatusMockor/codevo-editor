@@ -19,12 +19,12 @@ import {
   type AgentTaskLaunchAuthority,
   type MountedRef,
 } from "./agentProjectAuthority";
-import type { AgentTasksNotice } from "./agentThreadPorts";
+import type { AgentTasksNoticeUpdate } from "./agentThreadPorts";
 
 export interface AgentThreadWorktreeDependencies {
   readonly gitWorktreeGateway: GitWorktreeGateway;
   readonly reportError: (source: string, error: unknown) => void;
-  readonly setNotice: (notice: AgentTasksNotice | null) => void;
+  readonly setNotice: (update: AgentTasksNoticeUpdate) => void;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
 }
 
@@ -71,15 +71,19 @@ export async function createThreadWorktree(
     return null;
   }
   const created: CreatedAgentWorktree = { receipt: receipt.value, repositoryRoot };
-  const loss = taskLaunchAuthorityLoss(dependenciesRef, mountedRef, authority, repositoryRoot);
-  if (loss !== null) {
+  if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
     const cleaned = await compensateCreatedWorktree(
       dependenciesRef,
       mountedRef,
       authority,
       created,
     );
-    if (cleaned) launchAuthorityHolds(dependenciesRef, loss, authority.rootKey);
+    if (!cleaned) return null;
+    launchAuthorityHolds(
+      dependenciesRef,
+      taskLaunchAuthorityLoss(dependenciesRef, mountedRef, authority, repositoryRoot),
+      authority.rootKey,
+    );
     return null;
   }
   if (receipt.value.trusted) return created;

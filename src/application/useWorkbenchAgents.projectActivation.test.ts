@@ -19,7 +19,14 @@ import { defaultAppSettings, defaultWorkspaceSettings, type AppSettings } from "
 import { DEFAULT_WORKSPACE_PATH_POLICY } from "../domain/workspacePath";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
-import { agentLaunchReplacedBeforeSendNotice } from "./agentProjectAuthority";
+import {
+  useAgentProjectWorkspaceSync,
+  type AgentProjectWorkspaceSync,
+} from "../components/agentMode/useAgentProjectWorkspaceSync";
+import {
+  agentLaunchReplacedBeforeSendNotice,
+  agentNoticeForProject,
+} from "./agentProjectAuthority";
 import { agentTurnStartAbandonedMessage } from "./agentTurnStartRunner";
 import {
   useWorkbenchAgents,
@@ -44,7 +51,7 @@ const LAUNCH: AgentLaunchOptions = {
   thinkingMode: false,
 };
 
-type Boundary = "inspect" | "start" | "acknowledge" | "worktree" | "probe";
+type Boundary = "inspect" | "start" | "acknowledge" | "worktree" | "probe" | "cleanup";
 const FOLLOW_UP_BOUNDARIES = [
   ["while it is being prepared", "inspect"],
   ["before the backend accepts it", "start"],
@@ -217,11 +224,103 @@ describe("useWorkbenchAgents genuine replacements during a start", () => {
     });
 
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
-    expect(harness.hook().notice?.message).toBe(
-      agentLaunchReplacedBeforeSendNotice("workspaceReplaced"),
+    expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
+    expect(harness.hook().notice).toEqual(
+      agentLaunchReplacedBeforeSendNotice("workspaceReplaced", RESTORED_ROOT),
     );
     harness.unmount();
   });
+
+  it("keeps another project's notice when a replaced start finishes its cleanup there", async () => {
+    const harness = renderWorkbenchAgents({ savedThreads: [] });
+    await harness.settleRestoredProject();
+    harness.openWorkspace(RESTORED_ROOT);
+    await waitForReact(() =>
+      expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(workspaceIdFor(RESTORED_ROOT)),
+    );
+    const worktree = harness.hold("worktree");
+    const cleanup = harness.hold("cleanup");
+
+    let started: Promise<{ readonly threadId: string } | null> = Promise.resolve(null);
+    await act(async () => {
+      started = harness.hook().startThread(newThreadRequest());
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(worktree.entered()).toBeGreaterThan(0));
+    harness.openWorkspace(RESTORED_ROOT, "workspace-replacement");
+    await waitForReact(() =>
+      expect(
+        harness.hook().agentProjects.launchIdentityForProject(RESTORED_ROOT)?.workspaceId,
+      ).toBe("workspace-replacement"),
+    );
+    await act(async () => worktree.release());
+    await waitForReact(() => expect(cleanup.entered()).toBeGreaterThan(0));
+
+    harness.openWorkspace(ACTIVE_ROOT);
+    await waitForReact(() => expect(harness.project(RESTORED_ROOT)?.origin).toBe("background-tab"));
+    await act(async () => {
+      await harness.hook().sendFollowUp({ threadId: "missing", prompt: "Hello", launch: LAUNCH });
+    });
+    const otherNotice = harness.hook().notice;
+    expect(otherNotice?.message).toBe("This thread is no longer available.");
+    await act(async () => {
+      cleanup.release();
+      expect(await started).toBeNull();
+    });
+
+    expect(harness.hook().notice).toEqual(otherNotice);
+    harness.unmount();
+  });
+
+  it.each([
+    ["is still pending", null],
+    ["has failed", false],
+  ] as const)(
+    "keeps the selected project's warning when a refusal settles while its activation %s",
+    async (_label, activationResult) => {
+      const harness = renderWorkbenchAgents({ savedThreads: [] });
+      await harness.settleRestoredProject();
+      harness.openWorkspace(RESTORED_ROOT);
+      await waitForReact(() =>
+        expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(workspaceIdFor(RESTORED_ROOT)),
+      );
+      const worktree = harness.hold("worktree");
+      const cleanup = harness.hold("cleanup");
+
+      let started: Promise<{ readonly threadId: string } | null> = Promise.resolve(null);
+      await act(async () => {
+        started = harness.hook().startThread(newThreadRequest());
+        await Promise.resolve();
+      });
+      await waitForReact(() => expect(worktree.entered()).toBeGreaterThan(0));
+      harness.openWorkspace(RESTORED_ROOT, "workspace-replacement");
+      await waitForReact(() =>
+        expect(
+          harness.hook().agentProjects.launchIdentityForProject(RESTORED_ROOT)?.workspaceId,
+        ).toBe("workspace-replacement"),
+      );
+      await act(async () => worktree.release());
+      await waitForReact(() => expect(cleanup.entered()).toBeGreaterThan(0));
+
+      const activation = harness.selectProject(ACTIVE_ROOT);
+      if (activationResult !== null) await act(async () => activation.settle(activationResult));
+      expect(harness.activation().kind).toBe(activationResult === null ? "pending" : "failed");
+      expect(harness.project(RESTORED_ROOT)?.origin).toBe("active-tab");
+      await act(async () => {
+        await harness.hook().sendFollowUp({ threadId: "missing", prompt: "Hello", launch: LAUNCH });
+      });
+      const selectedWarning = harness.hook().notice;
+      expect(selectedWarning?.message).toBe("This thread is no longer available.");
+      await act(async () => {
+        cleanup.release();
+        expect(await started).toBeNull();
+      });
+
+      expect(harness.hook().notice).toEqual(selectedWarning);
+      expect(agentNoticeForProject(harness.hook().notice, ACTIVE_ROOT)).toEqual(selectedWarning);
+      harness.unmount();
+    },
+  );
 
   it("stays silent when a prepared start loses its project tab", async () => {
     const harness = renderWorkbenchAgents({ savedThreads: [] });
@@ -406,7 +505,7 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
         trusted: true,
       };
     }),
-    removeWorktree: vi.fn(async () => undefined),
+    removeWorktree: vi.fn(async () => pass("cleanup")),
     pruneWorktrees: vi.fn(async () => []),
   };
   const threadStore: AgentThreadStoreGateway = {
@@ -542,8 +641,16 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
   const root = createRoot(host);
   let current: WorkbenchAgentsSurface | null = null;
 
+  let sync: AgentProjectWorkspaceSync | null = null;
+  let pendingActivation: (opened: boolean) => void = () => undefined;
+  const activate = (): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
+      pendingActivation = resolve;
+    });
+
   function Harness() {
     current = useWorkbenchAgents(workbenchOptions);
+    sync = useAgentProjectWorkspaceSync({ workspaceRoot: activeRoot, activate });
     return null;
   }
 
@@ -583,6 +690,16 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
           opened.resolve();
         },
       };
+    },
+    selectProject(rootKey: string) {
+      const target = project(rootKey);
+      expect(target).toBeDefined();
+      act(() => sync?.select(target ?? null));
+      return { settle: (opened: boolean) => pendingActivation(opened) };
+    },
+    activation() {
+      expect(sync).not.toBeNull();
+      return (sync as AgentProjectWorkspaceSync).state;
     },
     failReloads() {
       expect(loads).toBeGreaterThan(0);

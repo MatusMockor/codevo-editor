@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import type { AgentProjectLaunchIdentity } from "../../application/agentProjectAuthority";
 
 export type AgentProjectWorkspaceTarget = Pick<
   AgentProjectDescriptor,
   "rootKey" | "rootPath" | "ownerId" | "generation" | "label"
->;
+> & { readonly registration?: AgentProjectLaunchIdentity | null };
 
 export interface AgentProjectWorkspaceOwner {
   readonly ownerId: string;
@@ -52,10 +53,15 @@ function sameRegistration(
   right: AgentProjectWorkspaceTarget | null,
 ): boolean {
   if (left === null || right === null) return false;
+  const registered = left.registration ?? null;
+  const requested = right.registration ?? null;
+  if (registered === null || requested === null) return false;
   return (
     left.rootKey === right.rootKey &&
     left.rootPath === right.rootPath &&
-    left.generation === right.generation
+    left.generation === right.generation &&
+    registered.workspaceId === requested.workspaceId &&
+    registered.generation === requested.generation
   );
 }
 
@@ -142,7 +148,7 @@ export function useAgentProjectWorkspaceSync({
       setState({
         kind: "failed",
         rootPath: target.rootPath,
-        owner: targetOwner(target),
+        owner: targetOwner(owner.current.target ?? target),
         message: `Could not open ${target.label}. Try again or reopen the project.`,
       });
     };

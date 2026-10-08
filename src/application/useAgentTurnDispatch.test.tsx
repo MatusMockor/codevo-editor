@@ -135,7 +135,7 @@ const PROVIDER_CHANGED_NOTICE: AgentTasksNotice = {
 };
 type DispatchHarness = ReturnType<typeof renderDispatch>;
 function launchReplacedNotice(loss: AgentLaunchAuthorityLoss): AgentTasksNotice {
-  return { kind: "warning", message: agentLaunchReplacedBeforeSendNotice(loss), action: null };
+  return agentLaunchReplacedBeforeSendNotice(loss, ROOT_A);
 }
 const STALE_SURFACES = [
   [
@@ -507,7 +507,7 @@ describe("useAgentTurnDispatch startThread", () => {
     harness.unmount();
   });
 
-  it("says the project was reopened when it was replaced during in-place preflight", async () => {
+  it("says the workspace was registered again when it was replaced during in-place preflight", async () => {
     const preflight = createDeferred<InPlacePreflight>();
     const harness = renderDispatch();
     harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
@@ -517,14 +517,15 @@ describe("useAgentTurnDispatch startThread", () => {
       const starting = harness.hook().startThread(startRequest({ isolation: "in-place" }));
       await waitForReact(() => expect(harness.preflightInPlace).toHaveBeenCalledTimes(1));
       replaceProviderAtoBtoA(harness.environment);
-      harness.environment.generation += 1;
+      harness.environment.workspaceId = OWNER_B;
+      harness.environment.workspaceGeneration += 1;
       preflight.resolve({ kind: "ok" });
       result = await starting;
     });
 
     expect(result).toBeNull();
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
-    expect(harness.notice()).toEqual(launchReplacedNotice("projectReopened"));
+    expect(harness.notice()).toEqual(launchReplacedNotice("workspaceReplaced"));
     harness.unmount();
   });
 
@@ -3488,7 +3489,10 @@ function renderDispatch(overrides: Partial<Environment> = {}) {
       onAccountUsageObserved,
       onProjectDispatchTrustRejected,
       reportError,
-      setNotice: (notice) => notices.push(notice),
+      setNotice: (update) =>
+        notices.push(
+          typeof update === "function" ? update(notices[notices.length - 1] ?? null) : update,
+        ),
       outputParser: parser,
       now: () => 1_700_000_000_000 + entropy,
       createEntropyHex4: () => {

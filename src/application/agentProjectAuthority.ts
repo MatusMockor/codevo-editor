@@ -1,5 +1,5 @@
 import { agentProjectOwnsLaunchRoot, type AgentProjectDescriptor } from "../domain/agentProject";
-import type { AgentTasksNotice } from "./agentThreadPorts";
+import type { AgentTasksNotice, AgentTasksNoticeUpdate } from "./agentThreadPorts";
 
 export const AGENT_TASKS_SOURCE = "Agents";
 
@@ -141,24 +141,43 @@ export function projectHoldsAuthority(
   return project.runtimeOwnerIds?.includes(authority.ownerId) === true;
 }
 
-export function agentLaunchReplacedBeforeSendNotice(loss: AgentLaunchAuthorityLoss): string {
-  return `The message was not sent because ${agentLaunchAuthorityLossDetail(loss)} while it was being prepared. Send it again.`;
+export function agentLaunchReplacedBeforeSendNotice(
+  loss: AgentLaunchAuthorityLoss,
+  projectRootKey: string,
+): AgentTasksNotice {
+  return {
+    kind: "warning",
+    message: `The message was not sent because ${agentLaunchAuthorityLossDetail(loss)} while it was being prepared. Send it again.`,
+    action: null,
+    projectRootKey,
+  };
+}
+
+export function agentNoticeForProject(
+  notice: AgentTasksNotice | null,
+  projectRootKey: string | null,
+): AgentTasksNotice | null {
+  if (notice === null || notice.projectRootKey === undefined) return notice;
+  return notice.projectRootKey === projectRootKey ? notice : null;
 }
 
 export function launchAuthorityHolds(
   dependenciesRef: AgentLaunchProjectsRef & {
-    readonly current: { readonly setNotice: (notice: AgentTasksNotice | null) => void };
+    readonly current: { readonly setNotice: (update: AgentTasksNoticeUpdate) => void };
   },
   loss: AgentLaunchAuthorityLoss | null,
   rootKey: string,
 ): boolean {
   if (loss === null) return true;
-  if (!launchRootReplacedWhileOpen(dependenciesRef, loss, rootKey)) return false;
-  dependenciesRef.current.setNotice(warning(agentLaunchReplacedBeforeSendNotice(loss)));
+  if (!launchRootReplacedWhileShown(dependenciesRef, loss, rootKey)) return false;
+  const refusal = agentLaunchReplacedBeforeSendNotice(loss, rootKey);
+  dependenciesRef.current.setNotice((current) =>
+    current === null || current.projectRootKey === rootKey ? refusal : current,
+  );
   return false;
 }
 
-function launchRootReplacedWhileOpen(
+function launchRootReplacedWhileShown(
   dependenciesRef: AgentLaunchProjectsRef,
   loss: AgentLaunchAuthorityLoss,
   rootKey: string,
@@ -166,7 +185,7 @@ function launchRootReplacedWhileOpen(
   if (loss !== "projectReopened" && loss !== "projectOwnerReplaced" && loss !== "workspaceReplaced")
     return false;
   const project = projectByRootKey(dependenciesRef.current.projects, rootKey);
-  if (project === undefined || project.origin === "closed-tab-live-tasks") return false;
+  if (project?.origin !== "active-tab") return false;
   return dependenciesRef.current.launchIdentityForProject(rootKey) !== null;
 }
 

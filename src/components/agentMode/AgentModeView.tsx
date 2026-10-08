@@ -86,6 +86,7 @@ import type {
   AgentThreadView,
   ExternalSessionsSurface,
 } from "../../application/agentThreadPorts";
+import { agentNoticeForProject } from "../../application/agentProjectAuthority";
 import type {
   AgentViewCommandBridge,
   AgentViewCommandHandlers,
@@ -971,7 +972,7 @@ function LocalAgentModeView({
     newThreadIn: projectThreads.newThreadInProject,
   });
 
-  const notice = localNotice ?? agents.notice;
+  const notice = localNotice ?? agentNoticeForProject(agents.notice, selectedRootKey);
   const dismissNotice = useCallback(() => {
     if (localNotice !== null) {
       setLocalNotice(null);

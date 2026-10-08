@@ -26,12 +26,24 @@ const B: AgentProjectWorkspaceTarget = {
   label: "B",
 };
 
+const REGISTERED_A: AgentProjectWorkspaceTarget = {
+  ...A,
+  registration: { workspaceId: "workspace-a", generation: 2 },
+};
+const REGISTERED_B: AgentProjectWorkspaceTarget = {
+  ...B,
+  registration: { workspaceId: "workspace-b", generation: 2 },
+};
+const PROMOTED = { ownerId: "promoted", generation: 1 } as const;
+
 function deferred() {
   let resolve: (value: boolean) => void = () => undefined;
-  const promise = new Promise<boolean>((settle) => {
+  let reject: (error: Error) => void = () => undefined;
+  const promise = new Promise<boolean>((settle, fail) => {
     resolve = settle;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 describe("project workspace synchronization", () => {
@@ -107,36 +119,63 @@ describe("project workspace synchronization", () => {
   });
 
   it("adopts a promoted owner of the same registration without reopening its root", async () => {
+    act(() => current.select(REGISTERED_A));
+    await act(async () => current.select({ ...REGISTERED_A, ownerId: "promoted" }));
+    expect(activate).not.toHaveBeenCalled();
+    expect(current.state).toEqual({ kind: "ready", rootPath: "/a", owner: PROMOTED });
+  });
+
+  it("reopens the root when its owner changes with a different workspace registration", async () => {
+    act(() => current.select(REGISTERED_A));
+    await act(async () =>
+      current.select({
+        ...REGISTERED_A,
+        ownerId: "promoted",
+        registration: { workspaceId: "workspace-a", generation: 3 },
+      }),
+    );
+    expect(activate).toHaveBeenCalledWith("/a");
+  });
+
+  it("reopens the root when an owner change carries no workspace registration", async () => {
     act(() => current.select(A));
     await act(async () => current.select({ ...A, ownerId: "promoted" }));
-    expect(activate).not.toHaveBeenCalled();
-    expect(current.state).toEqual({
-      kind: "ready",
-      rootPath: "/a",
-      owner: { ownerId: "promoted", generation: 1 },
-    });
+    expect(activate).toHaveBeenCalledWith("/a");
   });
 
   it("keeps one pending activation when its owner is promoted before it settles", async () => {
     const pending = deferred();
     activate.mockReturnValueOnce(pending.promise);
-    act(() => current.select(B));
+    act(() => current.select(REGISTERED_B));
     workspaceRoot = "/b";
     render();
-    act(() => current.select({ ...B, ownerId: "promoted" }));
+    act(() => current.select({ ...REGISTERED_B, ownerId: "promoted" }));
     expect(activate).toHaveBeenCalledTimes(1);
-    expect(current.state).toEqual({
-      kind: "pending",
-      rootPath: "/b",
-      owner: { ownerId: "promoted", generation: 1 },
-    });
+    expect(current.state).toEqual({ kind: "pending", rootPath: "/b", owner: PROMOTED });
     await act(async () => pending.resolve(true));
-    expect(current.state).toEqual({
-      kind: "ready",
-      rootPath: "/b",
-      owner: { ownerId: "promoted", generation: 1 },
-    });
+    expect(current.state).toEqual({ kind: "ready", rootPath: "/b", owner: PROMOTED });
   });
+
+  it.each([
+    ["reports it was not opened", (pending: ReturnType<typeof deferred>) => pending.resolve(false)],
+    ["rejects", (pending: ReturnType<typeof deferred>) => pending.reject(new Error("open failed"))],
+  ] as const)(
+    "offers a working retry to the promoted owner when its activation %s",
+    async (_label, settle) => {
+      const pending = deferred();
+      activate.mockReturnValueOnce(pending.promise);
+      act(() => current.select(REGISTERED_B));
+      act(() => current.select({ ...REGISTERED_B, ownerId: "promoted" }));
+      await act(async () => settle(pending));
+      expect(current.state).toMatchObject({ kind: "failed", rootPath: "/b", owner: PROMOTED });
+
+      act(() => current.select({ ...REGISTERED_B, ownerId: "promoted" }));
+      expect(activate).toHaveBeenCalledTimes(1);
+      await act(async () => current.retry());
+      expect(activate).toHaveBeenCalledTimes(2);
+      expect(current.state).toEqual({ kind: "ready", rootPath: "/b", owner: PROMOTED });
+    },
+  );
 
   it("names the exact owner of every pending, ready and failed activation", async () => {
     const pending = deferred();

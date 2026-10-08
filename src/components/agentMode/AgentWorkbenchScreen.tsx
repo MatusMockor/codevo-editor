@@ -354,12 +354,14 @@ export function AgentWorkbenchScreen({
   const pendingExternalRoot = useRef(navigationBoundary.pendingExternalRoot);
   pendingExternalRoot.current = navigationBoundary.pendingExternalRoot;
   const selectWorkspace = projectWorkspaceSync.select;
+  const launchIdentityForProject = projects.launchIdentityForProject;
   const selectProjectWorkspace = useCallback(
     (target: AgentProjectWorkspaceTarget | null) => {
       if (addProjectPending.current !== null || pendingExternalRoot.current !== null) return;
-      selectWorkspace(target);
+      if (target === null) return selectWorkspace(null);
+      selectWorkspace({ ...target, registration: launchIdentityForProject(target.rootKey) });
     },
-    [selectWorkspace],
+    [launchIdentityForProject, selectWorkspace],
   );
   const workspaceActivation = useMemo(
     () => ({ ...projectWorkspaceSync, select: selectProjectWorkspace }),

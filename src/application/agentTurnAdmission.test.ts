@@ -134,7 +134,10 @@ function harness(
     isWorktreeMissing: () => false,
     launchIdentityForProject: () => launchIdentity,
     reportError: vi.fn(),
-    setNotice: (notice) => notices.push(notice),
+    setNotice: (update) =>
+      notices.push(
+        typeof update === "function" ? update(notices[notices.length - 1] ?? null) : update,
+      ),
   };
   return { deps, notices };
 }

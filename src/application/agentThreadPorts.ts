@@ -79,7 +79,11 @@ export interface AgentTasksNotice {
   readonly kind: "info" | "warning" | "error";
   readonly message: string;
   readonly action: AgentTasksNoticeAction;
+  readonly projectRootKey?: string;
 }
+
+export type AgentTasksNoticeUpdate =
+  AgentTasksNotice | null | ((current: AgentTasksNotice | null) => AgentTasksNotice | null);
 
 export interface AgentRepositoryStatusSnapshot {
   readonly known: boolean;

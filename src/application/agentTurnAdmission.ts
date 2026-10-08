@@ -38,7 +38,7 @@ import {
 import type {
   AgentFollowUpRequest,
   AgentSteerRequest,
-  AgentTasksNotice,
+  AgentTasksNoticeUpdate,
   AgentThreadStartRequest,
   AgentThreadStoreSurface,
   AgentTurnAttachmentIntent,
@@ -66,7 +66,7 @@ export interface AgentTurnAdmissionDependencies {
   ) => Promise<AgentProjectLaunchIdentity | null>;
   readonly launchIdentityForProject: (projectRootKey: string) => AgentProjectLaunchIdentity | null;
   readonly reportError: (source: string, error: unknown) => void;
-  readonly setNotice: (notice: AgentTasksNotice | null) => void;
+  readonly setNotice: (update: AgentTasksNoticeUpdate) => void;
   readonly now?: () => number;
   readonly createEntropyHex4?: () => string;
 }
