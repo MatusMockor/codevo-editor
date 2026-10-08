@@ -97,13 +97,6 @@ export function sameProjectAuthority(
   );
 }
 
-export function sameOptionalProjectAuthority(
-  left: AgentProjectAuthority | undefined,
-  right: AgentProjectAuthority,
-): boolean {
-  return left !== undefined && sameProjectAuthority(left, right);
-}
-
 export type AgentLaunchAuthorityLoss =
   | "surfaceClosed"
   | "projectClosed"
@@ -112,6 +105,70 @@ export type AgentLaunchAuthorityLoss =
   | "repositoryRemoved"
   | "workspaceUnregistered"
   | "workspaceReplaced";
+
+export function agentLaunchAuthorityLossDetail(loss: AgentLaunchAuthorityLoss): string {
+  switch (loss) {
+    case "surfaceClosed":
+      return "the agent view was closed";
+    case "projectClosed":
+      return "its project was closed";
+    case "projectReopened":
+      return "its project was closed and opened again";
+    case "projectOwnerReplaced":
+      return "its project changed owner";
+    case "repositoryRemoved":
+      return "its repository left the project";
+    case "workspaceUnregistered":
+      return "its workspace is closing or no longer registered";
+    case "workspaceReplaced":
+      return "its workspace was registered again";
+    default:
+      return unsupportedLaunchAuthorityLoss(loss);
+  }
+}
+
+function unsupportedLaunchAuthorityLoss(loss: never): never {
+  throw new TypeError(`Unsupported launch authority loss: ${String(loss)}.`);
+}
+
+export function projectHoldsAuthority(
+  project: AgentProjectDescriptor,
+  authority: AgentProjectAuthority,
+): boolean {
+  if (project.rootKey !== authority.rootKey) return false;
+  if (project.generation !== authority.generation) return false;
+  if (project.ownerId === authority.ownerId) return true;
+  return project.runtimeOwnerIds?.includes(authority.ownerId) === true;
+}
+
+export function agentLaunchReplacedBeforeSendNotice(loss: AgentLaunchAuthorityLoss): string {
+  return `The message was not sent because ${agentLaunchAuthorityLossDetail(loss)} while it was being prepared. Send it again.`;
+}
+
+export function launchAuthorityHolds(
+  dependenciesRef: AgentLaunchProjectsRef & {
+    readonly current: { readonly setNotice: (notice: AgentTasksNotice | null) => void };
+  },
+  loss: AgentLaunchAuthorityLoss | null,
+  rootKey: string,
+): boolean {
+  if (loss === null) return true;
+  if (!launchRootReplacedWhileOpen(dependenciesRef, loss, rootKey)) return false;
+  dependenciesRef.current.setNotice(warning(agentLaunchReplacedBeforeSendNotice(loss)));
+  return false;
+}
+
+function launchRootReplacedWhileOpen(
+  dependenciesRef: AgentLaunchProjectsRef,
+  loss: AgentLaunchAuthorityLoss,
+  rootKey: string,
+): boolean {
+  if (loss !== "projectReopened" && loss !== "projectOwnerReplaced" && loss !== "workspaceReplaced")
+    return false;
+  const project = projectByRootKey(dependenciesRef.current.projects, rootKey);
+  if (project === undefined || project.origin === "closed-tab-live-tasks") return false;
+  return dependenciesRef.current.launchIdentityForProject(rootKey) !== null;
+}
 
 function projectOwnerLoss(
   dependenciesRef: AgentProjectsRef,
@@ -122,11 +179,7 @@ function projectOwnerLoss(
   const project = projectByRootKey(dependenciesRef.current.projects, authority.rootKey);
   if (project === undefined) return "projectClosed";
   if (project.generation !== authority.generation) return "projectReopened";
-  if (
-    project.ownerId !== authority.ownerId &&
-    project.runtimeOwnerIds?.includes(authority.ownerId) !== true
-  )
-    return "projectOwnerReplaced";
+  if (!projectHoldsAuthority(project, authority)) return "projectOwnerReplaced";
   return null;
 }
 

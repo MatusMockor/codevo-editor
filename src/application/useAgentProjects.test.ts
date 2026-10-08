@@ -24,6 +24,7 @@ import {
   type AgentProjectsDependencies,
   type AgentProjectsSurface,
 } from "./useAgentProjects";
+import { isCurrentThreadLaunchAuthority } from "./agentProjectAuthority";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 
 const ACTIVE_ROOT = "/ws/active";
@@ -551,6 +552,57 @@ describe("useAgentProjects lifecycle", () => {
     harness.environment.liveOwners.delete("workspace-b");
     harness.rerender();
     await waitForReact(() => expect(harness.hook().projects).toHaveLength(0));
+    harness.unmount();
+  });
+
+  it("releases every superseded owner across repeated promotions and a close", async () => {
+    const harness = renderAgentProjects({ tabs: [BACKGROUND_ROOT] });
+    await waitForReact(() =>
+      expect(harness.hook().launchIdentityForProject(BACKGROUND_ROOT)).not.toBeNull(),
+    );
+    const placeholder = agentRootOwnerId(BACKGROUND_ROOT);
+    const project = () =>
+      harness.hook().projects.find((candidate) => candidate.rootKey === BACKGROUND_ROOT);
+    const authorityUnder = (ownerId: string) => {
+      const identity = harness.hook().launchIdentityForProject(BACKGROUND_ROOT);
+      return {
+        rootKey: BACKGROUND_ROOT,
+        ownerId,
+        generation: project()?.generation ?? 0,
+        workspaceId: identity?.workspaceId ?? "",
+        workspaceGeneration: identity?.generation ?? 0,
+      };
+    };
+    const holds = (ownerId: string) =>
+      isCurrentThreadLaunchAuthority(
+        { current: harness.hook() },
+        { current: true },
+        authorityUnder(ownerId),
+      );
+    expect(project()?.ownerId).toBe(placeholder);
+
+    harness.environment.activeWorkspaceRoot = BACKGROUND_ROOT;
+    harness.environment.activeWorkspaceId = "workspace-first";
+    harness.rerender();
+    await waitForReact(() => expect(project()?.ownerId).toBe("workspace-first"));
+    expect(holds(placeholder)).toBe(true);
+    expect(harness.releaseProjectTasks).not.toHaveBeenCalledWith(placeholder);
+
+    harness.environment.activeWorkspaceId = "workspace-second";
+    harness.rerender();
+    await waitForReact(() => expect(project()?.ownerId).toBe("workspace-second"));
+    expect(harness.releaseProjectTasks).toHaveBeenCalledWith(placeholder);
+    expect(project()?.runtimeOwnerIds).not.toContain(placeholder);
+    expect(holds(placeholder)).toBe(false);
+    expect(holds("workspace-second")).toBe(true);
+
+    harness.environment.tabs = [];
+    harness.environment.activeWorkspaceRoot = ACTIVE_ROOT;
+    harness.environment.activeWorkspaceId = ACTIVE_ID;
+    harness.rerender();
+    await waitForReact(() => expect(project()).toBeUndefined());
+    expect(harness.releaseProjectTasks).toHaveBeenCalledWith("workspace-first");
+    expect(harness.releaseProjectTasks).toHaveBeenCalledWith("workspace-second");
     harness.unmount();
   });
 

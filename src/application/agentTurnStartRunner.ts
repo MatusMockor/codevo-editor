@@ -13,6 +13,7 @@ import type { AgentTurn } from "../domain/agentThread";
 import { isAgentSessionRestartConfirmationError } from "../domain/agentThreadSession";
 import {
   AGENT_TASKS_SOURCE,
+  agentLaunchAuthorityLossDetail,
   attempt,
   errorMessageOf,
   failure,
@@ -50,20 +51,6 @@ export function agentTurnStartAbandonedMessage(reason: AgentTurnStartAbandonment
 
 function abandonmentDetail(reason: AgentTurnStartAbandonment): string {
   switch (reason) {
-    case "surfaceClosed":
-      return "the agent view was closed";
-    case "projectClosed":
-      return "its project was closed";
-    case "projectReopened":
-      return "its project was closed and opened again";
-    case "projectOwnerReplaced":
-      return "its project changed owner";
-    case "repositoryRemoved":
-      return "its repository left the project";
-    case "workspaceUnregistered":
-      return "its workspace is closing or no longer registered";
-    case "workspaceReplaced":
-      return "its workspace was registered again";
     case "sendSuperseded":
       return "the queued send was cancelled";
     case "providerChanged":
@@ -73,12 +60,8 @@ function abandonmentDetail(reason: AgentTurnStartAbandonment): string {
     case "turnRemoved":
       return "its turn was removed from the thread";
     default:
-      return unsupportedAbandonment(reason);
+      return agentLaunchAuthorityLossDetail(reason);
   }
-}
-
-function unsupportedAbandonment(reason: never): never {
-  throw new TypeError(`Unsupported turn start abandonment: ${String(reason)}.`);
 }
 
 const UNEXPECTED_TASK_ID_MESSAGE = "The agent returned an unexpected task id.";

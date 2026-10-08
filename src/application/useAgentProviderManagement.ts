@@ -156,7 +156,6 @@ export interface SelectedAgentProviderAuthority {
 }
 
 interface SelectedAgentProviderAuthorityPublication extends SelectedAgentProviderAuthority {
-  readonly workspaceGeneration: number;
   readonly policyGateway: AgentProviderPolicyGateway;
   readonly healthGateway: AgentProviderHealthGateway;
   readonly updateGateway: AgentProviderUpdateGateway;
@@ -175,7 +174,6 @@ export interface AgentProviderManagementDependencies {
   readonly reportError: (source: string, error: unknown) => void;
   readonly mintOperationId: (provider: AgentCliKind) => string;
   readonly settingsHydrated: boolean;
-  readonly workspaceGeneration: number;
 }
 
 interface ProviderRuntime {
@@ -191,7 +189,6 @@ interface ProviderOwner {
   readonly configurationRevision: number;
   readonly settingsRevision: number;
   readonly providerGeneration: number;
-  readonly workspaceGeneration: number;
   readonly lifecycleGeneration: number;
   readonly cliPath: string;
   readonly discoveryGeneration: number | null;
@@ -321,7 +318,6 @@ export function useAgentProviderManagement(
         configurationRevision: providerRuntime.configurationRevision,
         settingsRevision: providerRuntime.policy.settingsRevision,
         providerGeneration: providerRuntime.policy.providerGeneration,
-        workspaceGeneration: dependenciesRef.current.workspaceGeneration,
         lifecycleGeneration: hydrationGenerationRef.current,
         cliPath,
         discoveryGeneration: authority.cliPath === null ? (discovery?.generation ?? null) : null,
@@ -341,7 +337,6 @@ export function useAgentProviderManagement(
         current.configurationRevision === owner.configurationRevision &&
         current.settingsRevision === owner.settingsRevision &&
         current.providerGeneration === owner.providerGeneration &&
-        current.workspaceGeneration === owner.workspaceGeneration &&
         current.lifecycleGeneration === owner.lifecycleGeneration &&
         current.cliPath === owner.cliPath &&
         current.discoveryGeneration === owner.discoveryGeneration &&
@@ -690,7 +685,6 @@ export function useAgentProviderManagement(
       setSelectedProviderAuthorityPublication({
         provider,
         settingsRevision,
-        workspaceGeneration: dependenciesRef.current.workspaceGeneration,
         policyGateway: dependenciesRef.current.policyGateway,
         healthGateway: dependenciesRef.current.healthGateway,
         updateGateway: dependenciesRef.current.updateGateway,
@@ -874,7 +868,6 @@ export function useAgentProviderManagement(
     async (provider: AgentCliKind): Promise<AgentProviderUpdateRegistrationOutcome> => {
       const lifecycleGeneration = hydrationGenerationRef.current;
       const gateways = {
-        workspaceGeneration: dependenciesRef.current.workspaceGeneration,
         policyGateway: dependenciesRef.current.policyGateway,
         healthGateway: dependenciesRef.current.healthGateway,
         updateGateway: dependenciesRef.current.updateGateway,
@@ -883,7 +876,6 @@ export function useAgentProviderManagement(
         mountedRef.current &&
         hydrationReadyRef.current &&
         hydrationGenerationRef.current === lifecycleGeneration &&
-        dependenciesRef.current.workspaceGeneration === gateways.workspaceGeneration &&
         dependenciesRef.current.policyGateway === gateways.policyGateway &&
         dependenciesRef.current.healthGateway === gateways.healthGateway &&
         dependenciesRef.current.updateGateway === gateways.updateGateway;
@@ -1342,7 +1334,6 @@ export function useAgentProviderManagement(
     dependencies.policyGateway,
     dependencies.settingsHydrated,
     dependencies.updateGateway,
-    dependencies.workspaceGeneration,
     publishSelectedProviderAuthority,
     register,
   ]);
@@ -1370,7 +1361,6 @@ export function useAgentProviderManagement(
       currentSelectedProviderAuthority(
         selectedProviderAuthorityPublication,
         dependencies.settingsHydrated,
-        dependencies.workspaceGeneration,
         dependencies.policyGateway,
         dependencies.healthGateway,
         dependencies.updateGateway,
@@ -1380,7 +1370,6 @@ export function useAgentProviderManagement(
       dependencies.policyGateway,
       dependencies.settingsHydrated,
       dependencies.updateGateway,
-      dependencies.workspaceGeneration,
       selectedProviderAuthorityPublication,
     ],
   );
@@ -1437,12 +1426,10 @@ export function useAgentProviderManagement(
       requested: ReadonlyArray<AgentCliKind>,
     ): Promise<ReadonlyArray<AgentProviderRefreshOutcome>> => {
       const lifecycleGeneration = hydrationGenerationRef.current;
-      const workspaceGeneration = dependenciesRef.current.workspaceGeneration;
       const discoveryGateway = dependenciesRef.current.discoveryGateway;
       const isCurrent = (generation: number): boolean =>
         mountedRef.current &&
         hydrationGenerationRef.current === lifecycleGeneration &&
-        dependenciesRef.current.workspaceGeneration === workspaceGeneration &&
         dependenciesRef.current.discoveryGateway === discoveryGateway &&
         cliDiscovery.currentGeneration() === generation;
       return refreshAgentProviderBatch({
@@ -1556,14 +1543,12 @@ function stillOffers(
 function currentSelectedProviderAuthority(
   publication: SelectedAgentProviderAuthorityPublication | null,
   settingsHydrated: boolean,
-  workspaceGeneration: number,
   policyGateway: AgentProviderPolicyGateway,
   healthGateway: AgentProviderHealthGateway,
   updateGateway: AgentProviderUpdateGateway,
 ): SelectedAgentProviderAuthority | null {
   if (publication === null) return null;
   if (!settingsHydrated) return null;
-  if (publication.workspaceGeneration !== workspaceGeneration) return null;
   if (publication.policyGateway !== policyGateway) return null;
   if (publication.healthGateway !== healthGateway) return null;
   if (publication.updateGateway !== updateGateway) return null;

@@ -91,6 +91,10 @@ import {
 } from "./agentTurnDispatchPolicy";
 import { AGENT_DISPATCH_IN_PROGRESS_NOTICE } from "./agentDispatchKeys";
 import { agentTurnStartAbandonedMessage } from "./agentTurnStartRunner";
+import {
+  agentLaunchReplacedBeforeSendNotice,
+  type AgentLaunchAuthorityLoss,
+} from "./agentProjectAuthority";
 import { DEFERRED_NEXT_TURN_NOTICE } from "./agentDeferredFollowUps";
 import { DEFERRED_SEND_FAILED_NOTICE } from "./agentDeferredFollowUpSend";
 import { DEFERRED_SESSION_RESTART_NOTICE } from "./agentSessionRestartConsent";
@@ -130,6 +134,9 @@ const PROVIDER_CHANGED_NOTICE: AgentTasksNotice = {
   action: null,
 };
 type DispatchHarness = ReturnType<typeof renderDispatch>;
+function launchReplacedNotice(loss: AgentLaunchAuthorityLoss): AgentTasksNotice {
+  return { kind: "warning", message: agentLaunchReplacedBeforeSendNotice(loss), action: null };
+}
 const STALE_SURFACES = [
   [
     "the hook unmounted",
@@ -137,6 +144,7 @@ const STALE_SURFACES = [
       harness.unmount();
       return () => undefined;
     },
+    null,
   ],
   [
     "the workspace went A to B to A",
@@ -147,6 +155,7 @@ const STALE_SURFACES = [
       harness.environment.workspaceGeneration += 1;
       return () => harness.unmount();
     },
+    launchReplacedNotice("workspaceReplaced"),
   ],
 ] as const;
 const RESTART_REFUSAL =
@@ -498,7 +507,7 @@ describe("useAgentTurnDispatch startThread", () => {
     harness.unmount();
   });
 
-  it("stays silent about a provider revision when the project was replaced during in-place preflight", async () => {
+  it("says the project was reopened when it was replaced during in-place preflight", async () => {
     const preflight = createDeferred<InPlacePreflight>();
     const harness = renderDispatch();
     harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
@@ -515,7 +524,7 @@ describe("useAgentTurnDispatch startThread", () => {
 
     expect(result).toBeNull();
     expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
-    expect(harness.notice()).toBeNull();
+    expect(harness.notice()).toEqual(launchReplacedNotice("projectReopened"));
     harness.unmount();
   });
 
@@ -569,7 +578,7 @@ describe("useAgentTurnDispatch startThread", () => {
 
   it.each(STALE_SURFACES)(
     "posts no provider notice for a new thread once %s",
-    async (_label, loseSurface) => {
+    async (_label, loseSurface, expectedNotice) => {
       const preflight = createDeferred<InPlacePreflight>();
       const harness = renderDispatch();
       harness.preflightInPlace.mockImplementationOnce(async () => preflight.promise);
@@ -587,7 +596,7 @@ describe("useAgentTurnDispatch startThread", () => {
 
       expect(result).toBeNull();
       expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
-      expect(harness.notice()).toBeNull();
+      expect(harness.notice()).toEqual(expectedNotice);
       cleanUp();
     },
   );
@@ -1930,7 +1939,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
-  it("stays silent about a provider revision when the follow-up's project was replaced", async () => {
+  it("says the project was reopened when the follow-up's project was replaced", async () => {
     const verdict = createDeferred<AgentSessionRestartVerdict>();
     const inspectSessionRestart = vi.fn(() => verdict.promise);
     const harness = renderDispatch({ inspectSessionRestart });
@@ -1951,7 +1960,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
 
     expect(sent).toBe(false);
-    expect(harness.notice()).toBeNull();
+    expect(harness.notice()).toEqual(launchReplacedNotice("projectReopened"));
     expect(harness.thread(threadId).turns).toHaveLength(1);
     harness.unmount();
   });
@@ -1994,7 +2003,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
 
   it.each(STALE_SURFACES)(
     "posts no provider notice for a follow-up once %s",
-    async (_label, loseSurface) => {
+    async (_label, loseSurface, expectedNotice) => {
       const verdict = createDeferred<AgentSessionRestartVerdict>();
       const inspectSessionRestart = vi.fn(() => verdict.promise);
       const harness = renderDispatch({ inspectSessionRestart });
@@ -2016,7 +2025,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       });
 
       expect(sent).toBe(false);
-      expect(harness.notice()).toBeNull();
+      expect(harness.notice()).toEqual(expectedNotice);
       expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
       cleanUp();
     },

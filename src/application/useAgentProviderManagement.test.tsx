@@ -1382,7 +1382,7 @@ describe("useAgentProviderManagement", () => {
     expect(harness.healthCalls).toHaveLength(3);
   });
 
-  it("retires probes and timers across workspace A to B to A generations", async () => {
+  it("retires probes and timers across health gateway A to B to A replacements", async () => {
     vi.useFakeTimers();
     const settings = configuredSettings();
     settings.agentProviderPreferences = {
@@ -1398,14 +1398,14 @@ describe("useAgentProviderManagement", () => {
     expect(harness.healthCalls).toHaveLength(2);
     const staleA = harness.healthCalls[0];
 
-    harness.replaceDependencies({ workspaceGeneration: 1 });
+    harness.replaceDependencies({ healthGateway: { ...harness.dependencies.healthGateway } });
     expect(harness.hook().selectedProviderAuthority).toBeNull();
     await act(async () => undefined);
     await act(async () => undefined);
     expect(harness.healthCalls).toHaveLength(4);
     const staleB = harness.healthCalls[2];
 
-    harness.replaceDependencies({ workspaceGeneration: 2 });
+    harness.replaceDependencies({ healthGateway: { ...harness.dependencies.healthGateway } });
     expect(harness.hook().selectedProviderAuthority).toBeNull();
     await act(async () => undefined);
     await act(async () => undefined);
@@ -2832,7 +2832,6 @@ function renderManagement(
     reportError: (source, error) => errors.push({ source, error }),
     mintOperationId: (provider) => `${provider}-update`,
     settingsHydrated,
-    workspaceGeneration: 0,
   };
   let currentDependencies = dependencies;
   const container = document.createElement("div");

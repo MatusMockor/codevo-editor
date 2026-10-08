@@ -639,12 +639,16 @@ export function useAgentProjects(dependencies: AgentProjectsDependencies): Agent
             entry.ownerId !== currentWorkspaceId &&
             !deps.hasLiveTasksForOwner(entry.ownerId);
           if (replaceOwnerId && currentWorkspaceId !== null) {
+            const forgottenOwnerId = entry.supersededOwnerId;
             ownerIdsRef.current.set(candidate.rootKey, currentWorkspaceId);
             entry = {
               ...entry,
               ownerId: currentWorkspaceId,
               supersededOwnerId: entry.ownerId,
             };
+            if (forgottenOwnerId !== null && !entryOwnerIds(entry).includes(forgottenOwnerId)) {
+              deps.releaseProjectTasks(forgottenOwnerId);
+            }
             scheduled.push({ rootKey: candidate.rootKey, generation: entry.generation });
             changed = true;
           }

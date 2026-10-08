@@ -23,6 +23,9 @@ import {
   failure,
   isCurrentTaskLaunchAuthority,
   isCurrentThreadLaunchAuthority,
+  launchAuthorityHolds,
+  taskLaunchAuthorityLoss,
+  threadLaunchAuthorityLoss,
   warning,
   type AgentProjectAuthority,
   type AgentTaskLaunchAuthority,
@@ -479,6 +482,12 @@ export function useAgentTurnDispatch(
         providerAdmissionHolds(dependenciesRef.current, providerAuthority, () =>
           isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot),
         );
+      const launchHolds = (): boolean =>
+        launchAuthorityHolds(
+          dependenciesRef,
+          taskLaunchAuthorityLoss(dependenciesRef, mountedRef, authority, repositoryRoot),
+          authority.rootKey,
+        );
       const reuse = request.reuseWorktree ?? null;
       const reuseClaim =
         reuse === null ? null : { authority, repositoryRoot, isolation: request.isolation, reuse };
@@ -519,7 +528,7 @@ export function useAgentTurnDispatch(
           repositoryRoot,
           providerHolds,
         );
-        if (!leased) return null;
+        if (!launchHolds() || !leased) return null;
         if (!providerHolds()) return null;
         const admission = await deps.store.reserveThreadSlot?.(threadId, {
           rootKey: authority.rootKey,
@@ -539,18 +548,15 @@ export function useAgentTurnDispatch(
           return null;
         }
         releaseSlot = admission;
-        if (
-          !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
-          !providerHolds()
-        )
-          return null;
+        if (!launchHolds() || !providerHolds()) return null;
         if (request.isolation === "in-place") {
           const preflight = await deps.preflightInPlace(
             repositoryRoot,
             authority,
             request.unsafeInPlaceConfirmationKey,
           );
-          if (preflight.kind === "owner-lost" || preflight.kind === "superseded") return null;
+          if (preflight.kind === "superseded") return null;
+          if (!launchHolds() || preflight.kind === "owner-lost") return null;
           if (!providerHolds()) return null;
           if (!reportPreflight(deps, preflight)) return null;
         }
@@ -574,10 +580,7 @@ export function useAgentTurnDispatch(
           }
           return null;
         }
-        if (
-          !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
-          !providerHolds()
-        ) {
+        if (!launchHolds() || !providerHolds()) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
               dependenciesRef,
@@ -629,11 +632,7 @@ export function useAgentTurnDispatch(
           threadId,
           prompt,
         );
-        if (
-          prepared === null ||
-          !isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot) ||
-          !providerHolds()
-        ) {
+        if (prepared === null || !launchHolds() || !providerHolds()) {
           if (createdWorktree !== null) {
             await compensateCreatedWorktree(
               dependenciesRef,
@@ -809,8 +808,15 @@ export function useAgentTurnDispatch(
       beginPendingTurn(reboundThread.provider.kind);
       const surfaceIsCurrent = (): boolean =>
         isCurrent() && isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, authority);
+      const launchHolds = (): boolean =>
+        isCurrent() &&
+        launchAuthorityHolds(
+          dependenciesRef,
+          threadLaunchAuthorityLoss(dependenciesRef, mountedRef, authority),
+          authority.rootKey,
+        );
       const stillCurrent = (): boolean =>
-        surfaceIsCurrent() &&
+        launchHolds() &&
         providerAdmissionHolds(dependenciesRef.current, providerAuthority, surfaceIsCurrent);
       try {
         const [flushed, verdict] = await Promise.all([

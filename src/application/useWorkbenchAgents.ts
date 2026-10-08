@@ -433,7 +433,6 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     signInActive: providerSignIn.isActive,
     reportError: options.reportError,
     mintOperationId: mintProviderOperationId,
-    workspaceGeneration: providerWorkspaceOwnerRef.current.generation,
   });
 
   const refreshAccountUsage = useCallback(

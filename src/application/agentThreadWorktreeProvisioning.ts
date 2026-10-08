@@ -12,6 +12,8 @@ import {
   failure,
   isCurrentProjectOwner,
   isCurrentTaskLaunchAuthority,
+  launchAuthorityHolds,
+  taskLaunchAuthorityLoss,
   type AgentProjectAuthority,
   type AgentLaunchProjectsRef,
   type AgentTaskLaunchAuthority,
@@ -69,8 +71,15 @@ export async function createThreadWorktree(
     return null;
   }
   const created: CreatedAgentWorktree = { receipt: receipt.value, repositoryRoot };
-  if (!isCurrentTaskLaunchAuthority(dependenciesRef, mountedRef, authority, repositoryRoot)) {
-    await compensateCreatedWorktree(dependenciesRef, mountedRef, authority, created);
+  const loss = taskLaunchAuthorityLoss(dependenciesRef, mountedRef, authority, repositoryRoot);
+  if (loss !== null) {
+    const cleaned = await compensateCreatedWorktree(
+      dependenciesRef,
+      mountedRef,
+      authority,
+      created,
+    );
+    if (cleaned) launchAuthorityHolds(dependenciesRef, loss, authority.rootKey);
     return null;
   }
   if (receipt.value.trusted) return created;

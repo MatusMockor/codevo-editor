@@ -12,13 +12,14 @@ import type {
   StartAgentTaskRequest,
 } from "../domain/agentTask";
 import type { AgentThread } from "../domain/agentThread";
+import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { GitStatus } from "../domain/git";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import { defaultAppSettings, defaultWorkspaceSettings, type AppSettings } from "../domain/settings";
 import { DEFAULT_WORKSPACE_PATH_POLICY } from "../domain/workspacePath";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
-import { AGENT_PROVIDER_CHANGED_BEFORE_SEND_NOTICE } from "./agentTurnAdmission";
+import { agentLaunchReplacedBeforeSendNotice } from "./agentProjectAuthority";
 import { agentTurnStartAbandonedMessage } from "./agentTurnStartRunner";
 import {
   useWorkbenchAgents,
@@ -43,149 +44,148 @@ const LAUNCH: AgentLaunchOptions = {
   thinkingMode: false,
 };
 
-describe("useWorkbenchAgents first activation of a restored project", () => {
-  it("keeps an accepted follow-up when its restored project becomes the active workspace", async () => {
-    const harness = renderWorkbenchAgents({ savedThreads: [restoredThread()] });
-    await harness.settleRestoredProject();
-    expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(agentRootOwnerId(RESTORED_ROOT));
-    const accepted = harness.holdStart();
+type Boundary = "inspect" | "start" | "acknowledge" | "worktree" | "probe";
+const FOLLOW_UP_BOUNDARIES = [
+  ["while it is being prepared", "inspect"],
+  ["before the backend accepts it", "start"],
+  ["between acceptance and acknowledgement", "acknowledge"],
+  ["after it is running", null],
+] as const;
+const NEW_THREAD_BOUNDARIES = [
+  ["during its repository probe", "probe"],
+  ["while its worktree is created", "worktree"],
+  ["before the backend accepts it", "start"],
+] as const;
 
-    let sent: Promise<boolean> = Promise.resolve(false);
-    await act(async () => {
-      sent = harness
-        .hook()
-        .sendFollowUp({ threadId: THREAD_ID, prompt: "Continue", launch: LAUNCH });
-      await Promise.resolve();
-    });
-    await waitForReact(() => expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1));
-
-    harness.openWorkspace(RESTORED_ROOT);
-    await waitForReact(() => {
-      expect(harness.project(RESTORED_ROOT)?.origin).toBe("active-tab");
-      expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(workspaceIdFor(RESTORED_ROOT));
-    });
-    await act(async () => {
-      accepted.resolve();
-      expect(await sent).toBe(true);
-    });
-
-    expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
-    expect(harness.lastTurnStatus(THREAD_ID)).toEqual({ kind: "pending" });
-    harness.unmount();
+async function sendAcrossActivation(
+  harness: ReturnType<typeof renderWorkbenchAgents>,
+  boundary: Boundary | null,
+  activate: () => Promise<void>,
+): Promise<boolean> {
+  const gate = boundary === null ? null : harness.hold(boundary);
+  let sent: Promise<boolean> = Promise.resolve(false);
+  await act(async () => {
+    sent = harness.hook().sendFollowUp({ threadId: THREAD_ID, prompt: "Continue", launch: LAUNCH });
+    await Promise.resolve();
   });
-
-  it("keeps an accepted follow-up when another project becomes the active workspace", async () => {
-    const harness = renderWorkbenchAgents({ savedThreads: [restoredThread(ACTIVE_ROOT)] });
-    await harness.settleRestoredProject();
-    const accepted = harness.holdStart();
-
-    let sent: Promise<boolean> = Promise.resolve(false);
-    await act(async () => {
-      sent = harness
-        .hook()
-        .sendFollowUp({ threadId: THREAD_ID, prompt: "Continue", launch: LAUNCH });
-      await Promise.resolve();
-    });
-    await waitForReact(() => expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1));
-
-    harness.openWorkspace(RESTORED_ROOT);
-    await waitForReact(() => expect(harness.project(ACTIVE_ROOT)?.origin).toBe("background-tab"));
-    await act(async () => {
-      accepted.resolve();
-      expect(await sent).toBe(true);
-    });
-
-    expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
-    expect(harness.lastTurnStatus(THREAD_ID)).toEqual({ kind: "pending" });
-    harness.unmount();
+  if (gate === null) await act(async () => void (await sent));
+  if (gate !== null) await waitForReact(() => expect(gate.entered()).toBeGreaterThan(0));
+  if (boundary === "inspect") expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+  await activate();
+  let result = false;
+  await act(async () => {
+    gate?.release();
+    result = await sent;
   });
+  return result;
+}
 
-  it("says why a new thread was not started when its restored project became the active workspace", async () => {
-    const harness = renderWorkbenchAgents({ savedThreads: [] });
-    await harness.settleRestoredProject();
-    const worktree = harness.holdWorktree();
+describe("useWorkbenchAgents sends across a project activation", () => {
+  it.each(FOLLOW_UP_BOUNDARIES)(
+    "keeps a follow-up %s when its restored project becomes the active workspace",
+    async (_label, boundary) => {
+      const harness = renderWorkbenchAgents({ savedThreads: [restoredThread()] });
+      await harness.settleRestoredProject();
+      expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(agentRootOwnerId(RESTORED_ROOT));
 
-    let started: Promise<{ readonly threadId: string } | null> = Promise.resolve(null);
-    await act(async () => {
-      started = harness.hook().startThread({
-        projectRootKey: RESTORED_ROOT,
-        repositoryRoot: RESTORED_ROOT,
-        prompt: "Refactor the API",
-        isolation: "worktree",
-        unsafeInPlaceConfirmationKey: null,
-        launch: LAUNCH,
+      const sent = await sendAcrossActivation(harness, boundary, async () => {
+        harness.openWorkspace(RESTORED_ROOT);
+        await waitForReact(() => {
+          expect(harness.project(RESTORED_ROOT)?.origin).toBe("active-tab");
+          expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(workspaceIdFor(RESTORED_ROOT));
+        });
       });
-      await Promise.resolve();
-    });
-    await waitForReact(() => expect(harness.worktree.addAgentWorktree).toHaveBeenCalledTimes(1));
 
-    harness.openWorkspace(RESTORED_ROOT);
-    await waitForReact(() =>
-      expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(workspaceIdFor(RESTORED_ROOT)),
-    );
-    await act(async () => {
-      worktree.resolve();
-      expect(await started).toBeNull();
-    });
+      expect(sent).toBe(true);
+      expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+      expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+      expect(harness.lastTurnStatus(THREAD_ID)).toEqual({ kind: "pending" });
+      harness.unmount();
+    },
+  );
 
-    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
-    expect(harness.worktree.removeWorktree).toHaveBeenCalledTimes(1);
-    expect(harness.hook().notice?.message).toBe(AGENT_PROVIDER_CHANGED_BEFORE_SEND_NOTICE);
-    harness.unmount();
-  });
+  it.each(FOLLOW_UP_BOUNDARIES)(
+    "keeps a turn sent in the active project %s when a thread of another project is selected",
+    async (_label, boundary) => {
+      const harness = renderWorkbenchAgents({ savedThreads: [restoredThread(ACTIVE_ROOT)] });
+      await harness.settleRestoredProject();
 
-  it("still abandons an accepted follow-up when its project tab is closed", async () => {
+      const sent = await sendAcrossActivation(harness, boundary, async () => {
+        harness.openWorkspace(RESTORED_ROOT);
+        await waitForReact(() =>
+          expect(harness.project(ACTIVE_ROOT)?.origin).toBe("background-tab"),
+        );
+      });
+
+      expect(sent).toBe(true);
+      expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+      expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+      expect(harness.lastTurnStatus(THREAD_ID)).toEqual({ kind: "pending" });
+      harness.unmount();
+    },
+  );
+
+  it.each(NEW_THREAD_BOUNDARIES)(
+    "starts a new thread %s when its restored project becomes the active workspace",
+    async (_label, boundary) => {
+      const harness = renderWorkbenchAgents({ savedThreads: [] });
+      await harness.settleRestoredProject();
+      const gate = harness.hold(boundary);
+
+      let started: Promise<{ readonly threadId: string } | null> = Promise.resolve(null);
+      await act(async () => {
+        started = harness.hook().startThread(newThreadRequest());
+        await Promise.resolve();
+      });
+      await waitForReact(() => expect(gate.entered()).toBeGreaterThan(0));
+      harness.openWorkspace(RESTORED_ROOT);
+      await waitForReact(() =>
+        expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(workspaceIdFor(RESTORED_ROOT)),
+      );
+      await act(async () => {
+        gate.release();
+        expect(await started).not.toBeNull();
+      });
+
+      expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1);
+      expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+      expect(harness.worktree.removeWorktree).not.toHaveBeenCalled();
+      harness.unmount();
+    },
+  );
+});
+
+describe("useWorkbenchAgents genuine replacements during a start", () => {
+  it("abandons an accepted follow-up when its project tab is closed", async () => {
     const harness = renderWorkbenchAgents({ savedThreads: [restoredThread()] });
     await harness.settleRestoredProject();
-    const accepted = harness.holdStart();
 
-    let sent: Promise<boolean> = Promise.resolve(true);
-    await act(async () => {
-      sent = harness
-        .hook()
-        .sendFollowUp({ threadId: THREAD_ID, prompt: "Continue", launch: LAUNCH });
-      await Promise.resolve();
-    });
-    await waitForReact(() => expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1));
-
-    harness.closeTab(RESTORED_ROOT);
-    await waitForReact(() =>
-      expect(harness.project(RESTORED_ROOT)?.origin).toBe("closed-tab-live-tasks"),
-    );
-    await act(async () => {
-      accepted.resolve();
-      expect(await sent).toBe(false);
+    const sent = await sendAcrossActivation(harness, "start", async () => {
+      harness.closeTab(RESTORED_ROOT);
+      await waitForReact(() =>
+        expect(harness.project(RESTORED_ROOT)?.origin).toBe("closed-tab-live-tasks"),
+      );
     });
 
+    expect(sent).toBe(false);
     expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 
-  it("still abandons an accepted follow-up when the same root is registered as a different workspace", async () => {
+  it("abandons an accepted follow-up when the same root is registered as a different workspace", async () => {
     const harness = renderWorkbenchAgents({ savedThreads: [restoredThread()] });
     await harness.settleRestoredProject();
-    const accepted = harness.holdStart();
 
-    let sent: Promise<boolean> = Promise.resolve(true);
-    await act(async () => {
-      sent = harness
-        .hook()
-        .sendFollowUp({ threadId: THREAD_ID, prompt: "Continue", launch: LAUNCH });
-      await Promise.resolve();
-    });
-    await waitForReact(() => expect(harness.agent.startAgentTask).toHaveBeenCalledTimes(1));
-
-    harness.openWorkspace(RESTORED_ROOT, "workspace-replacement");
-    await waitForReact(() =>
-      expect(
-        harness.hook().agentProjects.launchIdentityForProject(RESTORED_ROOT)?.workspaceId,
-      ).toBe("workspace-replacement"),
-    );
-    await act(async () => {
-      accepted.resolve();
-      expect(await sent).toBe(false);
+    const sent = await sendAcrossActivation(harness, "start", async () => {
+      harness.openWorkspace(RESTORED_ROOT, "workspace-replacement");
+      await waitForReact(() =>
+        expect(
+          harness.hook().agentProjects.launchIdentityForProject(RESTORED_ROOT)?.workspaceId,
+        ).toBe("workspace-replacement"),
+      );
     });
 
+    expect(sent).toBe(false);
     expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
     expect(harness.lastTurnStatus(THREAD_ID)).toEqual({
       kind: "failed",
@@ -193,7 +193,95 @@ describe("useWorkbenchAgents first activation of a restored project", () => {
     });
     harness.unmount();
   });
+
+  it("says the workspace was registered again when a prepared start meets a replacement of the open root", async () => {
+    const harness = renderWorkbenchAgents({ savedThreads: [] });
+    await harness.settleRestoredProject();
+    const gate = harness.hold("worktree");
+
+    let started: Promise<{ readonly threadId: string } | null> = Promise.resolve(null);
+    await act(async () => {
+      started = harness.hook().startThread(newThreadRequest());
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(gate.entered()).toBeGreaterThan(0));
+    harness.openWorkspace(RESTORED_ROOT, "workspace-replacement");
+    await waitForReact(() =>
+      expect(
+        harness.hook().agentProjects.launchIdentityForProject(RESTORED_ROOT)?.workspaceId,
+      ).toBe("workspace-replacement"),
+    );
+    await act(async () => {
+      gate.release();
+      expect(await started).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice?.message).toBe(
+      agentLaunchReplacedBeforeSendNotice("workspaceReplaced"),
+    );
+    harness.unmount();
+  });
+
+  it("stays silent when a prepared start loses its project tab", async () => {
+    const harness = renderWorkbenchAgents({ savedThreads: [] });
+    await harness.settleRestoredProject();
+    const gate = harness.hold("worktree");
+
+    let started: Promise<{ readonly threadId: string } | null> = Promise.resolve(null);
+    await act(async () => {
+      started = harness.hook().startThread(newThreadRequest());
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(gate.entered()).toBeGreaterThan(0));
+    harness.closeTab(RESTORED_ROOT);
+    await waitForReact(() => expect(harness.project(RESTORED_ROOT)).toBeUndefined());
+    await act(async () => {
+      gate.release();
+      expect(await started).toBeNull();
+    });
+
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    expect(harness.hook().notice).toBeNull();
+    harness.unmount();
+  });
+
+  it("leaves no thread of a closed project after repeated promotions with failed reloads", async () => {
+    const harness = renderWorkbenchAgents({ savedThreads: [restoredThread()] });
+    await harness.settleRestoredProject();
+    harness.failReloads();
+
+    harness.openWorkspace(RESTORED_ROOT);
+    await waitForReact(() =>
+      expect(harness.project(RESTORED_ROOT)?.ownerId).toBe(workspaceIdFor(RESTORED_ROOT)),
+    );
+    expect(harness.hook().threads).toHaveLength(1);
+    harness.openWorkspace(RESTORED_ROOT, "workspace-replacement");
+    await waitForReact(() =>
+      expect(harness.project(RESTORED_ROOT)?.ownerId).toBe("workspace-replacement"),
+    );
+    expect(harness.project(RESTORED_ROOT)?.runtimeOwnerIds).not.toContain(
+      agentRootOwnerId(RESTORED_ROOT),
+    );
+
+    harness.closeTab(RESTORED_ROOT);
+    harness.openWorkspace(ACTIVE_ROOT);
+    await waitForReact(() => expect(harness.project(RESTORED_ROOT)).toBeUndefined());
+    expect(harness.hook().threads).toHaveLength(0);
+    harness.unmount();
+  });
 });
+
+function newThreadRequest() {
+  return {
+    projectRootKey: RESTORED_ROOT,
+    repositoryRoot: RESTORED_ROOT,
+    prompt: "Refactor the API",
+    isolation: "worktree",
+    unsafeInPlaceConfirmationKey: null,
+    launch: LAUNCH,
+  } as const;
+}
 
 function workspaceIdFor(rootPath: string): string {
   return `workspace:${rootPath}`;
@@ -269,15 +357,22 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
   ]);
   const leasedWorkspaceIds = new Map<string, string>();
   let activeRoot = ACTIVE_ROOT;
-  let startGate: Promise<void> = Promise.resolve();
-  let worktreeGate: Promise<void> = Promise.resolve();
+  const gates = new Map<Boundary, { readonly opened: Promise<void>; entered: number }>();
+  const pass = async (boundary: Boundary): Promise<void> => {
+    const gate = gates.get(boundary);
+    if (gate === undefined) return;
+    gate.entered += 1;
+    await gate.opened;
+  };
+  let reloadsFail = false;
+  let loads = 0;
 
   const agent = {
     startAgentTask: vi.fn(async (payload: StartAgentTaskRequest) => {
-      await startGate;
+      await pass("start");
       return { taskId: payload.taskId };
     }),
-    acknowledgeAgentTaskStart: vi.fn(async () => undefined),
+    acknowledgeAgentTaskStart: vi.fn(async () => pass("acknowledge")),
     stopAgentTask: vi.fn(async () => undefined),
     stopAgentTasksForRoot: vi.fn(async () => undefined),
     steerAgentTask: vi.fn(async () => ({ kind: "accepted" }) as const),
@@ -289,10 +384,22 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
       return () => undefined;
     }),
   };
+  const sessions: AgentThreadSessionGateway = {
+    interruptAgentTask: vi.fn(async () => Promise.reject(new Error("interrupt not stubbed"))),
+    inspectAgentThreadSession: vi.fn(async () => {
+      await pass("inspect");
+      return Promise.reject(new Error("No session to inspect."));
+    }),
+    endAgentThreadSession: vi.fn(async () => false),
+    stopAgentBackgroundTask: vi.fn(async () => Promise.reject(new Error("stop not stubbed"))),
+    subscribeAgentSessionEnded: vi.fn(async () => () => undefined),
+    subscribeAgentSessionBackgroundTurn: vi.fn(async () => () => undefined),
+    subscribeAgentSessionBackgroundTasks: vi.fn(async () => () => undefined),
+  };
   const worktree = {
     listWorktrees: vi.fn(async () => []),
     addAgentWorktree: vi.fn(async (repositoryRoot: string, taskId: string) => {
-      await worktreeGate;
+      await pass("worktree");
       return {
         worktreePath: `${repositoryRoot}/.worktrees/${taskId}`,
         branch: `agent/${taskId}`,
@@ -303,21 +410,23 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
     pruneWorktrees: vi.fn(async () => []),
   };
   const threadStore: AgentThreadStoreGateway = {
-    loadAgentThreads: vi.fn(async ({ rootKey }: { readonly rootKey: string }) => ({
-      threads: options.savedThreads.filter((thread) => thread.owner.rootKey === rootKey),
-      unreadable: [],
-      evicted: 0,
-    })),
+    loadAgentThreads: vi.fn(async ({ rootKey }: { readonly rootKey: string }) => {
+      loads += 1;
+      if (reloadsFail) throw new Error("Saved agent history is unavailable.");
+      return {
+        threads: options.savedThreads.filter((thread) => thread.owner.rootKey === rootKey),
+        unreadable: [],
+        evicted: 0,
+      };
+    }),
     saveAgentThread: vi.fn(async () => undefined),
     deleteAgentThread: vi.fn(async () => undefined),
   };
   const git = {
-    getStatus: vi.fn(async (rootPath: string): Promise<GitStatus> => ({
-      branch: "main",
-      changes: [],
-      isRepository: true,
-      rootPath,
-    })),
+    getStatus: vi.fn(async (rootPath: string): Promise<GitStatus> => {
+      await pass("probe");
+      return { branch: "main", changes: [], isRepository: true, rootPath };
+    }),
     getDiff: vi.fn(async () => Promise.reject(new Error("diff not stubbed"))),
     stageFiles: vi.fn(async () => Promise.reject(new Error("stage not stubbed"))),
     commit: vi.fn(async () => Promise.reject(new Error("commit not stubbed"))),
@@ -376,6 +485,7 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
       })),
     },
     agentTaskGateway: agent as unknown as AgentTaskGateway,
+    agentThreadSessionGateway: sessions,
     agentThreadStoreGateway: threadStore,
     gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
     agentModeActive: true,
@@ -462,15 +572,21 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
         expect(hook().threads).toHaveLength(options.savedThreads.length);
       });
     },
-    holdStart() {
-      const gate = createDeferred();
-      startGate = gate.promise;
-      return gate;
+    hold(boundary: Boundary) {
+      const opened = createDeferred();
+      const gate = { opened: opened.promise, entered: 0 };
+      gates.set(boundary, gate);
+      return {
+        entered: () => gate.entered,
+        release: () => {
+          gates.delete(boundary);
+          opened.resolve();
+        },
+      };
     },
-    holdWorktree() {
-      const gate = createDeferred();
-      worktreeGate = gate.promise;
-      return gate;
+    failReloads() {
+      expect(loads).toBeGreaterThan(0);
+      reloadsFail = true;
     },
     openWorkspace(rootPath: string, workspaceId?: string) {
       descriptors.set(

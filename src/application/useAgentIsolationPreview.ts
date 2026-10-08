@@ -15,8 +15,7 @@ import {
   errorMessageOf,
   isCurrentProjectOwner,
   projectAuthority,
-  sameOptionalProjectAuthority,
-  sameProjectAuthority,
+  projectHoldsAuthority,
   type AgentProjectAuthority,
 } from "./agentProjectAuthority";
 import type {
@@ -89,12 +88,11 @@ export function useAgentIsolationPreview(
     (repositoryRoot: string, projectRootKey?: string): AgentTaskIsolationContext => {
       const deps = dependenciesRef.current;
       const project = isolationProject(deps.projects, repositoryRoot, projectRootKey);
-      const authority = project === undefined ? null : projectAuthority(project);
       const fresh = statusesRef.current.get(isolationStatusKey(project?.rootKey, repositoryRoot));
       const status =
         fresh !== undefined &&
-        authority !== null &&
-        sameProjectAuthority(fresh.authority, authority)
+        project !== undefined &&
+        projectHoldsAuthority(project, fresh.authority)
           ? fresh.snapshot
           : project === undefined
             ? { known: false, dirty: false }
@@ -176,9 +174,12 @@ export function useAgentIsolationPreview(
         statusesRef.current.get(statusKey),
         context,
       );
+      const probed = statusesRef.current.get(statusKey)?.authority;
       const confirmationKey =
+        project !== undefined &&
         authority !== null &&
-        sameOptionalProjectAuthority(statusesRef.current.get(statusKey)?.authority, authority)
+        probed !== undefined &&
+        projectHoldsAuthority(project, probed)
           ? isolationConfirmationKey(repositoryRoot, context, authority)
           : null;
       return {
@@ -276,11 +277,7 @@ function isCurrentTrustedProjectOwner(
     repositoryRoot,
     authority.rootKey,
   );
-  return (
-    project !== undefined &&
-    project.trust === "trusted" &&
-    sameProjectAuthority(projectAuthority(project), authority)
-  );
+  return project !== undefined && project.trust === "trusted";
 }
 
 function freshIsolationStatus(
@@ -355,7 +352,7 @@ function repositoryProbeState(
   if (
     authority !== null &&
     fresh !== undefined &&
-    sameProjectAuthority(fresh.authority, authority)
+    projectHoldsAuthority(project, fresh.authority)
   ) {
     return fresh.state;
   }

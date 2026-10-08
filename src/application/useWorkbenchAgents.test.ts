@@ -1060,23 +1060,28 @@ describe("useWorkbenchAgents composition", () => {
     harness.unmount();
   });
 
-  it("re-registers provider ownership across workspace A to B to A replacements", async () => {
+  it("keeps one provider registration and admission authority across active workspace A to B to A", async () => {
     const harness = renderWorkbenchAgents({ withProjectGateways: false });
     await waitForReact(() =>
-      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2),
+      expect(
+        harness.hook().providerManagement.admissionAuthority("claudeCode").disposition.kind,
+      ).toBe("ready"),
     );
+    const admitted = harness.hook().providerManagement.admissionAuthority("claudeCode");
+    const lookups = harness.agentProviderGateway.currentAgentProviderPolicy.mock.calls.length;
+    const probes = harness.agentProviderGateway.probeAgentProviderHealth.mock.calls.length;
 
-    harness.setWorkspaceId("workspace-b");
-    harness.rerender();
-    await waitForReact(() =>
-      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(4),
-    );
+    for (const workspaceId of ["workspace-b", ACTIVE_ID]) {
+      harness.setWorkspaceId(workspaceId);
+      harness.rerender();
+      expect(harness.hook().providerManagement.admissionAuthority("claudeCode")).toEqual(admitted);
+      await act(async () => undefined);
+      expect(harness.hook().providerManagement.admissionAuthority("claudeCode")).toEqual(admitted);
+    }
 
-    harness.setWorkspaceId(ACTIVE_ID);
-    harness.rerender();
-    await waitForReact(() =>
-      expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(6),
-    );
+    expect(harness.agentProviderGateway.registerAgentProviderPolicy).toHaveBeenCalledTimes(2);
+    expect(harness.agentProviderGateway.currentAgentProviderPolicy).toHaveBeenCalledTimes(lookups);
+    expect(harness.agentProviderGateway.probeAgentProviderHealth).toHaveBeenCalledTimes(probes);
     harness.unmount();
   });
 

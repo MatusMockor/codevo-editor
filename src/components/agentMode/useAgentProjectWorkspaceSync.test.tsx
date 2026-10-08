@@ -106,6 +106,38 @@ describe("project workspace synchronization", () => {
     expect(activate).toHaveBeenCalledWith("/a");
   });
 
+  it("adopts a promoted owner of the same registration without reopening its root", async () => {
+    act(() => current.select(A));
+    await act(async () => current.select({ ...A, ownerId: "promoted" }));
+    expect(activate).not.toHaveBeenCalled();
+    expect(current.state).toEqual({
+      kind: "ready",
+      rootPath: "/a",
+      owner: { ownerId: "promoted", generation: 1 },
+    });
+  });
+
+  it("keeps one pending activation when its owner is promoted before it settles", async () => {
+    const pending = deferred();
+    activate.mockReturnValueOnce(pending.promise);
+    act(() => current.select(B));
+    workspaceRoot = "/b";
+    render();
+    act(() => current.select({ ...B, ownerId: "promoted" }));
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(current.state).toEqual({
+      kind: "pending",
+      rootPath: "/b",
+      owner: { ownerId: "promoted", generation: 1 },
+    });
+    await act(async () => pending.resolve(true));
+    expect(current.state).toEqual({
+      kind: "ready",
+      rootPath: "/b",
+      owner: { ownerId: "promoted", generation: 1 },
+    });
+  });
+
   it("names the exact owner of every pending, ready and failed activation", async () => {
     const pending = deferred();
     activate.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(false);

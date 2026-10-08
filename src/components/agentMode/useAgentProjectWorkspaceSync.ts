@@ -47,6 +47,25 @@ function targetKey(target: AgentProjectWorkspaceTarget | null): string {
   return JSON.stringify([target.rootKey, target.rootPath, target.ownerId, target.generation]);
 }
 
+function sameRegistration(
+  left: AgentProjectWorkspaceTarget | null,
+  right: AgentProjectWorkspaceTarget | null,
+): boolean {
+  if (left === null || right === null) return false;
+  return (
+    left.rootKey === right.rootKey &&
+    left.rootPath === right.rootPath &&
+    left.generation === right.generation
+  );
+}
+
+function ownedBy(
+  state: Exclude<AgentProjectWorkspaceActivation, { readonly kind: "none" }>,
+  target: AgentProjectWorkspaceTarget,
+): AgentProjectWorkspaceActivation {
+  return { ...state, owner: targetOwner(target) };
+}
+
 export function useAgentProjectWorkspaceSync({
   workspaceRoot,
   activate,
@@ -81,6 +100,17 @@ export function useAgentProjectWorkspaceSync({
         current.current.workspaceRoot === target.rootPath)
     )
       return;
+    if (
+      !retry &&
+      target !== null &&
+      !authority.failed &&
+      sameRegistration(authority.target, target) &&
+      (authority.pending || current.current.workspaceRoot === target.rootPath)
+    ) {
+      authority.target = target;
+      setState((current) => (current.kind === "none" ? current : ownedBy(current, target)));
+      return;
+    }
     const replaced =
       authority.target !== null &&
       target !== null &&
@@ -123,7 +153,11 @@ export function useAgentProjectWorkspaceSync({
         return;
       }
       owner.current.pending = false;
-      setState({ kind: "ready", rootPath: target.rootPath, owner: targetOwner(target) });
+      setState({
+        kind: "ready",
+        rootPath: target.rootPath,
+        owner: targetOwner(owner.current.target ?? target),
+      });
     }, failed);
   }, []);
   const select = useCallback(
