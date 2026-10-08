@@ -38,13 +38,14 @@ describe("BrowserAgentComposerDraftPreference", () => {
     expect(new BrowserAgentComposerDraftPreference(memoryStorage()).load()).toEqual([]);
   });
 
-  it("round-trips thread and new-thread drafts in recency order", () => {
+  it("round-trips thread drafts in recency order and never stores new-thread drafts", () => {
     const storage = memoryStorage();
     const preference = new BrowserAgentComposerDraftPreference(storage);
 
     preference.save([
       ["agt-mue1wenj-7ede", "reply"],
       ["new:/workspace/app", "new thread"],
+      ["agt-mue1wenj-9c1f", "follow up"],
       ["clone:local:p-1", "ephemeral"],
     ]);
 
@@ -52,12 +53,26 @@ describe("BrowserAgentComposerDraftPreference", () => {
       version: 1,
       drafts: [
         ["agt-mue1wenj-7ede", "reply"],
-        ["new:/workspace/app", "new thread"],
+        ["agt-mue1wenj-9c1f", "follow up"],
       ],
     });
     expect(new BrowserAgentComposerDraftPreference(storage).load()).toEqual([
       ["agt-mue1wenj-7ede", "reply"],
-      ["new:/workspace/app", "new thread"],
+      ["agt-mue1wenj-9c1f", "follow up"],
+    ]);
+  });
+
+  it("ignores a new-thread draft left in storage by an earlier version", () => {
+    const stored = JSON.stringify({
+      version: 1,
+      drafts: [
+        ["agt-mue1wenj-7ede", "reply"],
+        ["new:/workspace/app", "typed before quitting"],
+      ],
+    });
+
+    expect(new BrowserAgentComposerDraftPreference(memoryStorage(stored)).load()).toEqual([
+      ["agt-mue1wenj-7ede", "reply"],
     ]);
   });
 
@@ -71,6 +86,10 @@ describe("BrowserAgentComposerDraftPreference", () => {
 
     preference.save([["agt-1", "draft"]]);
     preference.save([["clone:local:p-1", "only an ephemeral draft"]]);
+    expect(storage.values.has(AGENT_COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
+
+    preference.save([["agt-1", "draft"]]);
+    preference.save([["new:/workspace/app", "only a new-thread draft"]]);
     expect(storage.values.has(AGENT_COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
   });
 

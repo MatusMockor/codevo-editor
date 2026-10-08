@@ -10,7 +10,7 @@ export const MAX_PERSISTED_AGENT_COMPOSER_DRAFTS = 32;
 export const MAX_PERSISTED_AGENT_COMPOSER_DRAFT_TOTAL_BYTES = 256 * 1_024;
 export const MAX_AGENT_COMPOSER_DRAFT_SNAPSHOT_RAW_CHARS = 512 * 1_024;
 
-const EPHEMERAL_DRAFT_KEY_PREFIX = "clone:";
+const EPHEMERAL_DRAFT_KEY_PREFIXES: readonly string[] = Object.freeze(["clone:", "new:"]);
 const NO_ENTRIES: readonly AgentComposerDraftEntry[] = Object.freeze([]);
 
 export function isAgentComposerDraftTextRetainable(text: string): boolean {
@@ -70,8 +70,12 @@ export function boundAgentComposerDraftEntries(
 
 function isPersistableEntry(key: string, text: string): boolean {
   if (key === "" || key.length > MAX_AGENT_COMPOSER_DRAFT_KEY_CHARS) return false;
-  if (key.startsWith(EPHEMERAL_DRAFT_KEY_PREFIX)) return false;
+  if (isEphemeralDraftKey(key)) return false;
   return isAgentComposerDraftTextRetainable(text);
+}
+
+function isEphemeralDraftKey(key: string): boolean {
+  return EPHEMERAL_DRAFT_KEY_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
 function wireFormat(entries: readonly AgentComposerDraftEntry[]): string {

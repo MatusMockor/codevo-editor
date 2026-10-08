@@ -30,7 +30,7 @@ describe("agentComposerDraftSnapshot", () => {
   it("writes the versioned wire format oldest-first and parses it back identically", () => {
     const entries: readonly AgentComposerDraftEntry[] = [
       ["agt-mue1wenj-7ede", "reply to the agent"],
-      ["new:/workspace/app", 'start a new thread\nwith "quotes" and é'],
+      ["agt-mue1wenj-9c1f", 'follow up\nwith "quotes" and é'],
     ];
 
     const raw = serializeAgentComposerDraftSnapshot(entries);
@@ -39,10 +39,47 @@ describe("agentComposerDraftSnapshot", () => {
       version: 1,
       drafts: [
         ["agt-mue1wenj-7ede", "reply to the agent"],
-        ["new:/workspace/app", 'start a new thread\nwith "quotes" and é'],
+        ["agt-mue1wenj-9c1f", 'follow up\nwith "quotes" and é'],
       ],
     });
     expect(parseAgentComposerDraftSnapshot(raw)).toEqual(entries);
+  });
+
+  it("never writes a new-thread draft so it cannot survive a restart", () => {
+    const raw = serializeAgentComposerDraftSnapshot([
+      ["agt-mue1wenj-7ede", "reply to the agent"],
+      ["new:/workspace/app", "start a new thread"],
+      ["new:remote:server:runner:project", "start a remote thread"],
+    ]);
+
+    expect(JSON.parse(raw)).toEqual({
+      version: 1,
+      drafts: [["agt-mue1wenj-7ede", "reply to the agent"]],
+    });
+    expect(parseAgentComposerDraftSnapshot(raw)).toEqual([
+      ["agt-mue1wenj-7ede", "reply to the agent"],
+    ]);
+  });
+
+  it("serializes a snapshot holding only ephemeral drafts to the empty snapshot", () => {
+    const raw = serializeAgentComposerDraftSnapshot([
+      ["new:/workspace/app", "start a new thread"],
+      ["clone:local:p-1", "clone drafts are ephemeral"],
+    ]);
+
+    expect(raw).toBe(serializeAgentComposerDraftSnapshot([]));
+    expect(parseAgentComposerDraftSnapshot(raw)).toEqual([]);
+  });
+
+  it("does not let ephemeral drafts consume the entry cap of persisted ones", () => {
+    const ephemeral = Array.from(
+      { length: MAX_PERSISTED_AGENT_COMPOSER_DRAFTS },
+      (_, index): AgentComposerDraftEntry => [`new:/workspace/app-${index}`, `draft ${index}`],
+    );
+
+    const raw = serializeAgentComposerDraftSnapshot([["agt-1", "kept"], ...ephemeral]);
+
+    expect(parseAgentComposerDraftSnapshot(raw)).toEqual([["agt-1", "kept"]]);
   });
 
   it("serializes an empty snapshot and parses it to no entries", () => {
@@ -90,12 +127,13 @@ describe("agentComposerDraftSnapshot", () => {
       ["k".repeat(MAX_AGENT_COMPOSER_DRAFT_KEY_CHARS + 1), "long key"],
       ["agt-8", "a".repeat(MAX_AGENT_COMPOSER_DRAFT_TEXT_BYTES + 1)],
       ["agt-9", "é".repeat(MAX_AGENT_COMPOSER_DRAFT_TEXT_BYTES / 2 + 1)],
-      ["new:/workspace/app", "also kept"],
+      ["new:/workspace/app", "new-thread drafts are ephemeral"],
+      ["agt-10", "also kept"],
     ]);
 
     expect(parseAgentComposerDraftSnapshot(raw)).toEqual([
       ["agt-1", "kept"],
-      ["new:/workspace/app", "also kept"],
+      ["agt-10", "also kept"],
     ]);
   });
 

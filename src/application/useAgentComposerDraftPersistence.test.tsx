@@ -9,6 +9,7 @@ import {
 import type { KeyValueStorage } from "../infrastructure/browserSettingsGateway";
 import type { AgentComposerDraftPreferencePort } from "./agentComposerDraftPreferencePort";
 import { createAgentComposerDraftStore, type AgentComposerDraftStore } from "./agentComposerDrafts";
+import { agentDraftDispatchKey } from "./agentDispatchKeys";
 import {
   createSessionRestoreFlushRegistry,
   type SessionRestoreFlushRegistry,
@@ -135,20 +136,22 @@ function mount(node: ReactNode): () => void {
 }
 
 describe("useAgentComposerDraftPersistence", () => {
-  it("restores thread and new-thread drafts after a relaunch on the debounced save", () => {
+  it("restores a thread draft but not a new-thread draft after a relaunch on the debounced save", () => {
+    const newThreadKey = agentDraftDispatchKey("/workspace/app");
     const storage = memoryStorage();
     const first = session(storage);
     const unmountFirst = mount(<Screen current={first} />);
 
     act(() => {
       first.store.writeDraft("agt-mue1wenj-7ede", "reply to the agent");
-      first.store.writeDraft("new:/workspace/app", "start a new thread");
+      first.store.writeDraft(newThreadKey, "start a new thread");
     });
     expect(storage.values.has(AGENT_COMPOSER_DRAFTS_STORAGE_KEY)).toBe(false);
     expect(first.timers.pending()).toBe(1);
 
     act(() => first.timers.runAll());
     expect(storage.values.has(AGENT_COMPOSER_DRAFTS_STORAGE_KEY)).toBe(true);
+    expect(first.store.readDraft(newThreadKey)).toBe("start a new thread");
     unmountFirst();
 
     const relaunched = session(storage);
@@ -165,7 +168,8 @@ describe("useAgentComposerDraftPersistence", () => {
 
     expect(seen[0]).toBe("reply to the agent");
     expect(relaunched.store.readDraft("agt-mue1wenj-7ede")).toBe("reply to the agent");
-    expect(relaunched.store.readDraft("new:/workspace/app")).toBe("start a new thread");
+    expect(relaunched.store.readDraft(newThreadKey)).toBe("");
+    expect(relaunched.store.snapshot()).toEqual([["agt-mue1wenj-7ede", "reply to the agent"]]);
   });
 
   it("saves pending drafts when the flush registry is flushed", () => {
