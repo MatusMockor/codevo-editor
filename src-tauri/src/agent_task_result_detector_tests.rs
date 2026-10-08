@@ -362,6 +362,25 @@ const CLEARED_INIT: &[u8] =
 const CLEARED_EMPTY_RESULT: &[u8] = b"{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"\",\"num_turns\":0,\"usage\":{\"output_tokens\":0},\"session_id\":\"cleared\"}\n";
 
 #[test]
+fn admitting_a_frame_judges_its_session_without_pinning_it() {
+    let frame = |session: &str| serde_json::json!({"type":"user","session_id":session});
+    let nested = serde_json::json!({"type":"user","parent_tool_use_id":"toolu"});
+    let mut detector = ResultLineDetector::new();
+    assert!(detector.admits_root(&frame("resumed")));
+    assert_eq!(detector.session_id(), None);
+    detector.feed(INIT).unwrap();
+    assert!(detector.admits_root(&frame("resumed")));
+    assert!(!detector.admits_root(&frame("foreign")));
+    assert!(!detector.admits_root(&nested));
+    assert_eq!(detector.resets(), 0);
+    detector.feed(CLEAR_RESET).unwrap();
+    assert_eq!(detector.resets(), 1);
+    assert!(!detector.admits_root(&frame("resumed")));
+    assert!(detector.admits_root(&frame("cleared")));
+    assert_eq!(detector.session_id(), None);
+}
+
+#[test]
 fn retired_session_straggler_does_not_repin_after_clear() {
     let killed = b"{\"type\":\"system\",\"subtype\":\"task_updated\",\"task_id\":\"watch\",\"patch\":{\"status\":\"killed\"},\"session_id\":\"resumed\"}\n";
     let mut detector = ResultLineDetector::new();
@@ -981,4 +1000,239 @@ fn only_a_background_task_that_finishes_on_its_own_counts_as_a_wake_up() {
         .unwrap();
     assert_eq!(detector.wake_ups(), 2, "a foreground task wakes nothing");
     assert_eq!(detector.live_task_count(), 0);
+}
+
+fn tool_call(name: &str, id: &str, parent: Option<&str>) -> String {
+    format!(
+        "{}\n",
+        serde_json::json!({
+            "type": "assistant",
+            "parent_tool_use_id": parent,
+            "message": {"content": [{"type": "tool_use", "id": id, "name": name, "input": {}}]}
+        })
+    )
+}
+
+fn shell_started_by(task: &str, tool: Option<&str>) -> String {
+    let mut frame = serde_json::json!({
+        "type": "system",
+        "subtype": "task_started",
+        "task_id": task,
+        "task_type": "local_bash",
+        "is_backgrounded": true
+    });
+    if let Some(tool) = tool {
+        frame["tool_use_id"] = serde_json::json!(tool);
+    }
+    format!("{frame}\n")
+}
+
+fn kind_of(detector: &ResultLineDetector, task: &str) -> Option<BackgroundTaskKind> {
+    detector
+        .background_tasks()
+        .into_iter()
+        .find(|live| live.task_id == task)
+        .map(|live| live.kind)
+}
+
+#[test]
+fn only_a_task_started_by_a_root_tool_call_named_exactly_monitor_is_a_monitor() {
+    let mut detector = awaiting();
+    for call in [
+        tool_call("Monitor", "toolu-watch", None),
+        tool_call("Bash", "toolu-bash", None),
+        tool_call("monitor", "toolu-lowercase", None),
+        tool_call("MonitorTool", "toolu-longer", None),
+        tool_call("Monitor", "toolu-nested", Some("toolu-agent")),
+    ] {
+        detector.feed(call.as_bytes()).unwrap();
+    }
+    for (task, tool) in [
+        ("watch", Some("toolu-watch")),
+        ("bash", Some("toolu-bash")),
+        ("lowercase", Some("toolu-lowercase")),
+        ("longer", Some("toolu-longer")),
+        ("nested", Some("toolu-nested")),
+        ("unseen", Some("toolu-unseen")),
+        ("untied", None),
+    ] {
+        detector
+            .feed(shell_started_by(task, tool).as_bytes())
+            .unwrap();
+    }
+
+    assert_eq!(
+        kind_of(&detector, "watch"),
+        Some(BackgroundTaskKind::Monitor)
+    );
+    for task in ["bash", "lowercase", "longer", "nested", "unseen", "untied"] {
+        assert_eq!(
+            kind_of(&detector, task),
+            Some(BackgroundTaskKind::Shell),
+            "{task}"
+        );
+    }
+}
+
+#[test]
+fn a_monitor_call_counts_only_from_a_frame_whose_parent_is_absent_or_null() {
+    let monitor = BackgroundTaskKind::Monitor;
+    let shell = BackgroundTaskKind::Shell;
+    let parents = [
+        ("absent", None, monitor),
+        ("null", Some(serde_json::Value::Null), monitor),
+        ("nested", Some(serde_json::json!("toolu-agent")), shell),
+        ("empty", Some(serde_json::json!("")), shell),
+        ("numeric", Some(serde_json::json!(7)), shell),
+        ("zero", Some(serde_json::json!(0)), shell),
+        ("false", Some(serde_json::json!(false)), shell),
+        (
+            "object",
+            Some(serde_json::json!({"id": "toolu-agent"})),
+            shell,
+        ),
+        ("array", Some(serde_json::json!(["toolu-agent"])), shell),
+        (
+            "oversized",
+            Some(serde_json::json!("t".repeat(4096))),
+            shell,
+        ),
+    ];
+    let mut detector = awaiting();
+    for (name, parent, _) in &parents {
+        let mut call = serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "tool_use", "id": format!("toolu-{name}"), "name": "Monitor", "input": {}}
+            ]}
+        });
+        if let Some(parent) = parent {
+            call["parent_tool_use_id"] = parent.clone();
+        }
+        detector.feed(format!("{call}\n").as_bytes()).unwrap();
+    }
+    for (name, _, kind) in &parents {
+        let started = shell_started_by(name, Some(&format!("toolu-{name}")));
+        detector.feed(started.as_bytes()).unwrap();
+        assert_eq!(kind_of(&detector, name), Some(*kind), "{name}");
+    }
+}
+
+#[test]
+fn a_monitor_stays_a_monitor_through_later_frames_and_is_forgotten_when_it_ends() {
+    let mut detector = awaiting();
+    detector
+        .feed(tool_call("Monitor", "toolu-watch", None).as_bytes())
+        .unwrap();
+    detector
+        .feed(shell_started_by("watch", Some("toolu-watch")).as_bytes())
+        .unwrap();
+    for later in [
+        r#"{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"watch","task_type":"local_bash"}]}"#,
+        r#"{"type":"system","subtype":"task_progress","task_id":"watch","task_type":"local_bash","tool_use_id":"toolu-watch"}"#,
+        r#"{"type":"system","subtype":"task_updated","task_id":"watch","patch":{"description":"still watching"}}"#,
+    ] {
+        detector.feed(format!("{later}\n").as_bytes()).unwrap();
+        assert_eq!(
+            kind_of(&detector, "watch"),
+            Some(BackgroundTaskKind::Monitor),
+            "{later}"
+        );
+    }
+
+    detector.feed(DONE).unwrap();
+    assert_eq!(kind_of(&detector, "watch"), None);
+    detector
+        .feed(shell_started_by("watch", Some("toolu-watch")).as_bytes())
+        .unwrap();
+    assert_eq!(kind_of(&detector, "watch"), Some(BackgroundTaskKind::Shell));
+}
+
+#[test]
+fn remembered_monitor_calls_are_bounded_and_the_oldest_is_forgotten_first() {
+    let mut detector = awaiting();
+    for index in 0..=MAX_PENDING_MONITOR_CALLS {
+        let call = tool_call("Monitor", &format!("toolu-{index}"), None);
+        detector.feed(call.as_bytes()).unwrap();
+    }
+    detector
+        .feed(shell_started_by("oldest", Some("toolu-0")).as_bytes())
+        .unwrap();
+    detector
+        .feed(shell_started_by("second", Some("toolu-1")).as_bytes())
+        .unwrap();
+    let newest = format!("toolu-{MAX_PENDING_MONITOR_CALLS}");
+    detector
+        .feed(shell_started_by("newest", Some(&newest)).as_bytes())
+        .unwrap();
+
+    assert_eq!(
+        kind_of(&detector, "oldest"),
+        Some(BackgroundTaskKind::Shell)
+    );
+    assert_eq!(
+        kind_of(&detector, "second"),
+        Some(BackgroundTaskKind::Monitor)
+    );
+    assert_eq!(
+        kind_of(&detector, "newest"),
+        Some(BackgroundTaskKind::Monitor)
+    );
+}
+
+#[test]
+fn a_live_monitor_never_holds_a_session_turn_open_but_a_shell_beside_it_does() {
+    let mut watching = awaiting();
+    watching
+        .feed(tool_call("Monitor", "toolu-watch", None).as_bytes())
+        .unwrap();
+    watching
+        .feed(shell_started_by("watch", Some("toolu-watch")).as_bytes())
+        .unwrap();
+    assert!(
+        watching.feed(RESULT).unwrap(),
+        "a monitor alone lets the turn end"
+    );
+    assert_eq!(watching.live_background_task_count(), 1);
+
+    let mut beside = awaiting();
+    beside
+        .feed(tool_call("Monitor", "toolu-watch", None).as_bytes())
+        .unwrap();
+    beside
+        .feed(shell_started_by("watch", Some("toolu-watch")).as_bytes())
+        .unwrap();
+    beside
+        .feed(shell_started_by("build", Some("toolu-bash")).as_bytes())
+        .unwrap();
+    assert!(
+        !beside.feed(RESULT).unwrap(),
+        "the shell still holds the turn"
+    );
+    let built = b"{\"type\":\"system\",\"subtype\":\"task_notification\",\"task_id\":\"build\",\"status\":\"completed\"}\n";
+    assert!(beside.feed(built).unwrap());
+    assert_eq!(kind_of(&beside, "watch"), Some(BackgroundTaskKind::Monitor));
+
+    let mut websocket = awaiting();
+    let started = b"{\"type\":\"system\",\"subtype\":\"task_started\",\"task_id\":\"ws\",\"task_type\":\"monitor_ws\"}\n";
+    websocket.feed(started).unwrap();
+    assert!(websocket.feed(RESULT).unwrap());
+}
+
+#[test]
+fn a_per_turn_process_still_waits_for_its_monitor() {
+    let mut detector = ResultLineDetector::new();
+    detector
+        .feed(tool_call("Monitor", "toolu-watch", None).as_bytes())
+        .unwrap();
+    detector
+        .feed(shell_started_by("watch", Some("toolu-watch")).as_bytes())
+        .unwrap();
+    assert_eq!(
+        kind_of(&detector, "watch"),
+        Some(BackgroundTaskKind::Monitor)
+    );
+
+    assert!(!detector.feed(RESULT).unwrap());
+    assert_eq!(detector.live_task_count(), 1);
 }

@@ -342,29 +342,53 @@ fn a_finished_agent_expects_the_wake_up_reply() {
     assert_eq!(finished.background_tasks, level(vec![], EXPECTED));
 }
 
-#[test]
-fn a_task_that_finishes_while_our_command_runs_never_expects_a_reply() {
-    let mut router = ClaudeSessionRouter::new();
-    let (_, id) = owned_turn(&mut router);
-    let listed = feed_all(&mut router, &[TASKS_LISTED, TASK_STARTED]);
+fn tool_result(parent: Option<&str>) -> Vec<u8> {
+    line(serde_json::json!({
+        "type": "user",
+        "parent_tool_use_id": parent,
+        "session_id": "sess-abcdefgh",
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu-front", "content": "done"}
+        ]}
+    }))
+}
+
+fn running_command_whose_shell_finished(router: &mut ClaudeSessionRouter) -> String {
+    let (_, id) = owned_turn(router);
+    let listed = feed_all(router, &[TASKS_LISTED, TASK_STARTED]);
     assert_eq!(listed.background_changes, 1);
     let working = assistant("running the foreground command");
     let finished = feed_all(
-        &mut router,
+        router,
         &[&working, TASK_UPDATED, TASK_NOTIFIED, TASKS_EMPTIED],
     );
     assert_eq!(finished.settles, 0);
     assert_eq!(finished.background_changes, 1);
     assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+    id
+}
+
+#[test]
+fn a_task_that_finishes_before_a_later_round_of_our_command_is_answered_by_that_command() {
+    let mut router = ClaudeSessionRouter::new();
+    let id = running_command_whose_shell_finished(&mut router);
 
     let foreground = task_started("front-1", false);
     let foreground_done = task_finished("front-1", "completed");
+    let round = tool_result(None);
     let noted = assistant("NOTED");
     let own = result(Some(&id), 0.25, "NOTED");
     let completed = lifecycle(&id, "completed");
     let settling = feed_all(
         &mut router,
-        &[&foreground, &foreground_done, &noted, &own, &completed],
+        &[
+            &foreground,
+            &foreground_done,
+            &round,
+            &noted,
+            &own,
+            &completed,
+        ],
     );
     assert_eq!(settling.settles, 1);
     assert_eq!(settling.background_changes, 0);
@@ -374,7 +398,95 @@ fn a_task_that_finishes_while_our_command_runs_never_expects_a_reply() {
 }
 
 #[test]
-fn a_task_that_finishes_while_a_reply_is_written_never_expects_another_reply() {
+fn a_task_that_finishes_during_the_final_answer_of_our_command_expects_a_reply_at_its_result() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let foreground = task_started("front-1", false);
+    let foreground_done = task_finished("front-1", "completed");
+    let round = tool_result(None);
+    let before = feed_all(
+        &mut router,
+        &[
+            TASKS_LISTED,
+            TASK_STARTED,
+            &foreground,
+            &foreground_done,
+            &round,
+        ],
+    );
+    assert_eq!(before.settles, 0);
+    let finished = feed_all(&mut router, &[TASK_UPDATED, TASK_NOTIFIED, TASKS_EMPTIED]);
+    assert_eq!(finished.settles, 0);
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+
+    let answered = router.feed(&assistant("a long final answer"));
+    assert_eq!(answered.background_tasks, None);
+    let own = router.feed(&result(Some(&id), 0.25, "DONE"));
+    assert_eq!(own.background_tasks, level(vec![], EXPECTED));
+    let completed = router.feed(&lifecycle(&id, "completed"));
+    assert!(own.settled || completed.settled);
+    assert_eq!(completed.background_tasks, None);
+
+    assert_eq!(router.feed(INIT).background_tasks, level(vec![], OPEN));
+    let closed = router.feed(&result(None, 0.5, "NOTED"));
+    assert_eq!(closed.background_turns.len(), 1);
+    assert_eq!(closed.background_tasks, level(vec![], CLOSED));
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+}
+
+#[test]
+fn a_round_inside_a_subagent_does_not_answer_a_task_that_finished_meanwhile() {
+    let mut router = ClaudeSessionRouter::new();
+    let id = running_command_whose_shell_finished(&mut router);
+
+    let sidechain = tool_result(Some("toolu-agent"));
+    let own = result(Some(&id), 0.25, "DONE");
+    let completed = lifecycle(&id, "completed");
+    let settling = feed_all(&mut router, &[&sidechain, &own, &completed]);
+
+    assert_eq!(settling.settles, 1);
+    assert_eq!(settling.background_changes, 1);
+    assert_eq!(
+        router.background_tasks(),
+        level(vec![], EXPECTED).expect("expected")
+    );
+}
+
+#[test]
+fn a_stopped_task_during_our_command_expects_nothing_at_its_result() {
+    let mut router = ClaudeSessionRouter::new();
+    let (_, id) = owned_turn(&mut router);
+    let stopped = task_ended("stopped");
+    let own = result(Some(&id), 0.25, "DONE");
+    let completed = lifecycle(&id, "completed");
+    let turn = feed_all(
+        &mut router,
+        &[TASKS_LISTED, TASK_STARTED, &stopped, &own, &completed],
+    );
+
+    assert_eq!(turn.settles, 1);
+    assert_eq!(router.background_tasks(), ClaudeBackgroundTasks::default());
+}
+
+#[test]
+fn a_task_that_finishes_while_a_reply_is_written_is_answered_only_by_a_later_round_of_it() {
+    let mut router = ClaudeSessionRouter::new();
+    waiting_for_a_shell(&mut router);
+    assert_eq!(router.feed(INIT).background_tasks, Some(shell_level(OPEN)));
+    let finished = feed_all(&mut router, &[TASKS_EMPTIED, TASK_UPDATED, TASK_NOTIFIED]);
+    assert_eq!(finished.settles, 0);
+    let round = tool_result(None);
+    assert_eq!(router.feed(&round).background_tasks, None);
+
+    let replied = router.feed(&result(None, 0.5, "noted"));
+    assert_eq!(replied.background_turns.len(), 1);
+    assert!(replied.settled);
+    assert_eq!(replied.background_tasks, level(vec![], CLOSED));
+    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+}
+
+#[test]
+fn a_task_that_finishes_during_the_final_answer_of_a_reply_expects_another_reply() {
     let mut router = ClaudeSessionRouter::new();
     waiting_for_a_shell(&mut router);
     assert_eq!(router.feed(INIT).background_tasks, Some(shell_level(OPEN)));
@@ -385,28 +497,24 @@ fn a_task_that_finishes_while_a_reply_is_written_never_expects_another_reply() {
         level(vec![], OPEN).expect("open")
     );
 
-    let replied = router.feed(&result(None, 0.5, "noted"));
+    let replied = router.feed(&result(None, 0.5, "first"));
     assert_eq!(replied.background_turns.len(), 1);
     assert!(replied.settled);
-    assert_eq!(replied.background_tasks, level(vec![], CLOSED));
-    assert_eq!(router.feed(KEEP_ALIVE).background_tasks, None);
+    assert_eq!(replied.background_tasks, level(vec![], EXPECTED));
+    assert_eq!(router.feed(INIT).background_tasks, level(vec![], OPEN));
+    let answered = router.feed(&result(None, 0.75, "second"));
+    assert_eq!(answered.background_tasks, level(vec![], CLOSED));
 }
 
 #[test]
-fn a_task_that_finishes_after_our_command_ended_is_expected_again() {
+fn a_task_that_finishes_after_our_command_ended_is_expected_at_once() {
     let mut router = ClaudeSessionRouter::new();
     let (_, id) = owned_turn(&mut router);
-    let first = task_started("bg-0", true);
-    let first_done = task_finished("bg-0", "completed");
-    let during = feed_all(&mut router, &[&first, TASK_STARTED, &first_done]);
-    assert_eq!(during.settles, 0);
-    assert_eq!(router.background_tasks(), shell_level(CLOSED));
-
     let own = result(Some(&id), 0.25, "STARTED");
     let completed = lifecycle(&id, "completed");
-    let waiting = feed_all(&mut router, &[&own, &completed]);
+    let waiting = feed_all(&mut router, &[TASK_STARTED, &own, &completed]);
     assert_eq!(waiting.settles, 0);
-    assert_eq!(waiting.background_changes, 0);
+    assert_eq!(router.background_tasks(), shell_level(CLOSED));
 
     let drained = router.feed(TASK_UPDATED);
     assert!(drained.settled);

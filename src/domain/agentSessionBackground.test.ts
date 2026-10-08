@@ -3,7 +3,9 @@ import {
   AGENT_SESSION_REPLY_EXPECTED_CAP_MS,
   MAX_AGENT_SESSION_BACKGROUNDS,
   NO_AGENT_SESSION_BACKGROUNDS,
+  agentOwnerHasLiveSessionBackground,
   agentSessionBackgroundFor,
+  agentSessionBackgroundActivity,
   agentSessionBackgroundIsLive,
   agentSessionBackgroundKey,
   agentSessionBackgroundOf,
@@ -14,6 +16,7 @@ import {
   forgetAgentSessionBackground,
   nextAgentSessionReplyExpiry,
   recoverAgentSessionBackgrounds,
+  type AgentSessionBackground,
   type AgentSessionBackgrounds,
 } from "./agentSessionBackground";
 import type { AgentThread } from "./agentThread";
@@ -209,6 +212,49 @@ describe("agent session background levels", () => {
       2_000 + AGENT_SESSION_REPLY_EXPECTED_CAP_MS,
     );
     expect(agentSessionBackgroundIsLive(agentSessionBackgroundFor(lapsed, thread()))).toBe(false);
+  });
+
+  it("classifies a level once as idle, monitoring or working", () => {
+    const level: AgentSessionBackground = {
+      ownerId: "ws-1",
+      total: 1,
+      agents: 0,
+      tasks: [{ taskId: "m1", taskType: "monitor" }],
+      sinceEpochMs: 1_000,
+      taskSinceEpochMs: new Map(),
+      reply: { kind: "none" },
+    };
+    const second = { taskId: "m2", taskType: "monitor" } as const;
+
+    expect(agentSessionBackgroundActivity(undefined)).toBe("idle");
+    expect(agentSessionBackgroundActivity({ ...level, total: 0, tasks: [] })).toBe("idle");
+    expect(agentSessionBackgroundActivity(level)).toBe("monitoring");
+    expect(
+      agentSessionBackgroundActivity({ ...level, total: 2, tasks: [...level.tasks, second] }),
+    ).toBe("monitoring");
+    expect(agentSessionBackgroundActivity({ ...level, total: 2 })).toBe("working");
+    expect(agentSessionBackgroundActivity({ ...level, agents: 1 })).toBe("working");
+    expect(
+      agentSessionBackgroundActivity({ ...level, reply: { kind: "inProgress", sinceEpochMs: 1 } }),
+    ).toBe("working");
+    expect(
+      agentSessionBackgroundActivity({
+        ...level,
+        reply: { kind: "expected", sinceEpochMs: 1, untilEpochMs: 2 },
+      }),
+    ).toBe("working");
+    for (const taskType of ["shell", "agent", "other"] as const) {
+      expect(
+        agentSessionBackgroundActivity({ ...level, tasks: [{ taskId: "t1", taskType }] }),
+      ).toBe("working");
+      expect(
+        agentSessionBackgroundActivity({
+          ...level,
+          total: 2,
+          tasks: [...level.tasks, { taskId: "t1", taskType }],
+        }),
+      ).toBe("working");
+    }
   });
 
   it("is not live for a level that lists no task, no agent and no reply", () => {
@@ -835,5 +881,52 @@ describe("agent session background levels of several owners of one thread", () =
       both,
     );
     expect(forgetAgentSessionBackground(forgotten, session, observed)).toBe(forgotten);
+  });
+});
+
+describe("session-level work that keeps an owner live", () => {
+  const MONITORING: AgentSessionBackgroundTasksEvent = {
+    ...SHELL_ONLY,
+    tasks: [{ taskId: "watch", taskType: "monitor" }],
+  };
+  const settled = [thread()];
+
+  function liveFor(level: AgentSessionBackgroundTasksEvent, ownerId = "ws-1"): boolean {
+    const levels = applyAgentSessionBackgroundLevel(NO_AGENT_SESSION_BACKGROUNDS, level, 1_000);
+    return agentOwnerHasLiveSessionBackground(levels, settled, ownerId);
+  }
+
+  it.each([
+    ["a live monitor", MONITORING],
+    ["a live shell", SHELL_ONLY],
+    ["a live agent", RESUMED],
+    ["an expected reply", EXPECTING],
+    ["a reply in progress", REPLYING],
+  ])("counts %s of the owner's settled thread", (_work, level) => {
+    expect(liveFor(level)).toBe(true);
+  });
+
+  it("counts nothing once the level is idle or when no level is retained", () => {
+    expect(liveFor(DRAINED)).toBe(false);
+    expect(agentOwnerHasLiveSessionBackground(NO_AGENT_SESSION_BACKGROUNDS, settled, "ws-1")).toBe(
+      false,
+    );
+  });
+
+  it("never counts another owner's level, even for the same thread id", () => {
+    expect(liveFor({ ...MONITORING, workspaceId: "ws-2" })).toBe(false);
+    expect(liveFor({ ...MONITORING, workspaceId: "ws-2" }, "ws-2")).toBe(false);
+    expect(liveFor(MONITORING, "ws-2")).toBe(false);
+    expect(liveFor(MONITORING, "ws")).toBe(false);
+  });
+
+  it("never counts a level whose thread the owner no longer has", () => {
+    const levels = applyAgentSessionBackgroundLevel(NO_AGENT_SESSION_BACKGROUNDS, MONITORING, 1);
+    const others = [thread({ threadId: "agt-other-0001" })];
+    const codex = [thread({ provider: { kind: "codex", sessionId: "session-abcdefgh" } })];
+
+    expect(agentOwnerHasLiveSessionBackground(levels, [], "ws-1")).toBe(false);
+    expect(agentOwnerHasLiveSessionBackground(levels, others, "ws-1")).toBe(false);
+    expect(agentOwnerHasLiveSessionBackground(levels, codex, "ws-1")).toBe(false);
   });
 });

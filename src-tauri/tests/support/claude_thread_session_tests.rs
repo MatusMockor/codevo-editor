@@ -636,6 +636,95 @@ fn a_task_that_finishes_while_its_turn_still_runs_is_answered_by_that_turn_and_e
 }
 
 #[test]
+fn a_task_that_finishes_during_the_final_answer_expects_its_wake_up_reply_once_the_turn_ends() {
+    let cli = FakeCli::new("session-lastmoment-notification");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+
+    let (output, mut turn) = run_turn(&session, "native-lastmoment");
+
+    assert!(output.contains("a long final answer"), "{output}");
+    assert!(!output.contains("NOTED"), "{output}");
+    assert_eq!(turn.reap(), Ok(0));
+    assert_eq!(turn.outcome(), Some(TurnOutcome::Settled));
+    let expected = Some(ClaudeBackgroundReply::Expected);
+    assert!(
+        wait_until(TURN_TIMEOUT, || owner.last_reply() == expected),
+        "{:?}",
+        owner.levels()
+    );
+    assert_eq!(session.background_tasks(), 0);
+    assert!(owner.background_turns().is_empty());
+
+    cli.release_reply();
+    assert!(wait_until(TURN_TIMEOUT, || owner.last_reply()
+        == Some(ClaudeBackgroundReply::None)
+        && owner.background_turns().len() == 1));
+    let levels = owner.levels();
+    let expected_at = levels
+        .iter()
+        .position(|(_, reply)| *reply == ClaudeBackgroundReply::Expected)
+        .unwrap_or(levels.len());
+    assert!(
+        levels[expected_at..levels.len() - 1]
+            .iter()
+            .all(|(_, reply)| *reply != ClaudeBackgroundReply::None),
+        "the session must stay live from the result until the reply landed: {levels:?}"
+    );
+    let reply = String::from_utf8_lossy(&owner.background_turns()[0].1.output).into_owned();
+    assert!(reply.contains("NOTED"), "{reply}");
+    assert!(owner.reasons().is_empty());
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+}
+
+#[test]
+fn a_monitor_lets_its_turn_end_and_is_listed_as_a_monitor_until_its_stream_ends() {
+    let cli = FakeCli::new("session-monitor");
+    let owner = Arc::new(RecordingOwner::default());
+    let session = start_session(&cli, &owner, ClaudeSessionTuning::default());
+
+    let (output, mut turn) = run_turn(&session, "native-monitor");
+
+    assert!(output.contains("STARTED"), "{output}");
+    assert_eq!(turn.reap(), Ok(0));
+    assert_eq!(turn.outcome(), Some(TurnOutcome::Settled));
+    assert_eq!(session.background_tasks(), 1);
+    assert_eq!(session.facts().availability, SessionAvailability::Idle);
+    let listed = session.background_level();
+    assert_eq!(listed.reply, ClaudeBackgroundReply::None);
+    assert_eq!(listed.tasks.len(), 1);
+    assert_eq!(listed.tasks[0].kind, BackgroundTaskKind::Monitor);
+    assert!(owner.background_turns().is_empty());
+
+    cli.release_reply();
+    assert!(wait_until(TURN_TIMEOUT, || owner.background_turns().len()
+        == 1
+        && owner.last_reply() == Some(ClaudeBackgroundReply::None)));
+    assert_eq!(session.background_tasks(), 1);
+    assert_eq!(
+        session.background_level().tasks[0].kind,
+        BackgroundTaskKind::Monitor
+    );
+
+    cli.release_native_drain();
+    assert!(wait_until(TURN_TIMEOUT, || owner.background_turns().len()
+        == 2
+        && owner.last_reply() == Some(ClaudeBackgroundReply::None)));
+    assert_eq!(session.background_tasks(), 0);
+    let replies: Vec<String> = owner
+        .background_turns()
+        .iter()
+        .map(|(_, reply)| String::from_utf8_lossy(&reply.output).into_owned())
+        .collect();
+    assert!(replies[0].contains("NOTED-EVENT"), "{replies:?}");
+    assert!(replies[1].contains("NOTED-END"), "{replies:?}");
+    assert!(owner.reasons().is_empty());
+    session.kill_now(ClaudeSessionEndReason::Shutdown);
+    assert!(session.wait_reaped(REAP_TIMEOUT));
+}
+
+#[test]
 fn a_wake_up_reply_is_live_session_work_until_it_lands_and_the_turn_lands_first() {
     let cli = FakeCli::new("session-held-reply");
     let owner = Arc::new(RecordingOwner::default());

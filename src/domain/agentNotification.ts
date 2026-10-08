@@ -57,7 +57,11 @@ export interface AgentThreadNotificationDetection {
   readonly events: ReadonlyArray<AgentThreadNotificationEvent>;
 }
 
+export type AgentThreadRecoveryWatches = ReadonlyMap<string, string>;
+
 export const MAX_AGENT_THREAD_NOTIFICATION_SUBJECTS = 1_024;
+export const MAX_AGENT_THREAD_RECOVERY_WATCHES = 64;
+export const NO_AGENT_THREAD_RECOVERY_WATCHES: AgentThreadRecoveryWatches = new Map();
 
 const QUIET: AgentThreadNotificationState = Object.freeze({ kind: "quiet" });
 const UNKNOWN: AgentThreadNotificationState = Object.freeze({ kind: "unknown" });
@@ -121,6 +125,35 @@ export function detectAgentThreadNotifications(
   return { baseline, events };
 }
 
+export function watchAgentThreadsBeforeRecovery(
+  previous: AgentThreadRecoveryWatches,
+  subjects: ReadonlyArray<AgentThreadNotificationSubject>,
+  runningThreadIds: ReadonlySet<string>,
+): AgentThreadRecoveryWatches {
+  const watches = new Map<string, string>();
+  for (const subject of subjects) {
+    if (previous.get(subject.threadId) !== subject.ownerKey) continue;
+    watches.set(subject.threadId, subject.ownerKey);
+  }
+  for (const subject of subjects) {
+    if (watches.size >= MAX_AGENT_THREAD_RECOVERY_WATCHES) break;
+    if (!runningThreadIds.has(subject.threadId)) continue;
+    watches.set(subject.threadId, subject.ownerKey);
+  }
+  return watches;
+}
+
+export function agentThreadNotificationSubjectsBeforeRecovery(
+  subjects: ReadonlyArray<AgentThreadNotificationSubject>,
+  watches: AgentThreadRecoveryWatches,
+): ReadonlyArray<AgentThreadNotificationSubject> {
+  return subjects.flatMap((subject) => {
+    if (!reportsSettledTurn(subject.state)) return [subject];
+    if (watches.get(subject.threadId) !== subject.ownerKey) return [];
+    return [{ ...subject, state: UNKNOWN }];
+  });
+}
+
 export function agentThreadNotificationStillCurrent(
   baseline: AgentThreadNotificationBaseline,
   event: AgentThreadNotificationEvent,
@@ -131,6 +164,22 @@ export function agentThreadNotificationStillCurrent(
     return current.signalKey === event.signalKey;
   }
   return true;
+}
+
+function reportsSettledTurn(state: AgentThreadNotificationState): boolean {
+  switch (state.kind) {
+    case "quiet":
+    case "unknown":
+      return false;
+    case "held":
+    case "withheld":
+    case "released":
+      return true;
+    case "signal":
+      return state.signal.kind === "completed" || state.signal.kind === "failed";
+    default:
+      return unsupportedState(state);
+  }
 }
 
 function dueSignal(

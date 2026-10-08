@@ -219,6 +219,16 @@ fn shell_stopped(task: &str) -> Vec<u8> {
     }))
 }
 
+fn tool_round() -> Vec<u8> {
+    routed(serde_json::json!({
+        "type": "user",
+        "parent_tool_use_id": null,
+        "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "toolu-front", "content": "done"}
+        ]}
+    }))
+}
+
 fn own_turn(id: &str, during: &[Vec<u8>]) -> Vec<u8> {
     let opening = [command(id, "queued"), command(id, "started"), init()];
     let closing = [answer("done"), own_result(id), command(id, "completed")];
@@ -304,7 +314,7 @@ fn a_level_that_ends_the_session_work_is_published_after_the_reply_turn_it_close
 }
 
 #[test]
-fn a_reply_during_which_a_task_finished_publishes_its_idle_level_after_its_turn() {
+fn a_reply_whose_final_answer_saw_a_task_finish_keeps_the_session_live_before_its_turn_lands() {
     let quiet = QuietSession::start();
     let (turn, id) = quiet.attach();
     quiet.read_in_one_chunk(&[own_turn(&id, &[]), init(), shell_started("bg-1")].concat());
@@ -319,6 +329,36 @@ fn a_reply_during_which_a_task_finished_publishes_its_idle_level_after_its_turn(
     assert_eq!(
         quiet.read_in_one_chunk(&reply_ending_with_the_shell_finished),
         [
+            Emission::Level {
+                live: true,
+                turn_settled: true
+            },
+            Emission::Turn { turn_settled: true }
+        ]
+    );
+    assert_eq!(
+        quiet.session.background_level().reply,
+        ClaudeBackgroundReply::Expected
+    );
+}
+
+#[test]
+fn a_reply_that_ran_another_round_after_a_task_finished_publishes_its_idle_level_after_its_turn() {
+    let quiet = QuietSession::start();
+    let (turn, id) = quiet.attach();
+    quiet.read_in_one_chunk(&[own_turn(&id, &[]), init(), shell_started("bg-1")].concat());
+    assert_eq!(turn.outcome(), Some(TurnOutcome::Settled));
+    let reply_with_a_later_round = [
+        shell_finished("bg-1"),
+        tool_round(),
+        answer("noted"),
+        unprompted_result(),
+    ]
+    .concat();
+
+    assert_eq!(
+        quiet.read_in_one_chunk(&reply_with_a_later_round),
+        [
             Emission::Turn { turn_settled: true },
             Emission::Level {
                 live: false,
@@ -329,6 +369,30 @@ fn a_reply_during_which_a_task_finished_publishes_its_idle_level_after_its_turn(
     assert_eq!(
         quiet.session.background_level(),
         ClaudeBackgroundTasks::default()
+    );
+}
+
+#[test]
+fn a_task_that_finished_during_the_final_answer_publishes_the_expected_reply_before_the_settlement()
+{
+    let quiet = QuietSession::start();
+    let (turn, id) = quiet.attach();
+    let chunk = own_turn(
+        &id,
+        &[shell_started("bg-1"), tool_round(), shell_finished("bg-1")],
+    );
+
+    assert_eq!(
+        quiet.read_in_one_chunk(&chunk),
+        [Emission::Level {
+            live: true,
+            turn_settled: false
+        }]
+    );
+    assert_eq!(turn.outcome(), Some(TurnOutcome::Settled));
+    assert_eq!(
+        quiet.session.background_level().reply,
+        ClaudeBackgroundReply::Expected
     );
 }
 

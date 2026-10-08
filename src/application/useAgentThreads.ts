@@ -417,6 +417,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     backgrounds: sessionBackgrounds,
     recovered: sessionBackgroundsRecovered,
     watchSession,
+    ownerHasLiveSession,
   } = useAgentSessionBackgrounds(
     dependencies.agentThreadSessionGateway,
     dependencies.now ?? Date.now,
@@ -553,6 +554,13 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
       void refreshOrphanedWorktrees();
     },
     [dispatch, dispatchAction, refreshOrphanedWorktrees],
+  );
+
+  const { hasLiveTasksForOwner: ownerHasRunningTurn } = dispatch;
+  const hasLiveTasksForOwner = useCallback(
+    (ownerId: string): boolean =>
+      ownerHasRunningTurn(ownerId) || ownerHasLiveSession(currentThreads().values(), ownerId),
+    [currentThreads, ownerHasLiveSession, ownerHasRunningTurn],
   );
 
   const now = dependencies.now ?? Date.now;
@@ -981,7 +989,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     archive,
     unarchive,
     remove,
-    hasLiveTasksForOwner: dispatch.hasLiveTasksForOwner,
+    hasLiveTasksForOwner,
     stopProjectTasks: dispatch.stopProjectTasks,
     releaseProjectTasks,
     removeOrphanedWorktree: worktrees.removeOrphanedWorktree,

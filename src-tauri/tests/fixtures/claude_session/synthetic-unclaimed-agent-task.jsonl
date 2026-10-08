@@ -1,0 +1,4 @@
+{"type":"system","subtype":"task_started","task_id":"captured-task-0002","tool_use_id":"captured-tool-0003","description":"review the change","task_type":"local_agent","subagent_type":"general-purpose","session_id":"captured-session-0001"}
+{"type":"system","subtype":"task_progress","task_id":"captured-task-0002","tool_use_id":"captured-tool-0003","description":"Reading the change","last_tool_name":"Read","usage":{"duration_ms":1200,"total_tokens":3400,"tool_uses":5},"session_id":"captured-session-0001"}
+{"type":"system","subtype":"task_updated","task_id":"captured-task-0002","patch":{"status":"completed"},"session_id":"captured-session-0001"}
+{"type":"system","subtype":"task_notification","task_id":"captured-task-0002","tool_use_id":"captured-tool-0003","status":"completed","usage":{"duration_ms":2400,"total_tokens":6800,"tool_uses":9},"session_id":"captured-session-0001"}

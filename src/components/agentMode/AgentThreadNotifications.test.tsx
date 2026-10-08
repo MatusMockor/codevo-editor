@@ -10,12 +10,14 @@ import {
 } from "../../application/agentThreadNotificationCenter";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { useAgentThreadNotificationCenter } from "../../application/useAgentThreadNotificationCenter";
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTurnStatus } from "../../domain/agentThread";
 import {
   AGENT_THREAD_NOTIFICATION_TOAST_MS,
   AgentThreadNotifications,
 } from "./AgentThreadNotifications";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
+import { projectFixture } from "./agentThreadsSurfaceTestFixtures";
 
 const FOCUSED: AgentAppFocusPort = { isFocused: () => true, subscribe: () => () => undefined };
 const SYSTEM: AgentSystemAttentionPort = {
@@ -306,6 +308,87 @@ describe("AgentThreadNotifications", () => {
       expect(cards().map((card) => text(card, ".toast-notification-message"))).toEqual([
         "Thread b1",
       ]);
+    });
+  });
+
+  describe("while the session levels are still being recovered", () => {
+    const RUNNING = { kind: "running" } as const;
+    const DONE = { kind: "exited", exitCode: 0 } as const;
+    let center: AgentThreadNotificationCenter;
+
+    beforeEach(() => {
+      center = createAgentThreadNotificationCenter({ focus: FOCUSED, system: SYSTEM });
+    });
+
+    function show(
+      views: ReadonlyArray<AgentThreadView>,
+      baselineReady: boolean,
+      projects: ReadonlyArray<AgentProjectDescriptor> = [],
+    ): void {
+      act(() =>
+        root.render(
+          <AgentThreadNotifications
+            baselineReady={baselineReady}
+            center={center}
+            interactions={new Map()}
+            onSelectThread={() => undefined}
+            projects={projects}
+            views={views}
+            visibleThreadId="a1"
+          />,
+        ),
+      );
+    }
+
+    function notified(): string[] {
+      return center.toasts().map((toast) => toast.event.threadId);
+    }
+
+    function unhydrated(threadId: string): AgentThreadView {
+      const settled = view(threadId, DONE);
+      return { ...settled, thread: { ...settled.thread, turns: [] } };
+    }
+
+    it("notifies about the turn that finished during the recovery and about no thread that never ran", () => {
+      const history = Array.from({ length: 200 }, (_unused, index) => `h${index}`);
+      show([view("a1", RUNNING), view("b1", RUNNING), ...history.map(unhydrated)], false);
+      const later = [
+        view("a1", RUNNING),
+        view("b1", DONE),
+        ...history.map((threadId) => view(threadId, DONE)),
+      ];
+      show(later, false);
+      expect(notified()).toEqual([]);
+
+      show(later, true);
+
+      expect(notified()).toEqual(["b1"]);
+    });
+
+    it("forgets a thread it watched once that thread belongs to another owner generation", () => {
+      const rootKey = view("b1", RUNNING).thread.owner.rootKey;
+      const loaded = [projectFixture({ rootKey, generation: 1 })];
+      const reloaded = [projectFixture({ rootKey, generation: 2 })];
+      const finished = [view("a1", RUNNING), view("b1", DONE)];
+      show([view("a1", RUNNING), view("b1", RUNNING)], false, loaded);
+      show(finished, false, reloaded);
+      show(finished, false, loaded);
+
+      show(finished, true, loaded);
+
+      expect(notified()).toEqual([]);
+    });
+
+    it("still notifies when the owner stayed the same throughout the recovery", () => {
+      const rootKey = view("b1", RUNNING).thread.owner.rootKey;
+      const loaded = [projectFixture({ rootKey, generation: 1 })];
+      const finished = [view("a1", RUNNING), view("b1", DONE)];
+      show([view("a1", RUNNING), view("b1", RUNNING)], false, loaded);
+      show(finished, false, loaded);
+
+      show(finished, true, loaded);
+
+      expect(notified()).toEqual(["b1"]);
     });
   });
 });

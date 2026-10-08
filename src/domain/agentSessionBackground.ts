@@ -28,6 +28,8 @@ export interface AgentSessionBackground {
 
 export type AgentSessionBackgrounds = ReadonlyMap<string, AgentSessionBackground>;
 
+export type AgentSessionBackgroundActivity = "idle" | "monitoring" | "working";
+
 export const NO_AGENT_SESSION_BACKGROUNDS: AgentSessionBackgrounds = new Map();
 
 export function applyAgentSessionBackgroundLevel(
@@ -146,12 +148,33 @@ export function agentSessionBackgroundOf(
   return backgrounds.get(sessionKey(ownerId, threadId));
 }
 
+export function agentSessionBackgroundActivity(
+  background: AgentSessionBackground | undefined,
+): AgentSessionBackgroundActivity {
+  if (background === undefined) return "idle";
+  if (background.agents > 0 || background.reply.kind !== "none") return "working";
+  if (background.total <= 0) return "idle";
+  if (listsOnlyMonitors(background)) return "monitoring";
+  return "working";
+}
+
 export function agentSessionBackgroundIsLive(
   background: AgentSessionBackground | undefined,
 ): boolean {
-  if (background === undefined) return false;
-  if (background.total > 0 || background.agents > 0) return true;
-  return background.reply.kind !== "none";
+  return agentSessionBackgroundActivity(background) !== "idle";
+}
+
+export function agentOwnerHasLiveSessionBackground(
+  backgrounds: AgentSessionBackgrounds,
+  threads: Iterable<AgentThread>,
+  ownerId: string,
+): boolean {
+  if (backgrounds.size === 0) return false;
+  for (const thread of threads) {
+    if (thread.owner.ownerId !== ownerId) continue;
+    if (agentSessionBackgroundIsLive(agentSessionBackgroundFor(backgrounds, thread))) return true;
+  }
+  return false;
 }
 
 export function agentSessionReplySince(reply: AgentSessionReply): number | null {
@@ -197,6 +220,11 @@ function expectedReply(
     sinceEpochMs: nowEpochMs,
     untilEpochMs: nowEpochMs + AGENT_SESSION_REPLY_EXPECTED_CAP_MS,
   };
+}
+
+function listsOnlyMonitors(background: AgentSessionBackground): boolean {
+  if (background.tasks.length !== background.total) return false;
+  return background.tasks.every((task) => task.taskType === "monitor");
 }
 
 function replyExpiry(reply: AgentSessionReply): number | null {

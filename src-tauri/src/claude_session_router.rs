@@ -220,6 +220,7 @@ pub struct ClaudeSessionRouter {
     background_offer_pending: bool,
     reported_background: ClaudeBackgroundTasks,
     wake_up_pending: bool,
+    wake_up_unconsumed: bool,
     wake_up_expected_since: Option<Instant>,
     wake_up_reply_cap: Duration,
     task_stops: PendingTaskStops,
@@ -252,6 +253,7 @@ impl ClaudeSessionRouter {
             background_offer_pending: false,
             reported_background: ClaudeBackgroundTasks::default(),
             wake_up_pending: false,
+            wake_up_unconsumed: false,
             wake_up_expected_since: None,
             wake_up_reply_cap,
             task_stops: PendingTaskStops::default(),
@@ -393,7 +395,36 @@ impl ClaudeSessionRouter {
 
     fn consume_wake_up(&mut self) {
         self.wake_up_pending = false;
+        self.wake_up_unconsumed = false;
         self.wake_up_expected_since = None;
+    }
+
+    fn note_wake_up(&mut self) {
+        match self.attached.is_none() && self.unsolicited.is_none() {
+            true => self.wake_up_pending = true,
+            false => self.wake_up_unconsumed = true,
+        }
+    }
+
+    fn promote_unconsumed_wake_up(&mut self) {
+        if !self.wake_up_unconsumed || !self.idle() || self.interrupt_undecided() {
+            return;
+        }
+        self.wake_up_unconsumed = false;
+        if self.attached_cut_short() {
+            return;
+        }
+        self.wake_up_pending = true;
+    }
+
+    fn interrupt_undecided(&self) -> bool {
+        self.attached.as_ref().is_some_and(|turn| turn.interrupting)
+    }
+
+    fn attached_cut_short(&self) -> bool {
+        self.attached
+            .as_ref()
+            .is_some_and(|turn| turn.result_failed || (turn.cancelled && !turn.result_seen))
     }
 
     fn idle(&self) -> bool {
@@ -474,6 +505,7 @@ impl ClaudeSessionRouter {
             active.truncated |= dangling;
             step.background_turns.push(active.finish(false));
         }
+        self.consume_wake_up();
         step.background_tasks = self.background_change();
         step
     }
@@ -543,6 +575,9 @@ impl ClaudeSessionRouter {
         if self.acknowledges_interrupt(&message) {
             step.interrupt_acknowledged = true;
         }
+        if root_tool_result(&message) && self.detector.admits_root(&message) {
+            self.wake_up_unconsumed = false;
+        }
         if self.detector.expire_level_ended(&message) && self.owned() {
             if let (true, via_interrupt) = self.settle_ready() {
                 self.record_settlement(via_interrupt, step);
@@ -553,6 +588,8 @@ impl ClaudeSessionRouter {
         let owned = self.owned();
         self.note_run(destination, owned, &message);
         let wake_ups = self.detector.wake_ups();
+        let resets = self.detector.resets();
+        let delivery = self.delivery(destination, &message);
         let outcome = match destination {
             Destination::Turn | Destination::Command if owned => {
                 self.detector.consume_message(&message)
@@ -560,9 +597,14 @@ impl ClaudeSessionRouter {
             Destination::Command => self.detector.observe_command(&message).map(|()| false),
             _ => self.detector.track_message(&message).map(|()| false),
         };
-        self.wake_up_pending |= self.idle() && self.detector.wake_ups() != wake_ups;
+        if self.detector.resets() != resets {
+            self.consume_wake_up();
+        }
+        if self.detector.wake_ups() != wake_ups {
+            self.note_wake_up();
+        }
         let ends_unsolicited = destination == Destination::Unsolicited && root_result(&message);
-        self.forward(destination, message, line, step);
+        self.forward(delivery, message, line, step);
         if ends_unsolicited {
             self.emit_unsolicited(true, step);
         }
@@ -584,6 +626,7 @@ impl ClaudeSessionRouter {
         if settled {
             self.record_settlement(via_interrupt, step);
         }
+        self.promote_unconsumed_wake_up();
     }
 
     fn forward(
@@ -620,6 +663,9 @@ impl ClaudeSessionRouter {
                 .as_ref()
                 .is_some_and(|turn| turn.cancelled && !turn.result_seen);
         step.result_failed = !step.interrupted && !step.cancelled && self.attached_result_failed();
+        if step.interrupted || step.cancelled || step.result_failed {
+            self.wake_up_unconsumed = false;
+        }
         self.detach();
     }
 
@@ -676,6 +722,19 @@ impl ClaudeSessionRouter {
         self.attached
             .as_ref()
             .is_some_and(|turn| turn.runs.owns(message))
+    }
+
+    fn delivery(&self, destination: Destination, message: &Value) -> Destination {
+        if destination != Destination::Turn || !self.foreign_task_frame(message) {
+            return destination;
+        }
+        Destination::Discard
+    }
+
+    fn foreign_task_frame(&self, message: &Value) -> bool {
+        task_frame(message).is_some()
+            && message.get("parent_tool_use_id").is_none_or(Value::is_null)
+            && !self.attached_run_owns(message)
     }
 
     fn note_run(&mut self, destination: Destination, owned: bool, message: &Value) {
@@ -992,6 +1051,17 @@ fn task_frame(message: &Value) -> Option<&str> {
                 "task_started" | "task_progress" | "task_notification" | "task_updated"
             )
         })
+}
+
+fn root_tool_result(message: &Value) -> bool {
+    message.get("type").and_then(Value::as_str) == Some("user")
+        && message.get("parent_tool_use_id").is_none_or(Value::is_null)
+        && message
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))
 }
 
 fn root_answer(message: &Value) -> bool {

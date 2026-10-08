@@ -11,6 +11,8 @@ const MAX_LIVE_TASKS: usize = 256;
 const MAX_OBSERVED_TASKS: usize = 4096;
 const MAX_ID_BYTES: usize = 256;
 const MAX_RETIRED_SESSIONS: usize = 16;
+const MAX_PENDING_MONITOR_CALLS: usize = 64;
+const MONITOR_TOOL: &str = "Monitor";
 pub const MAX_BACKGROUND_TASK_DESCRIPTION_BYTES: usize = 512;
 
 /// Owns only lifecycle evidence from root Claude JSONL messages. A foreground
@@ -38,6 +40,8 @@ pub struct ResultLineDetector {
     started: u64,
     background_revision: u64,
     wake_ups: u64,
+    resets: u64,
+    monitor_calls: VecDeque<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -132,6 +136,7 @@ impl ResultLineDetector {
         if !self.accepts_root(message) {
             return Ok(());
         }
+        self.note_monitor_calls(message);
         self.expire_level_ended(message);
         if message.get("type").and_then(Value::as_str) != Some("system") {
             return Ok(());
@@ -226,6 +231,10 @@ impl ResultLineDetector {
         self.wake_ups
     }
 
+    pub fn resets(&self) -> u64 {
+        self.resets
+    }
+
     pub fn background_tasks(&self) -> Vec<LiveBackgroundTask> {
         let mut tasks: Vec<(&String, &LiveTask)> = self
             .live
@@ -299,7 +308,7 @@ impl ResultLineDetector {
         self.consume_value(&message)
     }
 
-    fn accepts_root(&mut self, message: &Value) -> bool {
+    pub fn admits_root(&self, message: &Value) -> bool {
         if !message.get("parent_tool_use_id").is_none_or(Value::is_null) {
             return false;
         }
@@ -309,13 +318,22 @@ impl ResultLineDetector {
         if !valid_id(session) || self.retired.iter().any(|retired| retired == session) {
             return false;
         }
-        match &self.session {
-            Some(expected) => expected == session,
-            None => {
-                self.session = Some(session.to_string());
-                true
-            }
+        self.session
+            .as_deref()
+            .is_none_or(|expected| expected == session)
+    }
+
+    fn accepts_root(&mut self, message: &Value) -> bool {
+        if !self.admits_root(message) {
+            return false;
         }
+        if self.session.is_none() {
+            self.session = message
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        true
     }
 
     fn drains(&self) -> bool {
@@ -353,6 +371,7 @@ impl ResultLineDetector {
         if !self.accepts_root(message) {
             return Ok(false);
         }
+        self.note_monitor_calls(message);
         self.expire_level_ended(message);
         let kind = message.get("type").and_then(Value::as_str);
         if kind == Some("result") && self.unprompted_result(message) {
@@ -416,7 +435,56 @@ impl ResultLineDetector {
     }
 
     fn armed_live_empty(&self) -> bool {
-        self.live.keys().all(|task| self.inherited.contains(task))
+        self.live
+            .iter()
+            .all(|(id, task)| !self.holds_turn(id, task))
+    }
+
+    fn holds_turn(&self, id: &str, task: &LiveTask) -> bool {
+        if self.inherited.contains(id) {
+            return false;
+        }
+        self.policy != ResultSettlePolicy::AwaitBackgroundWork
+            || task.facts.kind != BackgroundTaskKind::Monitor
+    }
+
+    fn note_monitor_calls(&mut self, message: &Value) {
+        if message.get("type").and_then(Value::as_str) != Some("assistant") {
+            return;
+        }
+        let calls = message
+            .pointer("/message/content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+            .filter(|block| block.get("name").and_then(Value::as_str) == Some(MONITOR_TOOL))
+            .filter_map(|block| block.get("id").and_then(Value::as_str))
+            .filter(|call| valid_id(call));
+        for call in calls {
+            self.monitor_calls.retain(|known| known != call);
+            if self.monitor_calls.len() == MAX_PENDING_MONITOR_CALLS {
+                self.monitor_calls.pop_front();
+            }
+            self.monitor_calls.push_back(call.to_string());
+        }
+    }
+
+    fn started_facts(&mut self, message: &Value) -> TaskFacts {
+        let facts = task_facts(message, None);
+        let called = facts.run.as_deref().and_then(|run| {
+            self.monitor_calls
+                .iter()
+                .position(|call| call.as_str() == run)
+        });
+        let Some(position) = called else {
+            return facts;
+        };
+        self.monitor_calls.remove(position);
+        TaskFacts {
+            kind: BackgroundTaskKind::Monitor,
+            ..facts
+        }
     }
 
     fn armed_foreground_live(&self) -> bool {
@@ -426,6 +494,7 @@ impl ResultLineDetector {
     }
 
     fn retire_session(&mut self) {
+        self.resets = self.resets.wrapping_add(1);
         if let Some(session) = self.session.take() {
             if self.retired.len() == MAX_RETIRED_SESSIONS {
                 self.retired.pop_front();
@@ -433,6 +502,7 @@ impl ResultLineDetector {
             self.retired.push_back(session);
         }
         self.inherited.clear();
+        self.monitor_calls.clear();
         self.level = BackgroundLevel::default();
         let retired: Vec<(String, LiveTask)> = self.live.drain().collect();
         for (task, live) in retired {
@@ -572,7 +642,8 @@ impl ResultLineDetector {
             }
             self.exhume(id);
             self.inherited.remove(id);
-            self.start(id, scope, task_facts(message, None), message);
+            let facts = self.started_facts(message);
+            self.start(id, scope, facts, message);
             return Ok(());
         }
         if !terminal && kind != "task_started" {
@@ -593,7 +664,8 @@ impl ResultLineDetector {
             if self.make_room().is_err() {
                 return Err("Claude background tasks exceeded their tracking limit.");
             }
-            self.start(id, scope, task_facts(message, None), message);
+            let facts = self.started_facts(message);
+            self.start(id, scope, facts, message);
         }
         Ok(())
     }

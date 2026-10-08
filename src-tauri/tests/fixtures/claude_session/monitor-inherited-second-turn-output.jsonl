@@ -1,0 +1,9 @@
+{"type":"command_lifecycle","command_uuid":"captured-command-0002","state":"queued"}
+{"type":"command_lifecycle","command_uuid":"captured-command-0002","state":"started"}
+{"type":"system","subtype":"init","session_id":"captured-session-0001"}
+{"type":"assistant","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"text","text":"NOTED"}]},"session_id":"captured-session-0001"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":"captured-session-0001"}
+{"type":"system","subtype":"init","session_id":"captured-session-0001"}
+{"type":"assistant","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"text","text":"NOTED"}]},"session_id":"captured-session-0001"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"SECOND"}]},"parent_tool_use_id":null,"session_id":"captured-session-0001"}
+{"type":"result","subtype":"success","is_error":false,"result":"SECOND","num_turns":1,"user_message_uuid":"captured-command-0002","user_message_uuids":["captured-command-0002"],"session_id":"captured-session-0001"}

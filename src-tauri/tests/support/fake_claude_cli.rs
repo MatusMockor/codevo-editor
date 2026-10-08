@@ -90,6 +90,26 @@ def unprompted_result(text):
     message.update(next_result_fields())
     emit(message)
 
+def monitor_events(task):
+    wait_for_release("release-reply")
+    system("init")
+    assistant("NOTED-EVENT")
+    unprompted_result("NOTED-EVENT")
+    wait_for_release("release-drain")
+    system("task_updated", task_id=task, patch={"status": "completed"})
+    system("task_notification", task_id=task, status="completed", output_file="/dev/null",
+           summary="Monitor \"watch\" stream ended")
+    system("background_tasks_changed", tasks=[])
+    system("init")
+    assistant("NOTED-END")
+    unprompted_result("NOTED-END")
+
+def late_wake_up():
+    wait_for_release("release-reply")
+    system("init")
+    assistant("NOTED")
+    unprompted_result("NOTED")
+
 def native_drain(task, ask=False, hold=False, hold_reply=False, quiet=False):
     if hold:
         wait_for_release("release-drain")
@@ -328,6 +348,41 @@ for raw in sys.stdin:
         ignore_interrupt = text.startswith("slow-ignore")
         finish_on_interrupt = text.startswith("slow-finish")
         hold_interrupt = text.startswith("slow-held")
+        continue
+    if text.startswith("native-monitor"):
+        task = "monitor-" + uid[:8]
+        watched = root_tool("toolu-monitor", "Monitor", "Monitor started")
+        system("background_tasks_changed", tasks=[{"task_id": task, "task_type": "local_bash", "description": "watch"}])
+        system("task_started", task_id=task, tool_use_id="toolu-monitor", description="watch",
+               is_backgrounded=True, task_type="local_bash")
+        watched()
+        assistant("STARTED", uid)
+        result(uid, text="STARTED")
+        lifecycle(uid, "completed")
+        threading.Thread(target=monitor_events, args=(task,), daemon=True).start()
+        continue
+    if text.startswith("native-lastmoment"):
+        task = "lastmoment-" + uid[:8]
+        front = "front-" + uid[:8]
+        system("background_tasks_changed", tasks=[{"task_id": task, "task_type": "local_bash", "description": "sleep 9"}])
+        system("task_started", task_id=task, tool_use_id="toolu-lastmoment", description="sleep 9",
+               is_backgrounded=True, task_type="local_bash")
+        assistant("running the foreground command")
+        system("task_started", task_id=front, tool_use_id="toolu-front", description="sleep 6",
+               is_backgrounded=False, task_type="local_bash")
+        system("task_notification", task_id=front, status="completed", output_file="/dev/null",
+               summary="Command completed")
+        emit({"type": "user", "parent_tool_use_id": None, "session_id": session_id,
+              "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu-front",
+                                                       "content": "done"}]}})
+        system("task_updated", task_id=task, patch={"status": "completed"})
+        system("task_notification", task_id=task, status="completed", output_file="/dev/null",
+               summary="Background command completed (exit code 0)")
+        system("background_tasks_changed", tasks=[])
+        assistant("a long final answer", uid)
+        result(uid, text="a long final answer")
+        lifecycle(uid, "completed")
+        threading.Thread(target=late_wake_up, daemon=True).start()
         continue
     if text.startswith("native-midturn"):
         task = "midturn-" + uid[:8]

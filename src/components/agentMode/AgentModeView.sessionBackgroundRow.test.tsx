@@ -75,6 +75,21 @@ const askedTurn: AgentTurn = {
   cliVersion: null,
 };
 
+const LIVE_TURN: AgentTurn = {
+  ...askedTurn,
+  turnId: "turn-live",
+  prompt: "Push it",
+  status: { kind: "running" },
+  startedAtEpochMs: STARTED_AT + 3_000,
+  endedAtEpochMs: null,
+  events: [],
+};
+const SETTLED_LIVE_TURN: AgentTurn = {
+  ...LIVE_TURN,
+  status: { kind: "exited", exitCode: 0 },
+  endedAtEpochMs: STARTED_AT + 4_000,
+};
+
 function frames(lines: ReadonlyArray<Record<string, unknown>>): string {
   return lines.map((line) => `${JSON.stringify(line)}\n`).join("");
 }
@@ -324,6 +339,7 @@ describe("sidebar row status of a thread whose background work is tracked by its
       open?: boolean;
       workingSection?: boolean;
       recovery?: Promise<ReadonlyArray<AgentSessionBackgroundTasksEvent>>;
+      liveTurn?: boolean;
     } = {},
   ) {
     const preference = options.workingSection === true ? workingSectionOn() : null;
@@ -341,8 +357,9 @@ describe("sidebar row status of a thread whose background work is tracked by its
     const stopSessionBackgroundTask = vi.fn(async (): Promise<AgentSessionTaskStopResult> => ({
       kind: "stopping",
     }));
+    const gates = threadFixture(THREAD_ID, "Run the gates");
     const initial: ReadonlyMap<string, AgentThread> = new Map([
-      [THREAD_ID, threadFixture(THREAD_ID, "Run the gates")],
+      [THREAD_ID, options.liveTurn === true ? { ...gates, turns: [askedTurn, LIVE_TURN] } : gates],
       [OTHER_THREAD_ID, threadFixture(OTHER_THREAD_ID, "Write the changelog")],
     ]);
     const session: AgentNavigationSession = {
@@ -445,6 +462,19 @@ describe("sidebar row status of a thread whose background work is tracked by its
             const thread = current.get(THREAD_ID);
             if (thread === undefined) return current;
             return new Map(current).set(THREAD_ID, { ...thread, viewedAtEpochMs: Date.now() });
+          }),
+        );
+      },
+      settleLiveTurn() {
+        expect(rendered.update).not.toBeNull();
+        act(() =>
+          rendered.update?.((current) => {
+            const thread = current.get(THREAD_ID);
+            if (thread === undefined) return current;
+            const turns = thread.turns.map((turn) =>
+              turn.turnId === LIVE_TURN.turnId ? SETTLED_LIVE_TURN : turn,
+            );
+            return new Map(current).set(THREAD_ID, { ...thread, turns });
           }),
         );
       },
@@ -825,6 +855,41 @@ describe("sidebar row status of a thread whose background work is tracked by its
 
       expect(rowStatuses(THREAD_ID)).toEqual([null]);
       expect(systemNotifications()).toEqual([]);
+    });
+
+    it("notifies for a turn that finishes while the recovery is still pending", async () => {
+      const recovery = pendingRecovery();
+      const { settleLiveTurn, systemNotifications } = await mount({
+        recovery: recovery.answer,
+        liveTurn: true,
+      });
+      expect(rowStatuses(THREAD_ID)).toEqual(["Working"]);
+
+      settleLiveTurn();
+      expect(systemNotifications()).toEqual([]);
+      await answered(() => recovery.resolve([]));
+
+      expect(systemNotifications()).toEqual([
+        { title: "Thread finished", body: "Run the gates · app" },
+      ]);
+    });
+
+    it("holds a turn that finished during the recovery when the recovered session still works", async () => {
+      const recovery = pendingRecovery();
+      const { gateway, settleLiveTurn, systemNotifications } = await mount({
+        recovery: recovery.answer,
+        liveTurn: true,
+      });
+      settleLiveTurn();
+
+      await answered(() => recovery.resolve([GATES]));
+      expect(rowStatuses(THREAD_ID)).toEqual(["Working in background"]);
+      expect(systemNotifications()).toEqual([]);
+
+      gateway.level(DRAINED);
+      expect(systemNotifications()).toEqual([
+        { title: "Thread finished", body: "Run the gates · app" },
+      ]);
     });
 
     it("reports a failed recovery and still notifies about later work", async () => {

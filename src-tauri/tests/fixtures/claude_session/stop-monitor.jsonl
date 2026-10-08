@@ -1,0 +1,16 @@
+{"type":"command_lifecycle","command_uuid":"captured-command-0001","state":"queued"}
+{"type":"command_lifecycle","command_uuid":"captured-command-0001","state":"started"}
+{"type":"system","subtype":"init","session_id":"captured-session-0001"}
+{"type":"assistant","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"tool_use","id":"captured-tool-0001","name":"ToolSearch","input":{"query":"select:Monitor","max_results":1}}]},"session_id":"captured-session-0001"}
+{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"captured-tool-0001","content":[{"type":"tool_reference","tool_name":"Monitor"}]}]},"session_id":"captured-session-0001"}
+{"type":"assistant","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"tool_use","id":"captured-tool-0002","name":"Monitor","input":{"command":"while true; do sleep 60; echo tick; done","description":"minute tick","timeout_ms":1800000}}]},"session_id":"captured-session-0001"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"captured-task-0001","run_id":"captured-run-0001","task_type":"local_bash","description":"minute tick"}],"session_id":"captured-session-0001"}
+{"type":"system","subtype":"task_started","task_id":"captured-task-0001","run_id":"captured-run-0001","tool_use_id":"captured-tool-0002","description":"minute tick","is_backgrounded":true,"task_type":"local_bash","session_id":"captured-session-0001"}
+{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"captured-tool-0002","content":"(tool result text removed)"}]},"session_id":"captured-session-0001"}
+{"type":"assistant","parent_tool_use_id":null,"message":{"role":"assistant","content":[{"type":"text","text":"STARTED"}]},"session_id":"captured-session-0001"}
+{"type":"result","subtype":"success","is_error":false,"result":"STARTED","num_turns":3,"stop_reason":"end_turn","terminal_reason":"completed","queued_turn_count":0,"result_index":0,"user_message_uuid":"captured-command-0001","user_message_uuids":["captured-command-0001"],"session_id":"captured-session-0001"}
+{"type":"command_lifecycle","command_uuid":"captured-command-0001","state":"completed"}
+{"type":"system","subtype":"task_updated","task_id":"captured-task-0001","run_id":"captured-run-0001","patch":{"status":"killed"},"session_id":"captured-session-0001"}
+{"type":"system","subtype":"task_notification","task_id":"captured-task-0001","run_id":"captured-run-0001","tool_use_id":"captured-tool-0002","status":"stopped","output_file":"/redacted/tasks/captured-task-0001.output","summary":"minute tick","session_id":"captured-session-0001"}
+{"type":"system","subtype":"background_tasks_changed","tasks":[],"session_id":"captured-session-0001"}
+{"type":"control_response","response":{"subtype":"success","request_id":"captured-request-0001","response":{}}}

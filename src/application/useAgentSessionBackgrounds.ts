@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   NO_AGENT_SESSION_BACKGROUNDS,
+  agentOwnerHasLiveSessionBackground,
   agentSessionBackgroundKey,
   agentSessionBackgroundOf,
   applyAgentSessionBackgroundLevel,
@@ -11,6 +12,7 @@ import {
   recoverAgentSessionBackgrounds,
   type AgentSessionBackgrounds,
 } from "../domain/agentSessionBackground";
+import type { AgentThread } from "../domain/agentThread";
 import type {
   AgentSessionBackgroundTasksEvent,
   AgentSessionEndedEvent,
@@ -39,6 +41,7 @@ export interface AgentSessionBackgroundsState {
   readonly backgrounds: AgentSessionBackgrounds;
   readonly recovered: boolean;
   readonly watchSession: (session: AgentThreadSessionRequest) => AgentSessionMissingReport;
+  readonly ownerHasLiveSession: (threads: Iterable<AgentThread>, ownerId: string) => boolean;
 }
 
 type BackgroundsTransition = (current: AgentSessionBackgrounds) => AgentSessionBackgrounds;
@@ -54,6 +57,7 @@ export function useAgentSessionBackgrounds(
   const [levelsHeardFrom, setLevelsHeardFrom] = useState<AgentThreadSessionGateway | null>(null);
   const [endsHeardFrom, setEndsHeardFrom] = useState<AgentThreadSessionGateway | null>(null);
   const latest = useRef(NO_AGENT_SESSION_BACKGROUNDS);
+  const endsHealthyFrom = useRef<AgentThreadSessionGateway | null>(null);
   const superseded = useRef<SupersededSessions>(null);
   const nowRef = useRef(now);
   const reportFailureRef = useRef(reportFailure);
@@ -88,13 +92,19 @@ export function useAgentSessionBackgrounds(
       transition((current) => endAgentSessionBackground(current, event));
     },
     onFailure: reportFailure,
-    onSettled: () => setEndsHeardFrom(() => gateway ?? null),
+    onSettled: (outcome) => {
+      endsHealthyFrom.current = outcome === "subscribed" ? (gateway ?? null) : null;
+      setEndsHeardFrom(() => gateway ?? null);
+    },
   });
   const recovered = gateway === undefined || recoveredFrom === gateway;
   const listening = levelsHeardFrom === gateway && endsHeardFrom === gateway;
   useEffect(() => {
     if (gateway === undefined) return;
-    return () => transition(() => NO_AGENT_SESSION_BACKGROUNDS);
+    return () => {
+      endsHealthyFrom.current = null;
+      transition(() => NO_AGENT_SESSION_BACKGROUNDS);
+    };
   }, [gateway, transition]);
   useEffect(() => {
     if (gateway === undefined || recovered) return;
@@ -157,8 +167,15 @@ export function useAgentSessionBackgrounds(
     },
     [transition],
   );
+  const ownerHasLiveSession = useCallback(
+    (threads: Iterable<AgentThread>, ownerId: string): boolean => {
+      if (gateway === undefined || endsHealthyFrom.current !== gateway) return false;
+      return agentOwnerHasLiveSessionBackground(latest.current, threads, ownerId);
+    },
+    [gateway],
+  );
   return useMemo(
-    () => ({ backgrounds, recovered, watchSession }),
-    [backgrounds, recovered, watchSession],
+    () => ({ backgrounds, recovered, watchSession, ownerHasLiveSession }),
+    [backgrounds, recovered, watchSession, ownerHasLiveSession],
   );
 }

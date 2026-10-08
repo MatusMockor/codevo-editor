@@ -6,10 +6,12 @@ export type AgentSessionEventSubscription<TEvent> = (
   handler: (event: TEvent) => void,
 ) => Promise<() => void>;
 
+export type AgentSessionSubscriptionOutcome = "subscribed" | "failed";
+
 export interface AgentSessionEventHandlers<TEvent> {
   readonly onEvent: (event: TEvent) => void;
   readonly onFailure: (error: unknown) => void;
-  readonly onSettled?: () => void;
+  readonly onSettled?: (outcome: AgentSessionSubscriptionOutcome) => void;
 }
 
 export function useAgentSessionEventSubscription<TEvent>(
@@ -35,12 +37,12 @@ export function useAgentSessionEventSubscription<TEvent>(
           return;
         }
         unsubscribe = stop;
-        handlersRef.current.onSettled?.();
+        handlersRef.current.onSettled?.("subscribed");
       },
       (error: unknown) => {
         if (disposed) return;
         handlersRef.current.onFailure(error);
-        handlersRef.current.onSettled?.();
+        handlersRef.current.onSettled?.("failed");
       },
     );
     return () => {

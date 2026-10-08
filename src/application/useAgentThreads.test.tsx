@@ -870,6 +870,109 @@ describe("useAgentThreads Claude session lifecycle", () => {
     harness.unmount();
   });
 
+  it("keeps an owner live for a settled thread's session-level work and for no other owner's", async () => {
+    let level: ((event: AgentSessionBackgroundTasksEvent) => void) | null = null;
+    const session = {
+      ...sessionGateway(),
+      subscribeAgentSessionBackgroundTasks: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTasksEvent) => void) => {
+          level = handler;
+          return () => undefined;
+        },
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await waitForReact(() => expect(level).not.toBeNull());
+    const otherOwner = "workspace-b";
+    const monitor: AgentSessionBackgroundTasksEvent = {
+      workspaceId: OWNER,
+      threadId,
+      total: 1,
+      agents: 0,
+      tasks: [{ taskId: "bwatch01", taskType: "monitor" }],
+      reply: "none",
+    };
+    const idle: AgentSessionBackgroundTasksEvent = { ...monitor, total: 0, tasks: [] };
+    const live = () => [
+      harness.hook().hasLiveTasksForOwner(OWNER),
+      harness.hook().hasLiveTasksForOwner(otherOwner),
+    ];
+
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+    expect(harness.hook().threads[0]?.lifecycle).toBe("settled");
+    expect(live()).toEqual([false, false]);
+
+    act(() => level?.({ ...monitor, workspaceId: otherOwner }));
+    expect(live()).toEqual([false, false]);
+    act(() => level?.(monitor));
+    expect(live()).toEqual([true, false]);
+    act(() => level?.({ ...idle, reply: "expected" }));
+    expect(live()).toEqual([true, false]);
+    act(() => level?.({ ...idle, reply: "inProgress" }));
+    expect(live()).toEqual([true, false]);
+    act(() => level?.(idle));
+    expect(live()).toEqual([false, false]);
+
+    act(() => level?.(monitor));
+    expect(live()).toEqual([true, false]);
+    await act(async () => {
+      harness.hook().releaseProjectTasks(OWNER);
+    });
+    expect(harness.hook().threads).toHaveLength(0);
+    expect(live()).toEqual([false, false]);
+    harness.unmount();
+  });
+
+  it("does not keep an owner live for session-level work when it cannot hear that session end", async () => {
+    let level: ((event: AgentSessionBackgroundTasksEvent) => void) | null = null;
+    const session = {
+      ...sessionGateway(),
+      subscribeAgentSessionEnded: vi
+        .fn<AgentThreadSessionGateway["subscribeAgentSessionEnded"]>()
+        .mockRejectedValue(new Error("listen failed")),
+      subscribeAgentSessionBackgroundTasks: vi.fn(
+        async (handler: (event: AgentSessionBackgroundTasksEvent) => void) => {
+          level = handler;
+          return () => undefined;
+        },
+      ),
+    } satisfies AgentThreadSessionGateway;
+    const harness = renderThreads({ agentThreadSessionGateway: session });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    harness.set({ worktrees: [worktreeOf(threadId)] });
+    await waitForReact(() => expect(level).not.toBeNull());
+    expect(harness.hook().hasLiveTasksForOwner(OWNER)).toBe(true);
+
+    await act(async () => {
+      harness.emitStatus(threadId, 1, { kind: "exited", exitCode: 0 });
+    });
+    act(() =>
+      level?.({
+        workspaceId: OWNER,
+        threadId,
+        total: 1,
+        agents: 0,
+        tasks: [{ taskId: "bwatch01", taskType: "shell" }],
+        reply: "none",
+      }),
+    );
+
+    const view = harness.hook().threads[0];
+    expect(view?.lifecycle).toBe("settled");
+    expect(agentSessionBackgroundIsLive(view?.sessionBackground)).toBe(true);
+    expect(
+      view === undefined ? null : agentThreadNotificationState(view.thread, null, "live").kind,
+    ).toBe("held");
+    expect(harness.hook().hasLiveTasksForOwner(OWNER)).toBe(false);
+    harness.unmount();
+  });
+
   it("holds the settled turn's completion from the agent drain until the follow-up reply is recorded", async () => {
     let level: ((event: AgentSessionBackgroundTasksEvent) => void) | null = null;
     let background: ((event: AgentSessionBackgroundTurnEvent) => void) | null = null;

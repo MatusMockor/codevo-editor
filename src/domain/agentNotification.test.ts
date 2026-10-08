@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { AgentThread, AgentTurn, AgentTurnStatus } from "./agentThread";
+import { runningTurn, type AgentThread, type AgentTurn, type AgentTurnStatus } from "./agentThread";
 import {
   MAX_AGENT_THREAD_NOTIFICATION_SUBJECTS,
+  MAX_AGENT_THREAD_RECOVERY_WATCHES,
+  NO_AGENT_THREAD_RECOVERY_WATCHES,
   agentThreadNotificationState,
   agentThreadNotificationStillCurrent,
+  agentThreadNotificationSubjectsBeforeRecovery,
   detectAgentThreadNotifications,
+  watchAgentThreadsBeforeRecovery,
   type AgentThreadNotificationBaseline,
+  type AgentThreadRecoveryWatches,
   type AgentThreadNotificationState,
   type AgentThreadNotificationSubject,
   type AgentThreadSessionWork,
@@ -604,5 +609,216 @@ describe("completion while session background work is live", () => {
         heldCompletion: null,
       });
     });
+  });
+});
+
+describe("observing threads before the session levels are recovered", () => {
+  const exitedCleanly: AgentTurnStatus = { kind: "exited", exitCode: 0 };
+  const running = thread([turn("u1", { kind: "running" })]);
+  const settled = thread([turn("u1", exitedCleanly)]);
+  const failed = thread([turn("u1", { kind: "failed", message: "boom" })]);
+  const unhydrated = thread([]);
+  const cutOff = thread([
+    turn("u1", exitedCleanly),
+    turn("u2", { kind: "interrupted" }, "background"),
+  ]);
+
+  interface Sighting {
+    readonly subject: AgentThreadNotificationSubject;
+    readonly running: boolean;
+  }
+
+  function seen(
+    threadId: string,
+    observed: AgentThread,
+    work: AgentThreadSessionWork = "idle",
+    ownerKey = "owner-a",
+  ): Sighting {
+    return {
+      subject: subject(threadId, agentThreadNotificationState(observed, null, work), ownerKey),
+      running: runningTurn(observed) !== null,
+    };
+  }
+
+  function watching(
+    previous: AgentThreadRecoveryWatches,
+    step: ReadonlyArray<Sighting>,
+  ): AgentThreadRecoveryWatches {
+    return watchAgentThreadsBeforeRecovery(
+      previous,
+      step.map((sighting) => sighting.subject),
+      new Set(step.filter((sighting) => sighting.running).map(({ subject }) => subject.threadId)),
+    );
+  }
+
+  function pending(steps: ReadonlyArray<ReadonlyArray<Sighting>>): {
+    readonly baseline: AgentThreadNotificationBaseline;
+    readonly watches: AgentThreadRecoveryWatches;
+    readonly keys: ReadonlyArray<string>;
+  } {
+    let baseline: AgentThreadNotificationBaseline = new Map();
+    let watches = NO_AGENT_THREAD_RECOVERY_WATCHES;
+    const keys: string[] = [];
+    for (const step of steps) {
+      watches = watching(watches, step);
+      const provisional = agentThreadNotificationSubjectsBeforeRecovery(
+        step.map((sighting) => sighting.subject),
+        watches,
+      );
+      const detection = detectAgentThreadNotifications(baseline, provisional);
+      baseline = detection.baseline;
+      keys.push(...detection.events.map((event) => `${event.threadId}:${event.signalKey}`));
+    }
+    return { baseline, watches, keys };
+  }
+
+  function recovering(
+    steps: ReadonlyArray<ReadonlyArray<Sighting>>,
+    recovered: ReadonlyArray<Sighting>,
+  ): ReadonlyArray<string> {
+    const before = pending(steps);
+    const detection = detectAgentThreadNotifications(
+      before.baseline,
+      recovered.map((sighting) => sighting.subject),
+    );
+    return [
+      ...before.keys,
+      ...detection.events.map((event) => `${event.threadId}:${event.signalKey}`),
+    ];
+  }
+
+  it("leaves out every thread that had already settled and so adopts it silently afterwards", () => {
+    const polling: Sighting = {
+      subject: subject("polling", agentThreadNotificationState(running, undefined, "idle")),
+      running: true,
+    };
+    const atLoad = [
+      seen("done", settled),
+      seen("failed", failed),
+      seen("held", settled, "live"),
+      seen("cut", cutOff),
+      seen("cut-live", cutOff, "live"),
+      seen("busy", running),
+      polling,
+    ];
+    expect(
+      agentThreadNotificationSubjectsBeforeRecovery(
+        atLoad.map((sighting) => sighting.subject),
+        NO_AGENT_THREAD_RECOVERY_WATCHES,
+      ).map((kept) => kept.threadId),
+    ).toEqual(["busy", "polling"]);
+    expect([...pending([atLoad]).watches.keys()]).toEqual(["busy", "polling"]);
+    expect(recovering([atLoad, atLoad], atLoad)).toEqual([]);
+  });
+
+  it("reports a turn that finished or failed while the recovery was pending", () => {
+    expect(
+      recovering([[seen("t1", running)], [seen("t1", settled)]], [seen("t1", settled)]),
+    ).toEqual(["t1:u1:completed"]);
+    expect(recovering([[seen("t1", running)], [seen("t1", failed)]], [seen("t1", failed)])).toEqual(
+      ["t1:u1:failed"],
+    );
+  });
+
+  it("holds a turn that finished during the recovery when the recovered level still works", () => {
+    const steps = [[seen("t1", running)], [seen("t1", settled)]];
+    expect(recovering(steps, [seen("t1", settled, "live")])).toEqual([]);
+
+    const held = detectAgentThreadNotifications(pending(steps).baseline, [
+      seen("t1", settled, "live").subject,
+    ]);
+    const released = detectAgentThreadNotifications(held.baseline, [seen("t1", settled).subject]);
+    expect(released.events.map((event) => event.signalKey)).toEqual(["u1:completed"]);
+  });
+
+  it("keeps a watched thread known while its settled state is not yet trusted", () => {
+    const masked = agentThreadNotificationSubjectsBeforeRecovery(
+      [seen("t1", settled).subject, seen("t2", settled).subject],
+      new Map([["t1", "owner-a"]]),
+    );
+    expect(masked.map((kept) => [kept.threadId, kept.state])).toEqual([["t1", UNKNOWN]]);
+  });
+
+  it("still asks for approval while the recovery is pending", () => {
+    const asking: Sighting = {
+      subject: subject(
+        "t1",
+        agentThreadNotificationState(running, { kind: "approval", id: "a" }, "idle"),
+      ),
+      running: true,
+    };
+    expect(recovering([[seen("t1", running)], [asking]], [asking])).toEqual(["t1:approval:a"]);
+  });
+
+  it("watches a thread only under the exact owner it was running for", () => {
+    const moved = seen("t1", settled, "idle", "owner-b");
+    const masked = agentThreadNotificationSubjectsBeforeRecovery(
+      [moved.subject],
+      new Map([["t1", "owner-a"]]),
+    );
+    expect(masked).toEqual([]);
+
+    const afterMove = pending([[seen("t1", running)], [moved]]);
+    expect([...afterMove.watches]).toEqual([]);
+    expect(afterMove.baseline.has("t1")).toBe(false);
+    expect(recovering([[seen("t1", running)], [moved]], [moved])).toEqual([]);
+  });
+
+  it("lets a watch die with the owner change so the returning owner is not watched again", () => {
+    const steps = [
+      [seen("t1", running)],
+      [seen("t1", settled, "idle", "owner-b")],
+      [seen("t1", settled)],
+    ];
+    expect([...pending(steps).watches]).toEqual([]);
+    expect(recovering(steps, [seen("t1", settled)])).toEqual([]);
+  });
+
+  it("lets a watch die when its thread disappears while the recovery is pending", () => {
+    const steps = [[seen("t1", running), seen("t2", running)], [seen("t2", running)]];
+    expect([...pending(steps).watches]).toEqual([["t2", "owner-a"]]);
+    expect(recovering([...steps, [seen("t1", settled), seen("t2", running)]], [])).toEqual([]);
+  });
+
+  it("follows a thread that keeps running under a new owner", () => {
+    const steps = [[seen("t1", running)], [seen("t1", running, "idle", "owner-b")]];
+    expect([...pending(steps).watches]).toEqual([["t1", "owner-b"]]);
+  });
+
+  it("never watches a thread that is not running, so quiet threads cannot fill the watches", () => {
+    const quiet = Array.from({ length: 2_000 }, (_unused, index) =>
+      seen(`quiet-${index}`, unhydrated),
+    );
+    const before = pending([[...quiet, seen("busy", running)]]);
+    expect([...before.watches]).toEqual([["busy", "owner-a"]]);
+
+    const hydrated = [seen("quiet-0", settled), seen("busy", settled)];
+    expect(recovering([[...quiet, seen("busy", running)], hydrated], hydrated)).toEqual([
+      "busy:u1:completed",
+    ]);
+  });
+
+  it("keeps the watches it has and admits running threads in order up to the bound", () => {
+    const fleet = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_unused, index) => seen(`${prefix}-${index}`, running));
+    const first = fleet("a", MAX_AGENT_THREAD_RECOVERY_WATCHES + 5);
+    const admitted = first
+      .slice(0, MAX_AGENT_THREAD_RECOVERY_WATCHES)
+      .map((sighting) => sighting.subject.threadId);
+    const filled = watching(NO_AGENT_THREAD_RECOVERY_WATCHES, first);
+    expect([...filled.keys()]).toEqual(admitted);
+
+    const reordered = [seen("late", running), ...[...first].reverse()];
+    const kept = watching(filled, reordered);
+    expect(kept.size).toBe(MAX_AGENT_THREAD_RECOVERY_WATCHES);
+    expect([...kept.keys()].sort()).toEqual([...admitted].sort());
+    expect(kept.has("late")).toBe(false);
+
+    const withoutOne = reordered.filter((sighting) => sighting.subject.threadId !== "a-0");
+    const refilled = watching(kept, withoutOne);
+    expect(refilled.size).toBe(MAX_AGENT_THREAD_RECOVERY_WATCHES);
+    expect(refilled.has("a-0")).toBe(false);
+    expect(refilled.has("late")).toBe(true);
+    expect(watching(refilled, withoutOne)).toEqual(refilled);
   });
 });

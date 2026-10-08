@@ -1130,6 +1130,15 @@ mod compaction;
 #[path = "claude_session_router_reply_tests.rs"]
 mod reply_level;
 
+#[path = "claude_session_router_captured_tests.rs"]
+mod captured;
+
+#[path = "claude_session_router_wake_up_end_tests.rs"]
+mod wake_up_end;
+
+#[path = "claude_session_router_foreign_task_tests.rs"]
+mod foreign_task;
+
 #[path = "claude_session_router_display_tests.rs"]
 mod display;
 

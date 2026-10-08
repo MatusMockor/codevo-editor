@@ -1,3 +1,4 @@
+import { classifyClaudeMonitorTasks, type ClaudeMonitorTasks } from "./claudeMonitorTasks.js";
 import {
   flushClaudeNotices,
   throttleClaudeNotices,
@@ -40,6 +41,7 @@ export interface AgentOutputParserState {
   readonly stderr: AgentOutputPendingLine;
   readonly emittedToolIds: ReadonlySet<string>;
   readonly claudeSubagentClassification?: ClaudeSubagentClassification;
+  readonly claudeMonitorTasks?: ClaudeMonitorTasks;
   readonly claudeNoticeThrottle?: ClaudeNoticeThrottle;
   readonly sessionId: string | null;
 }
@@ -63,6 +65,7 @@ interface ParsedLines {
   readonly events: ReadonlyArray<AgentTurnEvent>;
   readonly emittedToolIds: ReadonlySet<string>;
   readonly claudeSubagentClassification?: ClaudeSubagentClassification;
+  readonly claudeMonitorTasks?: ClaudeMonitorTasks;
   readonly claudeNoticeThrottle?: ClaudeNoticeThrottle;
   readonly capturedSessionId: string | null;
   readonly reportedSessionId: string | null;
@@ -111,6 +114,7 @@ export function feedAgentOutput(
       ...withPendingLine(state, stream, split.state),
       emittedToolIds: parsed.emittedToolIds,
       claudeSubagentClassification: parsed.claudeSubagentClassification,
+      claudeMonitorTasks: parsed.claudeMonitorTasks,
       claudeNoticeThrottle: parsed.claudeNoticeThrottle,
       sessionId: parsed.capturedSessionId,
     },
@@ -149,6 +153,7 @@ function parseLines(
   const events: AgentTurnEvent[] = [];
   let emittedToolIds = state.emittedToolIds;
   let claudeSubagentClassification = state.claudeSubagentClassification;
+  let claudeMonitorTasks = state.claudeMonitorTasks;
   let claudeNoticeThrottle = state.claudeNoticeThrottle;
   let capturedSessionId = state.sessionId;
   let reportedSessionId: string | null = null;
@@ -179,9 +184,11 @@ function parseLines(
       sessionFallback = parsed.result.sessionFallback;
     }
     if (state.kind === "claudeCode") {
+      const monitored = classifyClaudeMonitorTasks(claudeMonitorTasks, line, parsed.result.events);
+      claudeMonitorTasks = monitored.state;
       const classified = classifyClaudeSubagentTelemetry(
         claudeSubagentClassification,
-        parsed.result.events,
+        monitored.events,
       );
       claudeSubagentClassification = classified.state;
       const throttled = throttleClaudeNotices(claudeNoticeThrottle, classified.events);
@@ -197,6 +204,7 @@ function parseLines(
     events,
     emittedToolIds,
     claudeSubagentClassification,
+    claudeMonitorTasks,
     claudeNoticeThrottle,
     capturedSessionId,
     reportedSessionId,

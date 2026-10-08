@@ -7,6 +7,7 @@ import {
   AGENT_SESSION_REPLY_EXPECTED_CAP_MS,
   agentSessionBackgroundOf,
 } from "../domain/agentSessionBackground";
+import type { AgentThread } from "../domain/agentThread";
 import type {
   AgentSessionBackgroundTasksEvent,
   AgentSessionEndedEvent,
@@ -52,6 +53,26 @@ const SHELL_ONLY: AgentSessionBackgroundTasksEvent = {
   ...RESUMED,
   agents: 0,
   tasks: [{ taskId: "b1", taskType: "shell" }],
+};
+const MONITORING: AgentSessionBackgroundTasksEvent = {
+  ...SHELL_ONLY,
+  tasks: [{ taskId: "bwatch01", taskType: "monitor" }],
+};
+const SETTLED_THREAD: AgentThread = {
+  threadId: THREAD,
+  owner: { rootKey: "/repo", ownerId: "ws-1", repositoryRoot: "/repo" },
+  target: { isolation: "in-place", worktreePath: null },
+  provider: { kind: "claudeCode", sessionId: "session-abcdefgh" },
+  title: "Watch the build",
+  pinned: false,
+  archived: false,
+  createdAtEpochMs: 1_790_716_525_713,
+  updatedAtEpochMs: 1_790_716_525_713,
+  turns: [],
+  turnsTruncated: false,
+  viewedAtEpochMs: null,
+  externalOrigin: null,
+  integration: null,
 };
 
 function gateway() {
@@ -145,9 +166,11 @@ function render(fake: AgentThreadSessionGateway | undefined, now: () => number) 
   };
   const forget = (workspaceId: string, threadId = THREAD) => watch(workspaceId, threadId)();
   const recovered = () => observed.current?.recovered;
+  const retains = (ownerId = "ws-1") =>
+    observed.current?.ownerHasLiveSession([SETTLED_THREAD], ownerId);
   const rerender = (next: AgentThreadSessionGateway | undefined) =>
     act(() => root.render(createElement(Harness, { gateway: next })));
-  return { observed, entry, watch, forget, recovered, rerender, unmount, reportFailure };
+  return { observed, entry, watch, forget, recovered, retains, rerender, unmount, reportFailure };
 }
 
 describe("useAgentSessionBackgrounds", () => {
@@ -703,6 +726,78 @@ describe("useAgentSessionBackgrounds", () => {
       expect(harness.reportFailure).toHaveBeenCalledExactlyOnceWith(failure);
       expect(session.fake.listAgentSessionBackgrounds).toHaveBeenCalledTimes(1);
       expect(harness.entry()).toMatchObject({ total: 1 });
+    });
+
+    it("retains an owner for session-level work only while it hears that owner's sessions end", async () => {
+      const session = gateway();
+      session.fake.listAgentSessionBackgrounds.mockResolvedValueOnce([MONITORING]);
+      const harness = render(session.fake, () => 1_790_718_781_369);
+      expect(harness.retains()).toBe(false);
+      await waitForReact(() => expect(harness.recovered()).toBe(true));
+
+      expect(harness.entry()).toMatchObject({ total: 1 });
+      expect(harness.retains()).toBe(true);
+      expect(harness.retains("ws-2")).toBe(false);
+      session.end({
+        workspaceId: "ws-1",
+        threadId: THREAD,
+        reason: "crashed",
+        backgroundTasksLive: true,
+      });
+      expect(harness.retains()).toBe(false);
+    });
+
+    it("never retains an owner for a level whose session end it cannot hear", async () => {
+      const session = gateway();
+      const failure = new Error("listen failed");
+      session.fake.subscribeAgentSessionEnded.mockRejectedValueOnce(failure);
+      session.fake.listAgentSessionBackgrounds.mockResolvedValueOnce([MONITORING]);
+      const harness = render(session.fake, () => 1_790_718_781_369);
+      await waitForReact(() => expect(harness.recovered()).toBe(true));
+
+      expect(harness.reportFailure).toHaveBeenCalledExactlyOnceWith(failure);
+      expect(harness.entry()).toMatchObject({ total: 1 });
+      expect(harness.retains()).toBe(false);
+      session.level(SHELL_ONLY);
+      expect(harness.entry()).toMatchObject({ total: 1 });
+      expect(harness.retains()).toBe(false);
+    });
+
+    it("still retains an owner when only the level subscription failed", async () => {
+      const session = gateway();
+      session.fake.subscribeAgentSessionBackgroundTasks.mockRejectedValueOnce(
+        new Error("listen failed"),
+      );
+      session.fake.listAgentSessionBackgrounds.mockResolvedValueOnce([MONITORING]);
+      const harness = render(session.fake, () => 1_790_718_781_369);
+      await waitForReact(() => expect(harness.recovered()).toBe(true));
+
+      expect(harness.retains()).toBe(true);
+    });
+
+    it("retains nothing for a replaced gateway until the new one hears session ends", async () => {
+      const first = gateway();
+      first.fake.listAgentSessionBackgrounds.mockResolvedValueOnce([MONITORING]);
+      const harness = render(first.fake, () => 1_790_718_781_369);
+      await waitForReact(() => expect(harness.recovered()).toBe(true));
+      expect(harness.retains()).toBe(true);
+
+      const next = gateway();
+      const hearing = deferred<() => void>();
+      next.fake.subscribeAgentSessionEnded.mockReturnValueOnce(hearing.promise);
+      harness.rerender(next.fake);
+      await waitForReact(() =>
+        expect(next.fake.subscribeAgentSessionBackgroundTasks).toHaveBeenCalledTimes(1),
+      );
+      await settled(() => undefined);
+      next.level(MONITORING);
+      expect(harness.entry()).toMatchObject({ total: 1 });
+      expect(harness.retains()).toBe(false);
+
+      await settled(() => hearing.resolve(() => undefined));
+      await waitForReact(() => expect(harness.recovered()).toBe(true));
+      next.level(MONITORING);
+      expect(harness.retains()).toBe(true);
     });
 
     it("stops waiting when a subscription never settles and then lists nothing", async () => {

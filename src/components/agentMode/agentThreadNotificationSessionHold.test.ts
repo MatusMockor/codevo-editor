@@ -13,6 +13,7 @@ import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import {
   AGENT_SESSION_REPLY_EXPECTED_CAP_MS,
   NO_AGENT_SESSION_BACKGROUNDS,
+  agentSessionBackgroundActivity,
   agentSessionBackgroundIsLive,
   applyAgentSessionBackgroundLevel,
   endAgentSessionBackground,
@@ -48,6 +49,7 @@ const EDITOR: AgentEditorBridgeSurface = {
 
 const SHELL_TASK: AgentBackgroundTask = { taskId: "b7sh0uutx", taskType: "shell" };
 const MONITOR_TASK: AgentBackgroundTask = { taskId: "mon-1", taskType: "monitor" };
+const SECOND_MONITOR_TASK: AgentBackgroundTask = { taskId: "mon-2", taskType: "monitor" };
 const OTHER_TASK: AgentBackgroundTask = { taskId: "wf-1", taskType: "other" };
 const AGENT_TASK: AgentBackgroundTask = { taskId: "a4b355dcf6056a875", taskType: "agent" };
 
@@ -202,7 +204,6 @@ describe("completion notification while the thread's session still works in the 
 
   it.each([
     ["shell", SHELL],
-    ["watch loop", MONITOR],
     ["agent", level([AGENT_TASK])],
   ] as const)(
     "releases the finished turn at once when the user stops its last %s and no reply is expected",
@@ -319,6 +320,27 @@ describe("completion notification while the thread's session still works in the 
     expect(thread.fired()).toEqual(["u1:completed"]);
   });
 
+  it("reports once, for the late reply, when the task finished during the turn's final answer", () => {
+    const thread = scenario();
+    thread.level(SHELL);
+    thread.later(9_000);
+    thread.level(DRAINED);
+    expect(thread.fired()).toEqual([]);
+
+    thread.later(10_000);
+    thread.level(EXPECTING);
+    thread.turns(turn("u1", EXITED));
+    expect(thread.row()).toBe("Replying");
+    expect(thread.fired()).toEqual([]);
+
+    thread.level(REPLYING);
+    thread.turns(turn("u1", EXITED), turn("u2", EXITED, "background"));
+    expect(thread.fired()).toEqual([]);
+    thread.level(DRAINED);
+    expect(thread.row()).toBeNull();
+    expect(thread.fired()).toEqual(["u2:completed"]);
+  });
+
   it("delivers the held completion once when the session dies while the follow-up reply is written", () => {
     const thread = scenario();
     thread.level(SHELL);
@@ -405,25 +427,107 @@ describe("completion notification while the thread's session still works in the 
     expect(thread.fired()).toEqual([]);
   });
 
-  it("holds for a watch loop alone and lets go when the session ends", () => {
+  it("notifies when the turn that started a watch loop ends, although the row stays Monitoring", () => {
+    const thread = scenario();
+    thread.level(MONITOR);
+    expect(thread.fired()).toEqual([]);
+
+    thread.turns(turn("u1", EXITED));
+
+    expect(thread.row()).toBe("Monitoring");
+    expect(thread.fired()).toEqual(["u1:completed"]);
+    thread.later(3 * 60 * 60_000);
+    thread.observe();
+    expect(thread.fired()).toEqual(["u1:completed"]);
+  });
+
+  it("notifies once for every reply a watch loop event produces and holds only while that reply is written", () => {
+    const thread = scenario();
+    thread.level(MONITOR);
+    thread.turns(turn("u1", EXITED));
+    expect(thread.fired()).toEqual(["u1:completed"]);
+
+    thread.level(level([MONITOR_TASK], "inProgress"));
+    expect(thread.row()).toBe("Replying");
+    thread.turns(turn("u1", EXITED), turn("u2", EXITED, "background"));
+    expect(thread.fired()).toEqual(["u1:completed"]);
+    thread.level(MONITOR);
+    expect(thread.row()).toBe("Monitoring");
+    expect(thread.fired()).toEqual(["u1:completed", "u2:completed"]);
+
+    thread.level(level([MONITOR_TASK], "inProgress"));
+    thread.turns(
+      turn("u1", EXITED),
+      turn("u2", EXITED, "background"),
+      turn("u3", EXITED, "background"),
+    );
+    thread.level(MONITOR);
+    expect(thread.fired()).toEqual(["u1:completed", "u2:completed", "u3:completed"]);
+
+    thread.sessionEnds();
+    thread.observe();
+    expect(thread.row()).toBeNull();
+    expect(thread.fired()).toEqual(["u1:completed", "u2:completed", "u3:completed"]);
+  });
+
+  it("follows the captured Monitor: its turn, each event reply and the reply after its end notify once each", () => {
     const thread = scenario();
     thread.level(MONITOR);
     thread.turns(turn("u1", EXITED));
     expect(thread.row()).toBe("Monitoring");
+    expect(thread.fired()).toEqual(["u1:completed"]);
 
-    thread.later(3 * 60 * 60_000);
     thread.level(level([MONITOR_TASK], "inProgress"));
+    expect(thread.row()).toBe("Replying");
     thread.turns(turn("u1", EXITED), turn("u2", EXITED, "background"));
+    expect(thread.fired()).toEqual(["u1:completed"]);
     thread.level(MONITOR);
     expect(thread.row()).toBe("Monitoring");
-    expect(thread.fired()).toEqual([]);
+    expect(thread.fired()).toEqual(["u1:completed", "u2:completed"]);
 
-    thread.sessionEnds();
+    thread.level(EXPECTING);
+    expect(thread.row()).toBe("Replying");
+    thread.level(REPLYING);
+    thread.turns(
+      turn("u1", EXITED),
+      turn("u2", EXITED, "background"),
+      turn("u3", EXITED, "background"),
+    );
+    expect(thread.fired()).toEqual(["u1:completed", "u2:completed"]);
+    thread.level(DRAINED);
     expect(thread.row()).toBeNull();
-    expect(thread.fired()).toEqual(["u2:completed"]);
+    expect(thread.fired()).toEqual(["u1:completed", "u2:completed", "u3:completed"]);
 
+    thread.lapse();
     thread.observe();
-    expect(thread.fired()).toEqual(["u2:completed"]);
+    expect(thread.fired()).toHaveLength(3);
+  });
+
+  it("holds through the reply expected after a watch loop ended on its own", () => {
+    const thread = scenario();
+    thread.level(MONITOR);
+    thread.turns(turn("u1", EXITED));
+    thread.level(EXPECTING);
+    thread.level(REPLYING);
+    thread.turns(turn("u1", EXITED), turn("u2", EXITED, "background"));
+    expect(thread.fired()).toEqual(["u1:completed"]);
+
+    thread.level(DRAINED);
+    expect(thread.fired()).toEqual(["u1:completed", "u2:completed"]);
+  });
+
+  it("holds for a watch loop that runs beside a shell or whose list is cut short", () => {
+    const beside = scenario();
+    beside.level(level([MONITOR_TASK, SHELL_TASK]));
+    beside.turns(turn("u1", EXITED));
+    expect(beside.row()).toBe("Working in background");
+    expect(beside.fired()).toEqual([]);
+
+    const cutShort = scenario();
+    cutShort.level({ ...MONITOR, total: 40 });
+    cutShort.turns(turn("u1", EXITED));
+    expect(cutShort.row()).toBe("Working in background");
+    expect(cutShort.fired()).toEqual([]);
   });
 
   it("reports a failure at once while background work runs and says nothing more when the work ends", () => {
@@ -448,7 +552,7 @@ describe("completion notification while the thread's session still works in the 
       turn("u2", { kind: "failed", message: "Reply failed" }, "background"),
     );
 
-    expect(thread.fired()).toEqual(["u2:failed"]);
+    expect(thread.fired()).toEqual(["u1:completed", "u2:failed"]);
   });
 
   it.each(["approval", "input"] as const)(
@@ -571,6 +675,7 @@ describe("row status and completion notification for every session background sh
     [AGENT_TASK],
     [SHELL_TASK, MONITOR_TASK],
     [AGENT_TASK, SHELL_TASK],
+    [MONITOR_TASK, SECOND_MONITOR_TASK],
   ];
   const shapes: ReadonlyArray<AgentSessionBackground | undefined> = [
     undefined,
@@ -606,20 +711,39 @@ describe("row status and completion notification for every session background sh
     return agentThreadNotificationSubjects([view], new Map(), projects)[0]?.state;
   }
 
-  it("holds a completion exactly when the row shows the thread as live", () => {
-    expect(shapes).toHaveLength(253);
-    const held = shapes.filter((shape) => {
+  it("holds a completion exactly while the session works and shows the row live unless it is idle", () => {
+    expect(shapes).toHaveLength(289);
+    const activities = shapes.map((shape) => {
       const view = viewOf(EXITED, shape);
-      const live = agentRowIsLive(agentRowStatus(view));
-      expect(agentSessionBackgroundIsLive(shape)).toBe(live);
+      const activity = agentSessionBackgroundActivity(shape);
+      expect(agentRowIsLive(agentRowStatus(view))).toBe(activity !== "idle");
+      expect(agentSessionBackgroundIsLive(shape)).toBe(activity !== "idle");
       expect(stateOf(view)).toEqual({
-        kind: live ? "held" : "signal",
+        kind: activity === "working" ? "held" : "signal",
         signal: { kind: "completed", key: "u1:completed" },
       });
-      return live;
+      return activity;
     });
 
-    expect(held).toHaveLength(245);
+    expect(activities.filter((activity) => activity === "idle")).toHaveLength(9);
+    expect(activities.filter((activity) => activity === "monitoring")).toHaveLength(2);
+    expect(activities.filter((activity) => activity === "working")).toHaveLength(278);
+  });
+
+  it("calls only a complete list of nothing but watch loops monitoring", () => {
+    const monitoring = shapes.filter(
+      (shape) => agentSessionBackgroundActivity(shape) === "monitoring",
+    );
+
+    expect(
+      monitoring.map((shape) => [shape?.total, shape?.agents, shape?.reply.kind, shape?.tasks]),
+    ).toEqual([
+      [1, 0, "none", [MONITOR_TASK]],
+      [2, 0, "none", [MONITOR_TASK, SECOND_MONITOR_TASK]],
+    ]);
+    for (const shape of monitoring) {
+      expect(agentRowStatusLabel(agentRowStatus(viewOf(EXITED, shape)))).toBe("Monitoring");
+    }
   });
 
   it("never holds a failure, whatever the session still runs", () => {

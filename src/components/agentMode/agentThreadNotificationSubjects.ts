@@ -4,9 +4,10 @@ import {
   agentThreadNotificationState,
   type AgentThreadNotificationSubject,
 } from "../../domain/agentNotification";
+import { runningTurn } from "../../domain/agentThread";
 import type { AgentPendingInteractionIdentity } from "../../domain/agentPendingInteraction";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import { agentSessionBackgroundIsLive } from "../../domain/agentSessionBackground";
+import { agentSessionBackgroundActivity } from "../../domain/agentSessionBackground";
 
 type InteractionLookup = ReadonlyMap<string, AgentPendingInteractionIdentity | null>;
 
@@ -71,13 +72,24 @@ export function agentThreadNotificationSubjects(
       state: agentThreadNotificationState(
         view.thread,
         interaction,
-        agentSessionBackgroundIsLive(view.sessionBackground) ? "live" : "idle",
+        agentSessionBackgroundActivity(view.sessionBackground) === "working" ? "live" : "idle",
       ),
     };
     cache.set(view, { interactionKey, projectLabel, generation, subject });
     subjects.push(subject);
   }
   return subjects;
+}
+
+export function agentThreadsWithRunningTurn(
+  views: ReadonlyArray<AgentThreadView>,
+): ReadonlySet<string> {
+  const running = new Set<string>();
+  for (const view of views) {
+    if (view.thread.archived || runningTurn(view.thread) === null) continue;
+    running.add(view.thread.threadId);
+  }
+  return running;
 }
 
 function isRemote(view: AgentThreadView): boolean {

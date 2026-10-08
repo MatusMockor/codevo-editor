@@ -4,9 +4,10 @@ import {
   type AgentBackgroundActivity,
 } from "../../domain/agentBackgroundActivity";
 import {
-  agentSessionBackgroundIsLive,
+  agentSessionBackgroundActivity,
   agentSessionReplySince,
   type AgentSessionBackground,
+  type AgentSessionBackgroundActivity,
 } from "../../domain/agentSessionBackground";
 import { agentAgentsRunningLabel } from "./agentBackgroundIndicatorPresentation";
 import type { AgentPendingInteraction } from "../../domain/agentPendingInteraction";
@@ -82,8 +83,9 @@ export function agentRowStatus(
         : {}),
     };
   }
-  if (session !== undefined && agentSessionBackgroundIsLive(session))
-    return sessionBackgroundStatus(session);
+  const sessionActivity = agentSessionBackgroundActivity(session);
+  if (session !== undefined && sessionActivity !== "idle")
+    return sessionBackgroundStatus(session, sessionActivity);
   const last = lastTurnStatus(view.thread);
   if (last !== null && isFailedTurnStatus(last)) return { kind: "failed" };
   if (last !== null && isStoppedTurnStatus(last)) return { kind: "stopped" };
@@ -199,7 +201,10 @@ function liveAgentTasks(activity: AgentBackgroundActivity | null): number {
   return activity.tasks.filter((task) => task.taskType === "agent").length;
 }
 
-function sessionBackgroundStatus(session: AgentSessionBackground): AgentRowStatus {
+function sessionBackgroundStatus(
+  session: AgentSessionBackground,
+  activity: Exclude<AgentSessionBackgroundActivity, "idle">,
+): AgentRowStatus {
   if (session.agents > 0)
     return {
       kind: "agents",
@@ -210,13 +215,10 @@ function sessionBackgroundStatus(session: AgentSessionBackground): AgentRowStatu
   const replyingSince = agentSessionReplySince(session.reply);
   if (replyingSince !== null)
     return { kind: "working", startedAtEpochMs: replyingSince, activity: "replying" };
-  const monitoring =
-    session.tasks.length === session.total &&
-    session.tasks.every((task) => task.taskType === "monitor");
   return {
     kind: "working",
     startedAtEpochMs: session.sinceEpochMs,
-    activity: monitoring ? "monitoring" : "background",
+    activity: activity === "monitoring" ? "monitoring" : "background",
   };
 }
 

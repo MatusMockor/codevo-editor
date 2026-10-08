@@ -7,7 +7,10 @@ import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
-import { agentThreadNotificationSubjects } from "./agentThreadNotificationSubjects";
+import {
+  agentThreadNotificationSubjects,
+  agentThreadsWithRunningTurn,
+} from "./agentThreadNotificationSubjects";
 import { projectFixture } from "./agentThreadsSurfaceTestFixtures";
 
 type SubjectCache = Parameters<typeof agentThreadNotificationSubjects>[3];
@@ -48,12 +51,35 @@ describe("agentThreadNotificationSubjects", () => {
     ).not.toBe(first?.ownerKey);
   });
 
+  it("names exactly the unarchived threads that have a running turn", () => {
+    const turn = view.thread.turns[0]!;
+    const withStatus = (threadId: string, kind: "running" | "stopped", archived = false) =>
+      surfaceThreadView({
+        thread: {
+          ...view.thread,
+          threadId,
+          archived,
+          turns: [{ ...turn, status: { kind }, endedAtEpochMs: kind === "running" ? null : 2 }],
+        },
+      });
+    const empty = surfaceThreadView({ thread: { ...view.thread, threadId: "empty", turns: [] } });
+
+    expect([
+      ...agentThreadsWithRunningTurn([
+        withStatus("busy", "running"),
+        withStatus("done", "stopped"),
+        withStatus("shelved", "running", true),
+        empty,
+      ]),
+    ]).toEqual(["busy"]);
+  });
+
   it("leaves archived threads out", () => {
     const archived: AgentThreadView = { ...view, thread: { ...view.thread, archived: true } };
     expect(agentThreadNotificationSubjects([archived], new Map(), projects)).toEqual([]);
   });
 
-  it("holds a completion back while the thread's session still lists live work or a reply", () => {
+  it("holds a completion back while the thread's session works or a reply is due, not for watch loops alone", () => {
     const cache: SubjectCache = new WeakMap();
     const settled = surfaceThreadView({
       thread: {
@@ -104,6 +130,9 @@ describe("agentThreadNotificationSubjects", () => {
       held,
     );
     expect(stateOf({ ...idle, total: 1, tasks: [{ taskId: "m1", taskType: "monitor" }] })).toEqual(
+      completed,
+    );
+    expect(stateOf({ ...idle, total: 3, tasks: [{ taskId: "m1", taskType: "monitor" }] })).toEqual(
       held,
     );
     expect(stateOf({ ...idle, reply: { kind: "inProgress", sinceEpochMs: 3 } })).toEqual(held);

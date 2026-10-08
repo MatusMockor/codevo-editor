@@ -18,12 +18,18 @@ import {
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentPendingInteractionIdentity } from "../../domain/agentPendingInteraction";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import type { AgentThreadNotificationEvent } from "../../domain/agentNotification";
+import {
+  NO_AGENT_THREAD_RECOVERY_WATCHES,
+  agentThreadNotificationSubjectsBeforeRecovery,
+  watchAgentThreadsBeforeRecovery,
+  type AgentThreadNotificationEvent,
+} from "../../domain/agentNotification";
 import { useAutoDismiss } from "../../ui/foundation/useAutoDismiss";
 import { ToastNotification, type ToastNotificationAction } from "../ToastNotification";
 import { useToastStackPortalTarget } from "../toastStackPortal";
 import {
   agentThreadNotificationOwnerKey,
+  agentThreadsWithRunningTurn,
   useAgentThreadNotificationSubjects,
 } from "./agentThreadNotificationSubjects";
 
@@ -56,8 +62,23 @@ export function AgentThreadNotifications({
     readonly subjects: ReadonlyArray<unknown>;
     readonly visibleThreadId: string | null;
   } | null>(null);
+  const latest = useRef({ views, projects });
+  latest.current = { views, projects };
+  const watches = useRef(NO_AGENT_THREAD_RECOVERY_WATCHES);
   useLayoutEffect(() => {
-    if (!baselineReady) return;
+    if (!baselineReady) {
+      watches.current = watchAgentThreadsBeforeRecovery(
+        watches.current,
+        subjects,
+        agentThreadsWithRunningTurn(latest.current.views),
+      );
+      center.observe(
+        agentThreadNotificationSubjectsBeforeRecovery(subjects, watches.current),
+        visibleThreadId,
+      );
+      return;
+    }
+    watches.current = NO_AGENT_THREAD_RECOVERY_WATCHES;
     const previous = observed.current;
     if (
       previous !== null &&
@@ -70,8 +91,6 @@ export function AgentThreadNotifications({
     center.observe(subjects, visibleThreadId);
   }, [baselineReady, center, subjects, visibleThreadId]);
 
-  const latest = useRef({ views, projects });
-  latest.current = { views, projects };
   const open = useCallback(
     (event: AgentThreadNotificationEvent) => {
       const view = latest.current.views.find(
