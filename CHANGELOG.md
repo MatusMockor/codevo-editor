@@ -7,6 +7,30 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.107] - 2026-10-08
+
+### Added
+
+- Drop files and folders from Finder anywhere over an agent conversation. Folder
+  references remain recognizable in the composer and sent messages.
+
+### Fixed
+
+- New conversations start with an empty composer after restarting the editor, and
+  a delivered first message no longer returns to the draft after navigating away.
+- Starting a message and switching projects preserve accepted agent turns.
+  Failed project activation stays retryable, and refused sends explain the reason
+  in the correct project.
+- Background activity and completion notifications follow the session's actual
+  work, including Claude watch loops and their follow-up replies.
+- Claude sessions avoid unnecessary model-change restarts, and stored or queued
+  launches use the current model's supported context settings.
+- Server messages accept matching launch settings without a context choice.
+  Mismatched task or queued-message responses release the pending send and explain
+  whether work may already be running.
+- Revoking project trust stops its running agents and retires their sessions,
+  including work started before reopening the project.
+
 ## [0.2.0-beta.106] - 2026-10-07
 
 ### Changed
