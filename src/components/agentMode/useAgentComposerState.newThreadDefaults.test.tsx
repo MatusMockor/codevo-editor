@@ -549,7 +549,11 @@ describe("composer launch from the new-thread defaults", () => {
     };
     render({ settings });
 
-    expect(launch()).toEqual({ ...CONFIGURED_CLAUDE, model: "claude-opus-4-5" });
+    expect(launch()).toEqual({
+      ...CONFIGURED_CLAUDE,
+      model: "claude-opus-4-5",
+      context: undefined,
+    });
 
     render({ settings, claudeCatalog: withoutModel });
 
@@ -557,7 +561,11 @@ describe("composer launch from the new-thread defaults", () => {
 
     render({ settings });
 
-    expect(launch()).toEqual({ ...CONFIGURED_CLAUDE, model: "claude-opus-4-5" });
+    expect(launch()).toEqual({
+      ...CONFIGURED_CLAUDE,
+      model: "claude-opus-4-5",
+      context: undefined,
+    });
   });
 
   it.each(["opus", "claude-opus-5-0"] as const)(

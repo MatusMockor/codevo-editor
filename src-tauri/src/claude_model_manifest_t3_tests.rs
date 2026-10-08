@@ -1,7 +1,7 @@
 use super::*;
 use crate::claude_model_manifest_domain::CatalogSource;
 // Snapshot of https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json
-// Retrieved 2026-09-22. Deliberately local: compatibility tests never require a network.
+// Retrieved 2026-10-08. Deliberately local: compatibility tests never require a network.
 const UPSTREAM: &[u8] = include_bytes!("../tests/fixtures/t3-model-manifest.json");
 fn synthetic() -> Value {
     json!({"version":1,"updatedAt":"2026-09-22T19:42:55Z", "providers": {"claudeAgent": {
@@ -32,8 +32,8 @@ fn profile(value: &mut Value) -> &mut Value {
 #[test]
 fn translates_actual_upstream_with_provider_specific_effort_maps() {
     let catalog = parse_t3_manifest(UPSTREAM).unwrap();
-    assert_eq!(catalog.updated_at, "2026-09-22T19:42:55Z");
-    assert_eq!(catalog.claude_code.len(), 11);
+    assert_eq!(catalog.updated_at, "2026-10-07T19:00:00Z");
+    assert_eq!(catalog.claude_code.len(), 13);
     assert_eq!(
         catalog.resolve_model("default").unwrap().choice,
         "claude-fable-5-1"
@@ -176,10 +176,35 @@ fn keeps_upstream_newness_and_never_invents_descriptions() {
         .filter(|model| model.is_new == Some(true))
         .map(|model| model.choice.as_str())
         .collect();
-    assert_eq!(flagged, ["claude-opus-5-5"]);
+    assert_eq!(
+        flagged,
+        ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+    );
     let mut value = synthetic();
     value["providers"]["claudeAgent"]["models"][0]["badge"] = json!("new");
     assert_eq!(parse(&value).unwrap().claude_code[0].is_new, Some(true));
     value["providers"]["claudeAgent"]["models"][0]["badge"] = json!("hot");
     assert!(parse(&value).is_err());
+}
+#[test]
+fn offers_a_context_choice_only_where_upstream_does_not_fix_the_window() {
+    let catalog = parse_t3_manifest(UPSTREAM).unwrap();
+    let selectable: Vec<_> = catalog
+        .claude_code
+        .iter()
+        .filter(|model| !model.context_windows.is_empty())
+        .map(|model| (model.choice.as_str(), model.default_context.as_deref()))
+        .collect();
+    assert_eq!(
+        selectable,
+        [
+            ("claude-opus-4-6", Some("1m")),
+            ("claude-sonnet-4-6", Some("200k"))
+        ]
+    );
+    assert!(catalog
+        .claude_code
+        .iter()
+        .filter(|model| model.context_windows.is_empty())
+        .all(|model| model.default_context.is_none()));
 }

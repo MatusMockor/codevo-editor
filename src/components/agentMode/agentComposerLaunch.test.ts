@@ -162,7 +162,12 @@ describe("newThreadComposerLaunch", () => {
         ...CONFIGURED,
         claudeCode: { model: "claude-haiku-4-5", effort: "max" },
       }),
-    ).toEqual({ ...CONFIGURED_CLAUDE, model: "claude-haiku-4-5", effort: "default" });
+    ).toEqual({
+      ...CONFIGURED_CLAUDE,
+      model: "claude-haiku-4-5",
+      effort: "default",
+      context: undefined,
+    });
   });
 });
 

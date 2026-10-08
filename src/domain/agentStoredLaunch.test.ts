@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { admitStoredAgentLaunch, normalizeStoredAgentLaunch } from "./agentStoredLaunch";
 import { normalizeAgentComposerLaunch } from "../components/agentMode/agentComposerLaunch";
-import type { AgentLaunchOptions } from "./agentLaunch";
+import type { AgentLaunchOptions, ClaudeLaunchOptions } from "./agentLaunch";
 
 describe("normalizeStoredAgentLaunch", () => {
   it("replaces the retired CLI-inherited modes exactly like the composer", () => {
@@ -21,6 +21,36 @@ describe("normalizeStoredAgentLaunch", () => {
     });
     for (const launch of [codex, claude])
       expect(normalizeAgentComposerLaunch(launch)).toEqual(normalizeStoredAgentLaunch(launch));
+  });
+
+  it("never puts a context on a model whose catalog window is fixed", () => {
+    const fixedWindow: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "claude-opus-4-7",
+      mode: "bypassPermissions",
+      effort: "high",
+    };
+    for (const stored of [fixedWindow, { ...fixedWindow, context: "1m" } as const]) {
+      expect(normalizeStoredAgentLaunch(stored)).toEqual(fixedWindow);
+      expect(admitStoredAgentLaunch({ ...stored, mode: "default" }, true).launch).toEqual(
+        fixedWindow,
+      );
+      expect(normalizeAgentComposerLaunch(stored)).toEqual(fixedWindow);
+    }
+  });
+
+  it("keeps the context of a model that offers a choice, a default model or an unknown one", () => {
+    for (const model of ["claude-opus-4-6", "default", "claude-future-9"] as const) {
+      const stored: ClaudeLaunchOptions = {
+        provider: "claudeCode",
+        model,
+        mode: "bypassPermissions",
+        effort: "high",
+      };
+      const explicit: ClaudeLaunchOptions = { ...stored, context: "200k" };
+      expect(normalizeStoredAgentLaunch(stored)).toEqual({ ...stored, context: "1m" });
+      expect(normalizeStoredAgentLaunch(explicit)).toEqual(explicit);
+    }
   });
 
   it("keeps an explicitly chosen mode", () => {

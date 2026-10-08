@@ -1,6 +1,7 @@
 import {
   agentLaunchIsDangerous,
   type AgentLaunchOptions,
+  type ClaudeContextChoice,
   type ClaudeEffortChoice,
   type ClaudeLaunchOptions,
 } from "./agentLaunch";
@@ -20,7 +21,7 @@ export function normalizeStoredAgentLaunch(launch: AgentLaunchOptions): AgentLau
       ...launch,
       mode: launch.mode === "default" ? "bypassPermissions" : launch.mode,
       effort: storedClaudeEffort(launch),
-      context: launch.context ?? "1m",
+      context: storedClaudeContext(launch),
     };
   }
   return {
@@ -36,6 +37,13 @@ function storedClaudeEffort(launch: ClaudeLaunchOptions): ClaudeEffortChoice {
   if (entry === null) return "default";
   if (entry.efforts.includes("high")) return "high";
   return entry.defaultEffort;
+}
+
+function storedClaudeContext(launch: ClaudeLaunchOptions): ClaudeContextChoice | undefined {
+  const fixedWindow =
+    launch.model !== "default" && catalogClaudeModel(launch.model)?.contextWindows.length === 0;
+  if (fixedWindow) return undefined;
+  return launch.context ?? "1m";
 }
 
 function catalogClaudeModel(model: ClaudeLaunchOptions["model"]): ClaudeManifestModel | null {

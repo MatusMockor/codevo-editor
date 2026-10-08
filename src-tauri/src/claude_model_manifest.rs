@@ -321,6 +321,16 @@ mod tests {
         .unwrap());
     }
     #[tokio::test]
+    async fn the_checked_in_upstream_snapshot_replaces_the_bundle_as_live() {
+        let service = CatalogService::new().unwrap();
+        assert!(service.snapshot().unwrap().source.is_none());
+        let snapshot = include_bytes!("../tests/fixtures/t3-model-manifest.json").to_vec();
+        assert!(fetch_and_install(&service, async { Ok(snapshot) }, TIMEOUT)
+            .await
+            .unwrap());
+        assert!(service.snapshot().unwrap().source.is_some());
+    }
+    #[tokio::test]
     #[ignore = "explicit live upstream smoke test requires network"]
     async fn live_t3_source_is_fetchable_and_supported() {
         let bytes = fetch(SOURCE_URL).await.unwrap();

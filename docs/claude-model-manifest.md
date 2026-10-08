@@ -16,7 +16,8 @@ fetches have a one-hour TTL; failures retry after five minutes when the catalog 
 requested. Requests time out after ten seconds and are limited to 256 KiB. Refreshes
 are single-flight, use HTTPS, and do not follow redirects.
 
-The cache is `claude-model-manifest-t3-v1.json` in the application's data directory.
+The cache is `claude-model-manifest-t3-v2.json` in the application's data directory;
+the retired `claude-model-manifest-t3-v1.json` is removed on startup.
 It stores the normalized internal manifest and fetch time using an atomic replacement.
 An older cache cannot replace a newer bundle, and older remote timestamps cannot
 roll the catalog back. This source-specific filename excludes caches from the former
