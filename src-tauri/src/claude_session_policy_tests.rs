@@ -410,3 +410,142 @@ fn background_tasks_event_serializes_to_the_pinned_wire_shape() {
         r#"{"workspaceId":"ws-1","threadId":"agt-1-0a1c","total":0,"agents":0,"tasks":[],"reply":"expected"}"#
     );
 }
+
+fn claude_launch(model: &str, context: Option<&str>) -> AgentLaunchOptions {
+    let mut wire = serde_json::json!({
+        "provider": "claudeCode",
+        "model": model,
+        "mode": "bypassPermissions",
+        "effort": "high"
+    });
+    if let Some(context) = context {
+        wire["context"] = context.into();
+    }
+    serde_json::from_value(wire).expect("claude launch")
+}
+
+fn launched_with(launch: AgentLaunchOptions, args: Vec<String>) -> ClaudeSessionFingerprint {
+    let plan = crate::agent_task_spawner::AgentTaskSpawnPlan::for_tests(
+        std::env::current_exe().expect("test binary"),
+        args,
+        PathBuf::from("/repo"),
+        Vec::new(),
+    );
+    crate::agent_task_spawner::claude_session_turn::session_fingerprint(&plan, launch, 7)
+}
+
+fn launched(launch: AgentLaunchOptions) -> ClaudeSessionFingerprint {
+    launched_with(launch, launch.model_args())
+}
+
+fn disposition(
+    current: &ClaudeSessionFingerprint,
+    wanted: &ClaudeSessionFingerprint,
+) -> ClaudeSessionDisposition {
+    decide_session_disposition(
+        live(current, Some("sess-1"), SessionAvailability::Idle),
+        asked(wanted, Some("sess-1")),
+    )
+}
+
+const CONTEXTS: [Option<&str>; 3] = [None, Some("200k"), Some("1m")];
+const LAUNCH_CHANGED: ClaudeSessionDisposition =
+    ClaudeSessionDisposition::Restart(ClaudeSessionRestartReason::LaunchChanged);
+
+#[test]
+fn a_context_on_a_fixed_window_model_never_restarts_the_session() {
+    for held in CONTEXTS {
+        for requested in CONTEXTS {
+            assert_eq!(
+                disposition(
+                    &launched(claude_launch("claude-opus-4-7", held)),
+                    &launched(claude_launch("claude-opus-4-7", requested))
+                ),
+                ClaudeSessionDisposition::Reuse,
+                "held {held:?}, requested {requested:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_context_restarts_the_session_only_when_it_changes_the_model_argument() {
+    for (held, requested, expected) in [
+        (None, Some("200k"), ClaudeSessionDisposition::Reuse),
+        (Some("200k"), None, ClaudeSessionDisposition::Reuse),
+        (Some("1m"), Some("1m"), ClaudeSessionDisposition::Reuse),
+        (Some("200k"), Some("1m"), LAUNCH_CHANGED),
+        (Some("1m"), Some("200k"), LAUNCH_CHANGED),
+        (None, Some("1m"), LAUNCH_CHANGED),
+    ] {
+        assert_eq!(
+            disposition(
+                &launched(claude_launch("claude-opus-4-6", held)),
+                &launched(claude_launch("claude-opus-4-6", requested))
+            ),
+            expected,
+            "held {held:?}, requested {requested:?}"
+        );
+    }
+}
+
+#[test]
+fn the_session_identity_follows_the_launched_arguments_not_a_later_catalog() {
+    let argument = |value: &str| vec!["--model".to_string(), value.to_string()];
+    for (model, value) in [
+        ("claude-opus-4-6", "claude-opus-4-6"),
+        ("claude-opus-4-7", "claude-opus-4-7[1m]"),
+    ] {
+        let held = launched_with(claude_launch(model, Some("1m")), argument(value));
+        let requested = launched_with(claude_launch(model, Some("200k")), argument(value));
+        assert_eq!(held, requested, "{value}");
+        assert_eq!(
+            disposition(&held, &requested),
+            ClaudeSessionDisposition::Reuse,
+            "{value}"
+        );
+    }
+    let plain = launched_with(
+        claude_launch("claude-opus-4-6", Some("1m")),
+        argument("claude-opus-4-6"),
+    );
+    let large = launched_with(
+        claude_launch("claude-opus-4-6", Some("1m")),
+        argument("claude-opus-4-6[1m]"),
+    );
+    assert_ne!(plain, large);
+    assert_eq!(disposition(&plain, &large), LAUNCH_CHANGED);
+}
+
+#[test]
+fn inspection_agrees_with_the_disposition_for_every_context_pair() {
+    for model in [
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+        "default",
+    ] {
+        for held in CONTEXTS {
+            for requested in CONTEXTS {
+                let current = launched(claude_launch(model, held));
+                let wanted = claude_launch(model, requested);
+                let reusable =
+                    disposition(&current, &launched(wanted)) == ClaudeSessionDisposition::Reuse;
+                let facts = LiveSessionFacts {
+                    fingerprint: &current,
+                    conversation: Some("sess-1"),
+                    availability: SessionAvailability::Idle,
+                };
+                let inspected = inspect_session(Some((facts, false)), &wanted, Some("sess-1"), 7);
+                assert_eq!(
+                    inspected
+                        == ClaudeSessionInspection::Reuse {
+                            background_tasks: false
+                        },
+                    reusable,
+                    "{model}: held {held:?}, requested {requested:?}"
+                );
+            }
+        }
+    }
+}

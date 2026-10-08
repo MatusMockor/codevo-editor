@@ -1,8 +1,11 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { AgentFollowUpRequest, AgentThreadsSurface } from "../../application/agentThreadPorts";
 import { agentLaunchOptionsEqual, type AgentLaunchOptions } from "../../domain/agentLaunch";
+import { storedClaudeContext } from "../../domain/agentStoredLaunch";
+import type { ClaudeModelManifest } from "../../domain/claudeModelCatalog";
 import type { AgentComposerSubmission, AgentComposerSubmitSource } from "./AgentComposer";
 import type { AgentSessionRestartConfirmationView } from "./AgentSessionRestartBanner";
+import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 
 export type AgentSessionRestartSurface = Pick<AgentThreadsSurface, "followUpNeedsSessionRestart">;
 
@@ -51,8 +54,9 @@ export function useAgentSessionRestartGate(
   selectedThreadId: string | null,
   launch: AgentLaunchOptions,
 ): AgentSessionRestartGate {
+  const catalog = useAgentClaudeModelCatalog();
   const [pending, setPending] = useState<PendingRestart | null>(null);
-  const current = pending !== null && pendingMatches(pending, selectedThreadId, launch);
+  const current = pending !== null && pendingMatches(pending, selectedThreadId, launch, catalog);
   if (pending !== null && !current) setPending(null);
   const clear = useCallback((): void => setPending(null), []);
   const resend = current ? pending.resend : null;
@@ -109,7 +113,19 @@ function pendingMatches(
   pending: PendingRestart,
   selectedThreadId: string | null,
   launch: AgentLaunchOptions,
+  catalog: ClaudeModelManifest,
 ): boolean {
   if (pending.threadId !== selectedThreadId) return false;
-  return agentLaunchOptionsEqual(pending.launch, launch);
+  return agentLaunchOptionsEqual(
+    withLaunchedContext(pending.launch, catalog),
+    withLaunchedContext(launch, catalog),
+  );
+}
+
+function withLaunchedContext(
+  launch: AgentLaunchOptions,
+  catalog: ClaudeModelManifest,
+): AgentLaunchOptions {
+  if (launch.provider !== "claudeCode") return launch;
+  return { ...launch, context: storedClaudeContext(launch, catalog) };
 }

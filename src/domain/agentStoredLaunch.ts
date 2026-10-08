@@ -49,7 +49,7 @@ function storedClaudeEffort(
   return entry.defaultEffort;
 }
 
-function storedClaudeContext(
+export function storedClaudeContext(
   launch: ClaudeLaunchOptions,
   catalog: ClaudeModelManifest,
 ): ClaudeContextChoice | undefined {

@@ -1087,6 +1087,87 @@ fn inspect_reports_none_reuse_and_restart() {
     assert!(registry.shutdown_all());
 }
 
+fn claude_launch_with_context(model: &str, context: Option<&str>) -> AgentLaunchOptions {
+    let mut wire = serde_json::json!({
+        "provider": "claudeCode",
+        "model": model,
+        "mode": "bypassPermissions",
+        "effort": "high"
+    });
+    if let Some(context) = context {
+        wire["context"] = context.into();
+    }
+    serde_json::from_value(wire).expect("claude launch")
+}
+
+#[test]
+fn a_started_session_is_reused_when_inspected_with_the_launch_it_was_started_with() {
+    let cli = FakeCli::new("registry-inspect-launched");
+    let (registry, _) = session_registry(ClaudeSessionTuning::default());
+    let executable = std::env::current_exe().expect("test binary");
+    for (thread, model, started, restarting) in [
+        ("t1", "claude-opus-4-7", None, &[][..]),
+        ("t2", "claude-opus-4-7", Some("200k"), &[][..]),
+        ("t3", "claude-opus-4-7", Some("1m"), &[][..]),
+        ("t4", "claude-opus-4-6", None, &[Some("1m")][..]),
+        ("t5", "claude-opus-4-6", Some("200k"), &[Some("1m")][..]),
+        (
+            "t6",
+            "claude-opus-4-6",
+            Some("1m"),
+            &[None, Some("200k")][..],
+        ),
+    ] {
+        let launch = claude_launch_with_context(model, started);
+        let plan = plan_agent_invocation(
+            executable.to_str().expect("test binary path"),
+            AgentCliInvocation::ClaudeCode,
+            "unused",
+            &cli.dir,
+            None,
+            launch,
+        )
+        .expect("launch plan");
+        let request = ClaudeSessionRequest {
+            fingerprint: agent_task_spawner::claude_session_turn::session_fingerprint(
+                &plan, launch, 1,
+            ),
+            ..session_request(
+                &cli,
+                "ws-a",
+                thread,
+                None,
+                launch,
+                ClaudeSessionRestartPolicy::RefuseIfBackground,
+            )
+        };
+        let acquired = acquire(&registry, &cli, &request).expect("acquire");
+        settle(acquired.session.as_ref().expect("session"), "hello");
+        for requested in [None, Some("200k"), Some("1m")] {
+            let expected = match restarting.contains(&requested) {
+                true => ClaudeSessionInspection::Restart {
+                    background_tasks: false,
+                },
+                false => ClaudeSessionInspection::Reuse {
+                    background_tasks: false,
+                },
+            };
+            assert_eq!(
+                registry.inspect(
+                    "ws-a",
+                    thread,
+                    &claude_launch_with_context(model, requested),
+                    RESUME,
+                    1
+                ),
+                expected,
+                "{model}: started {started:?}, requested {requested:?}"
+            );
+        }
+    }
+    assert!(registry.shutdown_all());
+}
+
 #[test]
 fn a_native_background_turn_emits_exactly_one_event_for_its_key() {
     let cli = FakeCli::new("registry-native-background");

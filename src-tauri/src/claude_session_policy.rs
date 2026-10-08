@@ -63,7 +63,7 @@ pub struct ExecutableFingerprint {
     pub inode: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ClaudeSessionFingerprint {
     pub executable: ExecutableFingerprint,
     pub provider_generation: u64,
@@ -73,6 +73,35 @@ pub struct ClaudeSessionFingerprint {
     pub cwd: PathBuf,
     pub cwd_identity: Option<(u64, u64)>,
 }
+
+impl ClaudeSessionFingerprint {
+    pub fn launched(&self) -> AgentLaunchOptions {
+        self.launch.launched_with(&self.args_without_resume)
+    }
+}
+
+impl PartialEq for ClaudeSessionFingerprint {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            executable,
+            provider_generation,
+            launch: _,
+            args_without_resume,
+            env,
+            cwd,
+            cwd_identity,
+        } = self;
+        self.launched() == other.launched()
+            && *executable == other.executable
+            && *provider_generation == other.provider_generation
+            && *args_without_resume == other.args_without_resume
+            && *env == other.env
+            && *cwd == other.cwd
+            && *cwd_identity == other.cwd_identity
+    }
+}
+
+impl Eq for ClaudeSessionFingerprint {}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -324,7 +353,7 @@ pub fn inspect_session(
         return ClaudeSessionInspection::None;
     };
     let reusable = facts.availability == SessionAvailability::Idle
-        && facts.fingerprint.launch == *launch
+        && facts.fingerprint.launched() == launch.session_identity()
         && facts.fingerprint.provider_generation == provider_generation
         && resume_session_id.is_some()
         && facts.conversation == resume_session_id;

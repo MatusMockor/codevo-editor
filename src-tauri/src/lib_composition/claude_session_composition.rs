@@ -373,6 +373,18 @@ mod tests {
         plan_at(Path::new("/repo"))
     }
 
+    #[cfg(unix)]
+    fn launched_plan_at(cwd: &Path, launch: AgentLaunchOptions) -> AgentTaskSpawnPlan {
+        let mut args = vec!["-p".to_string()];
+        args.extend(launch.model_args());
+        AgentTaskSpawnPlan::for_tests(
+            std::env::current_exe().expect("test binary"),
+            args,
+            cwd.to_path_buf(),
+            Vec::new(),
+        )
+    }
+
     fn accept_authority() -> ClaudeSessionAuthority {
         Arc::new(|| Ok(()))
     }
@@ -431,6 +443,7 @@ for raw in sys.stdin:
         key: (&str, &str),
         root: &Path,
         argv: &[&str],
+        launch: AgentLaunchOptions,
     ) -> Arc<ClaudeThreadSession> {
         use std::os::unix::process::CommandExt;
         use std::process::{Command, Stdio};
@@ -441,7 +454,7 @@ for raw in sys.stdin:
                 thread_id: key.1.to_string(),
             },
             repository_root: root.to_path_buf(),
-            fingerprint: session_fingerprint(&plan_at(root), AgentLaunchOptions::default(), 1),
+            fingerprint: session_fingerprint(&launched_plan_at(root, launch), launch, 1),
             resume_session_id: None,
             restart: ClaudeSessionRestartPolicy::RefuseIfBackground,
         };
@@ -479,6 +492,7 @@ for raw in sys.stdin:
             (workspace_id, thread_id),
             root,
             &["/bin/sleep", "30"],
+            AgentLaunchOptions::default(),
         );
     }
 
@@ -487,6 +501,21 @@ for raw in sys.stdin:
         sessions: &ClaudeSessionRegistry,
         workspace_id: &str,
         thread_id: &str,
+    ) {
+        start_settled_session_launched(
+            sessions,
+            workspace_id,
+            thread_id,
+            AgentLaunchOptions::default(),
+        );
+    }
+
+    #[cfg(unix)]
+    fn start_settled_session_launched(
+        sessions: &ClaudeSessionRegistry,
+        workspace_id: &str,
+        thread_id: &str,
+        launch: AgentLaunchOptions,
     ) {
         let session = acquire_session(
             sessions,
@@ -498,6 +527,7 @@ for raw in sys.stdin:
                 SETTLING_FAKE_CLAUDE,
                 "FAKE_CLAUDE_COMPOSITION",
             ],
+            launch,
         );
         let turn = session
             .attach_turn(&claude_user_frame("hi", &[]))
@@ -745,6 +775,80 @@ for raw in sys.stdin:
         assert_eq!(event["reason"], "providerUpdated");
         assert_eq!(event["threadId"], "agt-1-0a1c");
         assert_eq!(sessions.live_sessions(), 0);
+        assert!(sessions.shutdown_all());
+    }
+
+    #[cfg(unix)]
+    fn claude_launch(model: &str, context: Option<&str>) -> AgentLaunchOptions {
+        let mut wire = json!({
+            "provider": "claudeCode",
+            "model": model,
+            "mode": "bypassPermissions",
+            "effort": "high"
+        });
+        if let Some(context) = context {
+            wire["context"] = context.into();
+        }
+        serde_json::from_value(wire).expect("claude launch")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inspection_asks_for_a_restart_only_when_the_model_argument_changes() {
+        let sessions = registry();
+        for (thread_id, model, held, requested, reusable) in [
+            ("agt-1-0a1c", "claude-opus-4-7", Some("1m"), None, true),
+            ("agt-1-0a1d", "claude-opus-4-7", None, Some("1m"), true),
+            (
+                "agt-1-0a1e",
+                "claude-opus-4-7",
+                Some("200k"),
+                Some("1m"),
+                true,
+            ),
+            ("agt-1-0a1f", "claude-opus-4-6", None, Some("200k"), true),
+            (
+                "agt-1-0a20",
+                "claude-opus-4-6",
+                Some("1m"),
+                Some("1m"),
+                true,
+            ),
+            (
+                "agt-1-0a21",
+                "claude-opus-4-6",
+                Some("200k"),
+                Some("1m"),
+                false,
+            ),
+            ("agt-1-0a22", "claude-opus-4-6", Some("1m"), None, false),
+        ] {
+            start_settled_session_launched(
+                &sessions,
+                "ws-1",
+                thread_id,
+                claude_launch(model, held),
+            );
+            let expected = match reusable {
+                true => ClaudeSessionInspection::Reuse {
+                    background_tasks: false,
+                },
+                false => ClaudeSessionInspection::Restart {
+                    background_tasks: false,
+                },
+            };
+            assert_eq!(
+                sessions.inspect(
+                    "ws-1",
+                    thread_id,
+                    &claude_launch(model, requested),
+                    Some("sess-fixture-composition"),
+                    1,
+                ),
+                expected,
+                "{model}: held {held:?}, requested {requested:?}"
+            );
+        }
         assert!(sessions.shutdown_all());
     }
 

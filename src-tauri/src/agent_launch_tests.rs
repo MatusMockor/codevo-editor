@@ -694,3 +694,78 @@ fn claude_summarized_thinking_display_is_gated_on_a_verified_cli_version() {
 
 #[path = "agent_launch_codex_tests.rs"]
 mod codex_catalog;
+
+fn claude_wire(model: &str, context: Option<&str>) -> AgentLaunchOptions {
+    let mut wire = serde_json::json!({
+        "provider": "claudeCode",
+        "model": model,
+        "mode": "bypassPermissions",
+        "effort": "high"
+    });
+    if let Some(context) = context {
+        wire["context"] = context.into();
+    }
+    serde_json::from_value(wire).expect("claude launch")
+}
+
+#[test]
+fn the_model_argument_of_every_context_state_is_pinned() {
+    let catalog = crate::claude_model_manifest::snapshot().expect("bundled catalog");
+    let models = catalog
+        .claude_code
+        .iter()
+        .map(|entry| entry.choice.as_str())
+        .chain(["fable", "opus", "sonnet"]);
+    let mut offering = 0;
+    let mut fixed = 0;
+    for model in models {
+        let offers_a_choice = catalog
+            .resolve_model(model)
+            .is_some_and(|entry| !entry.context_windows.is_empty());
+        let plain = vec!["--model".to_string(), model.to_string()];
+        let large = match offers_a_choice {
+            true => vec!["--model".to_string(), format!("{model}[1m]")],
+            false => plain.clone(),
+        };
+        assert_eq!(claude_wire(model, None).model_args(), plain, "{model}");
+        assert_eq!(
+            claude_wire(model, Some("200k")).model_args(),
+            plain,
+            "{model}"
+        );
+        assert_eq!(
+            claude_wire(model, Some("1m")).model_args(),
+            large,
+            "{model}"
+        );
+        assert_eq!(
+            claude_wire(model, None),
+            claude_wire(model, Some("200k")),
+            "{model}"
+        );
+        match offers_a_choice {
+            true => offering += 1,
+            false => fixed += 1,
+        }
+    }
+    assert_eq!(offering + fixed, catalog.claude_code.len() + 3);
+    assert!(offering > 0 && fixed > 0);
+    assert_eq!(
+        claude_wire("claude-opus-4-6", Some("1m")).model_args(),
+        ["--model", "claude-opus-4-6[1m]"]
+    );
+    assert_eq!(
+        claude_wire("claude-opus-4-7", Some("1m")).model_args(),
+        ["--model", "claude-opus-4-7"]
+    );
+    for context in [None, Some("200k"), Some("1m")] {
+        assert!(
+            claude_wire("default", context).model_args().is_empty(),
+            "{context:?}"
+        );
+    }
+    assert_eq!(
+        serde_json::to_string(&claude_wire("claude-opus-4-7", None)).expect("launch encodes"),
+        r#"{"provider":"claudeCode","model":"claude-opus-4-7","mode":"bypassPermissions","effort":"high","context":"200k"}"#
+    );
+}

@@ -362,6 +362,21 @@ impl AgentLaunchOptions {
         }
     }
 
+    pub fn launched_with(&self, args: &[String]) -> Self {
+        let mut launch = *self;
+        if let Self::ClaudeCode { context, .. } = &mut launch {
+            *context = launched_claude_context(args);
+        }
+        launch
+    }
+
+    pub fn session_identity(&self) -> Self {
+        let Ok(manifest) = crate::claude_model_manifest::snapshot() else {
+            return *self;
+        };
+        self.launched_with(&self.model_args_with_manifest(&manifest))
+    }
+
     pub fn validated_catalog_args(
         &self,
         version: Option<&str>,
@@ -540,6 +555,9 @@ fn is_claude_slash_command(prompt: &str) -> bool {
     !first_token.is_empty() && !first_token.contains('/')
 }
 
+const CLAUDE_MODEL_FLAG: &str = "--model";
+const CLAUDE_LARGE_CONTEXT_SUFFIX: &str = "[1m]";
+
 fn claude_model_args(
     model: ClaudeModelChoice,
     context: ClaudeContextChoice,
@@ -549,11 +567,25 @@ fn claude_model_args(
         return Vec::new();
     }
     let suffix = if supports_context && context == ClaudeContextChoice::OneM {
-        "[1m]"
+        CLAUDE_LARGE_CONTEXT_SUFFIX
     } else {
         ""
     };
-    vec!["--model".to_string(), format!("{}{suffix}", model.as_str())]
+    vec![
+        CLAUDE_MODEL_FLAG.to_string(),
+        format!("{}{suffix}", model.as_str()),
+    ]
+}
+
+fn launched_claude_context(args: &[String]) -> ClaudeContextChoice {
+    let model = args
+        .iter()
+        .position(|arg| arg == CLAUDE_MODEL_FLAG)
+        .and_then(|flag| args.get(flag + 1));
+    match model.is_some_and(|value| value.ends_with(CLAUDE_LARGE_CONTEXT_SUFFIX)) {
+        true => ClaudeContextChoice::OneM,
+        false => ClaudeContextChoice::TwoHundredK,
+    }
 }
 
 pub const CLAUDE_THINKING_DISPLAY_MIN_VERSION: &str = "2.1.220";
