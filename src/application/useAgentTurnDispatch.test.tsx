@@ -88,6 +88,7 @@ import {
   AGENT_SESSION_LOST_NOTICE,
 } from "./agentTurnDispatchPolicy";
 import { AGENT_DISPATCH_IN_PROGRESS_NOTICE } from "./agentDispatchKeys";
+import { AGENT_TURN_START_ABANDONED_MESSAGE } from "./agentTurnStartRunner";
 import { DEFERRED_NEXT_TURN_NOTICE } from "./agentDeferredFollowUps";
 import { DEFERRED_SEND_FAILED_NOTICE } from "./agentDeferredFollowUpSend";
 import { DEFERRED_SESSION_RESTART_NOTICE } from "./agentSessionRestartConsent";
@@ -514,7 +515,7 @@ describe("useAgentTurnDispatch startThread", () => {
     harness.unmount();
   });
 
-  it("stops a started task after an A to B to A provider revision during start", async () => {
+  it("keeps a started task the backend accepted after an A to B to A provider revision during start", async () => {
     const started = createDeferred<{ taskId: string }>();
     const harness = renderDispatch();
     harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
@@ -531,17 +532,17 @@ describe("useAgentTurnDispatch startThread", () => {
       result = await starting;
     });
 
-    expect(result).toBeNull();
-    expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
+    expect(result).not.toBeNull();
+    expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+    expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
+    expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledWith({
       taskId: harness.startedRequests[0]?.taskId,
       workspaceId: OWNER_A,
     });
-    expect(harness.retainUncertainWorktree).toHaveBeenCalledTimes(1);
-    expect(harness.agent.acknowledgeAgentTaskStart).not.toHaveBeenCalled();
     harness.unmount();
   });
 
-  it("stops a started task after an A to B to A provider revision during acknowledgement", async () => {
+  it("keeps a started task after an A to B to A provider revision during acknowledgement", async () => {
     const acknowledged = createDeferred<undefined>();
     const harness = renderDispatch();
     harness.agent.acknowledgeAgentTaskStart.mockImplementationOnce(
@@ -560,9 +561,9 @@ describe("useAgentTurnDispatch startThread", () => {
       result = await starting;
     });
 
-    expect(result).toBeNull();
-    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
-    expect(harness.retainUncertainWorktree).toHaveBeenCalledTimes(1);
+    expect(result).not.toBeNull();
+    expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+    expect(harness.retainUncertainWorktree).not.toHaveBeenCalled();
     expect(harness.hook().pendingTurnCount("claudeCode")).toBe(0);
     harness.unmount();
   });
@@ -1736,35 +1737,56 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     },
   );
 
-  it("rejects a late follow-up start after an A to B to A provider revision", async () => {
-    const harness = renderDispatch();
-    const threadId = await harness.settleThreadWithSession();
-    const started = createDeferred<{ taskId: string }>();
-    harness.agent.startAgentTask.mockImplementationOnce(async (request: StartAgentTaskRequest) => {
-      harness.startedRequests.push(request);
-      return started.promise;
-    });
+  it.each([
+    [
+      "republishes its revision",
+      (environment: Environment): void => {
+        environment.providerRevision.claudeCode += 1;
+      },
+    ],
+    ["is replaced A to B to A", replaceProviderAtoBtoA],
+    [
+      "is rechecking its health",
+      (environment: Environment): void => {
+        environment.providerDisposition.claudeCode = { kind: "initializing" };
+      },
+    ],
+  ] as const)(
+    "keeps a follow-up the backend accepted when its provider %s during the start",
+    async (_label, driftProvider) => {
+      const harness = renderDispatch();
+      const threadId = await harness.settleThreadWithSession();
+      const started = createDeferred<{ taskId: string }>();
+      harness.agent.startAgentTask.mockImplementationOnce(
+        async (request: StartAgentTaskRequest) => {
+          harness.startedRequests.push(request);
+          return started.promise;
+        },
+      );
 
-    let sent = true;
-    await act(async () => {
-      const sending = harness.hook().sendFollowUp({
-        threadId,
-        prompt: "Continue",
-        launch: concreteLaunch("claudeCode"),
+      let sent = false;
+      await act(async () => {
+        const sending = harness.hook().sendFollowUp({
+          threadId,
+          prompt: "Continue",
+          launch: concreteLaunch("claudeCode"),
+        });
+        await harness.waitForStartedRequests(2);
+        driftProvider(harness.environment);
+        started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+        sent = await sending;
       });
-      await harness.waitForStartedRequests(2);
-      replaceProviderAtoBtoA(harness.environment);
-      started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
-      sent = await sending;
-    });
 
-    expect(sent).toBe(false);
-    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
-    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
-    harness.unmount();
-  });
+      expect(sent).toBe(true);
+      expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+      expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(2);
+      expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
+      expect(harness.turn(threadId, 1).prompt).toBe("Continue");
+      harness.unmount();
+    },
+  );
 
-  it("rejects a follow-up after an A to B to A provider revision during acknowledgement", async () => {
+  it("keeps a follow-up after an A to B to A provider revision during acknowledgement", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
     const acknowledged = createDeferred<undefined>();
@@ -1772,7 +1794,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       async () => acknowledged.promise,
     );
 
-    let sent = true;
+    let sent = false;
     await act(async () => {
       const sending = harness.hook().sendFollowUp({
         threadId,
@@ -1787,9 +1809,9 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
       sent = await sending;
     });
 
-    expect(sent).toBe(false);
-    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
-    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    expect(sent).toBe(true);
+    expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+    expect(harness.turn(threadId, 1).status).toEqual({ kind: "pending" });
     harness.unmount();
   });
 
@@ -2146,7 +2168,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     harness.unmount();
   });
 
-  it("stop-settles its exact successful follow-up after project authority was replaced", async () => {
+  it("stops its exact successful follow-up and says why after project authority was replaced", async () => {
     const harness = renderDispatch();
     const threadId = await harness.settleThreadWithSession();
     const pendingStart = createDeferred<{ taskId: string }>();
@@ -2169,8 +2191,43 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
 
     expect(result).toBe(false);
+    expect(harness.turn(threadId, 1).status).toEqual({
+      kind: "failed",
+      message: AGENT_TURN_START_ABANDONED_MESSAGE,
+    });
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
+      taskId: harness.startedRequests[1]?.taskId,
+      workspaceId: OWNER_A,
+    });
+    expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(1);
+    expect(harness.notice()).toBeNull();
+    harness.unmount();
+  });
+
+  it("keeps a user's Stop as stopped when project authority was also replaced during start", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const pendingStart = createDeferred<{ taskId: string }>();
+    harness.agent.startAgentTask.mockImplementationOnce(async (payload: StartAgentTaskRequest) => {
+      harness.startedRequests.push(payload);
+      return pendingStart.promise;
+    });
+
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await harness.waitForStartedRequests(2);
+      await harness.hook().stop(threadId);
+      harness.environment.generation += 1;
+      pendingStart.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
+      await sending;
+    });
+
     expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
-    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 
@@ -2230,8 +2287,50 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
     });
 
     expect(result).toBe(false);
-    expect(harness.turn(threadId, 1).status).toEqual({ kind: "stopped" });
+    expect(harness.turn(threadId, 1).status).toEqual({
+      kind: "failed",
+      message: AGENT_TURN_START_ABANDONED_MESSAGE,
+    });
     expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    harness.unmount();
+  });
+
+  it("says why an abandoned follow-up ended even when the backend reports its own stop first", async () => {
+    const harness = renderDispatch();
+    const threadId = await harness.settleThreadWithSession();
+    const pendingAcknowledge = createDeferred<undefined>();
+    harness.agent.acknowledgeAgentTaskStart.mockImplementationOnce(
+      async () => pendingAcknowledge.promise,
+    );
+    const worktreePath = harness.thread(threadId).target.worktreePath;
+    harness.agent.stopAgentTask.mockImplementationOnce(async () => {
+      const turnId = harness.startedRequests[1]?.taskId ?? "";
+      harness.emitStatus(turnId, 1, { kind: "running" }, OWNER_A, { worktreePath });
+      harness.emitStatus(turnId, 2, { kind: "stopped" }, OWNER_A, { worktreePath });
+    });
+
+    let result = true;
+    await act(async () => {
+      const sending = harness.hook().sendFollowUp({
+        threadId,
+        prompt: "Continue",
+        launch: concreteLaunch("claudeCode"),
+      });
+      await waitForReact(() =>
+        expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledTimes(2),
+      );
+      harness.environment.generation += 1;
+      pendingAcknowledge.resolve(undefined);
+      result = await sending;
+    });
+
+    expect(result).toBe(false);
+    expect(harness.agent.stopAgentTask).toHaveBeenCalledTimes(1);
+    expect(harness.turn(threadId, 1).status).toEqual({
+      kind: "failed",
+      message: AGENT_TURN_START_ABANDONED_MESSAGE,
+    });
+    expect(harness.onTurnTerminal).toHaveBeenCalledTimes(1);
     harness.unmount();
   });
 

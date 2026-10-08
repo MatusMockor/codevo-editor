@@ -35,6 +35,8 @@ import type { AgentTasksNotice } from "./agentThreadPorts";
 
 const UNCERTAIN_START_MESSAGE = "The agent start result was uncertain.";
 export const AGENT_TASK_STOPPED_BEFORE_START_MESSAGE = "The agent was stopped before it started.";
+export const AGENT_TURN_START_ABANDONED_MESSAGE =
+  "This turn was cancelled while it was starting because its thread, project or agent provider changed. The agent may have received the message; check before sending it again.";
 const UNEXPECTED_TASK_ID_MESSAGE = "The agent returned an unexpected task id.";
 const OUTPUT_NOT_ATTACHED_MESSAGE = "The agent started but its live output could not be attached.";
 
@@ -138,12 +140,18 @@ async function runOwnedTurnStart(
   let turnRegistered = false;
   const stillOwned = (): boolean =>
     !intent.stopRequested &&
-    turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start) &&
+    turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start) &&
     (!turnRegistered || registeredTurnAlive(context, start));
+  const abandonedStatus = (): AgentTaskStatus =>
+    intent.stopRequested
+      ? { kind: "stopped" }
+      : { kind: "failed", message: AGENT_TURN_START_ABANDONED_MESSAGE };
   const abandon = async (): Promise<false> => {
+    const stoppedByUser = intent.stopRequested;
+    if (!stoppedByUser) settleRegisteredTurn(context, start, abandonedStatus());
     await attempt(() => gateway.stopAgentTask({ taskId: turnId, workspaceId }));
     retainUncertain();
-    settleRegisteredTurn(context, start, { kind: "stopped" });
+    if (stoppedByUser) settleRegisteredTurn(context, start, abandonedStatus());
     return false;
   };
   const stopStartedTurn = async (acknowledged: boolean): Promise<false> => {
@@ -167,7 +175,7 @@ async function runOwnedTurnStart(
     const stopHandedToBackend =
       intent.stopRequested &&
       turnRegistered &&
-      turnStartAuthorityIsCurrent(dependenciesRef, mountedRef, start) &&
+      turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start) &&
       registeredTurnAlive(context, start);
     return stopHandedToBackend ? stopStartedTurn(acknowledged) : abandon();
   };
@@ -186,8 +194,11 @@ async function runOwnedTurnStart(
     start.register(turn);
     turnRegistered = true;
   }
-  if (!stillOwned()) {
-    settleRegisteredTurn(context, start, { kind: "stopped" });
+  if (
+    !stillOwned() ||
+    !providerAdmissionIsCurrent(dependenciesRef.current, start.providerAuthority)
+  ) {
+    settleRegisteredTurn(context, start, abandonedStatus());
     return false;
   }
   const started = await attempt(() =>
@@ -342,18 +353,25 @@ function turnStartAuthorityIsCurrent(
   mountedRef: { readonly current: boolean },
   start: AgentTurnStart,
 ): boolean {
-  if (start.isCurrent?.() === false) return false;
-  const current =
-    start.authorityScope === "thread"
-      ? isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, start.authority)
-      : isCurrentTaskLaunchAuthority(
-          dependenciesRef,
-          mountedRef,
-          start.authority,
-          start.repositoryRoot,
-        );
-  if (!current) return false;
+  if (!turnLaunchAuthorityIsCurrent(dependenciesRef, mountedRef, start)) return false;
   return providerAdmissionIsCurrent(dependenciesRef.current, start.providerAuthority);
+}
+
+function turnLaunchAuthorityIsCurrent(
+  dependenciesRef: { readonly current: AgentTurnDispatchDependencies },
+  mountedRef: { readonly current: boolean },
+  start: AgentTurnStart,
+): boolean {
+  if (start.isCurrent?.() === false) return false;
+  if (start.authorityScope === "thread") {
+    return isCurrentThreadLaunchAuthority(dependenciesRef, mountedRef, start.authority);
+  }
+  return isCurrentTaskLaunchAuthority(
+    dependenciesRef,
+    mountedRef,
+    start.authority,
+    start.repositoryRoot,
+  );
 }
 
 function pendingTurn(
