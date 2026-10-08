@@ -612,7 +612,7 @@ describe("useAgentComposerState", () => {
       await pendingStart;
     });
 
-    expect(current().composer.composerProps.prompt).toBe("Keep exact owner");
+    expect(current().composer.composerProps.prompt).toBe("");
     expect(current().navigation.selectedThreadId).toBeNull();
   });
 

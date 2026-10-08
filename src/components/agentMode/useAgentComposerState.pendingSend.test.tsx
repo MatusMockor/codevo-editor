@@ -16,10 +16,15 @@ import {
   type AgentComposerAttachmentsSurface,
 } from "../../application/useAgentComposerAttachments";
 import { defaultAgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTurn } from "../../domain/agentThread";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT, surfaceThreadView } from "./agentSurfaceTestFixtures";
-import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
+import {
+  fixtureRepository,
+  projectFixture,
+  threadsSurfaceFixture,
+} from "./agentThreadsSurfaceTestFixtures";
 import { useAgentComposerState, type AgentComposerState } from "./useAgentComposerState";
 import { useAgentThreadNavigation, type AgentThreadNavigation } from "./useAgentThreadNavigation";
 
@@ -120,7 +125,13 @@ describe("composer optimistic send", () => {
     return captured as Captured;
   }
 
-  function Harness({ agents }: { readonly agents: AgentThreadsSurface }) {
+  function Harness({
+    agents,
+    projects: projectOverrides,
+  }: {
+    readonly agents: AgentThreadsSurface;
+    readonly projects?: ReadonlyArray<AgentProjectDescriptor>;
+  }) {
     const gateway = useMemo(() => attachmentGateway(released), []);
     const attachments = useAgentComposerAttachments({
       gateway,
@@ -157,7 +168,7 @@ describe("composer optimistic send", () => {
       });
       return { ...agents, attachments: wrap(attachments) };
     }, [agents, attachments]);
-    const projects = useMemo(() => [projectFixture()], []);
+    const projects = useMemo(() => projectOverrides ?? [projectFixture()], [projectOverrides]);
     const groups = useMemo(
       () => agentProjectGroups(projects, surface.threads, surface.orphanedWorktrees),
       [projects, surface.orphanedWorktrees, surface.threads],
@@ -189,8 +200,11 @@ describe("composer optimistic send", () => {
     );
   }
 
-  function render(agents: AgentThreadsSurface): void {
-    act(() => root.render(<Harness agents={agents} />));
+  function render(
+    agents: AgentThreadsSurface,
+    projects?: ReadonlyArray<AgentProjectDescriptor>,
+  ): void {
+    act(() => root.render(<Harness agents={agents} projects={projects} />));
   }
 
   async function attachImage(): Promise<void> {
@@ -606,6 +620,65 @@ describe("composer optimistic send", () => {
       sendFollowUp.mock.calls.filter(([request]) => (request.attachments?.length ?? 0) > 0),
     ).toHaveLength(1);
     await act(async () => send.resolve(true));
+  });
+
+  it("keeps a delivered new thread's prompt cleared after selecting another thread", async () => {
+    const start = deferred<AgentThreadStartResult | null>();
+    const startThread = vi.fn(() => start.promise);
+    render(threadsSurfaceFixture({ threads: [surfaceThreadView()], startThread }));
+
+    await submit("Build it");
+
+    expect(startThread).toHaveBeenCalledOnce();
+    expect(current().composer.pendingSend?.status).toBe("sending");
+    act(() => current().navigation.selectThread("agt-1"));
+
+    await act(async () => start.resolve({ threadId: "agt-new" }));
+
+    expect(current().navigation.selectedThreadId).toBe("agt-1");
+    act(() => current().composer.clearSelection());
+    expect(current().composer.composerProps.prompt).toBe("");
+    expect(current().composer.pendingSend?.status).not.toBe("failed");
+  });
+
+  it("keeps a delivered new thread's prompt cleared across project scopes", async () => {
+    const otherRoot = "/workspace/other";
+    const projects = [
+      projectFixture(),
+      projectFixture({
+        rootKey: otherRoot,
+        rootPath: otherRoot,
+        ownerId: "agent-root:other",
+        label: "other",
+        repositories: [fixtureRepository(otherRoot, "")],
+      }),
+    ];
+    const start = deferred<AgentThreadStartResult | null>();
+    const startThread = vi.fn(() => start.promise);
+    render(threadsSurfaceFixture({ startThread }), projects);
+    act(() => {
+      expect(current().navigation.setProjectScope(SURFACE_FIXTURE_ROOT)).toBe(true);
+      current().composer.clearDraftTarget();
+    });
+
+    await submit("Build it");
+
+    expect(startThread).toHaveBeenCalledOnce();
+    act(() => {
+      expect(current().navigation.setProjectScope(otherRoot)).toBe(true);
+      current().composer.clearDraftTarget();
+    });
+
+    await act(async () => start.resolve({ threadId: "agt-new" }));
+
+    expect(current().composer.target?.projectRootKey).toBe(otherRoot);
+    expect(current().composer.composerProps.prompt).toBe("");
+    act(() => {
+      expect(current().navigation.setProjectScope(SURFACE_FIXTURE_ROOT)).toBe(true);
+      current().composer.clearSelection();
+    });
+    expect(current().composer.target?.projectRootKey).toBe(SURFACE_FIXTURE_ROOT);
+    expect(current().composer.composerProps.prompt).toBe("");
   });
 
   it("shows a new thread's first message on the empty composer until the thread starts", async () => {

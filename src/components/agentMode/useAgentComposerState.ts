@@ -692,7 +692,7 @@ export function useAgentComposerControllerState({
             settlePendingSend(pendingSendOutcome(started !== null, false));
           }
           if (started === null) return false;
-          if (!isCurrent()) return false;
+          if (!isCurrent()) return true;
           onThreadStarted(started.threadId);
           return true;
         }
