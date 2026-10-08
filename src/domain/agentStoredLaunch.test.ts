@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { admitStoredAgentLaunch, normalizeStoredAgentLaunch } from "./agentStoredLaunch";
 import { normalizeAgentComposerLaunch } from "../components/agentMode/agentComposerLaunch";
 import type { AgentLaunchOptions, ClaudeLaunchOptions } from "./agentLaunch";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  type ClaudeManifestModel,
+  type ClaudeModelManifest,
+} from "./claudeModelCatalog";
 
 describe("normalizeStoredAgentLaunch", () => {
   it("replaces the retired CLI-inherited modes exactly like the composer", () => {
@@ -51,6 +56,43 @@ describe("normalizeStoredAgentLaunch", () => {
       expect(normalizeStoredAgentLaunch(stored)).toEqual({ ...stored, context: "1m" });
       expect(normalizeStoredAgentLaunch(explicit)).toEqual(explicit);
     }
+  });
+
+  it("lets the supplied catalog decide over the bundle whether a window is fixed", () => {
+    const withWindows = (
+      model: string,
+      contextWindows: ClaudeManifestModel["contextWindows"],
+    ): ClaudeModelManifest => ({
+      ...BUNDLED_CLAUDE_MODEL_MANIFEST,
+      claudeCode: BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.map((entry) =>
+        entry.choice === model
+          ? { ...entry, contextWindows, defaultContext: contextWindows[0] ?? null }
+          : entry,
+      ),
+    });
+    const offeredByBundle: ClaudeLaunchOptions = {
+      provider: "claudeCode",
+      model: "claude-opus-4-6",
+      mode: "bypassPermissions",
+      effort: "high",
+    };
+    const fixedNow = withWindows(offeredByBundle.model, []);
+    expect(normalizeStoredAgentLaunch(offeredByBundle)).toEqual({
+      ...offeredByBundle,
+      context: "1m",
+    });
+    expect(normalizeStoredAgentLaunch(offeredByBundle, fixedNow)).toEqual(offeredByBundle);
+    const storedWithContext: ClaudeLaunchOptions = { ...offeredByBundle, context: "1m" };
+    expect(normalizeStoredAgentLaunch(storedWithContext, fixedNow)).toEqual(offeredByBundle);
+    expect(admitStoredAgentLaunch({ ...offeredByBundle, mode: "default" }, true, fixedNow)).toEqual(
+      { kind: "ready", launch: offeredByBundle, dangerousLaunchConfirmed: true },
+    );
+
+    const fixedByBundle: ClaudeLaunchOptions = { ...offeredByBundle, model: "claude-opus-4-7" };
+    const offeredNow = withWindows(fixedByBundle.model, ["200k", "1m"]);
+    expect(normalizeStoredAgentLaunch(fixedByBundle)).toEqual(fixedByBundle);
+    const chosen: ClaudeLaunchOptions = { ...fixedByBundle, context: "200k" };
+    expect(normalizeStoredAgentLaunch(chosen, offeredNow)).toEqual(chosen);
   });
 
   it("keeps an explicitly chosen mode", () => {

@@ -10,6 +10,7 @@ import { TauriRemoteGitSyncGateway } from "../../infrastructure/tauriRemoteGitSy
 import { TauriCompareUrlOpener } from "../../infrastructure/tauriGitIntegrationGateway";
 import { BrowserAgentAttachmentEncoder } from "../../infrastructure/browserAgentAttachmentEncoder";
 import { useAgentProjectCreation } from "./useAgentProjectCreation";
+import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import {
   agentConversationEscapeAction,
   useAgentConversationEscape,
@@ -299,6 +300,7 @@ export function AgentModeView(props: AgentModeViewProps) {
     },
     [remote],
   );
+  const claudeCatalog = useAgentClaudeModelCatalog();
   const unified = useUnifiedAgentThreads({
     local: props.agents,
     gateway: remote?.gateway ?? null,
@@ -308,6 +310,7 @@ export function AgentModeView(props: AgentModeViewProps) {
     selectedThreadId,
     selectedProjectRootKey,
     localProjects: props.projects,
+    claudeCatalog,
     metadataRepository: remote?.metadataRepository,
     imageSurface: props.imageSurface ?? null,
     attachmentEncoder: REMOTE_ATTACHMENT_ENCODER,

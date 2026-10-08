@@ -42,6 +42,10 @@ import { RemoteChangeSummaryViews } from "./remoteChangeSummaryViews";
 import { useRemoteAgentAccountUsage } from "./useRemoteAgentAccountUsage";
 import { useRemoteAgentCommandCatalogAccess } from "./remoteAgentCommandCatalog";
 import { speechDictationServerIds } from "./speechDictationServers";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  type ClaudeModelManifest,
+} from "../domain/claudeModelCatalog";
 
 export interface UnifiedAgentThreadsOptions {
   readonly local: AgentThreadsSurface;
@@ -52,6 +56,7 @@ export interface UnifiedAgentThreadsOptions {
   readonly selectedThreadId: string | null;
   readonly selectedProjectRootKey?: string | null;
   readonly localProjects: readonly AgentProjectDescriptor[];
+  readonly claudeCatalog?: ClaudeModelManifest;
   readonly metadataRepository?: RemoteAgentMetadataRepository;
   readonly imageSurface?: AgentImageSurfacePort | null;
   readonly attachmentEncoder?: AgentAttachmentEncoderPort | null;
@@ -334,6 +339,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     valid,
     snapshots: inventory.snapshots,
     views: remoteById,
+    claudeCatalog: options.claudeCatalog ?? BUNDLED_CLAUDE_MODEL_MANIFEST,
     resolveAttachments: remoteAttachments.resolve,
     publish: inventory.publishPending,
     refresh: inventory.refresh,

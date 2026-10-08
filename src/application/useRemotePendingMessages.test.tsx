@@ -11,7 +11,14 @@ import type {
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import { emptyRemoteInventory } from "./remoteAgentInventoryLoad";
 import type { RemotePendingUpdate } from "./useRemoteAgentInventory";
-import { REMOTE_QUEUE_MISMATCH_NOTICE, useRemotePendingMessages } from "./useRemotePendingMessages";
+import {
+  BUNDLED_CLAUDE_MODEL_MANIFEST,
+  type ClaudeModelManifest,
+} from "../domain/claudeModelCatalog";
+import {
+  REMOTE_QUEUE_MISMATCH_NOTICES,
+  useRemotePendingMessages,
+} from "./useRemotePendingMessages";
 
 const launch = { provider: "codex", model: "default", mode: "workspaceWrite" } as const;
 const request = { threadId: "agt-1", prompt: "Next step", launch };
@@ -111,6 +118,7 @@ function setup(items: readonly RemoteRunnerPendingMessage[] = []) {
         }),
       ],
     ]),
+    claudeCatalog: BUNDLED_CLAUDE_MODEL_MANIFEST,
     resolveAttachments: vi.fn(async () => []),
     publish: published,
     refresh: vi.fn(async () => {}),
@@ -202,7 +210,7 @@ describe("server-owned pending message orchestration", () => {
     });
     expect(h.options.publish).not.toHaveBeenCalled();
     expect(h.options.refresh).toHaveBeenCalledOnce();
-    expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
+    expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICES.waiting);
     expect(h.result.hasUnconfirmed(request.threadId)).toBe(false);
   });
   it.each([undefined, "default"] as const)(
@@ -704,7 +712,7 @@ it.each([
       false,
     );
   });
-  expect(h.options.report).toHaveBeenCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
+  expect(h.options.report).toHaveBeenCalledWith(REMOTE_QUEUE_MISMATCH_NOTICES.waiting);
 });
 
 it("refreshes the server queue after a mismatching answer and lets a changed message through", async () => {
@@ -714,7 +722,7 @@ it("refreshes the server queue after a mismatching answer and lets a changed mes
   await act(async () => {
     expect(await h.result.enqueue(request)).toBe(false);
   });
-  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
+  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICES.waiting);
   expect(h.options.publish).not.toHaveBeenCalled();
   expect(h.options.refresh).toHaveBeenCalledOnce();
   expect(h.result.hasUnconfirmed(request.threadId)).toBe(false);
@@ -741,8 +749,97 @@ it("drops a queued message the runner placed in another conversation", async () 
   });
   expect(h.options.publish).not.toHaveBeenCalled();
   expect(h.options.refresh).toHaveBeenCalledOnce();
-  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICE);
+  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICES.elsewhere);
   expect(h.result.hasUnconfirmed(request.threadId)).toBe(false);
+});
+
+it("tells the user to stop the turn when a lost answer hid that the runner already dispatched a mismatching message", async () => {
+  const h = setup();
+  h.gateway.enqueueMessage.mockRejectedValueOnce(new Error("Connection lost"));
+  await act(async () => {
+    expect(await h.result.enqueue(request)).toBe(false);
+  });
+  expect(h.result.hasUnconfirmed(request.threadId)).toBe(true);
+  h.gateway.enqueueMessage.mockResolvedValueOnce({
+    pending: pending({
+      status: "dispatched",
+      taskId: "task-2",
+      launch: { ...launch, mode: "dangerFullAccess" },
+    }),
+    created: false,
+  });
+  await act(async () => {
+    expect(await h.result.enqueue(request)).toBe(false);
+  });
+  expect(h.gateway.enqueueMessage.mock.calls[1]![0].idempotencyKey).toBe(
+    h.gateway.enqueueMessage.mock.calls[0]![0].idempotencyKey,
+  );
+  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICES.started);
+  expect(h.options.publish).not.toHaveBeenCalled();
+  expect(h.options.refresh).toHaveBeenCalledOnce();
+  expect(h.result.hasUnconfirmed(request.threadId)).toBe(false);
+});
+
+it.each([
+  ["paused", "waiting"],
+  ["uncertain", "unconfirmed"],
+  ["cancelled", "cancelled"],
+] as const)("explains a mismatching %s message with fixed bounded text", async (status, notice) => {
+  const h = setup();
+  h.gateway.enqueueMessage.mockResolvedValueOnce({
+    pending: pending({ status, parts: [{ type: "text", text: "Other" }] }),
+    created: true,
+  });
+  await act(async () => {
+    expect(await h.result.enqueue(request)).toBe(false);
+  });
+  expect(h.options.report).toHaveBeenLastCalledWith(REMOTE_QUEUE_MISMATCH_NOTICES[notice]);
+  for (const text of Object.values(REMOTE_QUEUE_MISMATCH_NOTICES))
+    expect(text.length).toBeLessThanOrEqual(400);
+});
+
+it("keeps a retired-mode queued launch without a context when the supplied catalog fixes the window the bundle still offers", async () => {
+  const { h } = setupClaude();
+  const model = "claude-opus-4-6";
+  expect(
+    BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find((entry) => entry.choice === model)
+      ?.contextWindows,
+  ).not.toEqual([]);
+  const live: ClaudeModelManifest = {
+    ...BUNDLED_CLAUDE_MODEL_MANIFEST,
+    claudeCode: BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.map((entry) =>
+      entry.choice === model ? { ...entry, contextWindows: [], defaultContext: null } : entry,
+    ),
+  };
+  const retired = { provider: "claudeCode", model, mode: "default", effort: "high" } as const;
+  const admitted = { ...retired, mode: "bypassPermissions" } as const;
+  h.gateway.enqueueMessage.mockResolvedValue({
+    pending: pending({ launch: admitted }),
+    created: true,
+  });
+  h.update({ claudeCatalog: live });
+  await act(async () => {
+    expect(
+      await h.result.enqueue({ ...request, launch: retired, dangerousLaunchConfirmed: true }),
+    ).toBe(true);
+  });
+  const wire = h.gateway.enqueueMessage.mock.calls[0]![0] as { readonly launch: object };
+  expect(wire.launch).toEqual(admitted);
+  expect(wire.launch).not.toHaveProperty("context", "1m");
+
+  h.update({ claudeCatalog: BUNDLED_CLAUDE_MODEL_MANIFEST });
+  h.gateway.enqueueMessage.mockResolvedValue({
+    pending: pending({ launch: { ...admitted, context: "1m" } }),
+    created: true,
+  });
+  await act(async () => {
+    expect(
+      await h.result.enqueue({ ...request, launch: retired, dangerousLaunchConfirmed: true }),
+    ).toBe(true);
+  });
+  expect(h.gateway.enqueueMessage.mock.calls[1]![0]).toMatchObject({
+    launch: { ...admitted, context: "1m" },
+  });
 });
 
 it.each([

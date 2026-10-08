@@ -1,5 +1,6 @@
 import { collectRemoteInstructions } from "./collectRemoteInstructions";
 import { admitStoredAgentLaunch } from "../domain/agentStoredLaunch";
+import type { ClaudeModelManifest } from "../domain/claudeModelCatalog";
 import type { RemoteRunnerInstructionSnapshot } from "../domain/remoteRunnerInstructions";
 import { agentLaunchWithoutBrowser } from "../domain/agentLaunch";
 import {
@@ -24,6 +25,7 @@ interface Options {
   valid(owner: object): boolean;
   readonly snapshots: readonly RemoteAgentInventorySnapshot[];
   readonly views: ReadonlyMap<string, AgentThreadView>;
+  readonly claudeCatalog: ClaudeModelManifest;
   resolveAttachments(
     request: AgentSteerRequest,
     serverId: string,
@@ -32,8 +34,34 @@ interface Options {
   refresh(): Promise<void>;
   report(message: string): void;
 }
-export const REMOTE_QUEUE_MISMATCH_NOTICE =
-  "The runner returned a different queued message. The server may still run it: check the conversation's queued messages and remove it if it should not run. Sending again queues a separate message.";
+const QUEUE_MISMATCH = "The runner returned a different queued message.";
+const QUEUE_RESEND = "Sending again queues a separate message.";
+export const REMOTE_QUEUE_MISMATCH_NOTICES = {
+  waiting: `${QUEUE_MISMATCH} It is waiting in this conversation's queue: remove it there if it should not run. ${QUEUE_RESEND}`,
+  started: `${QUEUE_MISMATCH} It already started as a turn of this conversation: stop that turn if it should not run. ${QUEUE_RESEND}`,
+  unconfirmed: `${QUEUE_MISMATCH} It may already have reached the running turn: stop that turn if it should not act on it, and remove the message from this conversation's queue. ${QUEUE_RESEND}`,
+  cancelled: `${QUEUE_MISMATCH} The server cancelled it, so it will not run. ${QUEUE_RESEND}`,
+  elsewhere: `${QUEUE_MISMATCH} The server filed it under another conversation: check the other server conversations and remove it from that queue or stop its turn if it should not run. ${QUEUE_RESEND}`,
+} as const;
+function queueMismatchNotice(item: RemoteRunnerPendingMessage, conversationId: string): string {
+  if (item.conversationId !== conversationId) return REMOTE_QUEUE_MISMATCH_NOTICES.elsewhere;
+  switch (item.status) {
+    case "queued":
+    case "paused":
+      return REMOTE_QUEUE_MISMATCH_NOTICES.waiting;
+    case "dispatched":
+      return REMOTE_QUEUE_MISMATCH_NOTICES.started;
+    case "uncertain":
+      return REMOTE_QUEUE_MISMATCH_NOTICES.unconfirmed;
+    case "cancelled":
+      return REMOTE_QUEUE_MISMATCH_NOTICES.cancelled;
+    default:
+      return unsupportedPendingStatus(item.status);
+  }
+}
+function unsupportedPendingStatus(status: never): never {
+  throw new TypeError(`Unsupported pending message status: ${JSON.stringify(status)}.`);
+}
 type Command = {
   taskId: string;
   signature: string;
@@ -141,7 +169,11 @@ export function useRemotePendingMessages(options: Options) {
         throw new Error("This conversation has no model settings for queued messages.");
       const admission =
         rawLaunch.mode === "default"
-          ? admitStoredAgentLaunch(rawLaunch, request.dangerousLaunchConfirmed === true)
+          ? admitStoredAgentLaunch(
+              rawLaunch,
+              request.dangerousLaunchConfirmed === true,
+              options.claudeCatalog,
+            )
           : null;
       if (admission?.kind === "needsConfirmation")
         throw new Error(
@@ -227,7 +259,7 @@ export function useRemotePendingMessages(options: Options) {
       uncertain.current.delete(commandKey);
       if (!confirmed) {
         void options.refresh();
-        options.report(REMOTE_QUEUE_MISMATCH_NOTICE);
+        options.report(queueMismatchNotice(item, execution.conversationId));
         return false;
       }
       options.publish(execution.serverId, request.threadId, (values) => [
