@@ -5,6 +5,12 @@ export interface WorkspaceOpenedProjectIdentity {
   readonly canonicalRoot: string;
 }
 
+export interface WorkspaceOpenedProjectRevocation {
+  readonly workspaceId: string;
+  readonly admissionToken: number;
+  readonly canonicalRoot: string;
+}
+
 export interface WorkspaceTrustState {
   rootPath: string;
   trusted: boolean;
@@ -12,6 +18,7 @@ export interface WorkspaceTrustState {
 
 export interface WorkspaceTrustGateway {
   grantOpenedProject?(identity: WorkspaceOpenedProjectIdentity): Promise<WorkspaceTrustState>;
+  revokeOpenedProject?(identity: WorkspaceOpenedProjectRevocation): Promise<WorkspaceTrustState>;
   getTrust(rootPath: string): Promise<WorkspaceTrustState>;
   setTrust(rootPath: string, trusted: boolean): Promise<WorkspaceTrustState>;
   confirmGrant?(request: WorkspaceTrustConfirmation): Promise<boolean>;

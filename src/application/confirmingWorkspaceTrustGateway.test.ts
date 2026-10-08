@@ -11,6 +11,10 @@ describe("ConfirmingWorkspaceTrustGateway", () => {
         rootPath: identity.canonicalRoot,
         trusted: true,
       })),
+      revokeOpenedProject: vi.fn(async (identity) => ({
+        rootPath: identity.canonicalRoot,
+        trusted: false,
+      })),
     };
     const prompt = {
       request: vi.fn().mockResolvedValueOnce("trust").mockResolvedValueOnce("notNow"),
@@ -27,16 +31,23 @@ describe("ConfirmingWorkspaceTrustGateway", () => {
       selectedPath: "/a",
       canonicalRoot: "/a",
     });
+    const revocation = { workspaceId: "w", admissionToken: 1, canonicalRoot: "/a" };
+    await expect(gateway.revokeOpenedProject?.(revocation)).resolves.toEqual({
+      rootPath: "/a",
+      trusted: false,
+    });
+    expect(inner.revokeOpenedProject).toHaveBeenCalledExactlyOnceWith(revocation);
     expect(inner.grantOpenedProject).toHaveBeenCalledTimes(1);
     expect(inner.setTrust).toHaveBeenCalledTimes(1);
     expect(prompt.request).toHaveBeenCalledTimes(2);
   });
 
-  it("does not invent grantOpenedProject when the inner gateway lacks it", () => {
+  it("does not invent opened project operations the inner gateway lacks", () => {
     const gateway = new ConfirmingWorkspaceTrustGateway(
       { getTrust: vi.fn(), setTrust: vi.fn() },
       { request: vi.fn() },
     );
     expect(gateway.grantOpenedProject).toBeUndefined();
+    expect(gateway.revokeOpenedProject).toBeUndefined();
   });
 });

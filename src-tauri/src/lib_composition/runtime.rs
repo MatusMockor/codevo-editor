@@ -475,6 +475,7 @@ pub fn run() {
             set_smart_mode,
             workspace_trust_commands::set_workspace_trust,
             workspace_trust_commands::grant_opened_project_trust,
+            workspace_trust_commands::revoke_opened_project_trust,
             stage_git_files,
             stage_git_hunk,
             unstage_git_hunk,

@@ -1,6 +1,7 @@
 #[path = "workspace_opened_project_trust.rs"]
-mod opened_project;
+pub(crate) mod opened_project;
 
+use crate::agent_trust_revocation::TrustRevocation;
 use crate::eslint::EslintProcessRegistry;
 use crate::terminal_session::TerminalSupervisor;
 use crate::trust::{WorkspaceTrustService, WorkspaceTrustState};
@@ -69,17 +70,68 @@ pub(crate) fn set_workspace_trust(
         runtime.eslint_processes.activate_root(&runtime_root);
         return Ok(state);
     }
-    let revocation = agent_trust_revocation::revoke_trust_and_stop_agents(
+    let revocation = agent_trust_revocation::revoke_path_trust_and_stop_agents(
         &app,
         &service,
         &workspace_registry,
         &root_path,
     )
     .map_err(|error| error.to_string())?;
+    Ok(stop_revoked_workspace_runtimes(&app, &runtime, revocation))
+}
+
+#[tauri::command]
+pub(crate) fn revoke_opened_project_trust(
+    target: opened_project::OpenedProjectTrustRevocationTarget,
+    service: State<'_, Mutex<WorkspaceTrustService>>,
+    runtime: WorkspaceTrustRuntimeState<'_>,
+    app: AppHandle,
+) -> Result<WorkspaceTrustState, String> {
+    let revocation =
+        revoke_opened_project(&app, &service, &app.state::<WorkspaceRegistry>(), &target)
+            .map_err(|error| error.to_string())?;
+    Ok(stop_revoked_workspace_runtimes(&app, &runtime, revocation))
+}
+
+pub(crate) fn revoke_opened_project<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    trust: &Mutex<WorkspaceTrustService>,
+    registry: &WorkspaceRegistry,
+    target: &opened_project::OpenedProjectTrustRevocationTarget,
+) -> std::io::Result<TrustRevocation> {
+    let lease = opened_project::revocation_lease(registry, target)?;
+    revoke_leased_project(app, trust, &lease)
+}
+
+pub(crate) fn revoke_leased_project<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    trust: &Mutex<WorkspaceTrustService>,
+    lease: &crate::workspace_registry::WorkspaceRegistrationOperationLease,
+) -> std::io::Result<TrustRevocation> {
+    let revoked = opened_project::revoke_lease(lease, |root| {
+        trust
+            .lock()
+            .map_err(|_| std::io::Error::other("trust lock failed"))?
+            .revoke_opened_canonical_root(root)
+    })?;
+    Ok(
+        agent_trust_revocation::stop_agents_of_revoked_opened_project(
+            app,
+            revoked.descriptor,
+            &revoked.revoked_roots,
+        ),
+    )
+}
+
+fn stop_revoked_workspace_runtimes(
+    app: &AppHandle,
+    runtime: &WorkspaceTrustRuntimeState<'_>,
+    revocation: TrustRevocation,
+) -> WorkspaceTrustState {
     if let Some(descriptor) = &revocation.registered {
-        node_package_tasks::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
-        js_test_tasks::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
-        js_test_watch::request_stop_workspace_in_app(&app, &descriptor.workspace_id);
+        node_package_tasks::request_stop_workspace_in_app(app, &descriptor.workspace_id);
+        js_test_tasks::request_stop_workspace_in_app(app, &descriptor.workspace_id);
+        js_test_watch::request_stop_workspace_in_app(app, &descriptor.workspace_id);
         runtime
             .js_test_batches
             .request_stop_workspace(&descriptor.workspace_id);
@@ -87,12 +139,14 @@ pub(crate) fn set_workspace_trust(
             service.request_stop_workspace(&descriptor.workspace_id);
         }
     }
-    revoke_workspace_runtime_trust(
-        &revocation.runtime_root,
-        &runtime.eslint_processes,
-        &runtime.terminal_sessions,
-    );
-    Ok(revocation.state)
+    if let Some(runtime_root) = &revocation.runtime_root {
+        revoke_workspace_runtime_trust(
+            runtime_root,
+            &runtime.eslint_processes,
+            &runtime.terminal_sessions,
+        );
+    }
+    revocation.state
 }
 
 fn revoke_workspace_runtime_trust(

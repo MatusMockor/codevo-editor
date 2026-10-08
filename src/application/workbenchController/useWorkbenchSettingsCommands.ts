@@ -9,7 +9,10 @@ import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../../domain/tr
 import type { WorkspaceRuntimeOwner } from "../../domain/workspaceRuntimeOwner";
 import type { IntelligenceMode, WorkspaceDescriptor } from "../../domain/workspace";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
-import type { WorkspaceTrustIntentCoordinator } from "../workspaceTrustIntentCoordinator";
+import {
+  openedProjectRevocation,
+  type WorkspaceTrustIntentCoordinator,
+} from "../workspaceTrustIntentCoordinator";
 import {
   confirmWorkspaceTrustGrant,
   workspaceTrustChangeMessage,
@@ -196,7 +199,12 @@ export function useWorkbenchSettingsCommands({
       );
       if (!confirmed) return;
     }
-    const trustIntent = trustIntentCoordinator.request(requestedOwner, requestedRoot, trusted);
+    const trustIntent = trustIntentCoordinator.request(
+      requestedOwner,
+      requestedRoot,
+      trusted,
+      openedProjectRevocation(workspaceIdentityDescriptor, requestedOwner),
+    );
     const requestedRevision = openWorkspaceRequestTokenRef.current;
     workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] = trustIntent.revision;
     if (!trusted) {
@@ -265,6 +273,7 @@ export function useWorkbenchSettingsCommands({
     setWorkspaceTrust,
     stopProjectLanguageServersAfterTrustRevocation,
     workspaceDescriptor,
+    workspaceIdentityDescriptor,
     workspaceRoot,
     workspaceSettingsRef,
     workspaceTrust,
@@ -313,7 +322,12 @@ export function useWorkbenchSettingsCommands({
           (nextTrusted && pendingTrustAutostart));
       const trustIntent =
         requestedOwner && requestedRoot && requestsTrustChange
-          ? trustIntentCoordinator.request(requestedOwner, requestedRoot, nextTrusted as boolean)
+          ? trustIntentCoordinator.request(
+              requestedOwner,
+              requestedRoot,
+              nextTrusted as boolean,
+              openedProjectRevocation(workspaceIdentityDescriptor, requestedOwner),
+            )
           : null;
       if (requestedOwner && trustIntent) {
         workspaceTrustRevisionByOwnerRef.current[requestedOwner.ownerKey] = trustIntent.revision;

@@ -249,8 +249,24 @@ impl WorkspaceTrustService {
         })
     }
 
-    pub(crate) fn revoke_resolved_root(&mut self, root: &Path) -> io::Result<WorkspaceTrustState> {
-        self.set_canonical(normalize_path_string(&root.to_string_lossy()), false)
+    pub(crate) fn revoke_opened_canonical_root(&mut self, root: &str) -> io::Result<Vec<String>> {
+        let mut keys = vec![root.to_owned()];
+        let admitted = normalize_path_string(root);
+        if admitted != root {
+            keys.push(admitted);
+        }
+        for key in &keys {
+            if self.launches.has_active(key)? {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "workspace trust launch is in progress",
+                ));
+            }
+        }
+        for key in &keys {
+            self.revoke_canonical(key.clone(), RevocationOrigin::Manual)?;
+        }
+        Ok(keys)
     }
 
     pub(crate) fn revoke_clone_canonical_root(

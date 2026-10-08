@@ -1,5 +1,6 @@
 import type {
   WorkspaceOpenedProjectIdentity,
+  WorkspaceOpenedProjectRevocation,
   WorkspaceTrustConfirmation,
   WorkspaceTrustGateway,
   WorkspaceTrustState,
@@ -11,12 +12,18 @@ export class ConfirmingWorkspaceTrustGateway implements WorkspaceTrustGateway {
     identity: WorkspaceOpenedProjectIdentity,
   ) => Promise<WorkspaceTrustState>;
 
+  readonly revokeOpenedProject?: (
+    identity: WorkspaceOpenedProjectRevocation,
+  ) => Promise<WorkspaceTrustState>;
+
   constructor(
     private readonly inner: WorkspaceTrustGateway,
     private readonly prompt: Pick<WorkspaceTrustPromptCoordinator, "request">,
   ) {
     const grant = inner.grantOpenedProject;
     if (grant !== undefined) this.grantOpenedProject = (identity) => grant.call(inner, identity);
+    const revoke = inner.revokeOpenedProject;
+    if (revoke !== undefined) this.revokeOpenedProject = (identity) => revoke.call(inner, identity);
   }
 
   getTrust(rootPath: string): Promise<WorkspaceTrustState> {

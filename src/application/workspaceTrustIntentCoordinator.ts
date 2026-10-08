@@ -1,12 +1,53 @@
-import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
+import type {
+  WorkspaceOpenedProjectRevocation,
+  WorkspaceTrustGateway,
+  WorkspaceTrustState,
+} from "../domain/trust";
 import type { WorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 
 export interface WorkspaceTrustIntent {
+  readonly opened: WorkspaceOpenedProjectRevocation | null;
   readonly owner: WorkspaceRuntimeOwner;
   readonly revision: number;
   readonly rootPath: string;
   readonly trusted: boolean;
+}
+
+interface OpenedWorkspaceIdentity {
+  readonly admissionToken?: number;
+  readonly canonicalRoot: string;
+  readonly workspaceId: string;
+}
+
+export function openedProjectRevocation(
+  identity: OpenedWorkspaceIdentity | null,
+  owner: WorkspaceRuntimeOwner,
+): WorkspaceOpenedProjectRevocation | null {
+  if (!identity || identity.workspaceId !== owner.ownerKey) {
+    return null;
+  }
+
+  if (identity.admissionToken === undefined) {
+    return null;
+  }
+
+  return {
+    workspaceId: identity.workspaceId,
+    admissionToken: identity.admissionToken,
+    canonicalRoot: identity.canonicalRoot,
+  };
+}
+
+function persistTrustIntent(
+  gateway: WorkspaceTrustGateway,
+  intent: WorkspaceTrustIntent,
+): Promise<WorkspaceTrustState> {
+  if (intent.trusted || !intent.opened || !gateway.revokeOpenedProject) {
+    return gateway.setTrust(intent.rootPath, intent.trusted);
+  }
+
+  return gateway.revokeOpenedProject(intent.opened);
 }
 
 export interface WorkspaceTrustIntentResult {
@@ -40,8 +81,14 @@ export class WorkspaceTrustIntentCoordinator {
     return intent.trusted;
   }
 
-  request(owner: WorkspaceRuntimeOwner, rootPath: string, trusted: boolean): WorkspaceTrustIntent {
+  request(
+    owner: WorkspaceRuntimeOwner,
+    rootPath: string,
+    trusted: boolean,
+    opened: WorkspaceOpenedProjectRevocation | null = null,
+  ): WorkspaceTrustIntent {
     const intent = {
+      opened,
       owner,
       revision: ++this.nextRevision,
       rootPath,
@@ -83,7 +130,7 @@ export class WorkspaceTrustIntentCoordinator {
 
       let trust: WorkspaceTrustState;
       try {
-        trust = await gateway.setTrust(intent.rootPath, intent.trusted);
+        trust = await persistTrustIntent(gateway, intent);
       } catch (error) {
         const latest = this.desiredByOwner.get(ownerKey);
         if (latest && latest.revision !== intent.revision) {

@@ -106,3 +106,65 @@ describe("opened project trust admission", () => {
     });
   });
 });
+
+describe("opened project trust revocation", () => {
+  const revocation = { workspaceId: "ws-a", admissionToken: 4, canonicalRoot: "/real" };
+
+  it("sends the pinned identity contract and accepts its matching result", async () => {
+    vi.mocked(invoke).mockResolvedValue({ rootPath: "/real", trusted: false });
+
+    await expect(new TauriWorkspaceTrustGateway().revokeOpenedProject(revocation)).resolves.toEqual(
+      { rootPath: "/real", trusted: false },
+    );
+
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("revoke_opened_project_trust", {
+      target: contract.openedProjectRevocationTarget,
+    });
+  });
+
+  it("sends only the closed identity fields of a wider descriptor", async () => {
+    vi.mocked(invoke).mockResolvedValue({ rootPath: "/real", trusted: false });
+
+    await new TauriWorkspaceTrustGateway().revokeOpenedProject({ ...identity, admissionToken: 4 });
+
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("revoke_opened_project_trust", {
+      target: contract.openedProjectRevocationTarget,
+    });
+  });
+
+  it.each([
+    { ...revocation, admissionToken: 0 },
+    { ...revocation, admissionToken: 1.5 },
+    { ...revocation, admissionToken: Number.MAX_SAFE_INTEGER + 1 },
+    { ...revocation, workspaceId: "" },
+    { ...revocation, canonicalRoot: "relative" },
+    { ...revocation, canonicalRoot: "/bad\u0000" },
+    { ...revocation, canonicalRoot: "/" + "é".repeat(4096) },
+  ])("rejects an invalid identity before IPC: %j", async (invalid) => {
+    await expect(new TauriWorkspaceTrustGateway().revokeOpenedProject(invalid)).rejects.toThrow(
+      "Invalid opened project identity.",
+    );
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { rootPath: "/other", trusted: false },
+    { rootPath: "/real", trusted: true },
+    { rootPath: "/real", trusted: false, workspaceId: "ws-a" },
+    null,
+  ])("rejects a response that does not describe the revoked project: %j", async (response) => {
+    vi.mocked(invoke).mockResolvedValue(response);
+
+    await expect(new TauriWorkspaceTrustGateway().revokeOpenedProject(revocation)).rejects.toThrow(
+      "Opened project trust response does not match its identity.",
+    );
+  });
+
+  it("reports the backend refusal of a replaced identity unchanged", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(contract.openedProjectIdentityReplaced);
+
+    await expect(new TauriWorkspaceTrustGateway().revokeOpenedProject(revocation)).rejects.toBe(
+      contract.openedProjectIdentityReplaced,
+    );
+  });
+});

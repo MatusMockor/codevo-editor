@@ -1,4 +1,10 @@
 {
   "schemaVersion": 1,
-  "revokedRefusal": "workspace trust was revoked"
+  "revokedRefusal": "workspace trust was revoked",
+  "openedProjectIdentityReplaced": "This project is no longer open under the identity this window holds. Reopen it to change its trust.",
+  "openedProjectRevocationTarget": {
+    "workspaceId": "ws-a",
+    "admissionToken": 4,
+    "canonicalRootPath": "/real"
+  }
 }

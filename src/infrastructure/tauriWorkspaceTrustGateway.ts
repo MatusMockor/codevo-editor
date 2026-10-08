@@ -2,28 +2,54 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   WorkspaceTrustGateway,
   WorkspaceOpenedProjectIdentity,
+  WorkspaceOpenedProjectRevocation,
   WorkspaceTrustState,
 } from "../domain/trust";
 
+function assertOpenedProjectIdentity(
+  admissionToken: number | undefined,
+  workspaceId: string,
+  roots: readonly string[],
+): void {
+  if (
+    roots.some((root) => !root.startsWith("/")) ||
+    !Number.isSafeInteger(admissionToken) ||
+    (admissionToken ?? 0) <= 0 ||
+    [workspaceId, ...roots].some(
+      (value) =>
+        value.length === 0 ||
+        value.length > 4096 ||
+        new TextEncoder().encode(value).length > 4096 ||
+        Array.from(value).some(
+          (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+        ),
+    )
+  ) {
+    throw new Error("Invalid opened project identity.");
+  }
+}
+
+function assertOpenedProjectTrustState(
+  state: WorkspaceTrustState,
+  canonicalRootPath: string,
+  trusted: boolean,
+): void {
+  if (
+    !state ||
+    Object.keys(state).length !== 2 ||
+    state.rootPath !== canonicalRootPath ||
+    state.trusted !== trusted
+  ) {
+    throw new Error("Opened project trust response does not match its identity.");
+  }
+}
+
 export class TauriWorkspaceTrustGateway implements WorkspaceTrustGateway {
   async grantOpenedProject(identity: WorkspaceOpenedProjectIdentity): Promise<WorkspaceTrustState> {
-    if (
-      !identity.selectedPath.startsWith("/") ||
-      !identity.canonicalRoot.startsWith("/") ||
-      !Number.isSafeInteger(identity.admissionToken) ||
-      (identity.admissionToken ?? 0) <= 0 ||
-      [identity.workspaceId, identity.selectedPath, identity.canonicalRoot].some(
-        (value) =>
-          value.length === 0 ||
-          value.length > 4096 ||
-          new TextEncoder().encode(value).length > 4096 ||
-          Array.from(value).some(
-            (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
-          ),
-      )
-    ) {
-      throw new Error("Invalid opened project identity.");
-    }
+    assertOpenedProjectIdentity(identity.admissionToken, identity.workspaceId, [
+      identity.selectedPath,
+      identity.canonicalRoot,
+    ]);
     const target = {
       workspaceId: identity.workspaceId,
       admissionToken: identity.admissionToken,
@@ -31,14 +57,23 @@ export class TauriWorkspaceTrustGateway implements WorkspaceTrustGateway {
       canonicalRootPath: identity.canonicalRoot,
     };
     const state = await invoke<WorkspaceTrustState>("grant_opened_project_trust", { target });
-    if (
-      !state ||
-      Object.keys(state).length !== 2 ||
-      state.rootPath !== target.canonicalRootPath ||
-      state.trusted !== true
-    ) {
-      throw new Error("Opened project trust response does not match its identity.");
-    }
+    assertOpenedProjectTrustState(state, target.canonicalRootPath, true);
+    return state;
+  }
+
+  async revokeOpenedProject(
+    identity: WorkspaceOpenedProjectRevocation,
+  ): Promise<WorkspaceTrustState> {
+    assertOpenedProjectIdentity(identity.admissionToken, identity.workspaceId, [
+      identity.canonicalRoot,
+    ]);
+    const target = {
+      workspaceId: identity.workspaceId,
+      admissionToken: identity.admissionToken,
+      canonicalRootPath: identity.canonicalRoot,
+    };
+    const state = await invoke<WorkspaceTrustState>("revoke_opened_project_trust", { target });
+    assertOpenedProjectTrustState(state, target.canonicalRootPath, false);
     return state;
   }
 

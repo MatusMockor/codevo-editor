@@ -1,4 +1,4 @@
-use super::{revoke_trust_and_stop_agents, stop_agents_of_revoked_trust};
+use super::{revoke_path_trust_and_stop_agents, stop_agents_of_revoked_trust};
 use crate::agent_task_admission::AgentTaskAdmissionRegistry;
 use crate::agent_task_spawner::agent_launch::AgentLaunchOptions;
 use crate::agent_task_spawner::claude_session_policy::{
@@ -20,8 +20,13 @@ use crate::agent_task_supervisor::{
     AgentTaskStartRequest, AgentTaskStatusEvent, AgentTaskStatusPayload,
 };
 use crate::trust::WorkspaceTrustService;
+use crate::workspace_registry::registration::WorkspaceRegistration;
 use crate::workspace_registry::unregister::{WorkspaceOwnerRelease, WorkspaceOwnerScope};
 use crate::workspace_registry::{ManagedWorkspaceDescriptor, RegistrationOwner, WorkspaceRegistry};
+use crate::workspace_trust_commands::opened_project::{
+    revocation_lease, OpenedProjectTrustRevocationTarget, OPENED_PROJECT_REVOCATION_IDENTITY_ERROR,
+};
+use crate::workspace_trust_commands::{revoke_leased_project, revoke_opened_project};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -229,6 +234,33 @@ impl Harness {
         root: &Path,
         plan: AgentTaskSpawnPlan,
     ) {
+        self.start_turn_admitted_under(
+            task_id,
+            descriptor,
+            root,
+            &descriptor.canonical_root_path,
+            plan,
+        );
+    }
+
+    fn start_running_turn_admitted_under(
+        &self,
+        task_id: &str,
+        descriptor: &ManagedWorkspaceDescriptor,
+        trust_root: &Path,
+    ) {
+        let root = &descriptor.canonical_root_path;
+        self.start_turn_admitted_under(task_id, descriptor, root, trust_root, sleeping_plan(root));
+    }
+
+    fn start_turn_admitted_under(
+        &self,
+        task_id: &str,
+        descriptor: &ManagedWorkspaceDescriptor,
+        root: &Path,
+        trust_root: &Path,
+        plan: AgentTaskSpawnPlan,
+    ) {
         let admission = self
             .admission
             .reserve(
@@ -245,7 +277,7 @@ impl Harness {
                     task_id: task_id.to_string(),
                     thread_id: format!("thread-{task_id}"),
                     workspace_id: descriptor.workspace_id.as_str().to_string(),
-                    trust_root: descriptor.canonical_root_path.clone(),
+                    trust_root: trust_root.to_path_buf(),
                     repository_root: root.to_path_buf(),
                     isolation: AgentTaskIsolation::InPlace,
                     worktree_path: None,
@@ -488,18 +520,50 @@ fn revoked_trust_retires_the_codex_host_that_served_the_project_and_keeps_other_
     assert!(other_pids.gone_within_deadline());
 }
 
-#[test]
-fn revoking_trust_through_a_retargeted_symlink_acts_on_the_project_that_is_open() {
-    let harness = Harness::create("retargeted-symlink");
+fn tab_identity(registration: &WorkspaceRegistration) -> OpenedProjectTrustRevocationTarget {
+    tab_identity_of(serde_json::json!({
+        "workspaceId": registration.receipt.workspace_id,
+        "admissionToken": registration.receipt.admission_token,
+        "canonicalRootPath": registration.descriptor.canonical_root_path,
+    }))
+}
+
+fn tab_identity_of(identity: serde_json::Value) -> OpenedProjectTrustRevocationTarget {
+    serde_json::from_value(identity).expect("tab identity")
+}
+
+#[derive(Clone, Copy)]
+enum AliasAdmission {
+    First,
+    Second,
+}
+
+fn assert_trust_off_in_a_retargeted_alias_tab_revokes_the_open_project(admission: AliasAdmission) {
+    let harness = Harness::create("retargeted-alias-tab");
     let registry = harness.app.state::<WorkspaceRegistry>();
     let alias = harness.fixture.join("alias");
-    std::os::unix::fs::symlink(harness.workspace("opened"), &alias).expect("alias to opened");
+    let opened_path = harness.workspace("opened");
+    std::os::unix::fs::symlink(&opened_path, &alias).expect("alias to opened");
     let alias_label = alias.to_string_lossy().into_owned();
-    let opened = registry.register_with_receipt(&alias).expect("open alias");
+    let earlier = match admission {
+        AliasAdmission::First => None,
+        AliasAdmission::Second => Some(registry.register_with_receipt(&opened_path).expect("open")),
+    };
+    let tab = registry.register_with_receipt(&alias).expect("open alias");
+    if let Some(earlier) = &earlier {
+        assert_eq!(
+            earlier.descriptor.workspace_id,
+            tab.descriptor.workspace_id
+        );
+        let retained = registry
+            .descriptor(&tab.descriptor.workspace_id)
+            .expect("retained descriptor");
+        assert_ne!(retained.selected_root_path, alias);
+    }
     let retarget = registry
         .register_with_receipt(harness.workspace("retarget"))
         .expect("open retarget");
-    let opened_root = opened.descriptor.canonical_root_path.clone();
+    let opened_root = tab.descriptor.canonical_root_path.clone();
     let retarget_root = retarget.descriptor.canonical_root_path.clone();
     let retarget_label = retarget_root.to_string_lossy().into_owned();
     let mut trust =
@@ -510,7 +574,6 @@ fn revoking_trust_through_a_retargeted_symlink_acts_on_the_project_that_is_open(
         Path::new(&trust.snapshot(&alias_label).root_path),
         opened_root
     );
-    let trust = Mutex::new(trust);
     let hosts = Arc::new(CodexAppServerHostRegistry::new(Arc::new(
         ShellHostSpawner::default(),
     )));
@@ -520,23 +583,33 @@ fn revoking_trust_through_a_retargeted_symlink_acts_on_the_project_that_is_open(
         shell_host_for(&hosts, &retarget_root, &retarget_root).expect("retarget host");
     let opened_pids = ShellHostPids::of(&opened_host);
     let retarget_pids = ShellHostPids::of(&retarget_host);
-    harness.start_running_turn("agt-opened", &opened.descriptor);
+    harness.start_running_turn("agt-opened", &tab.descriptor);
     harness.start_running_turn("agt-retarget", &retarget.descriptor);
-    let sessions = harness.start_claude_session_turn("agt-opened-claude", &opened.descriptor);
+    let sessions = harness.start_claude_session_turn("agt-opened-claude", &tab.descriptor);
     std::fs::remove_file(&alias).expect("drop alias");
     std::os::unix::fs::symlink(&retarget_root, &alias).expect("alias to retarget");
+    assert_eq!(
+        Path::new(&trust.snapshot(&alias_label).root_path),
+        retarget_root
+    );
+    let trust = Mutex::new(trust);
 
-    let revocation =
-        revoke_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &alias_label)
-            .expect("revoke trust");
+    let revocation = revoke_opened_project(
+        harness.app.handle(),
+        &trust,
+        &registry,
+        &tab_identity(&tab),
+    )
+    .expect("revoke trust");
 
     assert_eq!(Path::new(&revocation.state.root_path), opened_root);
-    assert_eq!(revocation.runtime_root, opened_root);
+    assert!(!revocation.state.trusted);
+    assert_eq!(revocation.runtime_root.as_deref(), Some(opened_root.as_path()));
     assert_eq!(
         revocation
             .registered
             .map(|descriptor| descriptor.workspace_id),
-        Some(opened.descriptor.workspace_id.clone())
+        Some(tab.descriptor.workspace_id.clone())
     );
     let trust = trust.lock().expect("trust lock");
     assert!(!trust.get(&opened_root.to_string_lossy()).trusted);
@@ -558,6 +631,249 @@ fn revoking_trust_through_a_retargeted_symlink_acts_on_the_project_that_is_open(
     assert!(retarget_pids.gone_within_deadline());
 }
 
+#[test]
+fn revoking_trust_through_a_retargeted_symlink_acts_on_the_project_that_is_open() {
+    assert_trust_off_in_a_retargeted_alias_tab_revokes_the_open_project(AliasAdmission::First);
+}
+
+#[test]
+fn trust_off_in_a_tab_opened_through_a_second_retargeted_alias_revokes_the_open_project() {
+    assert_trust_off_in_a_retargeted_alias_tab_revokes_the_open_project(AliasAdmission::Second);
+}
+
+#[test]
+fn a_stale_or_foreign_tab_identity_is_rejected_without_revoking_or_stopping_anything() {
+    let harness = Harness::create("stale-tab-identity");
+    let registry = harness.app.state::<WorkspaceRegistry>();
+    let opened = registry
+        .register_with_receipt(harness.workspace("opened"))
+        .expect("open project");
+    let other = registry
+        .register_with_receipt(harness.workspace("other"))
+        .expect("open other project");
+    let opened_label = opened
+        .descriptor
+        .canonical_root_path
+        .to_string_lossy()
+        .into_owned();
+    let mut trust =
+        WorkspaceTrustService::load(harness.fixture.join("trust.json")).expect("load trust");
+    trust.set(&opened_label, true).expect("trust opened");
+    let trust = Mutex::new(trust);
+    harness.start_running_turn("agt-opened", &opened.descriptor);
+    let identity = |workspace_id: &str, admission_token: u64, canonical_root: &Path| {
+        tab_identity_of(serde_json::json!({
+            "workspaceId": workspace_id,
+            "admissionToken": admission_token,
+            "canonicalRootPath": canonical_root,
+        }))
+    };
+    let opened_id = opened.receipt.workspace_id.as_str();
+    let opened_token = opened.receipt.admission_token;
+    let opened_root = opened.descriptor.canonical_root_path.as_path();
+    let rejected = |target: &OpenedProjectTrustRevocationTarget| {
+        let refusal = revoke_opened_project(harness.app.handle(), &trust, &registry, target)
+            .err()
+            .map(|error| (error.kind(), error.to_string()));
+        let untouched = trust.lock().expect("trust lock").get(&opened_label).trusted
+            && harness.sink.terminal("agt-opened").is_none();
+        untouched
+            && refusal
+                == Some((
+                    std::io::ErrorKind::InvalidInput,
+                    OPENED_PROJECT_REVOCATION_IDENTITY_ERROR.to_string(),
+                ))
+    };
+
+    assert!(rejected(&identity("ws-unknown", opened_token, opened_root)));
+    assert!(rejected(&identity(opened_id, opened_token + 1, opened_root)));
+    assert!(rejected(&identity(opened_id, 0, opened_root)));
+    assert!(rejected(&identity(
+        opened_id,
+        other.receipt.admission_token + 1,
+        opened_root
+    )));
+    assert!(rejected(&identity(
+        opened_id,
+        opened_token,
+        &other.descriptor.canonical_root_path
+    )));
+    assert!(rejected(&identity(
+        opened_id,
+        opened_token,
+        &opened_root.join(".")
+    )));
+    assert!(rejected(&identity(
+        other.receipt.workspace_id.as_str(),
+        opened_token,
+        opened_root
+    )));
+    harness.retire_registration(&opened.descriptor);
+    assert!(rejected(&tab_identity(&opened)));
+    assert!(serde_json::from_value::<OpenedProjectTrustRevocationTarget>(serde_json::json!({
+        "workspaceId": opened_id,
+        "admissionToken": opened_token,
+        "canonicalRootPath": opened_root,
+        "rootPath": opened_root,
+    }))
+    .is_err());
+    harness.stop_and_settle("agt-opened");
+}
+
+#[test]
+fn a_registration_replaced_before_the_revocation_commits_keeps_its_replacement_untouched() {
+    let harness = Harness::create("replaced-before-commit");
+    let registry = harness.app.state::<WorkspaceRegistry>();
+    let root = harness.workspace("project");
+    let validated = registry.register_with_receipt(&root).expect("open project");
+    let label = validated
+        .descriptor
+        .canonical_root_path
+        .to_string_lossy()
+        .into_owned();
+    let mut trust =
+        WorkspaceTrustService::load(harness.fixture.join("trust.json")).expect("load trust");
+    trust.set(&label, true).expect("trust project");
+    let trust = Mutex::new(trust);
+    let lease = revocation_lease(&registry, &tab_identity(&validated)).expect("validated tab");
+    harness.retire_registration(&validated.descriptor);
+    let replacement = registry.register_with_receipt(&root).expect("reopen project");
+    assert_ne!(
+        replacement.descriptor.workspace_id,
+        validated.descriptor.workspace_id
+    );
+    let hosts = Arc::new(CodexAppServerHostRegistry::new(Arc::new(
+        ShellHostSpawner::default(),
+    )));
+    harness.app.manage(Arc::clone(&hosts));
+    let replacement_root = &replacement.descriptor.canonical_root_path;
+    let host = shell_host_for(&hosts, replacement_root, replacement_root).expect("host");
+    let pids = ShellHostPids::of(&host);
+    harness.start_running_turn("agt-replacement", &replacement.descriptor);
+    let sessions =
+        harness.start_claude_session_turn("agt-replacement-claude", &replacement.descriptor);
+
+    let refusal = revoke_leased_project(harness.app.handle(), &trust, &lease)
+        .err()
+        .map(|error| (error.kind(), error.to_string()));
+
+    assert_eq!(
+        refusal,
+        Some((
+            std::io::ErrorKind::InvalidInput,
+            OPENED_PROJECT_REVOCATION_IDENTITY_ERROR.to_string()
+        ))
+    );
+    assert!(trust.lock().expect("trust lock").get(&label).trusted);
+    for task_id in ["agt-replacement", "agt-replacement-claude"] {
+        assert!(harness.sink.terminal(task_id).is_none());
+    }
+    assert!(sessions.ended.lock().expect("ended lock").is_empty());
+    assert!(host.is_ready());
+    assert!(pids.alive());
+    for task_id in ["agt-replacement", "agt-replacement-claude"] {
+        harness.stop_and_settle(task_id);
+    }
+    hosts.drain_for_dispose();
+    assert!(pids.gone_within_deadline());
+}
+
+#[test]
+fn trust_off_in_a_tab_of_a_root_whose_name_normalizes_revokes_both_records_and_stops_its_work() {
+    for name in ["trailing space ", " leading space", "back\\slash"] {
+        let harness = Harness::create("normalizing-root-name");
+        let registry = harness.app.state::<WorkspaceRegistry>();
+        let opened = registry
+            .register_with_receipt(harness.workspace(name))
+            .expect("open project");
+        let exact_root = opened.descriptor.canonical_root_path.clone();
+        let exact = exact_root.to_string_lossy().into_owned();
+        let mut trust =
+            WorkspaceTrustService::load(harness.fixture.join("trust.json")).expect("load trust");
+        assert!(trust.grant_opened_canonical_root(&exact).expect("opened grant").trusted);
+        trust.set(&exact, true).expect("path grant");
+        let admitted_under = PathBuf::from(trust.snapshot(&exact).root_path);
+        let trust = Mutex::new(trust);
+        let hosts = Arc::new(CodexAppServerHostRegistry::new(Arc::new(
+            ShellHostSpawner::default(),
+        )));
+        harness.app.manage(Arc::clone(&hosts));
+        let host = shell_host_for(&hosts, &exact_root, &exact_root).expect("host");
+        let pids = ShellHostPids::of(&host);
+        harness.start_running_turn_admitted_under("agt-admitted", &opened.descriptor, &admitted_under);
+        harness.start_running_turn("agt-exact", &opened.descriptor);
+
+        let revocation = revoke_opened_project(
+            harness.app.handle(),
+            &trust,
+            &registry,
+            &tab_identity(&opened),
+        )
+        .expect("revoke trust");
+
+        assert_eq!(revocation.state.root_path, exact, "{name}");
+        assert_eq!(revocation.runtime_root.as_deref(), Some(exact_root.as_path()));
+        for task_id in ["agt-admitted", "agt-exact"] {
+            assert!(
+                stopped_for_revoked_trust(harness.sink.settled(task_id)),
+                "{name}: {task_id}"
+            );
+        }
+        assert!(!host.is_ready(), "{name}");
+        assert!(pids.gone_within_deadline(), "{name}");
+        drop(trust);
+        let reloaded =
+            WorkspaceTrustService::load(harness.fixture.join("trust.json")).expect("reload");
+        assert!(!reloaded.snapshot_canonical(&exact).trusted, "{name}");
+        assert!(!reloaded.get(&exact).trusted, "{name}");
+    }
+}
+
+#[test]
+fn revoking_an_existing_root_by_path_stops_runtimes_at_its_real_path() {
+    for name in ["trailing space ", "back\\slash", "plain"] {
+        let harness = Harness::create("path-runtime-root");
+        let registry = harness.app.state::<WorkspaceRegistry>();
+        let unregistered = harness
+            .workspace(&format!("unregistered {name}"))
+            .canonicalize()
+            .expect("canonical unregistered root");
+        let registered = registry
+            .register_with_receipt(harness.workspace(&format!("registered {name}")))
+            .expect("open project");
+        let trust = Mutex::new(
+            WorkspaceTrustService::load(harness.fixture.join("trust.json")).expect("load trust"),
+        );
+        let revoke = |root: &Path| {
+            revoke_path_trust_and_stop_agents(
+                harness.app.handle(),
+                &trust,
+                &registry,
+                &root.to_string_lossy(),
+            )
+            .expect("revoke trust")
+        };
+
+        let revocation = revoke(&unregistered);
+        assert_eq!(revocation.runtime_root.as_deref(), Some(unregistered.as_path()));
+        assert!(revocation.registered.is_none(), "{name}");
+
+        let registered_root = &registered.descriptor.canonical_root_path;
+        let revocation = revoke(registered_root);
+        assert_eq!(
+            revocation.runtime_root.as_deref(),
+            Some(registered_root.as_path())
+        );
+        assert_eq!(
+            revocation
+                .registered
+                .map(|descriptor| descriptor.workspace_id),
+            Some(registered.descriptor.workspace_id.clone()),
+            "{name}"
+        );
+    }
+}
+
 fn trusted_fallback_key(harness: &Harness) -> (PathBuf, String, WorkspaceTrustService) {
     let storage = harness.fixture.join("trust.json");
     let spelling = format!("{}/missing/./repo", harness.fixture.display());
@@ -577,15 +893,39 @@ fn revoking_an_unregistered_path_removes_the_fallback_key_its_grant_stored() {
     let trust = Mutex::new(trust);
 
     let revocation =
-        revoke_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &spelling)
+        revoke_path_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &spelling)
             .expect("revoke trust");
 
     assert_eq!(revocation.state.root_path, spelling);
     assert!(!revocation.state.trusted);
     assert!(revocation.registered.is_none());
+    assert!(revocation.runtime_root.is_none());
     assert!(!trust.lock().expect("trust lock").get(&spelling).trusted);
     let persisted = WorkspaceTrustService::load(storage).expect("reload trust");
     assert!(!persisted.get(&spelling).trusted);
+}
+
+#[test]
+fn an_unregistered_missing_root_is_the_runtime_root_only_in_its_stored_spelling() {
+    let harness = Harness::create("missing-runtime-root");
+    let registry = harness.app.state::<WorkspaceRegistry>();
+    let trust = Mutex::new(
+        WorkspaceTrustService::load(harness.fixture.join("trust.json")).expect("load trust"),
+    );
+    let stored = format!("{}/gone/repo", harness.fixture.display());
+
+    let revoke = |spelling: &str| {
+        revoke_path_trust_and_stop_agents(harness.app.handle(), &trust, &registry, spelling)
+            .expect("revoke trust")
+            .runtime_root
+    };
+
+    assert_eq!(revoke(&stored).as_deref(), Some(Path::new(&stored)));
+    for respelled in ["gone/./repo", "gone//repo"] {
+        let spelling = format!("{}/{respelled}", harness.fixture.display());
+        assert_eq!(Path::new(&spelling), Path::new(&stored));
+        assert!(revoke(&spelling).is_none());
+    }
 }
 
 #[test]
@@ -598,15 +938,16 @@ fn an_active_launch_on_a_fallback_key_still_refuses_its_revocation() {
         .expect("reserve the start boundary");
     let trust = Mutex::new(trust);
 
-    let refused = revoke_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &spelling)
-        .err()
-        .expect("revocation waits for the start boundary");
+    let refused =
+        revoke_path_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &spelling)
+            .err()
+            .expect("revocation waits for the start boundary");
 
     assert_eq!(refused.kind(), std::io::ErrorKind::WouldBlock);
     assert!(trust.lock().expect("trust lock").get(&spelling).trusted);
     drop(launch);
     let revocation =
-        revoke_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &spelling)
+        revoke_path_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &spelling)
             .expect("revoke after the launch");
     assert!(!revocation.state.trusted);
     assert!(!trust.lock().expect("trust lock").get(&spelling).trusted);
@@ -660,7 +1001,7 @@ fn a_fallback_spelling_that_collapses_onto_an_open_project_revokes_only_its_own_
     };
 
     let refused =
-        revoke_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &collision)
+        revoke_path_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &collision)
             .err()
             .expect("revocation waits for the fallback start boundary");
 
@@ -670,13 +1011,14 @@ fn a_fallback_spelling_that_collapses_onto_an_open_project_revokes_only_its_own_
     drop(launch);
 
     let revocation =
-        revoke_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &collision)
+        revoke_path_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &collision)
             .expect("revoke the fallback key");
 
     assert_eq!(revocation.state.root_path, collision);
     assert!(revocation.registered.is_none());
-    assert_eq!(revocation.runtime_root, Path::new(&collision));
-    assert_ne!(revocation.runtime_root.as_os_str(), opened_root.as_os_str());
+    let runtime_root = revocation.runtime_root.expect("fallback runtime root");
+    assert_eq!(runtime_root, Path::new(&collision));
+    assert_ne!(runtime_root, opened_root);
     assert!(!trust.lock().expect("trust lock").get(&collision).trusted);
     assert!(untouched());
     for task_id in ["agt-open", "agt-open-claude"] {
@@ -689,71 +1031,96 @@ fn a_fallback_spelling_that_collapses_onto_an_open_project_revokes_only_its_own_
 struct RevokedKeyCase {
     name: &'static str,
     input: String,
+    tab: Option<OpenedProjectTrustRevocationTarget>,
     retarget: Option<(PathBuf, PathBuf)>,
     keeps_trusted: Option<String>,
 }
 
+impl RevokedKeyCase {
+    fn by_path(name: &'static str, input: String) -> Self {
+        Self {
+            name,
+            input,
+            tab: None,
+            retarget: None,
+            keeps_trusted: None,
+        }
+    }
+
+    fn in_tab(name: &'static str, input: &Path, tab: &WorkspaceRegistration) -> Self {
+        Self {
+            tab: Some(tab_identity(tab)),
+            ..Self::by_path(name, input.to_string_lossy().into_owned())
+        }
+    }
+}
+
 fn revoked_key_cases(harness: &Harness) -> Vec<RevokedKeyCase> {
     let registry = harness.app.state::<WorkspaceRegistry>();
-    let open = |name: &str| {
-        registry
-            .register_with_receipt(harness.workspace(name))
-            .expect("open project")
-            .descriptor
-            .canonical_root_path
-    };
-    let open_through_alias = |alias: &str, target: &str| {
+    let open = |path: PathBuf| registry.register_with_receipt(path).expect("open project");
+    let alias_to = |alias: &str, target: &str| {
         let alias = harness.fixture.join(alias);
         std::os::unix::fs::symlink(harness.workspace(target), &alias).expect("alias");
-        registry.register_with_receipt(&alias).expect("open alias");
         alias
     };
     let label = |path: &Path| path.to_string_lossy().into_owned();
     let fixture = harness.fixture.canonicalize().expect("canonical fixture");
-    let collided = open("collided");
-    let retargeted_alias = open_through_alias("retargeted-alias", "retargeted-from");
+    let canonical = open(harness.workspace("canonical"));
+    let legacy = open(harness.workspace("legacy"));
+    let alias = alias_to("alias", "aliased");
+    let retargeted_alias = alias_to("retargeted-alias", "retargeted-from");
+    open(harness.workspace("second-from"));
+    let second_alias = alias_to("second-alias", "second-from");
+    let collided = open(harness.workspace("collided"));
     vec![
+        RevokedKeyCase::in_tab(
+            "tab of a registered canonical path",
+            &canonical.descriptor.canonical_root_path,
+            &canonical,
+        ),
+        RevokedKeyCase::in_tab(
+            "tab opened through a symlink",
+            &alias,
+            &open(alias.clone()),
+        ),
         RevokedKeyCase {
-            name: "registered canonical path",
-            input: label(&open("canonical")),
-            retarget: None,
-            keeps_trusted: None,
+            retarget: Some((retargeted_alias.clone(), harness.workspace("retargeted-to"))),
+            ..RevokedKeyCase::in_tab(
+                "tab opened through a symlink that is retargeted",
+                &retargeted_alias,
+                &open(retargeted_alias.clone()),
+            )
         },
         RevokedKeyCase {
-            name: "registered through a symlink",
-            input: label(&open_through_alias("alias", "aliased")),
-            retarget: None,
-            keeps_trusted: None,
+            retarget: Some((second_alias.clone(), harness.workspace("second-to"))),
+            ..RevokedKeyCase::in_tab(
+                "tab opened through a second alias that is retargeted",
+                &second_alias,
+                &open(second_alias.clone()),
+            )
         },
+        RevokedKeyCase::by_path(
+            "registered canonical path without a tab identity",
+            label(&legacy.descriptor.canonical_root_path),
+        ),
+        RevokedKeyCase::by_path(
+            "unregistered existing path",
+            label(&harness.workspace("unregistered")),
+        ),
+        RevokedKeyCase::by_path(
+            "unregistered nonexistent canonical spelling",
+            label(&fixture.join("gone/repo")),
+        ),
+        RevokedKeyCase::by_path(
+            "unregistered nonexistent fallback spelling",
+            label(&fixture.join("gone/./repo")),
+        ),
         RevokedKeyCase {
-            name: "registered through a symlink that is retargeted",
-            input: label(&retargeted_alias),
-            retarget: Some((retargeted_alias, harness.workspace("retargeted-to"))),
-            keeps_trusted: None,
-        },
-        RevokedKeyCase {
-            name: "unregistered existing path",
-            input: label(&harness.workspace("unregistered")),
-            retarget: None,
-            keeps_trusted: None,
-        },
-        RevokedKeyCase {
-            name: "unregistered nonexistent canonical spelling",
-            input: label(&fixture.join("gone/repo")),
-            retarget: None,
-            keeps_trusted: None,
-        },
-        RevokedKeyCase {
-            name: "unregistered nonexistent fallback spelling",
-            input: label(&fixture.join("gone/./repo")),
-            retarget: None,
-            keeps_trusted: None,
-        },
-        RevokedKeyCase {
-            name: "fallback spelling that collapses onto a registered root",
-            input: label(&fixture.join("missing/../collided")),
-            retarget: None,
-            keeps_trusted: Some(label(&collided)),
+            keeps_trusted: Some(label(&collided.descriptor.canonical_root_path)),
+            ..RevokedKeyCase::by_path(
+                "fallback spelling that collapses onto a registered root",
+                label(&fixture.join("missing/../collided")),
+            )
         },
     ]
 }
@@ -778,9 +1145,12 @@ fn revocation_removes_exactly_the_key_a_grant_of_the_same_input_stored() {
             std::os::unix::fs::symlink(target, alias).expect("retarget alias");
         }
 
-        let revocation =
-            revoke_trust_and_stop_agents(harness.app.handle(), &trust, &registry, &case.input)
-                .expect("revoke");
+        let app = harness.app.handle();
+        let revocation = match &case.tab {
+            Some(tab) => revoke_opened_project(app, &trust, &registry, tab),
+            None => revoke_path_trust_and_stop_agents(app, &trust, &registry, &case.input),
+        }
+        .expect("revoke");
 
         let trust = trust.lock().expect("trust lock");
         assert_eq!(revocation.state.root_path, granted, "{}", case.name);
@@ -793,14 +1163,15 @@ fn revocation_removes_exactly_the_key_a_grant_of_the_same_input_stored() {
 }
 
 #[test]
-fn trust_revocation_command_revokes_and_stops_agents_through_one_resolved_root() {
+fn trust_revocation_commands_revoke_and_stop_agents_through_one_identity() {
     let command = include_str!("workspace_trust_commands.rs");
-    assert!(
-        command.contains(
-            "    let revocation = agent_trust_revocation::revoke_trust_and_stop_agents(\n        &app,\n        &service,\n        &workspace_registry,\n        &root_path,\n    )"
-        ),
-        "trust revocation must mutate trust and stop agents through one resolved root"
-    );
+    for composition in [
+        "    let revocation = agent_trust_revocation::revoke_path_trust_and_stop_agents(\n        &app,\n        &service,\n        &workspace_registry,\n        &root_path,\n    )",
+        "    let lease = opened_project::revocation_lease(registry, target)?;\n    revoke_leased_project(app, trust, &lease)",
+        "    let revoked = opened_project::revoke_lease(lease, |root| {",
+    ] {
+        assert!(command.contains(composition), "missing: {composition}");
+    }
     assert!(
         !command.contains(".set(&root_path, false)") && !command.contains(".set(&root_path, trusted)"),
         "trust revocation must not resolve the trust path a second time"

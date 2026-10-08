@@ -54,22 +54,43 @@ impl WorkspaceRegistry {
         workspace_id: &WorkspaceId,
         admission_token: u64,
     ) -> io::Result<super::WorkspaceRegistrationOperationLease> {
+        self.reserve_registration_operation(workspace_id, |workspace| {
+            workspace.latest_admission_token == admission_token
+                && workspace
+                    .registration_admissions
+                    .contains_key(&admission_token)
+        })
+    }
+
+    pub(crate) fn reserve_held_registration_operation(
+        &self,
+        workspace_id: &WorkspaceId,
+        admission_token: u64,
+    ) -> io::Result<super::WorkspaceRegistrationOperationLease> {
+        self.reserve_registration_operation(workspace_id, |workspace| {
+            workspace
+                .registration_admissions
+                .contains_key(&admission_token)
+        })
+    }
+
+    fn reserve_registration_operation(
+        &self,
+        workspace_id: &WorkspaceId,
+        admitted: impl FnOnce(&super::ManagedWorkspace) -> bool,
+    ) -> io::Result<super::WorkspaceRegistrationOperationLease> {
         let _operation = self.lock_operations()?;
         let workspaces = self.workspaces.lock().map_err(lock_error)?;
         let workspace = workspaces
             .get(workspace_id)
             .filter(|workspace| workspace.unregister_generation.is_none())
             .ok_or_else(unknown_workspace)?;
-        if workspace.latest_admission_token != admission_token
-            || !workspace
-                .registration_admissions
-                .contains_key(&admission_token)
-        {
+        if !admitted(workspace) {
             return Err(stale_admission());
         }
         self.registration_operations.reserve(
             workspace_id,
-            admission_token,
+            workspace.latest_admission_token,
             workspace.descriptor.clone(),
             workspace.root.try_clone()?,
         )

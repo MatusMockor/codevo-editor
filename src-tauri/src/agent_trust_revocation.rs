@@ -8,25 +8,51 @@ use crate::workspace_registry::{ManagedWorkspaceDescriptor, WorkspaceId, Workspa
 use std::io;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Manager, Runtime};
 
 pub(crate) struct TrustRevocation {
     pub(crate) state: WorkspaceTrustState,
-    pub(crate) runtime_root: PathBuf,
+    pub(crate) runtime_root: Option<PathBuf>,
     pub(crate) registered: Option<ManagedWorkspaceDescriptor>,
 }
 
-pub(crate) fn revoke_trust_and_stop_agents<R: Runtime>(
+pub(crate) fn stop_agents_of_revoked_opened_project<R: Runtime>(
+    app: &AppHandle<R>,
+    opened: ManagedWorkspaceDescriptor,
+    revoked_roots: &[String],
+) -> TrustRevocation {
+    for revoked_root in revoked_roots {
+        stop_agents_of_revoked_trust(app, Path::new(revoked_root), Some(&opened.workspace_id));
+    }
+    TrustRevocation {
+        state: WorkspaceTrustState {
+            root_path: opened.canonical_root_path.to_string_lossy().into_owned(),
+            trusted: false,
+        },
+        runtime_root: Some(opened.canonical_root_path.clone()),
+        registered: Some(opened),
+    }
+}
+
+pub(crate) fn revoke_path_trust_and_stop_agents<R: Runtime>(
     app: &AppHandle<R>,
     trust: &Mutex<WorkspaceTrustService>,
     registry: &WorkspaceRegistry,
     root_path: &str,
 ) -> io::Result<TrustRevocation> {
-    let opened = workspace_opened_as(registry, Path::new(root_path));
-    let state = revoke_trust_record(trust, opened.as_ref(), root_path)?;
+    let state = locked(trust)?.set(root_path, false)?;
     let revoked_root = Path::new(&state.root_path);
-    let registered = opened.or_else(|| workspace_rooted_at(registry, revoked_root));
+    let runtime_root = Path::new(root_path)
+        .canonicalize()
+        .ok()
+        .or_else(|| stored_spelling(revoked_root));
+    let registered = runtime_root.as_deref().and_then(|root| {
+        registry
+            .descriptor_for_registered_path(root)
+            .ok()
+            .filter(|descriptor| descriptor.canonical_root_path.as_os_str() == root.as_os_str())
+    });
     stop_agents_of_revoked_trust(
         app,
         revoked_root,
@@ -34,12 +60,6 @@ pub(crate) fn revoke_trust_and_stop_agents<R: Runtime>(
             .as_ref()
             .map(|descriptor| &descriptor.workspace_id),
     );
-    let runtime_root = match &registered {
-        Some(descriptor) => descriptor.canonical_root_path.clone(),
-        None => Path::new(root_path)
-            .canonicalize()
-            .unwrap_or_else(|_| revoked_root.to_path_buf()),
-    };
     Ok(TrustRevocation {
         state,
         runtime_root,
@@ -47,41 +67,18 @@ pub(crate) fn revoke_trust_and_stop_agents<R: Runtime>(
     })
 }
 
-fn workspace_opened_as(
-    registry: &WorkspaceRegistry,
-    spelling: &Path,
-) -> Option<ManagedWorkspaceDescriptor> {
-    registry
-        .descriptor_for_registered_path(spelling)
-        .ok()
-        .filter(|descriptor| {
-            descriptor.selected_root_path.as_os_str() == spelling.as_os_str()
-                || descriptor.canonical_root_path.as_os_str() == spelling.as_os_str()
-        })
+fn stored_spelling(revoked_root: &Path) -> Option<PathBuf> {
+    let spelled_as_stored =
+        revoked_root.components().collect::<PathBuf>().as_os_str() == revoked_root.as_os_str();
+    spelled_as_stored.then(|| revoked_root.to_path_buf())
 }
 
-fn workspace_rooted_at(
-    registry: &WorkspaceRegistry,
-    root: &Path,
-) -> Option<ManagedWorkspaceDescriptor> {
-    registry
-        .descriptor_for_registered_path(root)
-        .ok()
-        .filter(|descriptor| descriptor.canonical_root_path.as_os_str() == root.as_os_str())
-}
-
-fn revoke_trust_record(
+fn locked(
     trust: &Mutex<WorkspaceTrustService>,
-    opened: Option<&ManagedWorkspaceDescriptor>,
-    root_path: &str,
-) -> io::Result<WorkspaceTrustState> {
-    let mut trust = trust
+) -> io::Result<MutexGuard<'_, WorkspaceTrustService>> {
+    trust
         .lock()
-        .map_err(|_| io::Error::other("workspace trust is unavailable"))?;
-    match opened {
-        Some(descriptor) => trust.revoke_resolved_root(&descriptor.canonical_root_path),
-        None => trust.set(root_path, false),
-    }
+        .map_err(|_| io::Error::other("workspace trust is unavailable"))
 }
 
 fn stop_agents_of_revoked_trust<R: Runtime>(

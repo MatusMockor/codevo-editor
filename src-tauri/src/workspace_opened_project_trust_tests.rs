@@ -157,6 +157,44 @@ fn wire_rejects_unknown_fields_and_invalid_tokens() {
 }
 
 #[test]
+fn revocation_identity_wire_and_refusal_match_the_shared_contract() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../contracts/workspace-trust-errors.json")).unwrap();
+    assert_eq!(
+        contract["openedProjectIdentityReplaced"].as_str(),
+        Some(OPENED_PROJECT_REVOCATION_IDENTITY_ERROR)
+    );
+    let pinned = contract["openedProjectRevocationTarget"].clone();
+    let target: OpenedProjectTrustRevocationTarget =
+        serde_json::from_value(pinned.clone()).unwrap();
+    assert_eq!(target.workspace_id.as_str(), "ws-a");
+    assert_eq!(target.admission_token, 4);
+    assert_eq!(target.canonical_root_path, "/real");
+    for (field, value) in [
+        ("rootPath", serde_json::json!("/real")),
+        ("selectedRootPath", serde_json::json!("/alias")),
+        ("trusted", serde_json::json!(false)),
+    ] {
+        let mut widened = pinned.clone();
+        widened[field] = value;
+        assert!(serde_json::from_value::<OpenedProjectTrustRevocationTarget>(widened).is_err());
+    }
+    for missing in ["workspaceId", "admissionToken", "canonicalRootPath"] {
+        let mut narrowed = pinned.clone();
+        narrowed.as_object_mut().unwrap().remove(missing);
+        assert!(serde_json::from_value::<OpenedProjectTrustRevocationTarget>(narrowed).is_err());
+    }
+    let refusal = revocation_lease(&WorkspaceRegistry::new(), &target)
+        .err()
+        .unwrap();
+    assert_eq!(refusal.kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(
+        refusal.to_string(),
+        OPENED_PROJECT_REVOCATION_IDENTITY_ERROR
+    );
+}
+
+#[test]
 fn persisted_revocation_survives_reload_and_manual_grant_can_restore_it() {
     let fixture = Fixture::new();
     let target = fixture.admit();
@@ -229,5 +267,169 @@ fn pending_lease_rejects_close_and_replacement_before_side_effect() {
         }
         assert!(grant_lease(&lease, &fixture.service, |_| panic!("stale activation")).is_err());
         assert!(!fixture.trusted());
+    }
+}
+
+fn revocation_target(grant: &OpenedProjectTrustTarget) -> OpenedProjectTrustRevocationTarget {
+    OpenedProjectTrustRevocationTarget {
+        workspace_id: grant.workspace_id.clone(),
+        admission_token: grant.admission_token,
+        canonical_root_path: grant.canonical_root_path.clone(),
+    }
+}
+
+fn revoke_in(fixture: &Fixture, root: &str) -> io::Result<Vec<String>> {
+    fixture
+        .service
+        .lock()
+        .unwrap()
+        .revoke_opened_canonical_root(root)
+}
+
+fn refused_as_replaced(refusal: Option<io::Error>) -> bool {
+    refusal.is_some_and(|refusal| {
+        refusal.kind() == io::ErrorKind::InvalidInput
+            && refusal.to_string() == OPENED_PROJECT_REVOCATION_IDENTITY_ERROR
+    })
+}
+
+#[test]
+fn a_held_admission_that_is_not_the_latest_still_revokes_its_registration() {
+    let fixture = Fixture::new();
+    let earlier = fixture.admit();
+    let latest = fixture.admit();
+    assert_eq!(earlier.workspace_id, latest.workspace_id);
+    assert_ne!(earlier.admission_token, latest.admission_token);
+    let root = earlier.canonical_root_path.clone();
+    fixture.service.lock().unwrap().set(&root, true).unwrap();
+
+    let lease = revocation_lease(&fixture.registry, &revocation_target(&earlier)).unwrap();
+    let revoked = revoke_lease(&lease, |root| revoke_in(&fixture, root)).unwrap();
+
+    assert_eq!(revoked.revoked_roots, vec![root]);
+    assert_eq!(revoked.descriptor.workspace_id, earlier.workspace_id);
+    assert!(!fixture.trusted());
+}
+
+#[test]
+fn a_registration_released_and_reopened_before_the_commit_refuses_the_revocation() {
+    for reopened in [false, true] {
+        let fixture = Fixture::new();
+        let target = fixture.admit();
+        let root = target.canonical_root_path.clone();
+        fixture.service.lock().unwrap().set(&root, true).unwrap();
+        let lease = revocation_lease(&fixture.registry, &revocation_target(&target)).unwrap();
+        fixture.registry.unregister(&target.workspace_id).unwrap();
+        if reopened {
+            assert_ne!(fixture.admit().workspace_id, target.workspace_id);
+        }
+
+        let refusal = revoke_lease(&lease, |root| revoke_in(&fixture, root)).err();
+
+        assert!(refused_as_replaced(refusal));
+        assert!(fixture.trusted());
+        assert!(refused_as_replaced(
+            revocation_lease(&fixture.registry, &revocation_target(&target)).err()
+        ));
+    }
+}
+
+#[test]
+fn a_release_and_reopen_cannot_interleave_with_an_in_flight_revocation() {
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    let fixture = Fixture::new();
+    let target = fixture.admit();
+    let root = target.canonical_root_path.clone();
+    fixture.service.lock().unwrap().set(&root, true).unwrap();
+    let lease = revocation_lease(&fixture.registry, &revocation_target(&target)).unwrap();
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let (reopened, reopened_rx) = std::sync::mpsc::channel();
+
+    let (shared_lease, shared_fixture, released_id) = (&lease, &fixture, &target.workspace_id);
+    let (revoked, released_in_time, replacement) = std::thread::scope(|scope| {
+        let revocation = scope.spawn(move || {
+            let (lease, fixture) = (shared_lease, shared_fixture);
+            let mut released_in_time = false;
+            let revoked = revoke_lease(lease, |root| {
+                entered.send(()).unwrap();
+                released_in_time = release_rx.recv_timeout(DEADLINE).is_ok();
+                revoke_in(fixture, root)
+            });
+            (revoked, released_in_time)
+        });
+        entered_rx
+            .recv_timeout(DEADLINE)
+            .expect("the revocation never reached its commit");
+        scope.spawn(move || {
+            shared_fixture.registry.unregister(released_id).unwrap();
+            reopened.send(shared_fixture.admit().workspace_id).unwrap();
+        });
+        let interleaved = reopened_rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_ok();
+        release.send(()).unwrap();
+        let (revoked, released_in_time) = revocation.join().unwrap();
+        let replacement = reopened_rx
+            .recv_timeout(DEADLINE)
+            .expect("the release never completed after the revocation");
+        assert!(!interleaved);
+        (revoked, released_in_time, replacement)
+    });
+
+    assert!(released_in_time);
+    let revoked = revoked.unwrap();
+    assert_eq!(revoked.descriptor.workspace_id, target.workspace_id);
+    assert_ne!(replacement, target.workspace_id);
+    assert_eq!(revoked.revoked_roots, vec![root]);
+    assert!(!fixture.trusted());
+}
+
+#[test]
+fn revocation_removes_the_exact_opened_record_and_the_record_admission_reads() {
+    for name in ["trailing space ", " leading space", "back\\slash", "plain"] {
+        let fixture = Fixture::new();
+        let directory = fixture.root.join(name);
+        fs::create_dir_all(&directory).unwrap();
+        let registration = fixture.registry.register_with_receipt(&directory).unwrap();
+        let exact = registration
+            .descriptor
+            .canonical_root_path
+            .to_string_lossy()
+            .into_owned();
+        let target = OpenedProjectTrustRevocationTarget {
+            workspace_id: registration.receipt.workspace_id.clone(),
+            admission_token: registration.receipt.admission_token,
+            canonical_root_path: exact.clone(),
+        };
+        let admitted = {
+            let mut service = fixture.service.lock().unwrap();
+            assert!(service.grant_opened_canonical_root(&exact).unwrap().trusted);
+            service.set(&exact, true).unwrap().root_path
+        };
+        let launch = {
+            let service = fixture.service.lock().unwrap();
+            service.reserve_launch(&service.snapshot(&exact)).unwrap()
+        };
+
+        let lease = revocation_lease(&fixture.registry, &target).unwrap();
+        let busy = revoke_lease(&lease, |root| revoke_in(&fixture, root))
+            .err()
+            .unwrap();
+        assert_eq!(busy.kind(), io::ErrorKind::WouldBlock, "{name}");
+        {
+            let service = fixture.service.lock().unwrap();
+            assert!(service.snapshot_canonical(&exact).trusted, "{name}");
+            assert!(service.snapshot_canonical(&admitted).trusted, "{name}");
+        }
+        drop(launch);
+        let revoked = revoke_lease(&lease, |root| revoke_in(&fixture, root)).unwrap();
+
+        assert_eq!(revoked.revoked_roots[0], exact, "{name}");
+        assert!(revoked.revoked_roots.contains(&admitted), "{name}");
+        let reloaded = WorkspaceTrustService::load(fixture.root.join("trust.json")).unwrap();
+        assert!(!reloaded.snapshot_canonical(&exact).trusted, "{name}");
+        assert!(!reloaded.snapshot_canonical(&admitted).trusted, "{name}");
+        assert!(!reloaded.get(&exact).trusted, "{name}");
     }
 }
