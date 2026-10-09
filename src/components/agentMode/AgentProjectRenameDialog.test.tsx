@@ -82,6 +82,7 @@ function Harness({
         }}
         onSelectAll={() => undefined}
         onSelectProject={(projectRootKey) => recorded.selected.push(projectRootKey)}
+        signals={new Map()}
       />
       <AgentProjectRenameDialog
         onCancel={rename.cancel}

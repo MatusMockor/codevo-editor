@@ -13,12 +13,17 @@ import type {
   AgentProjectMenuTarget,
 } from "./agentProjectMenuPresentation";
 import type { AgentProjectServerPresence } from "./agentProjectServerPresence";
+import type { AgentRailProjectSignal } from "./agentRailProjectSignal";
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
 const SIDEBAR_SHEET = "components/agentMode/agentSidebar.css";
 const SHARED_CLASS = /^(cv-popover|cv-icon-button(--[\w-]+|__[\w-]+)?|lucide(-[\w-]+)?)$/;
 
 const LOCAL_ONLY: AgentProjectServerPresence = { local: true, remoteServerIds: [] };
+const NO_SIGNALS: ReadonlyMap<string, AgentRailProjectSignal> = new Map();
+const WORKING: AgentRailProjectSignal = { tone: "working", label: "2 threads working" };
+const ATTENTION: AgentRailProjectSignal = { tone: "attention", label: "1 thread waiting for you" };
+const UNREAD: AgentRailProjectSignal = { tone: "unread", label: "1 thread unread" };
 
 const LINUX: RemoteRunnerServer = {
   id: "srv-7f3a",
@@ -46,6 +51,33 @@ function entry(label: string, serverPresence = LOCAL_ONLY): AgentRailScopeEntry 
 
 function escapeClass(name: string): string {
   return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function optionFor(surface: HTMLElement, label: string): HTMLElement {
+  const option = [...surface.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (candidate) => candidate.querySelector(".cv-project-switch__label")?.textContent === label,
+  );
+  expect(option, label).toBeDefined();
+  return option as HTMLElement;
+}
+
+function signalOf(option: HTMLElement): ReadonlyArray<string | null> {
+  return [...option.querySelectorAll<HTMLElement>(".cv-project-switch__signal")].flatMap((dot) => [
+    dot.getAttribute("role"),
+    dot.getAttribute("data-tone"),
+    dot.getAttribute("aria-label"),
+    dot.getAttribute("title"),
+  ]);
+}
+
+function searchProjects(surface: HTMLElement, query: string): void {
+  const input = surface.querySelector<HTMLInputElement>('input[aria-label="Search projects"]');
+  expect(input).not.toBeNull();
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  act(() => {
+    setter?.call(input, query);
+    input?.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 function sheetsStyling(className: string): ReadonlyArray<string> {
@@ -79,6 +111,7 @@ describe("AgentProjectSwitcher", () => {
       command: AgentProjectMenuCommand,
     ) => void = () => undefined,
     onSelectProject: (projectRootKey: string) => void = () => undefined,
+    signals: ReadonlyMap<string, AgentRailProjectSignal> = NO_SIGNALS,
   ): HTMLElement {
     act(() =>
       root.render(
@@ -89,6 +122,7 @@ describe("AgentProjectSwitcher", () => {
           onProjectCommand={onProjectCommand}
           onSelectAll={() => undefined}
           onSelectProject={onSelectProject}
+          signals={signals}
         />,
       ),
     );
@@ -114,13 +148,19 @@ describe("AgentProjectSwitcher", () => {
   });
 
   it("styles the popover only through classes the sidebar sheet owns", () => {
-    const surface = openSwitcher();
+    const surface = openSwitcher(
+      undefined,
+      undefined,
+      undefined,
+      new Map([["/work/docs-site", WORKING]]),
+    );
     const names = [surface, ...surface.querySelectorAll<HTMLElement>("[class]")]
       .flatMap((element) => [...element.classList])
       .filter((name) => !SHARED_CLASS.test(name));
 
     expect(names).toContain("cv-project-switch");
     expect(names).toContain("cv-project-badge");
+    expect(names).toContain("cv-project-switch__signal");
     for (const name of new Set(names)) {
       expect(sheetsStyling(name), name).toEqual([SIDEBAR_SHEET]);
     }
@@ -170,6 +210,7 @@ describe("AgentProjectSwitcher", () => {
               onProjectCommand={() => undefined}
               onSelectAll={() => undefined}
               onSelectProject={() => undefined}
+              signals={NO_SIGNALS}
             />,
           ),
         ),
@@ -181,14 +222,6 @@ describe("AgentProjectSwitcher", () => {
       );
       expect(surface).not.toBeNull();
       return surface as HTMLElement;
-    }
-
-    function optionFor(surface: HTMLElement, label: string): HTMLElement {
-      const option = [...surface.querySelectorAll<HTMLElement>('[role="option"]')].find(
-        (candidate) => candidate.querySelector(".cv-project-switch__label")?.textContent === label,
-      );
-      expect(option, label).toBeDefined();
-      return option as HTMLElement;
     }
 
     function rowLeaks(row: HTMLElement, value: string): boolean {
@@ -238,6 +271,108 @@ describe("AgentProjectSwitcher", () => {
       root = createRoot(host);
       const emptyServers = await openWith([]);
       expect(emptyServers.querySelector(".cv-project-switch__server")).toBeNull();
+    });
+  });
+
+  describe("thread signal", () => {
+    const entries = [entry("editor"), entry("docs-site"), entry("api")];
+
+    function openWithSignals(signals: ReadonlyMap<string, AgentRailProjectSignal>): HTMLElement {
+      return openSwitcher(entries, undefined, undefined, signals);
+    }
+
+    it("marks a project row with the tone and label of its threads", () => {
+      const surface = openWithSignals(
+        new Map([
+          ["/work/docs-site", WORKING],
+          ["/work/api", UNREAD],
+        ]),
+      );
+
+      expect(signalOf(optionFor(surface, "docs-site"))).toEqual([
+        "img",
+        "working",
+        "2 threads working",
+        "2 threads working",
+      ]);
+      expect(signalOf(optionFor(surface, "api"))).toEqual([
+        "img",
+        "unread",
+        "1 thread unread",
+        "1 thread unread",
+      ]);
+    });
+
+    it("leaves rows without a signal and the All projects row unmarked", () => {
+      const surface = openWithSignals(
+        new Map([
+          ["/work/docs-site", WORKING],
+          ["all", ATTENTION],
+        ]),
+      );
+
+      expect(signalOf(optionFor(surface, "editor"))).toEqual([]);
+      expect(signalOf(optionFor(surface, "api"))).toEqual([]);
+      expect(signalOf(optionFor(surface, "All projects"))).toEqual([]);
+      expect(surface.querySelectorAll(".cv-project-switch__signal")).toHaveLength(1);
+      expect(host.querySelector(".cv-project-switch__signal")).toBeNull();
+    });
+
+    it("marks the current project row next to its Current label and check", () => {
+      const surface = openWithSignals(new Map([["/work/editor", ATTENTION]]));
+      const current = optionFor(surface, "editor");
+
+      expect(current.getAttribute("aria-current")).toBe("true");
+      expect(signalOf(current)).toEqual([
+        "img",
+        "attention",
+        "1 thread waiting for you",
+        "1 thread waiting for you",
+      ]);
+      expect([...current.children].map((child) => child.classList.item(0))).toEqual([
+        "cv-project-badge",
+        "cv-project-switch__label",
+        "cv-project-switch__state",
+        "cv-project-switch__signal",
+        "lucide",
+      ]);
+      expect(current.querySelector(".cv-project-switch__state")?.textContent).toBe("Current");
+    });
+
+    it("keeps the signal on rows that survive a search", () => {
+      const surface = openWithSignals(
+        new Map([
+          ["/work/editor", ATTENTION],
+          ["/work/docs-site", WORKING],
+        ]),
+      );
+
+      searchProjects(surface, "docs");
+
+      const labels = [...surface.querySelectorAll(".cv-project-switch__label")].map(
+        (label) => label.textContent,
+      );
+      expect(labels).toEqual(["docs-site"]);
+      expect(signalOf(optionFor(surface, "docs-site"))).toEqual([
+        "img",
+        "working",
+        "2 threads working",
+        "2 threads working",
+      ]);
+      expect(surface.querySelectorAll(".cv-project-switch__signal")).toHaveLength(1);
+    });
+
+    it("takes its size and tone colours from the collapsed project group dot", () => {
+      const rules = parseAllStyleSheets().rules.filter((rule) =>
+        /\.cv-project-switch__signal(?![\w-])/.test(rule.selector),
+      );
+
+      expect(rules.map((rule) => rule.selector.replace(/\s+/g, " "))).toEqual([
+        ".cv-sb-project__signal, .cv-project-switch__signal",
+        '.cv-sb-project__signal[data-tone="attention"], .cv-project-switch__signal[data-tone="attention"]',
+        '.cv-sb-project__signal[data-tone="working"], .cv-project-switch__signal[data-tone="working"]',
+        '.cv-sb-project__signal[data-tone="unread"], .cv-project-switch__signal[data-tone="unread"]',
+      ]);
     });
   });
 

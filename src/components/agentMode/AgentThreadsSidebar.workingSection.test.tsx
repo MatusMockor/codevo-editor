@@ -297,6 +297,24 @@ describe("AgentThreadsSidebar Working section", () => {
     return host.querySelector<HTMLButtonElement>('.cv-sb-shelf[data-shelf="working"]');
   }
 
+  function switcherSignals(): ReadonlyArray<ReadonlyArray<string | null>> {
+    const trigger = host.querySelector<HTMLButtonElement>(".cv-sb-switch");
+    expect(trigger).not.toBeNull();
+    act(() => trigger?.click());
+    const options = document.querySelectorAll<HTMLElement>(
+      '[role="dialog"][aria-label="Switch project"] [role="option"]',
+    );
+    const signals = [...options].flatMap((option) =>
+      [...option.querySelectorAll<HTMLElement>(".cv-project-switch__signal")].map((dot) => [
+        option.querySelector(".cv-project-switch__label")?.textContent ?? null,
+        dot.getAttribute("data-tone"),
+        dot.getAttribute("aria-label"),
+      ]),
+    );
+    act(() => trigger?.click());
+    return signals;
+  }
+
   function toggleWorking(): void {
     const shelf = workingShelf();
     expect(shelf).not.toBeNull();
@@ -540,6 +558,39 @@ describe("AgentThreadsSidebar Working section", () => {
     const signal = host.querySelector(`[data-project-root-key="${APP}"] .cv-sb-project__signal`);
     expect(signal?.getAttribute("aria-label")).toBe("1 thread working");
     expect(signal?.getAttribute("data-tone")).toBe("working");
+  });
+
+  it("signals every project in the switcher whatever the rail focus and the Working preference", () => {
+    const overrides: SidebarOverrides = {
+      groups: [
+        group(APP, "app", [busy("app-pin", NOW - 3_000, { pinned: true }), idle("app-idle")]),
+        group(API, "api", [
+          busy("api-asks", NOW - 2_000, {}, API),
+          busy("api-busy", NOW - 1_000, {}, API),
+        ]),
+      ],
+      projectFocus: "active",
+      pendingInteractions: new Map([["api-asks", "approval"]]),
+    };
+    const expected = [
+      ["app", "working", "1 thread working"],
+      ["api", "attention", "1 thread waiting for you"],
+    ];
+
+    render(overrides);
+    expect(host.querySelector(`[data-project-root-key="${API}"]`)).toBeNull();
+    expect(workingShelf()).toBeNull();
+    expect(switcherSignals()).toEqual(expected);
+
+    renderToday(overrides);
+    expect(host.querySelector(`[data-project-root-key="${API}"]`)).toBeNull();
+    expect(switcherSignals()).toEqual(expected);
+
+    renderToday({ ...overrides, pendingInteractions: NO_PENDING });
+    expect(switcherSignals()).toEqual([
+      ["app", "working", "1 thread working"],
+      ["api", "working", "2 threads working"],
+    ]);
   });
 
   it("gathers working threads from every project into one shelf", () => {

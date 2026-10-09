@@ -16,6 +16,7 @@ import {
   type AgentProjectMenuTarget,
 } from "./agentProjectMenuPresentation";
 import { agentProjectServerBadgeLabel } from "./agentProjectServerPresence";
+import type { AgentRailProjectSignal } from "./agentRailProjectSignal";
 import { useAgentRowServerNames, type AgentRowServerNames } from "./agentRowServerNamesContext";
 import type { AgentRailScopeEntry } from "./agentSidebarPresentation";
 
@@ -34,6 +35,7 @@ export interface AgentProjectSwitcherProps {
   readonly entries: ReadonlyArray<AgentRailScopeEntry>;
   readonly activeEntry: AgentRailScopeEntry | null;
   readonly focus: AgentRailProjectFocus;
+  readonly signals: ReadonlyMap<string, AgentRailProjectSignal>;
   onSelectAll(): void;
   onSelectProject(projectRootKey: string): void;
   onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
@@ -46,6 +48,7 @@ export function AgentProjectSwitcher({
   onProjectCommand,
   onSelectAll,
   onSelectProject,
+  signals,
 }: AgentProjectSwitcherProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -175,6 +178,7 @@ export function AgentProjectSwitcher({
                 option={option}
                 selected={option.key === selectedKey}
                 serverNames={serverNames}
+                signal={switcherOptionSignal(option, signals)}
               />
             ))}
           </ul>
@@ -222,6 +226,7 @@ interface SwitcherOptionRowProps {
   readonly current: boolean;
   readonly selected: boolean;
   readonly serverNames: AgentRowServerNames;
+  readonly signal: AgentRailProjectSignal | null;
   onChoose(): void;
   onHighlight(): void;
 }
@@ -235,6 +240,7 @@ function SwitcherOptionRow({
   option,
   selected,
   serverNames,
+  signal,
 }: SwitcherOptionRowProps) {
   const entry = option.entry;
   const state = entry === null ? null : agentRailProjectState(entry);
@@ -271,6 +277,15 @@ function SwitcherOptionRow({
       )}
       {current && <span className="cv-project-switch__state">Current</span>}
       {!current && state !== null && <span className="cv-project-switch__state">{state}</span>}
+      {signal !== null && (
+        <span
+          aria-label={signal.label}
+          className="cv-project-switch__signal"
+          data-tone={signal.tone}
+          role="img"
+          title={signal.label}
+        />
+      )}
       <Check aria-hidden="true" className="cv-project-switch__check" size={14} />
     </li>
   );
@@ -330,6 +345,14 @@ function switcherOptions(
     .map((entry) => ({ key: entry.projectRootKey, label: entry.label, entry }));
   if (needle !== "") return projects;
   return [{ key: ALL_PROJECTS_KEY, label: ALL_PROJECTS_LABEL, entry: null }, ...projects];
+}
+
+function switcherOptionSignal(
+  option: SwitcherOption,
+  signals: ReadonlyMap<string, AgentRailProjectSignal>,
+): AgentRailProjectSignal | null {
+  if (option.entry === null) return null;
+  return signals.get(option.entry.projectRootKey) ?? null;
 }
 
 function switcherEntryMatches(entry: AgentRailScopeEntry, needle: string): boolean {

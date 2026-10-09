@@ -11,6 +11,7 @@ import type {
   AgentProjectMenuTarget,
 } from "./agentProjectMenuPresentation";
 import { AgentProjectSwitcher } from "./AgentProjectSwitcher";
+import type { AgentRailProjectSignal } from "./agentRailProjectSignal";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
 import { defaultAgentPanelLayoutShortcuts } from "./agentThreadHeaderPresentation";
 import {
@@ -33,6 +34,7 @@ export interface AgentRailHeaderProps {
   readonly searchActiveDescendant: string | null;
   readonly newThreadTitle?: string;
   readonly projectFocus: AgentRailProjectFocus;
+  readonly projectSignals: ReadonlyMap<string, AgentRailProjectSignal>;
   onShowAllProjects(): void;
   onSwitchProject(projectRootKey: string): void;
   onProjectCommand(target: AgentProjectMenuTarget, command: AgentProjectMenuCommand): void;
@@ -53,6 +55,7 @@ export function AgentRailHeader({
   onSwitchProject,
   overflowRootPaths,
   projectFocus,
+  projectSignals,
   scope,
   scopeEntries,
   search,
@@ -129,6 +132,7 @@ export function AgentRailHeader({
             onProjectCommand={onProjectCommand}
             onSelectAll={onShowAllProjects}
             onSelectProject={onSwitchProject}
+            signals={projectSignals}
           />
           <IconButton
             disabled={!addProjectAvailable}

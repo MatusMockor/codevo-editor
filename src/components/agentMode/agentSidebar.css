@@ -888,7 +888,8 @@
   white-space: nowrap;
 }
 
-.cv-sb-project__signal {
+.cv-sb-project__signal,
+.cv-project-switch__signal {
   flex: none;
   width: 7px;
   height: 7px;
@@ -897,15 +898,18 @@
   background: var(--cv-fg-subtle);
 }
 
-.cv-sb-project__signal[data-tone="attention"] {
+.cv-sb-project__signal[data-tone="attention"],
+.cv-project-switch__signal[data-tone="attention"] {
   background: var(--cv-warn);
 }
 
-.cv-sb-project__signal[data-tone="working"] {
+.cv-sb-project__signal[data-tone="working"],
+.cv-project-switch__signal[data-tone="working"] {
   background: var(--cv-work);
 }
 
-.cv-sb-project__signal[data-tone="unread"] {
+.cv-sb-project__signal[data-tone="unread"],
+.cv-project-switch__signal[data-tone="unread"] {
   background: var(--cv-ok);
 }
 

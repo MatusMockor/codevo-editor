@@ -54,6 +54,7 @@ import {
   agentRailVisibleThreadOrder,
 } from "./agentRailProjectLayout";
 import type { AgentRailProjectGroupActions } from "./AgentRailProjectGroup";
+import { agentRailProjectSignals } from "./agentRailProjectSignal";
 import type { AgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
 import {
   agentRailStatusLookup,
@@ -269,6 +270,16 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   const sections = useMemo(
     () => agentRailWorkingSections(organized.sections, workingStatusOf, workingRail.workingSection),
     [organized.sections, workingRail.workingSection, workingStatusOf],
+  );
+  const projectSignals = useMemo(
+    () =>
+      agentRailProjectSignals(
+        views,
+        scopeEntries,
+        pendingInteractions ?? NO_PENDING_INTERACTIONS,
+        organized.now,
+      ),
+    [organized.now, pendingInteractions, scopeEntries, views],
   );
   const disclosureState = projectDisclosure.state;
   const projects = useMemo(
@@ -515,6 +526,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
         onSwitchProject={focusProject}
         overflowRootPaths={overflowRootPaths}
         projectFocus={projectFocus}
+        projectSignals={projectSignals}
         scope={scope}
         scopeEntries={scopeEntries}
         onSearchKeyDown={handleSearchKeyDown}
