@@ -106,6 +106,15 @@ function parseModel(value: unknown, path: string): CodexCatalogModel {
   });
 }
 
+export function supersedesCodexModelCatalog(
+  next: CodexModelCatalog,
+  previous: CodexModelCatalog,
+): boolean {
+  if (next.revision !== previous.revision) return next.revision > previous.revision;
+  if (next.source !== "bundled") return false;
+  return JSON.stringify(next.models) !== JSON.stringify(previous.models);
+}
+
 export function resolveCodexCatalogModel(
   catalog: CodexModelCatalog,
   model: CodexModelChoice,

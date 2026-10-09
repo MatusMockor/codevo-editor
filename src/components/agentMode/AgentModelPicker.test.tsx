@@ -14,12 +14,16 @@ import {
   BUNDLED_CLAUDE_MODEL_MANIFEST,
   parseClaudeModelManifest,
 } from "../../domain/claudeModelCatalog";
-import { BUNDLED_CODEX_MODEL_CATALOG } from "../../domain/codexModelCatalog";
+import {
+  BUNDLED_CODEX_MODEL_CATALOG,
+  parseCodexModelCatalog,
+} from "../../domain/codexModelCatalog";
 import { EMPTY_MODEL_FIRST_SEEN_LEDGER } from "../../domain/modelNewness";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { agentModelRows, type AgentModelChoice } from "./agentLaunchPresentation";
 import { agentPlatformModifier } from "./agentSubmitShortcut";
 import { ClaudeModelCatalogContext } from "./useAgentClaudeModelCatalog";
+import { CodexModelCatalogContext } from "./useAgentCodexModelCatalog";
 import { ModelNewnessContext } from "./useAgentModelNewness";
 
 const CLAUDE: AgentLaunchOptions = {
@@ -177,8 +181,8 @@ describe("AgentModelPicker", () => {
     expect(optionValues()).toEqual([
       "gpt-6.1-sol",
       "gpt-6-astra",
-      "gpt-6-sol",
       "gpt-6-luna",
+      "gpt-6-sol",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -401,6 +405,127 @@ describe("AgentModelPicker", () => {
     },
   );
 
+  it("opens on a selected current Codex model that follows a legacy one in the catalog", () => {
+    const models = BUNDLED_CODEX_MODEL_CATALOG.models;
+    const interleaved = parseCodexModelCatalog({
+      ...BUNDLED_CODEX_MODEL_CATALOG,
+      models: [
+        ...models.filter((model) => model.isDefault),
+        ...models.filter((model) => model.status === "legacy"),
+        ...models.filter((model) => !model.isDefault && model.status !== "legacy"),
+      ],
+    });
+    const onSelect = vi.fn();
+    act(() =>
+      root.render(
+        <CodexModelCatalogContext.Provider value={interleaved}>
+          <Harness
+            disabled={false}
+            launch={{ provider: "codex", model: "gpt-6-astra", mode: "default" }}
+            onSelect={onSelect}
+            providerEnabled={null}
+            providerManagement={null}
+            providerSwitchable={false}
+          />
+        </CodexModelCatalogContext.Provider>,
+      ),
+    );
+    open();
+
+    expect(optionValues()).toEqual(["gpt-6.1-sol", "gpt-6-astra", "gpt-6-luna"]);
+    expect(activeOption()).toBe("gpt-6-astra");
+    expect(search().getAttribute("aria-activedescendant")).toBe(`${ID}-list-1`);
+
+    key("Enter");
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("opens on a selected current Claude model that follows legacy ones in the catalog", () => {
+    const entries = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode;
+    const interleaved = parseClaudeModelManifest({
+      version: 1,
+      updatedAt: BUNDLED_CLAUDE_MODEL_MANIFEST.updatedAt,
+      claudeCode: [
+        ...entries.filter((entry) => entry.status === "legacy"),
+        ...entries.filter((entry) => entry.status !== "legacy"),
+      ],
+    });
+    const onSelect = vi.fn();
+    act(() =>
+      root.render(
+        <ClaudeModelCatalogContext.Provider value={interleaved}>
+          <Harness
+            disabled={false}
+            launch={{ ...CLAUDE, model: "claude-sonnet-5-5" }}
+            onSelect={onSelect}
+            providerEnabled={null}
+            providerManagement={null}
+            providerSwitchable={false}
+          />
+        </ClaudeModelCatalogContext.Provider>,
+      ),
+    );
+    open();
+
+    expect(optionValues()).toHaveLength(5);
+    expect(activeOption()).toBe("claude-sonnet-5-5");
+
+    key("Enter");
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("opens with the legacy section expanded on a selected legacy model that is not last", () => {
+    const onSelect = vi.fn();
+    render({ provider: "codex", model: "gpt-6-sol", mode: "default" }, onSelect);
+    open();
+
+    expect(legacyToggle().getAttribute("aria-expanded")).toBe("true");
+    expect(optionValues()).toEqual([
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "gpt-6-sol",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]);
+    expect(activeOption()).toBe("gpt-6-sol");
+    expect(selectedOption()?.dataset.value).toBe("gpt-6-sol");
+
+    key("ArrowDown");
+    key("Enter");
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("gpt-5.6-sol");
+  });
+
+  it("reopens on the selected model after another provider's rows were displayed", () => {
+    const onSelect = vi.fn();
+    render(
+      { provider: "codex", model: "gpt-6-astra", mode: "default" },
+      onSelect,
+      false,
+      null,
+      null,
+      true,
+    );
+    open();
+    act(() => railItem("claudeCode").click());
+    expect(optionValues()).toContain("claude-sonnet-5");
+    key("Escape");
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+
+    open();
+
+    expect(activeOption()).toBe("gpt-6-astra");
+    key("Enter");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it("reveals the seven legacy Claude models without presenting a fake default row", () => {
     render(CLAUDE);
     open();
@@ -549,6 +674,14 @@ describe("AgentModelPicker", () => {
     );
     expect(element).not.toBeNull();
     return element ?? document.createElement("div");
+  }
+
+  function activeOption(): string | null {
+    return (
+      host
+        .querySelector<HTMLElement>(".agent-model-picker__row--active [role='option']")
+        ?.getAttribute("data-value") ?? null
+    );
   }
 
   function selectedOption(): HTMLElement | null {

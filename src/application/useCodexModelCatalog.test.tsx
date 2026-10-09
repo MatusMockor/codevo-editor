@@ -101,6 +101,71 @@ describe("useCodexModelCatalog", () => {
     hook.unmount();
   });
 
+  it("adopts a restatused bundled fallback and keeps the bundle object when nothing changed", async () => {
+    vi.useFakeTimers();
+    const restatused = parseCodexModelCatalog({
+      ...BUNDLED_CODEX_MODEL_CATALOG,
+      models: BUNDLED_CODEX_MODEL_CATALOG.models.map((model) =>
+        model.id === "gpt-6-luna" ? { ...model, status: "legacy" } : model,
+      ),
+    });
+    const sameBundle = parseCodexModelCatalog(
+      JSON.parse(JSON.stringify(BUNDLED_CODEX_MODEL_CATALOG)),
+    );
+    let publish!: (catalog: CodexModelCatalog) => void;
+    const hook = renderCatalog({
+      read: vi.fn().mockResolvedValueOnce(sameBundle).mockResolvedValue(restatused),
+      subscribe: async (listener) => {
+        publish = listener;
+        return () => {};
+      },
+    });
+    await act(async () => {});
+    expect(hook.result.current).toBe(BUNDLED_CODEX_MODEL_CATALOG);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(hook.result.current).toBe(restatused);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(hook.result.current).toBe(restatused);
+    act(() => publish(live));
+    expect(hook.result.current).toBe(live);
+    act(() => publish(restatused));
+    expect(hook.result.current).toBe(live);
+    hook.unmount();
+  });
+
+  it("drops a bundled read overtaken by an event and accepts the next undisturbed read", async () => {
+    vi.useFakeTimers();
+    const restatus = (id: string): CodexModelCatalog =>
+      parseCodexModelCatalog({
+        ...BUNDLED_CODEX_MODEL_CATALOG,
+        models: BUNDLED_CODEX_MODEL_CATALOG.models.map((model) =>
+          model.id === id ? { ...model, status: "legacy" } : model,
+        ),
+      });
+    const stale = restatus("gpt-6-luna");
+    const fresh = restatus("gpt-6-astra");
+    const first = pending();
+    let publish!: (catalog: CodexModelCatalog) => void;
+    const read = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(stale);
+    const hook = renderCatalog({
+      read,
+      subscribe: async (listener) => {
+        publish = listener;
+        return () => {};
+      },
+    });
+    await act(async () => {});
+    expect(read).toHaveBeenCalledTimes(1);
+    act(() => publish(fresh));
+    expect(hook.result.current).toBe(fresh);
+    await act(async () => first.resolve(stale));
+    expect(hook.result.current).toBe(fresh);
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(hook.result.current).toBe(stale);
+    hook.unmount();
+  });
+
   it("drops results and events from a replaced gateway", async () => {
     let publish!: (catalog: CodexModelCatalog) => void;
     const stop = vi.fn();

@@ -1,7 +1,7 @@
 use super::*;
 use crate::claude_model_manifest_domain::CatalogSource;
 // Snapshot of https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json
-// Retrieved 2026-10-08. Deliberately local: compatibility tests never require a network.
+// Retrieved 2026-10-09. Deliberately local: compatibility tests never require a network.
 const UPSTREAM: &[u8] = include_bytes!("../tests/fixtures/t3-model-manifest.json");
 fn synthetic() -> Value {
     json!({"version":1,"updatedAt":"2026-09-22T19:42:55Z", "providers": {"claudeAgent": {
@@ -32,7 +32,7 @@ fn profile(value: &mut Value) -> &mut Value {
 #[test]
 fn translates_actual_upstream_with_provider_specific_effort_maps() {
     let catalog = parse_t3_manifest(UPSTREAM).unwrap();
-    assert_eq!(catalog.updated_at, "2026-10-07T19:00:00Z");
+    assert_eq!(catalog.updated_at, "2026-10-08T21:30:00Z");
     assert_eq!(catalog.claude_code.len(), 13);
     assert_eq!(
         catalog.resolve_model("default").unwrap().choice,
@@ -76,6 +76,33 @@ fn unrelated_providers_and_current_model_overlays_do_not_change_claude() {
     input["providers"]["other"] = json!({"newCapability": [true, 42]});
     input["currentModels"] = json!({"codex": ["arbitrary"], "claudeAgent": ["unrelated"]});
     assert!(parse(&input).is_ok());
+}
+#[test]
+fn missing_or_broken_codex_sections_leave_the_claude_translation_identical() {
+    let translate = |value: &Value| serde_json::to_value(parse(value).unwrap()).unwrap();
+    let upstream: Value = serde_json::from_slice(UPSTREAM).unwrap();
+    assert!(upstream["providers"]["codex"]["models"].is_array());
+    let expected = translate(&upstream);
+    let mut missing = upstream.clone();
+    missing["providers"]
+        .as_object_mut()
+        .unwrap()
+        .remove("codex");
+    assert_eq!(translate(&missing), expected);
+    let oversized: Vec<Value> = (0..2000)
+        .map(|index| json!({"slug": format!("gpt-{index}"), "status": "legacy"}))
+        .collect();
+    for section in [
+        json!("gpt-6-sol"),
+        json!({"models": {}}),
+        json!({"models": [{"slug": "gpt-6-sol", "status": "deprecated"}]}),
+        json!({"models": [{"slug": "a".repeat(4096), "status": "legacy"}]}),
+        json!({"models": oversized}),
+    ] {
+        let mut input = upstream.clone();
+        input["providers"]["codex"] = section;
+        assert_eq!(translate(&input), expected);
+    }
 }
 #[test]
 fn rejects_unknown_capabilities_and_execution_mappings() {

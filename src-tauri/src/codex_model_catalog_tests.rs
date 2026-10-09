@@ -1,5 +1,7 @@
 use super::*;
-use crate::codex_model_catalog_domain::CodexCatalogSource as WireSource;
+use crate::codex_model_catalog_domain::{
+    validate_catalog, CodexCatalogSource as WireSource, CodexModelStatus,
+};
 use serde_json::{json, Value};
 
 const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/codex-app-server-model-list.jsonl");
@@ -61,6 +63,24 @@ fn live_ids(service: &CatalogService) -> Vec<String> {
         .collect()
 }
 
+fn curated(ids: &[&str]) -> Arc<CuratedCodexStatuses> {
+    let ids: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+    Arc::new(CuratedCodexStatuses::try_from(ids).unwrap())
+}
+
+fn published(service: &CatalogService) -> CodexModelCatalog {
+    service.snapshot().unwrap().published().clone()
+}
+
+fn legacy_ids(catalog: &CodexModelCatalog) -> Vec<&str> {
+    catalog
+        .models
+        .iter()
+        .filter(|model| model.status == CodexModelStatus::Legacy)
+        .map(|model| model.id.as_str())
+        .collect()
+}
+
 #[test]
 fn bundle_is_published_until_a_live_catalog_is_installed() {
     let service = CatalogService::new().unwrap();
@@ -94,6 +114,84 @@ fn identical_listing_advances_generation_without_a_new_revision() {
     assert_eq!(service.snapshot().unwrap().published().revision, 1);
     assert!(!service.install(1, listing_without("gpt-6-luna")).unwrap());
     assert!(live_ids(&service).contains(&"gpt-6-luna".to_string()));
+}
+
+#[test]
+fn curated_statuses_before_or_after_the_listing_publish_the_same_models() {
+    let before = CatalogService::new().unwrap();
+    assert!(before
+        .install_curated(curated(&["gpt-6-luna", "gpt-not-listed"]))
+        .unwrap());
+    assert!(before.install(1, listing()).unwrap());
+    let after = CatalogService::new().unwrap();
+    assert!(after.install(1, listing()).unwrap());
+    assert_eq!(legacy_ids(&published(&after)), ["gpt-5.5"]);
+    assert!(after
+        .install_curated(curated(&["gpt-6-luna", "gpt-not-listed"]))
+        .unwrap());
+    let (before, after) = (published(&before), published(&after));
+    assert_eq!(before.models, after.models);
+    assert_eq!((before.revision, after.revision), (1, 2));
+    assert_eq!(legacy_ids(&after), ["gpt-6-luna", "gpt-5.5"]);
+    let upgrades: Vec<_> = after
+        .models
+        .iter()
+        .filter_map(|model| model.upgrade_to.as_deref())
+        .collect();
+    assert_eq!(upgrades, ["gpt-5.6-sol"]);
+}
+
+#[test]
+fn curated_change_republishes_while_identical_or_irrelevant_statuses_do_not() {
+    let service = CatalogService::new().unwrap();
+    assert!(service.install(1, listing()).unwrap());
+    assert!(service.install_curated(curated(&["gpt-6-luna"])).unwrap());
+    assert_eq!(published(&service).revision, 2);
+    assert!(!service.install_curated(curated(&["gpt-6-luna"])).unwrap());
+    assert!(!service
+        .install_curated(curated(&["gpt-6-luna", "gpt-not-listed", "gpt-6.1-sol"]))
+        .unwrap());
+    assert!(!service.install(2, listing()).unwrap());
+    let unchanged = published(&service);
+    assert_eq!(unchanged.revision, 2);
+    assert_eq!(legacy_ids(&unchanged), ["gpt-6-luna", "gpt-5.5"]);
+    assert_eq!(
+        service
+            .snapshot()
+            .unwrap()
+            .resolve("default")
+            .unwrap()
+            .status,
+        CodexModelStatus::Current
+    );
+    assert!(service.install(2, listing_without("gpt-5.6-sol")).unwrap());
+    let relisted = published(&service);
+    assert_eq!(relisted.revision, 3);
+    assert_eq!(legacy_ids(&relisted), ["gpt-6-luna", "gpt-5.5"]);
+    assert!(service.install_curated(curated(&[])).unwrap());
+    let cleared = published(&service);
+    assert_eq!(cleared.revision, 4);
+    assert_eq!(legacy_ids(&cleared), ["gpt-5.5"]);
+}
+
+#[test]
+fn bundled_fallback_gets_the_curated_overlay_at_revision_zero() {
+    let service = CatalogService::new().unwrap();
+    let pristine = published(&service);
+    assert!(!legacy_ids(&pristine).contains(&"gpt-6-luna"));
+    assert!(service.install_curated(curated(&["gpt-6-luna"])).unwrap());
+    let overlaid = published(&service);
+    assert_eq!(overlaid.source, WireSource::Bundled);
+    assert_eq!(overlaid.revision, 0);
+    assert!(legacy_ids(&overlaid).contains(&"gpt-6-luna"));
+    assert!(validate_catalog(&overlaid).is_ok());
+    assert!(!service.install_curated(curated(&["gpt-6-luna"])).unwrap());
+    assert!(!service
+        .install_curated(curated(&["gpt-6-luna", "gpt-6.1-sol"]))
+        .unwrap());
+    assert_eq!(published(&service), overlaid);
+    assert!(service.install_curated(curated(&[])).unwrap());
+    assert_eq!(published(&service), pristine);
 }
 
 #[test]

@@ -750,7 +750,13 @@ describe("agent model row badges", () => {
     const codex = agentModelRows("codex", null, null, undefined, undefined, newness);
     expect(codex.filter((row) => row.isNew).map((row) => row.value)).toEqual(["gpt-6-sol"]);
     expect(codex.filter((row) => row.isDefault).map((row) => row.value)).toEqual(["gpt-6.1-sol"]);
-    expect(codex.filter((row) => row.isLegacy).map((row) => row.value)).toEqual(["gpt-5.5"]);
+    expect(codex.filter((row) => row.isLegacy).map((row) => row.value)).toEqual([
+      "gpt-6-sol",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]);
     const legacy = claude.filter((row) => row.isLegacy === true);
     expect(agentLegacyModelsSummary(legacy)).toMatch(/^Fable 5, Opus 4\.8 and \d+ more$/u);
     expect(agentLegacyModelsSummary(legacy.slice(0, 2))).toBe("Fable 5, Opus 4.8");

@@ -15,6 +15,7 @@ pub mod agent_task_supervisor;
 mod agent_trust_revocation;
 mod claude_model_manifest;
 mod claude_model_manifest_domain;
+mod codex_curated_model_status;
 mod codex_model_catalog;
 mod codex_model_catalog_domain;
 

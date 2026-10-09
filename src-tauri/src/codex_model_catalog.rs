@@ -1,5 +1,6 @@
 use crate::agent_task_spawner::agent_provider::runtime::AgentProviderRuntimeRegistry;
 use crate::agent_task_spawner::AgentCliInvocation;
+use crate::codex_curated_model_status::CuratedCodexStatuses;
 use crate::codex_model_catalog_domain::{
     parse_catalog, parse_model_list, CodexCatalogSnapshot, CodexModelCatalog, CodexModelListing,
     LiveCodexCatalog,
@@ -49,16 +50,49 @@ impl CodexCatalogSource for RegistryCatalogSource {
 
 struct InstalledLive {
     catalog: Arc<LiveCodexCatalog>,
+    listing: CodexModelListing,
     generation: u64,
 }
 
 struct CatalogState {
     bundled: Arc<CodexModelCatalog>,
     live: Option<InstalledLive>,
+    curated: Arc<CuratedCodexStatuses>,
     revision: u64,
     schedule: Option<(u64, Instant)>,
     in_flight: bool,
     epoch: u64,
+}
+
+impl CatalogState {
+    fn restatus_live(&mut self, curated: &CuratedCodexStatuses) -> Result<bool, String> {
+        let Some(live) = self.live.as_mut() else {
+            return Ok(false);
+        };
+        let listing = curated_listing(&live.listing, curated);
+        if live.catalog.lists_same_models(&listing) {
+            return Ok(false);
+        }
+        let revision = self.revision.checked_add(1).ok_or(UNAVAILABLE)?;
+        live.catalog = Arc::new(LiveCodexCatalog::from_listing(listing, revision)?);
+        self.revision = revision;
+        Ok(true)
+    }
+}
+
+fn curated_listing(
+    listing: &CodexModelListing,
+    curated: &CuratedCodexStatuses,
+) -> CodexModelListing {
+    let mut listing = listing.clone();
+    curated.apply(&mut listing.models);
+    listing
+}
+
+fn bundled_catalog(curated: &CuratedCodexStatuses) -> Result<CodexModelCatalog, String> {
+    let mut catalog = parse_catalog(BUNDLE)?;
+    curated.apply(&mut catalog.models);
+    Ok(catalog)
 }
 
 struct CatalogService {
@@ -71,6 +105,7 @@ impl CatalogService {
             state: Mutex::new(CatalogState {
                 bundled: Arc::new(parse_catalog(BUNDLE)?),
                 live: None,
+                curated: Arc::default(),
                 revision: 0,
                 schedule: None,
                 in_flight: false,
@@ -97,19 +132,34 @@ impl CatalogService {
             if generation < live.generation {
                 return Ok(false);
             }
-            if live.catalog.lists_same_models(&listing) {
+            if live.listing == listing {
                 live.generation = generation;
                 return Ok(false);
             }
         }
         let revision = state.revision.checked_add(1).ok_or(UNAVAILABLE)?;
-        let catalog = LiveCodexCatalog::from_listing(listing, revision)?;
+        let catalog =
+            LiveCodexCatalog::from_listing(curated_listing(&listing, &state.curated), revision)?;
         state.revision = revision;
         state.live = Some(InstalledLive {
             catalog: Arc::new(catalog),
+            listing,
             generation,
         });
         Ok(true)
+    }
+
+    fn install_curated(&self, curated: Arc<CuratedCodexStatuses>) -> Result<bool, String> {
+        let mut state = self.state()?;
+        if state.curated == curated {
+            return Ok(false);
+        }
+        let bundled = bundled_catalog(&curated)?;
+        let live_changed = state.restatus_live(&curated)?;
+        let changed = live_changed || (state.live.is_none() && *state.bundled != bundled);
+        state.bundled = Arc::new(bundled);
+        state.curated = curated;
+        Ok(changed)
     }
 
     fn invalidate(&self) {
@@ -206,6 +256,15 @@ fn refresh(app: tauri::AppHandle, source: Arc<dyn CodexCatalogSource>) {
             publish(&app, &service);
         }
     });
+}
+
+pub fn install_curated_statuses(app: &tauri::AppHandle, curated: Arc<CuratedCodexStatuses>) {
+    let Ok(service) = service() else {
+        return;
+    };
+    if service.install_curated(curated) == Ok(true) {
+        publish(app, &service);
+    }
 }
 
 pub fn request_refresh(app: &tauri::AppHandle, registry: &Arc<AgentProviderRuntimeRegistry>) {

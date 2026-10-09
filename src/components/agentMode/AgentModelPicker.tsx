@@ -26,12 +26,16 @@ import {
   agentModelRows,
   agentModelRowIsFavorite,
   boundAgentModelQuery,
-  filterAgentModelRows,
   MAX_AGENT_MODEL_QUERY_LENGTH,
   type AgentModelChoice,
   type AgentModelFilter,
   type AgentModelRow,
 } from "./agentLaunchPresentation";
+import {
+  agentModelPickerOpening,
+  agentModelPickerSections,
+  agentModelPickerVisibleRows,
+} from "./agentModelPickerSections";
 import { AGENT_POPOVER_METRICS, useAgentPopover, type AgentPopoverMetrics } from "./agentPopover";
 import { trapPopoverTab } from "./agentPopoverFocus";
 import { AgentProviderGlyph } from "./AgentProviderGlyph";
@@ -105,57 +109,34 @@ export function AgentModelPicker({
     () => PROVIDERS.filter((provider) => providerIsEnabled(providerEnabled, provider)),
     [providerEnabled],
   );
+  const providerRows = useCallback(
+    (provider: AgentCliKind): ReadonlyArray<AgentModelRow> => {
+      if (!providerIsEnabled(providerEnabled, provider)) return [];
+      return agentModelRows(
+        provider,
+        configuredProviderModel(providerManagement, provider),
+        configuredProviderVersion(providerManagement, provider),
+        catalog,
+        codexCatalog,
+        newness,
+      );
+    },
+    [catalog, codexCatalog, newness, providerEnabled, providerManagement],
+  );
   const rows = useMemo(() => {
-    if (filter === "favorites") {
-      return providers
-        .filter((provider) => providerSwitchable || provider === launch.provider)
-        .flatMap((provider) =>
-          agentModelRows(
-            provider,
-            configuredProviderModel(providerManagement, provider),
-            configuredProviderVersion(providerManagement, provider),
-            catalog,
-            codexCatalog,
-            newness,
-          ),
-        );
-    }
-    return providerIsEnabled(providerEnabled, displayProvider)
-      ? agentModelRows(
-          displayProvider,
-          configuredProviderModel(providerManagement, displayProvider),
-          configuredProviderVersion(providerManagement, displayProvider),
-          catalog,
-          codexCatalog,
-          newness,
-        )
-      : [];
-  }, [
-    catalog,
-    codexCatalog,
-    displayProvider,
-    filter,
-    launch.provider,
-    newness,
-    providerEnabled,
-    providerManagement,
-    providers,
-    providerSwitchable,
-  ]);
-  const filteredRows = useMemo(
-    () => filterAgentModelRows(rows, filter, favorites.keys, query),
+    if (filter !== "favorites") return providerRows(displayProvider);
+    return providers
+      .filter((provider) => providerSwitchable || provider === launch.provider)
+      .flatMap((provider) => providerRows(provider));
+  }, [displayProvider, filter, launch.provider, providerRows, providers, providerSwitchable]);
+  const sections = useMemo(
+    () => agentModelPickerSections(rows, filter, favorites.keys, query),
     [favorites.keys, filter, query, rows],
   );
-  const legacySectionVisible =
-    filter === "all" && query.trim() === "" && filteredRows.some((row) => row.isLegacy === true);
-  const currentRows = legacySectionVisible
-    ? filteredRows.filter((row) => row.isLegacy !== true)
-    : filteredRows;
-  const legacyRows = legacySectionVisible
-    ? filteredRows.filter((row) => row.isLegacy === true)
-    : [];
-  const visible =
-    legacySectionVisible && legacyExpanded ? [...currentRows, ...legacyRows] : currentRows;
+  const currentRows = sections.current;
+  const legacyRows = sections.legacy;
+  const legacySectionVisible = legacyRows.length > 0;
+  const visible = agentModelPickerVisibleRows(sections, legacyExpanded);
   const active = clampIndex(activeIndex, visible.length);
   const activeRow = visible[active] ?? null;
   const modifier = agentPlatformModifier().glyph;
@@ -164,18 +145,14 @@ export function AgentModelPicker({
 
   const openPicker = useCallback(() => {
     if (pickerDisabled) return;
+    const opening = agentModelPickerOpening(providerRows(launch.provider), selectedModel);
     setQuery("");
     setFilter("all");
     setDisplayProvider(launch.provider);
-    setLegacyExpanded(rows.some((row) => row.value === selectedModel && row.isLegacy === true));
-    setActiveIndex(
-      Math.max(
-        0,
-        rows.findIndex((row) => row.value === selectedModel),
-      ),
-    );
+    setLegacyExpanded(opening.legacyExpanded);
+    setActiveIndex(opening.activeIndex);
     show();
-  }, [launch.provider, pickerDisabled, rows, selectedModel, show]);
+  }, [launch.provider, pickerDisabled, providerRows, selectedModel, show]);
 
   useAgentControlOpenRequest(openRequest, () => openPicker(), onOpenRequestHandled);
 

@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
-import { BUNDLED_CODEX_MODEL_CATALOG, type CodexModelCatalog } from "../domain/codexModelCatalog";
+import {
+  BUNDLED_CODEX_MODEL_CATALOG,
+  supersedesCodexModelCatalog,
+  type CodexModelCatalog,
+} from "../domain/codexModelCatalog";
 import type { CodexModelCatalogGateway } from "./codexModelCatalogGateway";
 
 // The backend owns probe TTL, retry backoff, provider-generation ownership and validation.
@@ -11,14 +15,21 @@ export function useCodexModelCatalog(gateway: CodexModelCatalogGateway): CodexMo
     let owned = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let unsubscribe: (() => void) | undefined;
+    let deliveredEvents = 0;
     setCatalog(BUNDLED_CODEX_MODEL_CATALOG);
     const publish = (next: CodexModelCatalog): void => {
       if (!owned) return;
-      setCatalog((previous) => (next.revision > previous.revision ? next : previous));
+      setCatalog((previous) => (supersedesCodexModelCatalog(next, previous) ? next : previous));
+    };
+    const publishEvent = (next: CodexModelCatalog): void => {
+      deliveredEvents += 1;
+      publish(next);
     };
     const refresh = async (): Promise<void> => {
+      const eventsBeforeRead = deliveredEvents;
       try {
-        publish(await gateway.read());
+        const next = await gateway.read();
+        if (deliveredEvents === eventsBeforeRead) publish(next);
       } catch {
         // A failed refresh must preserve the last usable catalog.
       }
@@ -26,7 +37,7 @@ export function useCodexModelCatalog(gateway: CodexModelCatalogGateway): CodexMo
     };
     const start = async (): Promise<void> => {
       try {
-        const stop = await gateway.subscribe?.(publish);
+        const stop = await gateway.subscribe?.(publishEvent);
         if (!owned) {
           stop?.();
           return;

@@ -11,6 +11,7 @@ import {
   codexModelReleaseDate,
   parseCodexModelCatalog,
   resolveCodexCatalogModel,
+  supersedesCodexModelCatalog,
 } from "./codexModelCatalog";
 
 const live = wireContract.catalogs[0].value;
@@ -66,6 +67,40 @@ describe("Codex model catalog", () => {
     const ids = BUNDLED_CODEX_MODEL_CATALOG.models.map((model) => model.id);
     expect(ids).not.toContain("codex-auto-review");
     expect(ids).not.toContain("gpt-reserve");
+  });
+
+  it("bundles the curated legacy statuses and keeps the only upstream upgrade target", () => {
+    const legacy = BUNDLED_CODEX_MODEL_CATALOG.models.filter((model) => model.status === "legacy");
+    expect(legacy.map((model) => [model.id, model.upgradeTo])).toEqual([
+      ["gpt-6-sol", null],
+      ["gpt-5.6-sol", null],
+      ["gpt-5.6-terra", null],
+      ["gpt-5.6-luna", null],
+      ["gpt-5.5", "gpt-5.6-sol"],
+    ]);
+    expect(legacy.some((model) => model.isDefault)).toBe(false);
+  });
+
+  it("supersedes by revision and lets only a changed bundled fallback replace the bundle", () => {
+    const bundle = BUNDLED_CODEX_MODEL_CATALOG;
+    const restatused = parseCodexModelCatalog({
+      ...bundle,
+      models: bundle.models.map((model) =>
+        model.id === "gpt-6-luna" ? { ...model, status: "legacy" } : model,
+      ),
+    });
+    const sameBundle = parseCodexModelCatalog(JSON.parse(JSON.stringify(bundle)));
+    const first = parseCodexModelCatalog(live);
+    const sameRevision = parseCodexModelCatalog({ ...live, models: live.models.slice(0, 1) });
+    const newer = parseCodexModelCatalog({ ...live, revision: live.revision + 1 });
+    expect(supersedesCodexModelCatalog(restatused, bundle)).toBe(true);
+    expect(supersedesCodexModelCatalog(bundle, restatused)).toBe(true);
+    expect(supersedesCodexModelCatalog(sameBundle, bundle)).toBe(false);
+    expect(supersedesCodexModelCatalog(first, restatused)).toBe(true);
+    expect(supersedesCodexModelCatalog(restatused, first)).toBe(false);
+    expect(supersedesCodexModelCatalog(sameRevision, first)).toBe(false);
+    expect(supersedesCodexModelCatalog(newer, first)).toBe(true);
+    expect(supersedesCodexModelCatalog(first, newer)).toBe(false);
   });
 
   it("resolves the default sentinel and explicit ids only through the catalog", () => {
