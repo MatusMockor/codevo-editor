@@ -7,6 +7,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.108] - 2026-10-09
+
+### Changed
+
+- Older OpenAI models are grouped under Legacy models in the model picker, the same
+  way older Claude models are. The picker opens on the selected model.
+
 ## [0.2.0-beta.107] - 2026-10-08
 
 ### Added
