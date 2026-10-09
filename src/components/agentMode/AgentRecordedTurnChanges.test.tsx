@@ -70,7 +70,7 @@ function click(text: string) {
   button!.click();
 }
 function openDiff() {
-  const button = host.querySelector<HTMLButtonElement>("button.cv-changes-row");
+  const button = host.querySelector<HTMLButtonElement>("button.cv-changes__open");
   expect(button).not.toBeNull();
   button?.click();
 }
@@ -96,7 +96,7 @@ it("ignores a previous thread's late summary", async () => {
   await act(async () =>
     resolve({ ...stale, files: [...stale.files, ...summary("t1", "extra.ts").files] }),
   );
-  expect(host.querySelector(".cv-changes-row__count")?.textContent).toBe("1 changed file");
+  expect(host.querySelector(".cv-changes__count")?.textContent).toBe("1 changed file");
   expect(host.textContent).not.toContain("2 changed files");
 });
 it("never invents live changes when the snapshot is unavailable", async () => {
@@ -164,7 +164,7 @@ it("shows a persisted capture failure as final without Retry", async () => {
     }),
   });
   expect(host.textContent).toContain("Snapshot Git command failed.");
-  expect(host.querySelector(".cv-changes-row--unavailable")).not.toBeNull();
+  expect(host.querySelector(".cv-changes-note")).not.toBeNull();
   expect(host.textContent).not.toContain("Retry recorded changes");
 });
 it.each<AgentTurnChangesDenialReason>([
@@ -175,7 +175,7 @@ it.each<AgentTurnChangesDenialReason>([
 ])("shows the %s authority denial as a muted line without Retry", async (reason) => {
   const reader = createAgentTurnChangesReader(() => ({ kind: "denied", reason }));
   await render({ getTurnChanges: reader.getTurnChanges });
-  expect(host.querySelector(".cv-changes-row--unavailable")?.textContent).toBe(
+  expect(host.querySelector(".cv-changes-note")?.textContent).toBe(
     agentTurnChangesDenialMessage(reason),
   );
   expect(host.textContent).not.toContain("Retry recorded changes");
@@ -392,7 +392,7 @@ describe("automatic retry of transient server read failures", () => {
       expect(host.textContent).toContain("Recorded changes could not be loaded.");
       expect(retryButton()?.disabled).toBe(true);
       await pending.settle(value);
-      expect(host.querySelector(".cv-changes-row__count")?.textContent ?? null).toBe(count);
+      expect(host.querySelector(".cv-changes__count")?.textContent ?? null).toBe(count);
       expect(host.textContent).not.toContain("Recorded changes could not be loaded.");
       expect(retryButton()).toBeNull();
       expect(getTurnChanges).toHaveBeenCalledTimes(2);

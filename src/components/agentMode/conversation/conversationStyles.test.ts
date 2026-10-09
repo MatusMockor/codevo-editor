@@ -291,9 +291,9 @@ describe("P3 conversation sheets", () => {
 
   it.each([
     [WORK_ROWS, ".cv-work-row:focus-visible"],
-    [CHANGES, ".cv-changes-row:focus-visible"],
-    [CHANGES, ".cv-changes__toggle:focus-visible"],
-    [CHANGES, ".cv-changes__file:focus-visible"],
+    [CHANGES, ".cv-changes .cv-changes__open:focus-visible"],
+    [CHANGES, ".cv-changes .cv-changes__fold:focus-visible"],
+    [CHANGES, ".cv-changes__row:focus-visible"],
     [PROSE, ".agent-raw__toggle:focus-visible"],
     [PROSE, ".agent-compaction-event__label:focus-visible"],
   ])("never paints an accent box for keyboard focus on %s %s", (sheet, selector) => {
@@ -304,9 +304,8 @@ describe("P3 conversation sheets", () => {
   it.each([
     [WORK_ROWS, ".cv-work-row:focus-visible > .cv-work-row__icon + *"],
     [WORK_ROWS, ".agent-work__summary:focus-visible > .agent-work__title"],
-    [CHANGES, ".cv-changes-row:focus-visible > .cv-changes-row__count"],
-    [CHANGES, ".cv-changes__toggle:focus-visible"],
-    [CHANGES, ".cv-changes__file:focus-visible > .cv-changes__path"],
+    [CHANGES, ".cv-changes .cv-changes__open:focus-visible"],
+    [CHANGES, ".cv-changes__row:focus-visible > .cv-changes__name"],
     [PROSE, ".agent-raw__toggle:focus-visible"],
     [PROSE, ".agent-compaction-event__label:focus-visible"],
   ])("underlines only the title for keyboard focus on %s %s", (sheet, selector) => {
@@ -604,15 +603,39 @@ describe("P3 conversation sheets", () => {
     expect(declaredValue(CONVERSATION, ".cv-earlier", "display")).toBe("grid");
   });
 
-  it("draws the changes row at the mockup size and truncates long counts", () => {
-    expect(declaredValue(CHANGES, ".cv-changes-row", "height")).toBe("36px");
-    expect(declaredValue(CHANGES, ".cv-changes-row", "padding")).toBe("0 6px 0 var(--cv-space-5)");
-    expect(declaredValue(CHANGES, ".cv-changes-row", "border-radius")).toBe("var(--cv-r-card)");
-    expect(declaredValue(CHANGES, ".cv-changes-row", "background")).toBe("var(--cv-tint-1)");
-    expect(declaredValue(CHANGES, '.cv-changes-row[data-active="true"]', "background")).toBe(
+  it("draws the changes card with the mockup header size and truncates long counts and names", () => {
+    expect(declaredValue(CHANGES, ".cv-changes__header", "min-height")).toBe("36px");
+    expect(declaredValue(CHANGES, ".cv-changes__header", "padding")).toBe(
+      "0 var(--cv-space-3) 0 var(--cv-space-5)",
+    );
+    expect(declaredValue(CHANGES, ".cv-changes", "border-radius")).toBe("var(--cv-r-card)");
+    expect(declaredValue(CHANGES, ".cv-changes", "background")).toBe("var(--cv-tint-1)");
+    expect(declaredValue(CHANGES, ".cv-changes", "font-size")).toBe(
+      "calc(var(--cv-t-xs) * var(--cv-type-scale))",
+    );
+    expect(declaredValue(CHANGES, '.cv-changes[data-active="true"]', "background")).toBe(
       "var(--cv-tint-2)",
     );
-    expect(declaredValue(CHANGES, ".cv-changes-row__count", "text-overflow")).toBe("ellipsis");
+    expect(declaredValue(CHANGES, ".cv-changes__count", "text-overflow")).toBe("ellipsis");
+    expect(declaredValue(CHANGES, ".cv-changes__name", "text-overflow")).toBe("ellipsis");
+    expect(declaredValue(CHANGES, ".cv-changes__row", "min-height")).toBe("26px");
+    expect(declaredValue(CHANGES, ".cv-changes__row:hover", "background")).toBe("var(--cv-tint-2)");
+  });
+
+  it("marks the focused folder control by tone and turns the folder chevron with a motion token", () => {
+    expect(
+      declaredValue(CHANGES, ".cv-changes .cv-changes__fold:focus-visible", "background"),
+    ).toBe("var(--cv-tint-3)");
+    expect(declaredValue(CHANGES, ".cv-changes__chevron", "transition")).toBe(
+      "transform var(--cv-motion-base) var(--cv-ease)",
+    );
+    expect(
+      declaredValue(
+        CHANGES,
+        '.cv-changes__row[aria-expanded="true"] > .cv-changes__chevron',
+        "transform",
+      ),
+    ).toBe("rotate(90deg)");
   });
 
   it("centres the empty-thread question like the mockup hero", () => {

@@ -140,9 +140,13 @@ describe("opening a recorded Claude turn file in the Diff surface", () => {
       (candidate) => candidate.getAttribute("data-thread-id") === view.thread.threadId,
     );
     if (host.querySelector(".agent-turn-list") === null) await act(async () => threadRow?.click());
-    await waitForReact(() => expect(buttonWithText("Show files")).toBeDefined());
-    act(() => buttonWithText("Show files")?.click());
-    const greet = [...host.querySelectorAll<HTMLElement>('[aria-label="Changed files"] button')];
+    await waitForReact(() => expect(host.querySelector(".cv-changes__tree")).not.toBeNull());
+    expect(buttonWithText("Show files")).toBeUndefined();
+    const greet = [
+      ...host.querySelectorAll<HTMLElement>(
+        `.cv-changes [aria-label="Changed files"] button[title="${GREET}"]`,
+      ),
+    ];
     expect(greet).toHaveLength(1);
     await act(async () => greet[0]?.click());
 
