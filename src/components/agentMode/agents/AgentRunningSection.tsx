@@ -1,3 +1,4 @@
+import { Square } from "lucide-react";
 import { memo, useContext, useEffect, useId, useRef } from "react";
 import type { AgentRuntimeSubagent } from "../../../domain/agentRuntimeSubagent";
 import { RoleTag } from "../../../ui/foundation/RoleTag";
@@ -207,6 +208,12 @@ function AgentRunningStopButton({
       onClick={() => onStop(stopTaskId)}
       type="button"
     >
+      <Square
+        aria-hidden="true"
+        className="cv-agents-row__stop-glyph"
+        fill="currentColor"
+        size={10}
+      />
       Stop
     </button>
   );

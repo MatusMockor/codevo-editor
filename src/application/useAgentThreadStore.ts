@@ -1042,6 +1042,7 @@ function persistIntent(
         action.events,
       );
     case "turnSteered":
+    case "turnHaltRequested":
       return liveTurnIntent(state, action.threadId, action.turnId, "immediate");
     case "turnInterrupted":
       return liveTurnIntentByTurnId(state, action.turnId, "immediate");

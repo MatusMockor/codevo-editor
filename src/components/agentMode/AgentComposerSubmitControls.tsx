@@ -1,4 +1,5 @@
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
+import type { AgentTurnHaltSource } from "../../domain/agentTurnHaltRecord";
 import { SubmitButton } from "../../ui/foundation/SubmitButton";
 import { agentSubmitKeyShortcuts, type AgentSubmitShortcut } from "./agentSubmitShortcut";
 
@@ -28,7 +29,7 @@ export function AgentComposerSubmitControls({
   readonly followUpBehavior: AgentFollowUpBehavior;
   readonly immediateBlockedReason: string | null;
   readonly shortcut: AgentSubmitShortcut;
-  readonly onStop: (() => void) | undefined;
+  readonly onStop: ((source: AgentTurnHaltSource) => void) | undefined;
   readonly onAlternate: () => void;
 }) {
   const alternateName = followUpBehavior === "queue" ? "Send now" : "Queue message";
@@ -40,7 +41,7 @@ export function AgentComposerSubmitControls({
         className="agent-composer__stop"
         label="Stop agent"
         mode="stop"
-        onClick={onStop}
+        onClick={() => onStop?.("composerStopButton")}
         title="Stop (Esc)"
       />
     );

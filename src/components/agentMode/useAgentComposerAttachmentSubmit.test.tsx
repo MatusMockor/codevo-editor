@@ -101,6 +101,7 @@ describe("composer attachment submission", () => {
       worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
+      onThreadIdentified: expect.any(Function),
     });
     expect(markSent).toHaveBeenCalledTimes(1);
     expect(markSent).toHaveBeenCalledWith(["draft-image"]);

@@ -57,6 +57,7 @@ import { MAX_AGENT_THREAD_TITLE_BYTES } from "./agentThreadLimits";
 import { recoverAgentTurnResultStatus } from "./agentTurnRestartRecovery";
 import { agentProviderSessionAfterReport } from "./agentSessionIdentity";
 import { restorableAgentTurnLifecycle } from "./agentTurnLifecycleRestore";
+import type { AgentTurnHaltRecord } from "./agentTurnHaltRecord";
 import { requestAgentTurnHalt, type AgentTurnHaltRequest } from "./agentTurnHaltRequest";
 export {
   AGENT_ATTACHMENT_ID_PATTERN,
@@ -131,6 +132,7 @@ export interface AgentTurn {
   /** Runtime-only reconciliation mark; the JSON prompt was replaced from this turn's log. */
   readonly promptRestored?: boolean;
   readonly haltRequested?: boolean;
+  readonly haltRequest?: AgentTurnHaltRecord;
   readonly foregroundSettled?: boolean;
   readonly firstEventOffset?: number;
   readonly subagentLifecycle?: AgentSubagentLifecycle;

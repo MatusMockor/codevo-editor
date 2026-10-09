@@ -1,6 +1,7 @@
 import type { AgentShipStepResult } from "../domain/agentShip";
 import type { AgentCommitSelection } from "../domain/gitCommitSelection";
 import type { AgentThreadDropSection } from "../domain/agentThreadOrganization";
+import type { AgentTurnHaltTrigger } from "../domain/agentTurnHaltRecord";
 import { settleAgentThreadMutation } from "./agentThreadMutationOutcome";
 import type {
   AgentThreadMutationResult,
@@ -166,9 +167,9 @@ export function remoteAgentThreadActions({
       if (!remote(id)) return local.threadCopyDetail(id, detail);
       return detail === "threadId" ? (byId.get(id)?.execution?.conversationId ?? null) : null;
     }) satisfies AgentThreadsSurface["threadCopyDetail"],
-    stop: async (id: string) => {
+    stop: async (id: string, trigger: AgentTurnHaltTrigger) => {
       if (remote(id)) await stop(id);
-      else await local.stop(id);
+      else await local.stop(id, trigger);
     },
     hasLiveTasksForOwner: (id: string) =>
       remote(id)

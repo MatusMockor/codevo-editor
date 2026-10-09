@@ -183,6 +183,7 @@ describe("useAgentComposerState", () => {
       worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
+      onThreadIdentified: expect.any(Function),
     });
     expect(current().composer.composerProps.prompt).toBe("");
     expect(current().navigation.selectedThreadId).toBe("agt-new");
@@ -418,6 +419,7 @@ describe("useAgentComposerState", () => {
       worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
+      onThreadIdentified: expect.any(Function),
     });
   });
 
@@ -991,8 +993,8 @@ describe("useAgentComposerState", () => {
     expect(sendFollowUp).not.toHaveBeenCalled();
     expect(current().composer.composerProps.prompt).toBe("");
 
-    act(() => current().composer.composerProps.onStop?.());
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    act(() => current().composer.composerProps.onStop?.("composerStopButton"));
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerStopButton" });
   });
 
   it("asks before stopping background-only work and stops on the second press", () => {
@@ -1000,15 +1002,15 @@ describe("useAgentComposerState", () => {
     render(threadsSurfaceFixture({ threads: [backgroundOnlyThreadView()], stop }));
     act(() => current().navigation.selectThread("agt-1"));
 
-    act(() => current().composer.composerProps.onStop?.());
+    act(() => current().composer.composerProps.onStop?.("composerStopButton"));
     expect(stop).not.toHaveBeenCalled();
     expect(current().composer.composerProps.stopConfirmation).toMatchObject({
       kind: "confirmBackground",
       liveTaskCount: 1,
     });
 
-    act(() => current().composer.composerProps.onStop?.());
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    act(() => current().composer.composerProps.onStop?.("composerStopButton"));
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerStopButton" });
     expect(current().composer.composerProps.stopConfirmation).toBeNull();
   });
 
@@ -1021,7 +1023,7 @@ describe("useAgentComposerState", () => {
       }),
     );
     act(() => current().navigation.selectThread("agt-1"));
-    act(() => current().composer.composerProps.onStop?.());
+    act(() => current().composer.composerProps.onStop?.("composerStopButton"));
     expect(current().composer.composerProps.stopConfirmation).toMatchObject({
       kind: "confirmBackground",
       liveTaskCount: 1,
@@ -1032,7 +1034,7 @@ describe("useAgentComposerState", () => {
     act(() => current().navigation.selectThread("agt-1"));
     expect(current().composer.composerProps.stopConfirmation).toBeNull();
 
-    act(() => current().composer.composerProps.onStop?.());
+    act(() => current().composer.composerProps.onStop?.("composerStopButton"));
     expect(stop).not.toHaveBeenCalled();
     expect(current().composer.composerProps.stopConfirmation).toMatchObject({
       kind: "confirmBackground",
@@ -1045,12 +1047,12 @@ describe("useAgentComposerState", () => {
     const interrupt = vi.fn(async () => true);
     render(threadsSurfaceFixture({ threads: [steerableThreadView()], stop, interrupt }));
     act(() => current().navigation.selectThread("agt-1"));
-    await act(async () => current().composer.composerProps.onStop?.());
-    expect(interrupt).toHaveBeenCalledWith("agt-1");
+    await act(async () => current().composer.composerProps.onStop?.("composerStopButton"));
+    expect(interrupt).toHaveBeenCalledWith("agt-1", "composerStopButton");
     expect(stop).not.toHaveBeenCalled();
     expect(current().composer.composerProps.stopConfirmation?.kind).toBe("interrupting");
-    await act(async () => current().composer.composerProps.onStop?.());
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    await act(async () => current().composer.composerProps.onStop?.("composerEscape"));
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerEscape" });
     expect(current().composer.composerProps.stopConfirmation).toBeNull();
   });
 
@@ -1060,7 +1062,7 @@ describe("useAgentComposerState", () => {
     const first = steerableThreadView();
     render(threadsSurfaceFixture({ threads: [first], stop, interrupt }));
     act(() => current().navigation.selectThread("agt-1"));
-    await act(async () => current().composer.composerProps.onStop?.());
+    await act(async () => current().composer.composerProps.onStop?.("composerStopButton"));
     expect(current().composer.composerProps.stopConfirmation?.kind).toBe("interrupting");
     const [interrupted] = first.thread.turns;
     expect(interrupted).toBeDefined();
@@ -1077,7 +1079,7 @@ describe("useAgentComposerState", () => {
     render(threadsSurfaceFixture({ threads: [next], stop, interrupt }));
     expect(current().composer.composerProps.running).toBe(true);
     expect(current().composer.composerProps.stopConfirmation).toBeNull();
-    await act(async () => current().composer.composerProps.onStop?.());
+    await act(async () => current().composer.composerProps.onStop?.("composerStopButton"));
     expect(stop).not.toHaveBeenCalled();
     expect(interrupt).toHaveBeenCalledTimes(2);
   });
@@ -1087,20 +1089,23 @@ describe("useAgentComposerState", () => {
     const interrupt = vi.fn(async () => true);
     render(threadsSurfaceFixture({ threads: [steerableThreadView()], stop, interrupt }));
     act(() => current().navigation.selectThread("agt-1"));
-    await act(async () => current().composer.composerProps.onStop?.());
+    await act(async () => current().composer.composerProps.onStop?.("composerStopButton"));
     act(() => current().composer.composerProps.stopConfirmation?.onCancel());
     expect(current().composer.composerProps.stopConfirmation).toBeNull();
-    await act(async () => current().composer.composerProps.onStop?.());
+    await act(async () => current().composer.composerProps.onStop?.("composerStopButton"));
     expect(interrupt).toHaveBeenCalledTimes(1);
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerStopButton" });
   });
 
   it("stops at once from the explicit stop-everything action", () => {
     const stop = vi.fn(async () => undefined);
     render(threadsSurfaceFixture({ threads: [backgroundOnlyThreadView()], stop }));
     act(() => current().navigation.selectThread("agt-1"));
-    act(() => current().composer.composerProps.onStopNow?.());
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    act(() => current().composer.composerProps.onStopNow?.("stopConfirmationBanner"));
+    expect(stop).toHaveBeenCalledWith("agt-1", {
+      kind: "ui",
+      source: "stopConfirmationBanner",
+    });
   });
 
   it("can stop a running server turn without queue support and keep writing after it stops", () => {
@@ -1125,8 +1130,8 @@ describe("useAgentComposerState", () => {
     expect(current().composer.composerProps.mode.kind).toBe("followUp");
     expect(current().composer.composerProps.running).toBe(true);
     expect(current().composer.composerProps.submitBlocked).toBe(true);
-    act(() => current().composer.composerProps.onStop?.());
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    act(() => current().composer.composerProps.onStop?.("composerStopButton"));
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerStopButton" });
 
     const stopped: AgentThreadView = {
       ...view,
@@ -1143,7 +1148,7 @@ describe("useAgentComposerState", () => {
     act(() => current().composer.composerProps.onPromptChange("Continue with a changed plan"));
     expect(current().composer.composerProps.prompt).toBe("Continue with a changed plan");
     expect(current().composer.composerProps.submitBlocked).toBe(false);
-    act(() => current().composer.composerProps.onStop?.());
+    act(() => current().composer.composerProps.onStop?.("composerStopButton"));
     expect(stop).toHaveBeenCalledTimes(1);
   });
 

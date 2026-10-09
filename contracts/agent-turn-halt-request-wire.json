@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    "composerStopButton",
+    "composerEscape",
+    "stopConfirmationBanner",
+    "sessionDock",
+    "threadMenu"
+  ],
+  "escalationSources": [
+    "composerStopButton",
+    "composerEscape",
+    "stopConfirmationBanner",
+    "sessionDock",
+    "threadMenu",
+    "interruptRefused"
+  ],
+  "modes": ["softInterrupt", "hardStop"],
+  "valid": [
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "threadMenu",
+      "mode": "hardStop",
+      "requestedAtEpochMs": 0
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerStopButton",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000,
+      "escalation": { "source": "interruptRefused", "requestedAtEpochMs": 1500 }
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000,
+      "escalation": { "source": "sessionDock", "requestedAtEpochMs": 1000 }
+    }
+  ],
+  "invalid": [
+    {
+      "turnId": "agt-turn-0000",
+      "source": "windowEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "interruptRefused",
+      "mode": "hardStop",
+      "requestedAtEpochMs": 1000
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "pause",
+      "requestedAtEpochMs": 1000
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": -1
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": "1000"
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000,
+      "note": "free text"
+    },
+    { "turnId": "agt-turn-0000", "source": "composerEscape", "mode": "softInterrupt" }
+  ],
+  "invalidEscalation": [
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000,
+      "escalation": { "source": "elsewhere", "requestedAtEpochMs": 1500 }
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000,
+      "escalation": { "source": "sessionDock", "requestedAtEpochMs": 999 }
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "composerEscape",
+      "mode": "softInterrupt",
+      "requestedAtEpochMs": 1000,
+      "escalation": { "source": "sessionDock", "requestedAtEpochMs": 1500, "note": "x" }
+    },
+    {
+      "turnId": "agt-turn-0000",
+      "source": "threadMenu",
+      "mode": "hardStop",
+      "requestedAtEpochMs": 1000,
+      "escalation": { "source": "sessionDock", "requestedAtEpochMs": 1500 }
+    }
+  ]
+}

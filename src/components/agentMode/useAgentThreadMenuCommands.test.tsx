@@ -219,7 +219,7 @@ describe("useAgentThreadMenuCommands", () => {
     act(() => current().handleThreadMenuCommand("missing", { kind: "newThread" }));
 
     expect(agents.togglePin).toHaveBeenCalledWith("agt-1");
-    expect(agents.stop).toHaveBeenCalledWith("agt-1");
+    expect(agents.stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "threadMenu" });
     expect(agents.archive).toHaveBeenCalledWith("agt-1");
     expect(agents.unarchive).toHaveBeenCalledWith("agt-1");
     expect(agents.renameThread).toHaveBeenCalledWith("agt-1", "Renamed");

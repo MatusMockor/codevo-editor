@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { agentTurnUiHalt } from "../domain/agentTurnHaltRecord";
 import type { CodexTransport } from "../domain/agentProviderSettings";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { act, createElement, useMemo, useReducer } from "react";
@@ -117,6 +118,8 @@ import {
   type AgentWorktreeUseRegistry,
 } from "./agentWorktreeUseRegistry";
 import { PREVIOUS_WORKTREE_UNAVAILABLE_NOTICE } from "./agentPreviousWorktreeReuse";
+
+const STOP_TRIGGER = agentTurnUiHalt("composerStopButton");
 
 function concreteLaunch(provider: AgentCliKind): AgentLaunchOptions {
   if (provider === "codex") return { provider: "codex", model: "default", mode: "workspaceWrite" };
@@ -395,6 +398,116 @@ describe("useAgentTurnDispatch startThread", () => {
       harness.unmount();
     },
   );
+
+  it("identifies the minted thread id synchronously, before the first await of the start", async () => {
+    const lease = createDeferred<boolean>();
+    const ensureProjectLease = vi.fn(async () => lease.promise);
+    const harness = renderDispatch({ leaseToken: null, ensureProjectLease });
+    const onThreadIdentified = vi.fn();
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness
+        .hook()
+        .startThread(startRequest({ isolation: "in-place", onThreadIdentified }));
+      expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+      expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+      expect(harness.actions).toEqual([]);
+      await waitForReact(() => expect(ensureProjectLease).toHaveBeenCalledWith(ROOT_A));
+      expect(harness.state().threads.size).toBe(0);
+      lease.resolve(true);
+      result = await starting;
+    });
+
+    const threadId = harness.startedRequests[0]?.threadId;
+    expect(result).toEqual({ threadId });
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(onThreadIdentified).toHaveBeenCalledWith(threadId);
+    expect([...harness.state().threads.keys()]).toEqual([threadId]);
+    harness.unmount();
+  });
+
+  it("starts, registers and acknowledges the turn when the identification observer throws", async () => {
+    const harness = renderDispatch();
+    const failure = new Error("observer failed");
+    const onThreadIdentified = vi.fn(() => {
+      throw failure;
+    });
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ onThreadIdentified })),
+    );
+
+    const started = harness.startedRequests[0];
+    expect(result).toEqual({ threadId: started?.threadId });
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(harness.reportError).toHaveBeenCalledWith(AGENT_TASKS_SOURCE, failure);
+    expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledWith({
+      taskId: started?.taskId,
+      workspaceId: OWNER_A,
+    });
+    expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+    expect([...harness.state().threads.keys()]).toEqual([started?.threadId]);
+    expect(harness.hook().pendingTurnCount("claudeCode")).toBe(0);
+    harness.unmount();
+  });
+
+  it("identifies the thread once even when the backend then rejects the start", async () => {
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new AgentTaskStartRejectedError("Too many agent tasks are starting or running."),
+    );
+    const onThreadIdentified = vi.fn();
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ onThreadIdentified })),
+    );
+
+    expect(result).toBeNull();
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(harness.state().threads.size).toBe(0);
+    harness.unmount();
+  });
+
+  it("never identifies a thread when admission refuses the start", async () => {
+    const harness = renderDispatch();
+    const onThreadIdentified = vi.fn();
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ prompt: "   ", onThreadIdentified })),
+    );
+
+    expect(result).toBeNull();
+    expect(onThreadIdentified).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("never identifies a thread for a start refused because the project is already dispatching", async () => {
+    const lease = createDeferred<boolean>();
+    const ensureProjectLease = vi.fn(async () => lease.promise);
+    const harness = renderDispatch({ leaseToken: null, ensureProjectLease });
+    const first = vi.fn();
+    const second = vi.fn();
+
+    let refused: AgentThreadStartResult | null = { threadId: "pending" };
+    await act(async () => {
+      const starting = harness
+        .hook()
+        .startThread(startRequest({ isolation: "in-place", onThreadIdentified: first }));
+      refused = await harness
+        .hook()
+        .startThread(startRequest({ isolation: "in-place", onThreadIdentified: second }));
+      expect(harness.notice()?.message).toBe(AGENT_DISPATCH_IN_PROGRESS_NOTICE);
+      lease.resolve(true);
+      await starting;
+    });
+
+    expect(refused).toBeNull();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).not.toHaveBeenCalled();
+    harness.unmount();
+  });
 
   it("tracks the exact provider while a new turn is pending before publication", async () => {
     const lease = createDeferred<boolean>();
@@ -2604,7 +2717,7 @@ describe("useAgentTurnDispatch sendFollowUp", () => {
         launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
-      await harness.hook().stop(threadId);
+      await harness.hook().stop(threadId, STOP_TRIGGER);
       harness.environment.generation += 1;
       pendingStart.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
       await sending;
@@ -2918,7 +3031,7 @@ describe("useAgentTurnDispatch stop and project release", () => {
     const harness = renderDispatch();
     const threadId = await harness.startThread();
 
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
 
     expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
       taskId: harness.turnIdOf(threadId, 0),
@@ -4269,7 +4382,7 @@ describe("useAgentTurnDispatch steering", () => {
     await act(async () => {
       sending = harness.hook().steer({ threadId, prompt: "now", delivery: "immediate" });
     });
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
     await act(async () => {
       gate.resolve(false);
       await sending;
@@ -4452,7 +4565,7 @@ describe("useAgentTurnDispatch steering", () => {
     const turnId = harness.turnIdOf(threadId, 0);
     await holdSecondForNextTurn(harness, threadId);
 
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
     await act(async () => harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 }));
 
     expect(
@@ -4573,7 +4686,7 @@ describe("useAgentTurnDispatch steering", () => {
     const threadId = await harness.startRunningThread();
     const turnId = harness.turnIdOf(threadId, 0);
     await steerOnce(harness, { threadId, prompt: "next", delivery: "queued" });
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
     expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("paused");
     expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
     await act(async () => harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 }));
@@ -4599,7 +4712,7 @@ describe("useAgentTurnDispatch steering", () => {
     const entry = harness.hook().deferredFollowUps.get(threadId)![0];
     await act(() => harness.hook().sendDeferredFollowUpNow(threadId, entry.id));
     expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
     await act(async () => gate.resolve({ taskId: harness.turnIdOf(threadId, 1) }));
     expect(
       harness
@@ -4827,7 +4940,7 @@ describe("useAgentTurnDispatch steering", () => {
         });
       });
       expect(harness.attachmentGateway.claimAgentAttachments).toHaveBeenCalledTimes(1);
-      await act(() => harness.hook().stop(threadId));
+      await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
       const noticeAfterStop = harness.notice();
       await act(async () => {
         if (settlement === "reject") gate.reject(new Error("late claim failure"));
@@ -4935,7 +5048,7 @@ describe("useAgentTurnDispatch steering", () => {
       pending = harness.hook().steer({ threadId, prompt: "do not restart" });
     });
     expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
     await act(async () => {
       harness.emitOutput(turnId, 1, `session:${SESSION_ID}`);
       harness.emitStatus(turnId, 2, { kind: "exited", exitCode: 0 });
@@ -5052,7 +5165,7 @@ describe("useAgentTurnDispatch steering", () => {
     harness.agent.steerAgentTask.mockResolvedValueOnce(rejection("inputClosed"));
     await steerOnce(harness, { threadId, prompt: "queued" });
 
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
 
     expect(harness.hook().deferredFollowUps.get(threadId)?.[0].state).toBe("paused");
     expect(harness.notice()?.message).toBe(DEFERRED_CLEARED_NOTICE);
@@ -5615,7 +5728,7 @@ describe("useAgentTurnDispatch run control", () => {
       });
       await harness.waitForStartedRequests(2);
       const turnId = harness.startedRequests[1]?.taskId ?? "";
-      await harness.hook().stop(threadId);
+      await harness.hook().stop(threadId, STOP_TRIGGER);
       expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
         taskId: turnId,
         workspaceId: OWNER_A,
@@ -5652,7 +5765,7 @@ describe("useAgentTurnDispatch run control", () => {
         launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
-      await harness.hook().stop(threadId);
+      await harness.hook().stop(threadId, STOP_TRIGGER);
       started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
       await sending;
     });
@@ -5678,7 +5791,7 @@ describe("useAgentTurnDispatch run control", () => {
         launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
-      await harness.hook().stop(threadId);
+      await harness.hook().stop(threadId, STOP_TRIGGER);
       started.reject(new Error("The agent was stopped before it started."));
       await sending;
     });
@@ -5706,7 +5819,7 @@ describe("useAgentTurnDispatch run control", () => {
         launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
-      await harness.hook().stop(threadId);
+      await harness.hook().stop(threadId, STOP_TRIGGER);
       started.reject(new Error("ipc timeout"));
       await sending;
     });
@@ -5737,7 +5850,7 @@ describe("useAgentTurnDispatch run control", () => {
         launch: concreteLaunch("claudeCode"),
       });
       await harness.waitForStartedRequests(2);
-      await harness.hook().stop(threadId);
+      await harness.hook().stop(threadId, STOP_TRIGGER);
       expect(harness.notice()?.message).not.toBe("The agent could not be stopped.");
       started.resolve({ taskId: harness.startedRequests[1]?.taskId ?? "" });
       await sending;

@@ -64,9 +64,20 @@ export function agentThreadRowRuntime(
   view: AgentThreadView,
   connectedServerName: string | null,
 ): AgentThreadRowRuntime {
-  const provider = view.thread.provider.kind;
+  return agentRowRuntime(
+    view.thread.provider.kind,
+    view.execution?.kind === "remote" ? "server" : "local",
+    connectedServerName,
+  );
+}
+
+export function agentRowRuntime(
+  provider: AgentCliKind,
+  place: AgentThreadRowRuntimePlace,
+  connectedServerName: string | null,
+): AgentThreadRowRuntime {
   const providerLabel = agentProviderLabel(provider);
-  if (view.execution?.kind !== "remote") {
+  if (place === "local") {
     return { place: "local", provider, label: `${providerLabel}, local` };
   }
   const name = connectedServerName?.trim() ?? "";

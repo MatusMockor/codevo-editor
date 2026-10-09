@@ -11,6 +11,11 @@ export type AgentPendingSendTarget =
   | { readonly kind: "followUp"; readonly threadId: string; readonly baseTurnId: string | null }
   | { readonly kind: "new"; readonly projectRootKey: string; readonly provider: AgentCliKind };
 
+export interface AgentPendingSendOwner {
+  readonly ownerId: string;
+  readonly generation: number;
+}
+
 export interface AgentPendingSendAttachment {
   readonly view: AgentTurnAttachmentView;
   readonly previewUrl: string | null;
@@ -23,6 +28,8 @@ export interface AgentPendingSend {
   readonly attachments: ReadonlyArray<AgentPendingSendAttachment>;
   readonly sentAtEpochMs: number;
   readonly status: "sending" | "failed";
+  readonly owner?: AgentPendingSendOwner;
+  readonly identifiedThreadId?: string;
 }
 
 export type AgentPendingSends = ReadonlyArray<AgentPendingSend>;
@@ -31,6 +38,7 @@ export type AgentPendingSendOutcome = "sent" | "failed" | "withdrawn";
 
 export type AgentPendingSendAction =
   | { readonly kind: "begin"; readonly send: AgentPendingSend }
+  | { readonly kind: "identified"; readonly id: number; readonly threadId: string }
   | { readonly kind: "settle"; readonly id: number; readonly outcome: AgentPendingSendOutcome }
   | { readonly kind: "dismiss"; readonly id: number };
 
@@ -50,6 +58,13 @@ export function reduceAgentPendingSends(
       );
       return [...kept, action.send].slice(-MAX_AGENT_PENDING_SENDS);
     }
+    case "identified":
+      if (!state.some((entry) => awaitsIdentification(entry, action.id))) return state;
+      return state.map((entry) =>
+        awaitsIdentification(entry, action.id)
+          ? { ...entry, identifiedThreadId: action.threadId }
+          : entry,
+      );
     case "settle":
       if (!state.some((entry) => entry.id === action.id)) return state;
       if (action.outcome !== "failed") return state.filter((entry) => entry.id !== action.id);
@@ -121,6 +136,15 @@ function pendingSendAttachment(draft: AgentComposerAttachmentDraft): AgentPendin
     view: { kind: "chip", key: draft.draftId, name: draft.name, glyph: draft.kind },
     previewUrl: null,
   };
+}
+
+function awaitsIdentification(entry: AgentPendingSend, id: number): boolean {
+  return (
+    entry.id === id &&
+    entry.target.kind === "new" &&
+    entry.status === "sending" &&
+    entry.identifiedThreadId === undefined
+  );
 }
 
 function pendingSendMatches(

@@ -1,4 +1,5 @@
 import { AlertTriangle } from "lucide-react";
+import type { AgentTurnHaltSource } from "../../domain/agentTurnHaltRecord";
 import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
 import {
   agentSessionStopConfirmationText,
@@ -25,7 +26,7 @@ export function AgentStopConfirmationBanner({
   onFocusReturn,
 }: {
   readonly confirmation: AgentStopConfirmationView | null;
-  readonly onConfirm: (() => void) | undefined;
+  readonly onConfirm: ((source: AgentTurnHaltSource) => void) | undefined;
   readonly onFocusReturn?: () => void;
 }) {
   if (confirmation === null) return null;
@@ -41,7 +42,11 @@ export function AgentStopConfirmationBanner({
       actions={
         <>
           {onConfirm === undefined ? null : (
-            <button className="cv-banner-action" onClick={choose(onConfirm)} type="button">
+            <button
+              className="cv-banner-action"
+              onClick={choose(() => onConfirm("stopConfirmationBanner"))}
+              type="button"
+            >
               Stop everything
             </button>
           )}

@@ -1,8 +1,11 @@
+import { agentTurnUiHalt } from "../domain/agentTurnHaltRecord";
 import { describe, expect, it, vi } from "vitest";
 import { surfaceChangedFile } from "../components/agentMode/agentSurfaceTestFixtures";
 import { threadsSurfaceFixture } from "../components/agentMode/agentThreadsSurfaceTestFixtures";
 import { projectRemoteAgentThreads } from "./remoteAgentProjection";
 import { remoteAgentThreadActions } from "./remoteAgentSurface";
+
+const STOP_TRIGGER = agentTurnUiHalt("composerStopButton");
 function setup(running = false) {
   const threads = projectRemoteAgentThreads({
     serverId: "server",
@@ -216,11 +219,11 @@ describe("remote conversation action routing", () => {
     const h = setup();
     h.actions.renameThread("local", "Name");
     h.actions.archive("local");
-    await h.actions.stop("local");
+    await h.actions.stop("local", STOP_TRIGGER);
     await h.actions.showFileDiff("local", surfaceChangedFile("src/file.ts"));
     expect(h.local.renameThread).toHaveBeenCalledWith("local", "Name");
     expect(h.local.archive).toHaveBeenCalledWith("local");
-    expect(h.local.stop).toHaveBeenCalledWith("local");
+    expect(h.local.stop).toHaveBeenCalledWith("local", STOP_TRIGGER);
     expect(h.local.showFileDiff).toHaveBeenCalledWith("local", surfaceChangedFile("src/file.ts"));
     expect(h.update).not.toHaveBeenCalled();
     expect(h.stop).not.toHaveBeenCalled();

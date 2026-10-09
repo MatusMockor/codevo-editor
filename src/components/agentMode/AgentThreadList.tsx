@@ -9,6 +9,7 @@ import type { AgentThreadDropSection } from "../../domain/agentThreadOrganizatio
 import { AgentThreadRow } from "./AgentThreadRow";
 import { AgentRailProjectGroup, type AgentRailProjectGroupActions } from "./AgentRailProjectGroup";
 import type { AgentRailProjectSection } from "./agentRailProjectLayout";
+import { NO_AGENT_RAIL_STARTING_ROWS, type AgentRailStartingRows } from "./agentRailStartingRows";
 import { NO_AGENT_RAIL_WORKING_SHELF, type AgentRailWorkingShelf } from "./agentRailWorkingSection";
 import {
   agentRowProjectLabel,
@@ -40,6 +41,7 @@ export interface AgentThreadListProps {
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly pendingInteractions?: ReadonlyMap<string, AgentPendingInteraction>;
   readonly working?: AgentRailWorkingShelf;
+  readonly startingRows?: AgentRailStartingRows;
   onToggleWorking?(): void;
   onToggleSettled(): void;
   onToggleSnoozed(): void;
@@ -68,6 +70,7 @@ export const AgentThreadList = memo(function AgentThreadList({
   selectedThreadId,
   settledExpanded,
   snoozedExpanded,
+  startingRows = NO_AGENT_RAIL_STARTING_ROWS,
   working = NO_AGENT_RAIL_WORKING_SHELF,
 }: AgentThreadListProps) {
   const drag = useAgentThreadDrag(sections, onThreadMenuCommand, working.threads);
@@ -137,6 +140,7 @@ export const AgentThreadList = memo(function AgentThreadList({
           key={project.entry.projectRootKey}
           pendingInteractions={pendingInteractions}
           project={project}
+          starting={startingRows.get(project.entry.projectRootKey)}
         >
           {renderRows(project.rows, true, project.threads)}
         </AgentRailProjectGroup>

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { agentTurnUiHalt } from "../domain/agentTurnHaltRecord";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type { AgentCliKind } from "../domain/agentTask";
 import { act, createElement } from "react";
@@ -34,6 +35,8 @@ import {
   type WorkbenchAgentsOptions,
   type WorkbenchAgentsSurface,
 } from "./useWorkbenchAgents";
+
+const STOP_TRIGGER = agentTurnUiHalt("composerStopButton");
 
 const ACTIVE_ROOT = "/ws/active";
 const ACTIVE_ID = "workspace-active";
@@ -1146,7 +1149,7 @@ describe("useWorkbenchAgents composition", () => {
     expect(harness.hook().threads.map((view) => view.thread.title)).toEqual(
       expect.arrayContaining(["First owner", "Second owner"]),
     );
-    await act(async () => harness.hook().stop(secondThreadId));
+    await act(async () => harness.hook().stop(secondThreadId, STOP_TRIGGER));
     expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
       taskId: harness.startedRequests[1]?.taskId,
       workspaceId: "workspace-active-replaced",

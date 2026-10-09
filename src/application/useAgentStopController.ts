@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentTurn } from "../domain/agentThread";
 import {
+  agentTurnUiHalt,
+  type AgentTurnHaltSource,
+  type AgentTurnHaltTrigger,
+} from "../domain/agentTurnHaltRecord";
+import {
   AGENT_STOP_CONFIRMATION_WINDOW_MS,
   agentInterruptingDeadlineEpochMs,
   agentStopDeadlineRemainingMs,
@@ -11,8 +16,8 @@ import {
 
 export interface AgentStopControllerOptions {
   readonly readRunningTurn: (threadId: string) => AgentTurn | null;
-  readonly hardStop: (threadId: string) => Promise<void>;
-  readonly interrupt?: (threadId: string) => Promise<boolean>;
+  readonly hardStop: (threadId: string, trigger: AgentTurnHaltTrigger) => Promise<void>;
+  readonly interrupt?: (threadId: string, source: AgentTurnHaltSource) => Promise<boolean>;
   readonly readSessionBackgroundTaskCount?: (threadId: string) => number;
   readonly stopSessionBackground?: (threadId: string) => void;
   readonly now?: () => number;
@@ -34,8 +39,8 @@ export type AgentStopConfirmation =
 
 export interface AgentStopController {
   readonly confirmation: AgentStopConfirmation | null;
-  requestStop(threadId: string): void;
-  stopNow(threadId: string): void;
+  requestStop(threadId: string, source: AgentTurnHaltSource): void;
+  stopNow(threadId: string, source: AgentTurnHaltSource): void;
   cancelStop(): void;
 }
 
@@ -43,6 +48,7 @@ interface AgentInterruptedTurn {
   readonly threadId: string;
   readonly turnId: string;
   readonly requestedAtEpochMs: number;
+  readonly source: AgentTurnHaltSource;
 }
 
 interface PendingStopConfirmation {
@@ -73,13 +79,19 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
     return () => clearTimeout(timer);
   }, [cancelStop, pending]);
 
-  const stopNow = useCallback(
-    (threadId: string): void => {
+  const hardStop = useCallback(
+    (threadId: string, trigger: AgentTurnHaltTrigger): void => {
       pendingInterruptRef.current = null;
       cancelStop();
-      void optionsRef.current.hardStop(threadId);
+      void optionsRef.current.hardStop(threadId, trigger);
     },
     [cancelStop],
+  );
+
+  const stopNow = useCallback(
+    (threadId: string, source: AgentTurnHaltSource): void =>
+      hardStop(threadId, agentTurnUiHalt(source)),
+    [hardStop],
   );
 
   const settleInterrupt = useCallback(
@@ -92,7 +104,7 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
       }
       if (!accepted) {
         forgetInterrupt(interruptedRef.current, attempt);
-        stopNow(attempt.threadId);
+        hardStop(attempt.threadId, { kind: "interruptRefused", source: attempt.source });
         return;
       }
       const { now = Date.now } = optionsRef.current;
@@ -103,21 +115,20 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
         deadlineEpochMs,
       });
     },
-    [stopNow],
+    [hardStop],
   );
 
   const startInterrupt = useCallback(
-    (threadId: string, turnId: string, requestedAtEpochMs: number): void => {
+    (attempt: AgentInterruptedTurn): void => {
       const interrupt = optionsRef.current.interrupt;
       if (interrupt === undefined) {
-        stopNow(threadId);
+        stopNow(attempt.threadId, attempt.source);
         return;
       }
-      const attempt: AgentInterruptedTurn = { threadId, turnId, requestedAtEpochMs };
       rememberInterrupt(interruptedRef.current, attempt);
       pendingInterruptRef.current = attempt;
       cancelStop();
-      void interrupt(threadId).then(
+      void interrupt(attempt.threadId, attempt.source).then(
         (accepted) => settleInterrupt(attempt, accepted),
         () => settleInterrupt(attempt, false),
       );
@@ -126,7 +137,7 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
   );
 
   const requestStop = useCallback(
-    (threadId: string): void => {
+    (threadId: string, source: AgentTurnHaltSource): void => {
       const { readRunningTurn, now = Date.now, interrupt } = optionsRef.current;
       const { readSessionBackgroundTaskCount } = optionsRef.current;
       const nowEpochMs = now();
@@ -144,10 +155,15 @@ export function useAgentStopController(options: AgentStopControllerOptions): Age
           cancelStop();
           return;
         case "hardStop":
-          stopNow(threadId);
+          stopNow(threadId, source);
           return;
         case "interrupt":
-          startInterrupt(threadId, decision.turnId, nowEpochMs);
+          startInterrupt({
+            threadId,
+            turnId: decision.turnId,
+            requestedAtEpochMs: nowEpochMs,
+            source,
+          });
           return;
         case "confirmBackground":
           armRef.current = { threadId, turnId: decision.turnId, armedAtEpochMs: nowEpochMs };

@@ -65,7 +65,7 @@ describe("AgentStopConfirmationBanner", () => {
     act(() => button(host, "Stop everything").click());
     expect(onFocusReturn).toHaveBeenCalledTimes(1);
     act(() => button(host, "Keep running").click());
-    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith("stopConfirmationBanner");
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onFocusReturn).toHaveBeenCalledTimes(2);
   });
@@ -86,7 +86,7 @@ describe("AgentStopConfirmationBanner", () => {
     expect(host.textContent).not.toContain("Keep running");
     act(() => button(host, "Stop everything").click());
     act(() => button(host, "Dismiss").click());
-    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith("stopConfirmationBanner");
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 

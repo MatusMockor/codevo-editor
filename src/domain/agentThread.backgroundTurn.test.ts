@@ -207,6 +207,9 @@ describe("agentThreadsReducer backgroundTurnRecorded", () => {
       threadId: THREAD_ID,
       ownerId: OWNER.ownerId,
       turnId: "agt-1-0a1d",
+      trigger: { kind: "ui", source: "composerStopButton" },
+      mode: "hardStop",
+      requestedAtEpochMs: 40,
     });
     const steered = state.threads.get(THREAD_ID);
     expect(steered?.turns[2]?.events).toContainEqual({

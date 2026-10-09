@@ -10,9 +10,13 @@ describe("agent history IPC ownership", () => {
   it("uses the stable before-turn cursor and rejects unknown request cursors", async () => {
     const turn = logTurn();
     const turns = serializeAgentHistoryThread({ ...thread, turns: [turn] }).turns;
-    const invoke = vi
-      .fn()
-      .mockResolvedValue({ turns, hasEarlier: false, beforeTurnId: turn.turnId, revision: 1 });
+    const invoke = vi.fn().mockResolvedValue({
+      turns,
+      hasEarlier: false,
+      beforeTurnId: turn.turnId,
+      revision: 1,
+      haltRequests: [],
+    });
     expect(
       (
         await readAgentHistoryTurns(invoke, {
@@ -48,9 +52,11 @@ describe("agent history IPC ownership", () => {
       owner: { ...thread.owner, ownerId: owner.ownerId },
       externalOrigin: { provider: "codex" as const, sessionId, importedAtEpochMs: 1 },
     };
-    const invoke = vi
-      .fn()
-      .mockResolvedValue({ thread: serializeAgentHistoryThread(imported), revision: 1 });
+    const invoke = vi.fn().mockResolvedValue({
+      thread: serializeAgentHistoryThread(imported),
+      revision: 1,
+      haltRequests: [],
+    });
     expect((await findAgentHistoryImport(invoke, request))?.threadId).toBe(thread.threadId);
     await expect(
       findAgentHistoryImport(invoke, {

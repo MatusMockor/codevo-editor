@@ -505,15 +505,23 @@ describe("sidebar row status of a thread whose background work is tracked by its
     return host.querySelector<HTMLElement>(".agent-session__scroll");
   }
 
-  function pressEscapeInTranscript(): void {
-    const target = transcript();
+  function pressEscape(target: HTMLElement | null): void {
     expect(target).not.toBeNull();
     act(() => {
+      target?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
       target?.focus();
       target?.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });
+  }
+
+  function pressEscapeInPrompt(): void {
+    pressEscape(host.querySelector<HTMLElement>(".agent-composer textarea"));
+  }
+
+  function pressEscapeInTranscript(): void {
+    pressEscape(transcript());
   }
 
   function stopTasksButtons(): ReadonlyArray<HTMLButtonElement> {
@@ -671,16 +679,26 @@ describe("sidebar row status of a thread whose background work is tracked by its
     expect(workingShelf()).toBeNull();
   });
 
-  it("offers to stop the idle session's task on Esc while the session lists it", async () => {
+  it("offers to stop the idle session's task on Esc in the prompt while the session lists it", async () => {
     const { gateway } = await mount({ open: true });
     gateway.level(GATES);
 
-    pressEscapeInTranscript();
+    pressEscapeInPrompt();
 
     expect(host.textContent).toContain(
       "1 background task is still running in Claude's session. Press Stop tasks or Esc again to stop it.",
     );
     expect(stopTasksButtons()).toHaveLength(1);
+  });
+
+  it("offers nothing to stop on Esc in the transcript while the session lists the task", async () => {
+    const { gateway } = await mount({ open: true });
+    gateway.level(GATES);
+
+    pressEscapeInTranscript();
+
+    expect(host.textContent).not.toContain("still running in Claude's session");
+    expect(stopTasksButtons()).toHaveLength(0);
   });
 
   it("offers nothing to stop on Esc after the session reported the task finished", async () => {
@@ -690,7 +708,7 @@ describe("sidebar row status of a thread whose background work is tracked by its
     later(4 * MINUTE);
     gateway.level(DRAINED);
 
-    pressEscapeInTranscript();
+    pressEscapeInPrompt();
 
     expect(host.textContent).not.toContain("still running in Claude's session");
     expect(stopTasksButtons()).toHaveLength(0);

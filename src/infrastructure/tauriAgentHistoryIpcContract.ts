@@ -12,6 +12,10 @@ import {
 import { parseAgentThread, type AgentThread } from "../domain/agentThread";
 import { serializeAgentHistoryThread } from "../domain/agentThreadWire";
 import {
+  attachAgentTurnHaltRequests,
+  serializeAgentTurnHaltRequests,
+} from "../domain/agentTurnHaltRecord";
+import {
   AGENT_TASK_ID_PATTERN,
   isAgentSessionId,
   MAX_AGENT_TASK_PATH_BYTES,
@@ -29,7 +33,8 @@ export async function loadAgentHistory(
 ): Promise<AgentThreadStoreSnapshot> {
   const owner = validateAgentThreadStoreOwnerRequest(request);
   const raw = await invoke("load_agent_history", { request: owner });
-  const result = object(raw, ["threads", "unreadable", "evicted", "revisions"]);
+  const result = object(raw, ["threads", "unreadable", "evicted", "revisions", "haltRequests"]);
+  const haltRequests = plainRecord(result.haltRequests);
   const revisions = result.revisions;
   if (
     typeof revisions !== "object" ||
@@ -51,6 +56,7 @@ export async function loadAgentHistory(
     ...snapshot,
     threads: snapshot.threads.map((thread) => ({
       ...thread,
+      turns: attachAgentTurnHaltRequests(thread.turns, haltRequests[thread.threadId] ?? []),
       historyRevision: parseRevision(revisionMap[thread.threadId]),
     })),
   };
@@ -58,6 +64,7 @@ export async function loadAgentHistory(
 export interface PreparedAgentHistoryWrite extends AgentThreadStoreOwnerRequest {
   readonly thread: Record<string, unknown>;
   readonly expectedRevision: number;
+  readonly haltRequests: ReadonlyArray<Record<string, unknown>>;
 }
 export function prepareAgentHistoryThreadWrite(
   owner: AgentThreadStoreOwnerRequest,
@@ -70,7 +77,12 @@ export function prepareAgentHistoryThreadWrite(
   const parsed = parseAgentThread(document);
   if (parsed.owner.rootKey !== request.rootKey || parsed.owner.ownerId !== request.ownerId)
     throw new TypeError("Foreign agent history owner.");
-  return { ...request, thread: document, expectedRevision };
+  return {
+    ...request,
+    thread: document,
+    expectedRevision,
+    haltRequests: serializeAgentTurnHaltRequests(thread.turns),
+  };
 }
 export async function savePreparedAgentHistoryThread(
   invoke: InvokeAgentThreadStoreCommand,
@@ -138,9 +150,11 @@ export async function findAgentHistoryImport(
     },
   });
   if (result === null) return null;
-  const found = object(result, ["thread", "revision"]);
+  const found = object(result, ["thread", "revision", "haltRequests"]);
+  const parsed = parseAgentThread(found.thread);
   const thread = {
-    ...parseAgentThread(found.thread),
+    ...parsed,
+    turns: attachAgentTurnHaltRequests(parsed.turns, found.haltRequests),
     historyRevision: parseRevision(found.revision),
   };
   if (
@@ -158,6 +172,13 @@ function parseRevision(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0)
     throw new TypeError("Invalid history revision.");
   return value as number;
+}
+function plainRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new TypeError("Invalid history halt requests.");
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).length > 64) throw new TypeError("Invalid history halt requests.");
+  return record;
 }
 function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))

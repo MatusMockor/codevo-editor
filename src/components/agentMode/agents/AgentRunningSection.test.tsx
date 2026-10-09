@@ -156,6 +156,12 @@ describe("Agents panel running section", () => {
     render(new Set());
     const stop = button('Stop background task "Watch release workflow"');
     expect(stop?.textContent).toBe("Stop");
+    expect(stop?.querySelectorAll("svg")).toHaveLength(1);
+    expect(
+      stop?.querySelectorAll('svg.cv-agents-row__stop-glyph[aria-hidden="true"]'),
+    ).toHaveLength(1);
+    expect(stop?.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
+    expect(stop?.querySelector("svg rect")).not.toBeNull();
     act(() => stop?.focus());
     act(() => stop?.click());
     expect(stopTask).toHaveBeenCalledExactlyOnceWith("s1");
@@ -164,6 +170,8 @@ describe("Agents panel running section", () => {
     const stopping = button('Stopping "Watch release workflow"');
     expect(stopping?.textContent).toBe("Stopping…");
     expect(stopping?.getAttribute("aria-disabled")).toBe("true");
+    expect(stopping?.querySelectorAll("svg")).toHaveLength(0);
+    expect(stopping).toBe(stop);
     expect(document.activeElement).toBe(stopping);
     expect(stopping?.closest(".cv-agents-row")?.getAttribute("data-status")).toBe("stopping");
     expect(stopping?.closest(".cv-agents-row")?.textContent).toContain("Stopping…");

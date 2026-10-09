@@ -1,4 +1,5 @@
 import { ChevronRight, Clock3 } from "lucide-react";
+import type { AgentTurnHaltSource } from "../../../domain/agentTurnHaltRecord";
 import { ComposerBanner } from "../../../ui/foundation/ComposerBanner";
 import { AgentJumpToLatest } from "../AgentJumpToLatest";
 import type { AgentSessionActivityBar } from "./agentSessionActivityBar";
@@ -17,7 +18,7 @@ export interface AgentSessionDockProps {
   readonly endSession?: AgentSessionEndOffer;
   onRevealQueue(): void;
   onOpenAgents(): void;
-  onStop?(): void;
+  onStop?(source: AgentTurnHaltSource): void;
   onEndSession?(): void;
 }
 
@@ -78,7 +79,7 @@ function AgentSessionActivityBanner({
   readonly endSession: AgentSessionEndOffer;
   onEndSession: (() => void) | undefined;
   onOpenAgents(): void;
-  onStop?(): void;
+  onStop?(source: AgentTurnHaltSource): void;
 }) {
   const view = activity.actions.includes("view");
   const stop = activity.actions.includes("stop") && onStop !== undefined;
@@ -103,7 +104,7 @@ function AgentSessionActivityBanner({
               <button
                 aria-label="Stop agent and background work"
                 className="cv-banner-action"
-                onClick={onStop}
+                onClick={() => onStop?.("sessionDock")}
                 type="button"
               >
                 Stop

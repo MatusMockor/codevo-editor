@@ -3,20 +3,14 @@ import { useLatest } from "../../ui/foundation/useLatest";
 import type { AgentComposerProps } from "./AgentComposer";
 import { agentConversationEscapeApplies } from "./agentConversationEscape";
 
-export type AgentConversationEscapeSource = Pick<
-  AgentComposerProps,
-  "queuedEdit" | "running" | "sessionTasksStoppable" | "onStop"
->;
+export type AgentConversationEscapeSource = Pick<AgentComposerProps, "queuedEdit">;
 
 export function agentConversationEscapeAction(
   composer: AgentConversationEscapeSource,
 ): (() => void) | null {
   const queuedEdit = composer.queuedEdit ?? null;
-  if (queuedEdit !== null) return () => queuedEdit.onCancel();
-  if (composer.running !== true && composer.sessionTasksStoppable !== true) return null;
-  const stop = composer.onStop;
-  if (stop === undefined) return null;
-  return () => stop();
+  if (queuedEdit === null) return null;
+  return () => queuedEdit.onCancel();
 }
 
 export function useAgentConversationEscape(

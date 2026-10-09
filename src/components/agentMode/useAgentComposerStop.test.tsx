@@ -69,7 +69,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
 
     expect(harness.controls().running).toBe(false);
     expect(harness.controls().sessionTasksStoppable).toBe(true);
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     expect(harness.controls().stopConfirmation).toMatchObject({
       kind: "confirmSessionBackground",
       liveTaskCount: 1,
@@ -77,7 +77,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
     expect(session.stopTasks).not.toHaveBeenCalled();
 
     act(() => vi.advanceTimersByTime(AGENT_STOP_CONFIRMATION_WINDOW_MS - 1));
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     expect(session.stopTasks).toHaveBeenCalledExactlyOnceWith("agt-1");
     expect(harness.agents.stop).not.toHaveBeenCalled();
     expect(harness.controls().stopConfirmation).toBeNull();
@@ -86,7 +86,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
   it("routes the banner's Stop tasks and End session to the exact thread", () => {
     const session = port();
     const harness = render(surfaceThreadView({ sessionBackground: watch }), session);
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     const confirmation = harness.controls().stopConfirmation;
     expect(confirmation?.kind).toBe("confirmSessionBackground");
     act(() => {
@@ -96,7 +96,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
     expect(session.endSession).toHaveBeenCalledExactlyOnceWith("agt-1");
     expect(harness.controls().stopConfirmation).toBeNull();
 
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     act(() => {
       const next = harness.controls().stopConfirmation;
       if (next?.kind !== "confirmSessionBackground") return;
@@ -108,20 +108,20 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
   it("drops the confirmation once the tasks leave or another owner's thread shows", () => {
     const session = port();
     const harness = render(surfaceThreadView({ sessionBackground: watch }), session);
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     harness.select(surfaceThreadView());
     expect(harness.controls().stopConfirmation).toBeNull();
     expect(harness.controls().sessionTasksStoppable).toBe(false);
 
     harness.select(surfaceThreadView({ sessionBackground: watch }));
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     const base = surfaceThreadView({ sessionBackground: watch });
     harness.select({
       ...base,
       thread: { ...base.thread, owner: { ...base.thread.owner, ownerId: "agent-root:other" } },
     });
     expect(harness.controls().stopConfirmation).toBeNull();
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     expect(session.stopTasks).not.toHaveBeenCalled();
   });
 
@@ -129,14 +129,14 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
     const withoutEnd = render(surfaceThreadView({ sessionBackground: watch }), {
       stopTasks: vi.fn(),
     });
-    act(() => withoutEnd.controls().onStop());
+    act(() => withoutEnd.controls().onStop("composerStopButton"));
     const plain = withoutEnd.controls().stopConfirmation;
     expect(plain?.kind).toBe("confirmSessionBackground");
     expect(plain?.kind === "confirmSessionBackground" && plain.onEndSession).toBeUndefined();
 
     const base = surfaceThreadView({ sessionBackground: watch });
     const archived = render({ ...base, thread: { ...base.thread, archived: true } }, port());
-    act(() => archived.controls().onStop());
+    act(() => archived.controls().onStop("composerStopButton"));
     const confirmation = archived.controls().stopConfirmation;
     expect(confirmation?.kind).toBe("confirmSessionBackground");
     expect(confirmation?.kind === "confirmSessionBackground" && confirmation.onEndSession).toBe(
@@ -144,7 +144,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
     );
 
     const endable = render(surfaceThreadView({ sessionBackground: watch }), port());
-    act(() => endable.controls().onStop());
+    act(() => endable.controls().onStop("composerStopButton"));
     const offered = endable.controls().stopConfirmation;
     expect(offered?.kind === "confirmSessionBackground" && typeof offered.onEndSession).toBe(
       "function",
@@ -160,7 +160,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
     }));
     const many: AgentSessionBackground = { ...watch, total: 40, tasks: reported };
     const harness = render(surfaceThreadView({ sessionBackground: many }), session);
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     expect(harness.controls().stopConfirmation).toMatchObject({
       kind: "confirmSessionBackground",
       liveTaskCount: 40,
@@ -184,7 +184,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
   it("stays inert without a session stop port or for remote threads", () => {
     const harness = render(surfaceThreadView({ sessionBackground: watch }), undefined);
     expect(harness.controls().sessionTasksStoppable).toBe(false);
-    act(() => harness.controls().onStop());
+    act(() => harness.controls().onStop("composerStopButton"));
     expect(harness.controls().stopConfirmation).toBeNull();
 
     const session = port();

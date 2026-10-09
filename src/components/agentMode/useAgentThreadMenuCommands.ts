@@ -18,6 +18,7 @@ import {
   type AgentThreadBulkCommand,
 } from "../../domain/agentThreadBulkAction";
 import { runningTurn } from "../../domain/agentThread";
+import { agentTurnUiHalt } from "../../domain/agentTurnHaltRecord";
 import {
   agentThreadSectionMoves,
   type AgentThreadSectionMove,
@@ -299,7 +300,7 @@ export function useAgentThreadMenuCommands({
           undoable(threadId, { kind: "unpin" }, () => agents.togglePin(threadId));
           return;
         case "stop":
-          void agents.stop(threadId);
+          void agents.stop(threadId, agentTurnUiHalt("threadMenu"));
           return;
         case "endSession":
           requestEndSession(threadId);

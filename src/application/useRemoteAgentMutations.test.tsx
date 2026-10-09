@@ -6,10 +6,12 @@ import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunn
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
+import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import {
   REMOTE_CONVERSATION_BUSY_NOTICE,
   REMOTE_ORIGIN_BASE_NEEDS_WORKTREE,
   REMOTE_ORIGIN_BASE_UNSUPPORTED,
+  REMOTE_START_OBSERVER_FAILED_NOTICE,
   REMOTE_STOP_UNAPPLIED_NOTICE,
   useRemoteAgentMutations,
 } from "./useRemoteAgentMutations";
@@ -973,5 +975,203 @@ describe("remote agent start base", () => {
       projectId: "p",
       base,
     });
+  });
+});
+
+describe("remote agent start identification", () => {
+  const threadKey = remoteAgentThreadKey("s", "r", "t");
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => {
+      resolve = done;
+    });
+    return { promise, resolve };
+  }
+
+  it("identifies the unified thread key once the draft is created, before the start responds", async () => {
+    const h = await render();
+    const created = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    const started = deferred<RemoteRunnerTask>();
+    h.gw.createTask.mockReturnValueOnce(created.promise);
+    h.gw.startTask.mockReturnValueOnce(started.promise);
+    const onThreadIdentified = vi.fn();
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start({ ...request, onThreadIdentified }, target);
+    });
+    await vi.waitFor(() => expect(h.gw.createTask).toHaveBeenCalledTimes(1));
+    expect(onThreadIdentified).not.toHaveBeenCalled();
+
+    await act(async () => {
+      created.resolve({ task: task({ status: "draft", projectId: undefined }), created: true });
+    });
+    await vi.waitFor(() => expect(h.gw.startTask).toHaveBeenCalledTimes(1));
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(onThreadIdentified).toHaveBeenCalledWith(threadKey);
+    expect(h.publish).not.toHaveBeenCalled();
+
+    await act(async () => {
+      started.resolve(task());
+      expect(await starting).toEqual(task());
+    });
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(h.publish).toHaveBeenCalledOnce();
+  });
+
+  it("identifies a retried start from its retained draft before asking the runner again", async () => {
+    const h = await render();
+    h.gw.startTask.mockRejectedValueOnce(new Error("disconnected"));
+    const first = vi.fn();
+    await act(async () => {
+      expect(await h.current().start({ ...request, onThreadIdentified: first }, target)).toBeNull();
+    });
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(first).toHaveBeenCalledWith(threadKey);
+
+    const recreated = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    h.gw.createTask.mockReturnValueOnce(recreated.promise);
+    const retried = vi.fn();
+    let retrying!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      retrying = h.current().start({ ...request, onThreadIdentified: retried }, target);
+    });
+    await vi.waitFor(() => expect(h.gw.createTask).toHaveBeenCalledTimes(2));
+    expect(retried).toHaveBeenCalledTimes(1);
+    expect(retried).toHaveBeenCalledWith(threadKey);
+
+    await act(async () => {
+      recreated.resolve({ task: task(), created: false });
+      expect(await retrying).toEqual(task());
+    });
+    expect(retried).toHaveBeenCalledTimes(1);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(h.gw.startTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("never identifies a thread when no draft is confirmed", async () => {
+    const rejected = await render();
+    rejected.gw.createTask.mockRejectedValueOnce(new Error("disconnected"));
+    const onRejected = vi.fn();
+    await act(async () => {
+      expect(
+        await rejected.current().start({ ...request, onThreadIdentified: onRejected }, target),
+      ).toBeNull();
+    });
+    expect(onRejected).not.toHaveBeenCalled();
+
+    const mismatched = await render();
+    mismatched.gw.createTask.mockResolvedValueOnce({
+      task: task({ status: "draft", runnerId: "other" }),
+      created: true,
+    });
+    const onMismatched = vi.fn();
+    await act(async () => {
+      expect(
+        await mismatched.current().start({ ...request, onThreadIdentified: onMismatched }, target),
+      ).toBeNull();
+    });
+    expect(onMismatched).not.toHaveBeenCalled();
+
+    const stale = await render();
+    const created = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    stale.gw.createTask.mockReturnValueOnce(created.promise);
+    const onStale = vi.fn();
+    let operation!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      operation = stale.current().start({ ...request, onThreadIdentified: onStale }, target);
+    });
+    await stale.replace();
+    await act(async () => {
+      created.resolve({ task: task({ status: "draft" }), created: true });
+      await operation;
+    });
+    expect(onStale).not.toHaveBeenCalled();
+  });
+
+  it("never identifies a thread for a continuation", async () => {
+    const h = await render();
+    const onThreadIdentified = vi.fn();
+    const followUp = { prompt: "hello", launch: request.launch, threadId: "display" };
+    await act(async () => {
+      await h
+        .current()
+        .followUp(
+          Object.assign(followUp, { onThreadIdentified }),
+          { ...target, conversationId: "t", latestTaskId: "t" },
+          "display",
+        );
+    });
+    expect(h.gw.continueTask).toHaveBeenCalledTimes(1);
+    expect(onThreadIdentified).not.toHaveBeenCalled();
+  });
+
+  it("returns and publishes the started task when the identification observer throws", async () => {
+    const h = await render();
+    const onThreadIdentified = vi.fn(() => {
+      throw new Error("observer failed");
+    });
+    await act(async () => {
+      expect(await h.current().start({ ...request, onThreadIdentified }, target)).toEqual(task());
+    });
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(h.gw.startTask).toHaveBeenCalledExactlyOnceWith({
+      serverId: "s",
+      taskId: "t",
+      projectId: "p",
+    });
+    expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", task());
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_START_OBSERVER_FAILED_NOTICE);
+
+    await act(async () => {
+      expect(await h.current().start(request, target)).toEqual(task());
+    });
+    expect(h.gw.createTask).toHaveBeenCalledTimes(2);
+    expect(h.gw.createTask.mock.calls[1]?.[0].idempotencyKey).not.toBe(
+      h.gw.createTask.mock.calls[0]?.[0].idempotencyKey,
+    );
+  });
+
+  it("honours a Stop pressed during the start when the identification observer throws", async () => {
+    const h = await render();
+    const started = deferred<RemoteRunnerTask>();
+    h.gw.startTask.mockReturnValueOnce(started.promise);
+    h.gw.getTask.mockResolvedValueOnce(task());
+    const onThreadIdentified = vi.fn(() => {
+      throw new Error("observer failed");
+    });
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start({ ...request, onThreadIdentified }, target);
+    });
+    await vi.waitFor(() => expect(h.gw.startTask).toHaveBeenCalledTimes(1));
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await h.current().stop(target);
+    });
+    expect(h.gw.cancelTask).not.toHaveBeenCalled();
+
+    await act(async () => {
+      started.resolve(task());
+      expect(await starting).toEqual(task());
+    });
+    expect(h.publish).toHaveBeenCalledWith("s", task());
+    expect(h.gw.cancelTask).toHaveBeenCalledExactlyOnceWith({ serverId: "s", taskId: "t" });
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_START_OBSERVER_FAILED_NOTICE);
+  });
+
+  it("keeps the start alive when reporting the observer failure fails too", async () => {
+    const h = await render();
+    h.report.mockImplementationOnce(() => {
+      throw new Error("report failed");
+    });
+    const onThreadIdentified = vi.fn(() => {
+      throw new Error("observer failed");
+    });
+    await act(async () => {
+      expect(await h.current().start({ ...request, onThreadIdentified }, target)).toEqual(task());
+    });
+    expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", task());
+    expect(h.report).toHaveBeenCalledTimes(1);
   });
 });

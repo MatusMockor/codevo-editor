@@ -12,7 +12,8 @@ import {
   type AgentThreadSessionGateway,
   type AgentThreadSessionRequest,
 } from "../domain/agentThreadSession";
-import type { AgentTurnHaltRequest } from "../domain/agentTurnHaltRequest";
+import { agentTurnUiHalt, type AgentTurnHaltSource } from "../domain/agentTurnHaltRecord";
+import type { AgentTurnHaltIntent } from "../domain/agentTurnHaltRequest";
 import { latestPromptedAgentLaunch } from "../domain/agentTurnOrigin";
 import {
   recordAgentBackgroundTurn,
@@ -39,7 +40,7 @@ import {
 export interface AgentThreadSessionLifecycleOptions {
   readonly gateway: AgentThreadSessionGateway | undefined;
   readonly readThread: (threadId: string) => AgentThread | undefined;
-  readonly recordHaltRequest: (request: AgentTurnHaltRequest) => void;
+  readonly recordHaltRequest: (intent: AgentTurnHaltIntent) => void;
   readonly ownsOwner: (owner: AgentThreadOwner) => boolean;
   readonly resumeSessionId: (thread: AgentThread) => string | null;
   readonly setNotice: (notice: AgentTasksNotice) => void;
@@ -50,7 +51,7 @@ export interface AgentThreadSessionLifecycleOptions {
 }
 
 export interface AgentThreadSessionLifecycle {
-  interrupt(threadId: string): Promise<boolean>;
+  interrupt(threadId: string, source: AgentTurnHaltSource): Promise<boolean>;
   endSession(thread: AgentThread): Promise<AgentSessionEndResult>;
   inspectRestart(threadId: string, launch: AgentLaunchOptions): Promise<AgentSessionRestartVerdict>;
   inspectBackground(threadId: string): Promise<AgentSessionBackgroundInspection>;
@@ -136,7 +137,7 @@ export function useAgentThreadSessionLifecycle(
   });
 
   const interrupt = useCallback(
-    async (threadId: string): Promise<boolean> => {
+    async (threadId: string, source: AgentTurnHaltSource): Promise<boolean> => {
       const { gateway, readThread } = optionsRef.current;
       const thread = readThread(threadId);
       if (gateway === undefined || thread === undefined) return false;
@@ -144,7 +145,12 @@ export function useAgentThreadSessionLifecycle(
       const turn = runningTurn(thread);
       if (turn === null) return false;
       const authority = { threadId, ownerId: thread.owner.ownerId };
-      optionsRef.current.recordHaltRequest({ ...authority, turnId: turn.turnId });
+      optionsRef.current.recordHaltRequest({
+        ...authority,
+        turnId: turn.turnId,
+        trigger: agentTurnUiHalt(source),
+        mode: "softInterrupt",
+      });
       const outcome = await attempt(() =>
         gateway.interruptAgentTask({
           taskId: turn.turnId,

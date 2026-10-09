@@ -175,6 +175,12 @@ describe("stopping a native background task left live in an idle Claude session"
     });
   }
 
+  function prompt(): HTMLTextAreaElement {
+    const element = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea");
+    expect(element).not.toBeNull();
+    return element ?? document.createElement("textarea");
+  }
+
   async function openAgentsPanel(): Promise<Element | null> {
     await act(async () => labelled("View background tasks")?.click());
     const panel = host.querySelector('section[aria-label="Agents"]');
@@ -225,19 +231,18 @@ describe("stopping a native background task left live in an idle Claude session"
     expect(host.querySelector(".cv-session-dock__banners .cv-composer-banner")).toBeNull();
   });
 
-  it("confirms on Esc for the idle thread and stops its tasks on a second Esc", async () => {
+  it("confirms on Esc in the prompt for the idle thread and stops its tasks on a second Esc", async () => {
     const harness = await mount();
-    const transcript = host.querySelector<HTMLElement>(".agent-session__scroll")!;
-    act(() => transcript.focus());
+    act(() => prompt().focus());
 
-    escape(transcript);
+    escape(prompt());
     expect(host.textContent).toContain(
       "1 background task is still running in Claude's session. Press Stop tasks or Esc again to stop it.",
     );
     expect(named("Stop tasks")).toHaveLength(1);
     expect(harness.stopSessionBackgroundTask).not.toHaveBeenCalled();
 
-    escape(transcript);
+    escape(prompt());
     await act(async () => undefined);
     expect(harness.stopSessionBackgroundTask).toHaveBeenCalledExactlyOnceWith(
       THREAD_ID,
@@ -245,6 +250,25 @@ describe("stopping a native background task left live in an idle Claude session"
     );
     expect(harness.stop).not.toHaveBeenCalled();
     expect(named("Stop tasks")).toHaveLength(0);
+  });
+
+  it("leaves the idle thread's tasks alone on Esc outside the composer prompt", async () => {
+    const harness = await mount();
+    const transcript = host.querySelector<HTMLElement>(".agent-session__scroll");
+    expect(transcript).not.toBeNull();
+    act(() => {
+      transcript?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+      transcript?.focus();
+    });
+
+    escape(transcript ?? document.body);
+    escape(transcript ?? document.body);
+    await act(async () => undefined);
+
+    expect(host.textContent).not.toContain("still running in Claude's session");
+    expect(named("Stop tasks")).toHaveLength(0);
+    expect(harness.stopSessionBackgroundTask).not.toHaveBeenCalled();
+    expect(harness.stop).not.toHaveBeenCalled();
   });
 
   it("names Claude's refusal, emphasises End session and lists the task in its confirmation", async () => {
@@ -282,12 +306,9 @@ describe("stopping a native background task left live in an idle Claude session"
 
   it("offers no End session in the idle Esc confirmation without an End session port", async () => {
     await mount({ endable: false });
-    const transcript = host.querySelector<HTMLElement>(".agent-session__scroll");
-    expect(transcript).not.toBeNull();
-    if (transcript === null) return;
-    act(() => transcript.focus());
+    act(() => prompt().focus());
 
-    escape(transcript);
+    escape(prompt());
 
     expect(named("Stop tasks")).toHaveLength(1);
     expect(named("End session")).toHaveLength(0);
