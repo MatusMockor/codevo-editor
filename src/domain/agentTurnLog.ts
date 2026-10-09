@@ -99,6 +99,7 @@ export interface AgentTurnLogPage {
   readonly hasLater: boolean;
   readonly loss: AgentTurnLogLoss;
   readonly clipped: boolean;
+  readonly earlierDiscarded?: boolean;
 }
 
 export interface SummarizeAgentTurnLogsRequest {

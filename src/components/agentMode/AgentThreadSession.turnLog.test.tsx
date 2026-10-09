@@ -139,6 +139,39 @@ describe("thread session turn log notices", () => {
     expect(host.textContent).not.toContain(AGENT_TURN_REMOTE_WINDOW_NOTICE);
   });
 
+  function remoteReader(): AgentThreadHistorySurface {
+    return {
+      page: null,
+      older: vi.fn(),
+      latest: vi.fn(),
+      activitySource: (threadId, turnId) => ({
+        scope: { rootKey: "/root", ownerId: "owner", threadId, turnId },
+        generation: 1,
+        leaseToken: null,
+        readPage: vi.fn(),
+      }),
+    };
+  }
+
+  it("offers the load control instead of the remote window notice when the runner can page back", () => {
+    render(true, null, false, remoteReader(), "clientWindow");
+    expect(host.textContent).not.toContain(AGENT_TURN_REMOTE_WINDOW_NOTICE);
+    expect(host.querySelector(".agent-note--warning")).toBeNull();
+    expect(host.querySelector("button.cv-load-earlier")?.textContent).toBe("Load earlier activity");
+  });
+
+  it("keeps saying the server discarded activity even when the rest can be paged back", () => {
+    render(true, null, false, remoteReader(), "serverGap");
+    expect(host.textContent).toContain(AGENT_TURN_REMOTE_DISCARDED_NOTICE);
+    expect(host.querySelector("button.cv-load-earlier")?.textContent).toBe("Load earlier activity");
+  });
+
+  it("offers no reader for a remote turn that was never truncated", () => {
+    render(false, null, false, remoteReader(), "clientWindow");
+    expect(host.querySelector("button.cv-load-earlier")).toBeNull();
+    expect(host.querySelector(".agent-note--warning")).toBeNull();
+  });
+
   it("hides every loss notice once the window was rebuilt from the whole log", () => {
     const store = createAgentTurnLogFactsStore(() => 0);
     store.publishSlot(THREAD_ID, slot({ state: { kind: "stopped", reason: "sealed" } }));

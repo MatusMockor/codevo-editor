@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 const ERROR_BODY_LIMIT: usize = 1024;
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,eventBackwardPaging";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -533,6 +533,7 @@ mod tests {
         assert!(tokens.contains(&"commandCatalog"));
         assert!(tokens.contains(&"speechTranscription"));
         assert!(tokens.contains(&"mcpServers"));
+        assert!(tokens.contains(&"eventBackwardPaging"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);

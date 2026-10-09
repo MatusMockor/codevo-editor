@@ -478,6 +478,7 @@ export const AgentTurnView = memo(function AgentTurnView({
           {rawOutput !== null && <div className="agent-message-actions">{rawOutput}</div>}
 
           <AgentTurnLogNotices
+            discardReported={activityWindow?.earlierDiscarded === true}
             eventsRetention={turn.eventsRetention}
             eventsTruncated={turn.eventsTruncated}
             readerAvailable={readerSource !== null}
@@ -522,12 +523,14 @@ function AgentTurnEnd({ marker }: { readonly marker: AgentTurnEndMarker }) {
 }
 
 function AgentTurnLogNotices({
+  discardReported,
   eventsRetention,
   eventsTruncated,
   readerAvailable,
   turnId,
   turnLog,
 }: {
+  readonly discardReported: boolean;
   readonly eventsRetention: AgentTurn["eventsRetention"];
   readonly eventsTruncated: boolean;
   readonly readerAvailable: boolean;
@@ -536,6 +539,7 @@ function AgentTurnLogNotices({
 }) {
   const facts = useAgentTurnLogFacts(turnLog, turnId);
   const notices = agentTurnLogNoticeModel(facts, eventsTruncated, {
+    discardReported,
     readerAvailable,
     retention: eventsRetention,
   });

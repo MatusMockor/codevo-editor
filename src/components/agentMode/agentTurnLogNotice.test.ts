@@ -171,6 +171,33 @@ describe("agent turn log notices", () => {
     );
   });
 
+  it("drops the remote window notice only when the earlier activity can be loaded", () => {
+    const readable = { readerAvailable: true } as const;
+    expect(agentTurnLossNotice(null, true, { ...readable, retention: "clientWindow" })).toBeNull();
+    expect(agentTurnLogNoticeModel(null, true, { ...readable, retention: "clientWindow" })).toEqual(
+      { loss: null, unsaved: null },
+    );
+    expect(
+      agentTurnLossNotice(null, true, { readerAvailable: false, retention: "clientWindow" }),
+    ).toBe(AGENT_TURN_REMOTE_WINDOW_NOTICE);
+    expect(agentTurnLossNotice(null, true, { ...readable, retention: "serverGap" })).toBe(
+      AGENT_TURN_REMOTE_DISCARDED_NOTICE,
+    );
+    expect(agentTurnLossNotice(null, true, readable)).toBe(AGENT_TURN_WINDOW_NOTICE);
+    expect(agentTurnLossNotice(null, false, { ...readable, retention: "clientWindow" })).toBeNull();
+  });
+
+  it("leaves the server discard to the earlier-activity control once it reports it", () => {
+    const reported = { discardReported: true, readerAvailable: true } as const;
+    expect(agentTurnLossNotice(null, true, { ...reported, retention: "serverGap" })).toBeNull();
+    expect(
+      agentTurnLossNotice(null, true, { discardReported: false, retention: "serverGap" }),
+    ).toBe(AGENT_TURN_REMOTE_DISCARDED_NOTICE);
+    expect(agentTurnLossNotice(null, true, { discardReported: true })).toBe(
+      AGENT_TURN_WINDOW_NOTICE,
+    );
+  });
+
   it("keeps the local wording when no remote provenance is given", () => {
     expect(agentTurnLossNotice(null, true, {})).toBe(AGENT_TURN_WINDOW_NOTICE);
     expect(AGENT_TURN_WINDOW_NOTICE).toBe("Some activity from this turn is not shown.");

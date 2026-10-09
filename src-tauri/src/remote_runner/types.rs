@@ -51,6 +51,7 @@ pub struct EventsRequest {
     pub server_id: String,
     pub task_id: String,
     pub after: Option<u64>,
+    pub before: Option<u64>,
 }
 
 #[derive(Deserialize)]

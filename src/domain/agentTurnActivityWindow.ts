@@ -27,6 +27,7 @@ export interface AgentTurnActivityWindow {
   readonly gap: boolean;
   readonly loss: AgentTurnLogLoss;
   readonly clipped: boolean;
+  readonly earlierDiscarded?: boolean;
 }
 
 export type AgentTurnActivityRejection =
@@ -65,6 +66,7 @@ export function openAgentTurnActivityWindow(page: AgentTurnLogPage): AgentTurnAc
     gap: false,
     loss: page.loss,
     clipped: page.clipped,
+    ...earlierDiscarded(page.earlierDiscarded === true),
   });
 }
 
@@ -83,6 +85,7 @@ export function prependAgentTurnActivityPage(
     gap: window.gap || joinedGap,
     loss: mergeAgentTurnLogLoss(window.loss, page.loss),
     clipped: window.clipped || page.clipped,
+    ...earlierDiscarded(window.earlierDiscarded === true || page.earlierDiscarded === true),
   });
 }
 
@@ -100,6 +103,7 @@ export function appendAgentTurnActivityPage(
     gap: window.gap || joinedGap,
     loss: mergeAgentTurnLogLoss(window.loss, page.loss),
     clipped: window.clipped || page.clipped,
+    ...earlierDiscarded(window.earlierDiscarded === true || page.earlierDiscarded === true),
   });
 }
 
@@ -116,7 +120,11 @@ export function agentTurnActivityWindowEvents(
 ): AgentTurnActivityWindowEvents {
   const events: AgentTurnEvent[] = [];
   const seqs: number[] = [];
-  for (const entry of window.entries) {
+  const unsettledCalls = new Map<string, string | null>();
+  for (const [index, entry] of window.entries.entries()) {
+    if (reannouncesUnsettledToolCall(unsettledCalls, entry.event, window.entries[index + 1]?.event))
+      continue;
+    trackToolSettlement(unsettledCalls, entry.event);
     const previous = events[events.length - 1];
     const merged = previous === undefined ? null : coalesceAgentTextEvents(previous, entry.event);
     if (merged !== null) {
@@ -135,6 +143,24 @@ export function agentTurnActivityWindowEvents(
   return { events, seqs };
 }
 
+function reannouncesUnsettledToolCall(
+  unsettledCalls: ReadonlyMap<string, string | null>,
+  event: AgentTurnEvent,
+  next: AgentTurnEvent | undefined,
+): boolean {
+  if (event.kind !== "toolCall" || next?.kind !== "toolResult") return false;
+  if (next.toolId !== event.toolId || next.parentToolId !== event.parentToolId) return false;
+  return unsettledCalls.get(event.toolId) === (event.parentToolId ?? null);
+}
+
+function trackToolSettlement(
+  unsettledCalls: Map<string, string | null>,
+  event: AgentTurnEvent,
+): void {
+  if (event.kind === "toolCall") unsettledCalls.set(event.toolId, event.parentToolId ?? null);
+  if (event.kind === "toolResult") unsettledCalls.delete(event.toolId);
+}
+
 function supersedesSettledSnapshot(
   events: ReadonlyArray<AgentTurnEvent>,
   next: AgentTurnEvent,
@@ -145,6 +171,11 @@ function supersedesSettledSnapshot(
   if (call?.kind !== "toolCall" || result?.kind !== "toolResult") return false;
   if (call.name !== next.name || call.parentToolId !== next.parentToolId) return false;
   return result.toolId === call.toolId && result.parentToolId === call.parentToolId;
+}
+
+function earlierDiscarded(discarded: boolean): { readonly earlierDiscarded?: true } {
+  if (!discarded) return {};
+  return { earlierDiscarded: true };
 }
 
 function emptyPageRejection(

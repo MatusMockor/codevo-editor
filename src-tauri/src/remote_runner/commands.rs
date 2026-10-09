@@ -94,6 +94,37 @@ fn cursor_path(path: String, after: Option<u64>) -> Result<String, String> {
     }
 }
 
+enum EventDirection {
+    Forward(Option<u64>),
+    Backward(u64),
+}
+
+impl EventDirection {
+    fn parse(after: Option<u64>, before: Option<u64>) -> Result<Self, String> {
+        if after.is_some() && before.is_some() {
+            return Err("Runner event cursors are mutually exclusive".into());
+        }
+        if let Some(value) = before {
+            if !(1..=9_007_199_254_740_991).contains(&value) {
+                return Err("Invalid runner cursor".into());
+            }
+            return Ok(Self::Backward(value));
+        }
+        if after.is_some_and(|value| value > 9_007_199_254_740_991) {
+            return Err("Invalid runner cursor".into());
+        }
+        Ok(Self::Forward(after))
+    }
+
+    fn path(self, task_id: &str) -> Result<String, String> {
+        let path = task_path(task_id, "/events")?;
+        match self {
+            Self::Forward(after) => cursor_path(path, after),
+            Self::Backward(before) => Ok(format!("{path}?before={before}")),
+        }
+    }
+}
+
 fn task_path(task_id: &str, suffix: &str) -> Result<String, String> {
     id(task_id)?;
     Ok(format!("/v1/tasks/{task_id}{suffix}"))
@@ -191,15 +222,11 @@ pub async fn remote_runner_list_events(
     state: tauri::State<'_, RemoteRunnerState>,
     request: EventsRequest,
 ) -> Result<Value, String> {
+    let direction = EventDirection::parse(request.after, request.before)?;
+    let path = direction.path(&request.task_id)?;
     let state = state.inner().clone();
     blocking(move || {
-        let page = state.call(
-            &request.server_id,
-            "GET",
-            &cursor_path(task_path(&request.task_id, "/events")?, request.after)?,
-            None,
-            vec![],
-        )?;
+        let page = state.call(&request.server_id, "GET", &path, None, vec![])?;
         super::event_page::validate(page)
     })
     .await
@@ -234,7 +261,64 @@ pub async fn remote_runner_upload_attachment(
 
 #[cfg(test)]
 mod tests {
-    use super::OperationPermit;
+    use super::{EventDirection, EventsRequest, OperationPermit};
+
+    #[test]
+    fn event_cursor_paths_preserve_forward_and_support_backward() {
+        for (after, before, expected) in [
+            (None, None, "/v1/tasks/task/events".to_string()),
+            (Some(0), None, "/v1/tasks/task/events?after=0".to_string()),
+            (Some(7), None, "/v1/tasks/task/events?after=7".to_string()),
+            (None, Some(1), "/v1/tasks/task/events?before=1".to_string()),
+            (
+                None,
+                Some(9_007_199_254_740_991),
+                "/v1/tasks/task/events?before=9007199254740991".to_string(),
+            ),
+            (
+                Some(9_007_199_254_740_991),
+                None,
+                "/v1/tasks/task/events?after=9007199254740991".to_string(),
+            ),
+        ] {
+            assert_eq!(
+                EventDirection::parse(after, before)
+                    .unwrap()
+                    .path("task")
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn event_cursors_reject_conflicts_and_invalid_bounds() {
+        assert_eq!(
+            EventDirection::parse(Some(0), Some(1)).err(),
+            Some("Runner event cursors are mutually exclusive".into())
+        );
+        for before in [0, 9_007_199_254_740_992, u64::MAX] {
+            assert_eq!(
+                EventDirection::parse(None, Some(before)).err(),
+                Some("Invalid runner cursor".into())
+            );
+        }
+        assert_eq!(
+            EventDirection::parse(Some(9_007_199_254_740_992), None).err(),
+            Some("Invalid runner cursor".into())
+        );
+    }
+
+    #[test]
+    fn event_request_accepts_before_and_rejects_unknown_fields() {
+        let value = serde_json::json!({"serverId":"server","taskId":"task","before":7});
+        let request: EventsRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(request.before, Some(7));
+        assert_eq!(request.after, None);
+        let mut unknown = value;
+        unknown["unexpected"] = true.into();
+        assert!(serde_json::from_value::<EventsRequest>(unknown).is_err());
+    }
 
     #[test]
     fn ninth_operation_is_refused_with_the_fixed_busy_text_until_a_permit_drops() {

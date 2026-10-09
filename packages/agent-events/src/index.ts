@@ -29,3 +29,4 @@ export { isClaudeInformationalFrameNotice } from "./agentOutput/claudeStreamNoti
 export * from "./agentSubagentLifecycle.js";
 export * from "./remoteRunnerEvent.js";
 export * from "./remoteAgentTranscript.js";
+export * from "./remoteAgentTranscriptSegment.js";

@@ -3,7 +3,7 @@ import {
   type AgentTurnEarlierActivityState,
 } from "../../../application/useAgentHistoryActivity";
 import type { AgentTurnActivityWindow } from "../../../domain/agentTurnActivityWindow";
-import { agentTurnLogLossNotice } from "../agentTurnLogNotice";
+import { AGENT_TURN_REMOTE_DISCARDED_NOTICE, agentTurnLogLossNotice } from "../agentTurnLogNotice";
 
 export const AGENT_ACTIVITY_GAP_NOTICE = "Some activity is missing from the saved history.";
 export const AGENT_ACTIVITY_CLIPPED_NOTICE = "Some saved activity was shortened for display.";
@@ -119,6 +119,7 @@ function windowNotice(window: AgentTurnActivityWindow | null): string | null {
   if (window === null) return null;
   if (window.loss.kind !== "none")
     return agentTurnLogLossNotice(window.loss) ?? AGENT_ACTIVITY_GAP_NOTICE;
+  if (window.earlierDiscarded === true) return AGENT_TURN_REMOTE_DISCARDED_NOTICE;
   if (window.gap) return AGENT_ACTIVITY_GAP_NOTICE;
   if (window.clipped) return AGENT_ACTIVITY_CLIPPED_NOTICE;
   return null;

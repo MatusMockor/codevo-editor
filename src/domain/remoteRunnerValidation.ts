@@ -395,6 +395,7 @@ export const remoteRunnerChecks = {
         gitSync: optional(boolean),
         portPreview: optional(boolean),
         speechTranscription: optional(boolean),
+        eventBackwardPaging: optional(boolean),
       }),
     }),
   },
@@ -551,6 +552,10 @@ export const remoteRunnerChecks = {
   },
   cancelTask: { request: object(taskRequest), response: task },
   listEvents: { request: object({ ...taskRequest, after: integer(0) }), response: eventPage },
+  listEventsBefore: {
+    request: object({ ...taskRequest, before: integer(1) }),
+    response: eventPage,
+  },
   getTurnChanges: { request: object(taskRequest), response: accepts(parseAgentTurnChangeSummary) },
   getTurnFileDiff: {
     request: object({ ...taskRequest, relativePath: isAgentTurnChangePath }),

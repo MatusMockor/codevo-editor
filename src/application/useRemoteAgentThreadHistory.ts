@@ -12,6 +12,12 @@ import type {
 import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import { RemoteAgentProjection, type RemoteAgentProjectionInput } from "./remoteAgentProjection";
 import { droppedServerEvictedOutput, retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
+import {
+  RemoteAgentTurnActivitySources,
+  sameRemoteTurnActivityBinding,
+  type RemoteTurnActivityAuthority,
+  type RemoteTurnActivityBinding,
+} from "./remoteAgentTurnActivitySources";
 
 interface Dependencies {
   readonly gateway: RemoteRunnerGateway | null;
@@ -34,6 +40,11 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
   const epoch = useRef(0);
   const current = useRef<DisplayPage | null>(null);
   const [page, setPage] = useState<DisplayPage | null>(null);
+  const [activity] = useState(() => new RemoteAgentTurnActivitySources());
+  const activityAuthority = useCallback<RemoteTurnActivityAuthority>(
+    (bound) => mounted.current && activityCurrent(deps.current, current.current, bound),
+    [],
+  );
   const latest = useCallback(() => {
     epoch.current += 1;
     current.current = null;
@@ -48,7 +59,8 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
     )
       latest();
     deps.current = dependencies;
-  }, [dependencies, latest]);
+    activity.prune((bound) => activityCurrent(dependencies, current.current, bound));
+  }, [activity, dependencies, latest]);
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
@@ -242,6 +254,51 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
     older,
     newer,
     latest,
+    activitySource: (threadId, turnId) => {
+      const binding = activityBinding(dependencies, page, threadId, turnId);
+      if (binding === null) return null;
+      return activity.resolve(binding, activityAuthority);
+    },
+  };
+}
+function activityCurrent(
+  deps: Dependencies,
+  page: DisplayPage | null,
+  bound: RemoteTurnActivityBinding,
+): boolean {
+  return sameRemoteTurnActivityBinding(
+    activityBinding(deps, page, bound.scope.threadId, bound.scope.turnId),
+    bound,
+  );
+}
+function activityBinding(
+  deps: Dependencies,
+  page: DisplayPage | null,
+  threadId: string,
+  turnId: string,
+): RemoteTurnActivityBinding | null {
+  const resolved = resolve(deps, threadId);
+  const gateway = deps.gateway;
+  const listEventsBefore = gateway?.listEventsBefore;
+  if (!resolved || !gateway || !listEventsBefore) return null;
+  if (resolved.snapshot.descriptor?.capabilities.eventBackwardPaging !== true) return null;
+  const history = page?.owner === deps.owner && page.view.threadId === threadId ? page : null;
+  const thread = resolved.view.thread;
+  if (![...thread.turns, ...(history?.view.turns ?? [])].some((turn) => turn.turnId === turnId))
+    return null;
+  return {
+    owner: deps.owner,
+    gateway,
+    port: { listEventsBefore: (request) => listEventsBefore.call(gateway, request) },
+    serverId: resolved.snapshot.serverId,
+    runnerId: resolved.runnerId,
+    provider: thread.provider.kind === "claudeCode" ? "claude" : "codex",
+    scope: {
+      rootKey: thread.owner.rootKey,
+      ownerId: thread.owner.ownerId,
+      threadId,
+      turnId,
+    },
   };
 }
 function resolve(deps: Dependencies, threadId: string) {

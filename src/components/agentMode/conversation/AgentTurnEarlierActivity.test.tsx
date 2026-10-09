@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openAgentTurnActivityWindow } from "../../../domain/agentTurnActivityWindow";
+import { AGENT_TURN_REMOTE_DISCARDED_NOTICE } from "../agentTurnLogNotice";
 import { AgentTurnEarlierControl, AgentTurnLaterControl } from "./AgentTurnEarlierActivity";
 
 let host: HTMLDivElement;
@@ -92,6 +93,38 @@ describe("AgentTurnEarlierControl", () => {
     );
     expect(load).toHaveBeenCalledTimes(1);
     expect(host.textContent).toContain("Some activity is missing from the saved history.");
+  });
+
+  it("says the server discarded earlier activity once a window reached that point", () => {
+    const render = (earlierDiscarded: boolean) =>
+      act(() =>
+        root.render(
+          <AgentTurnEarlierControl
+            canRevealMemory={false}
+            hiddenCount={0}
+            logAvailable
+            onLoadEarlier={() => undefined}
+            onRevealMemory={() => undefined}
+            state={{
+              kind: "ready",
+              window: {
+                ...window,
+                hasEarlier: false,
+                ...(earlierDiscarded ? { earlierDiscarded } : {}),
+              },
+            }}
+          />,
+        ),
+      );
+
+    render(true);
+    expect(host.querySelector(".agent-note--warning")?.textContent).toBe(
+      AGENT_TURN_REMOTE_DISCARDED_NOTICE,
+    );
+    expect(host.querySelector("button.cv-load-earlier")).toBeNull();
+
+    render(false);
+    expect(host.innerHTML).toBe("");
   });
 
   it("renders nothing when there is nothing earlier to show", () => {

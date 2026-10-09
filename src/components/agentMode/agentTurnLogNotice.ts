@@ -18,6 +18,7 @@ export const AGENT_TURN_LOG_UNSAVED_PREFIX = "Activity is not being saved to dis
 export interface AgentTurnWindowOptions {
   readonly readerAvailable?: boolean;
   readonly retention?: AgentTurnEventsRetention;
+  readonly discardReported?: boolean;
 }
 
 export interface AgentTurnLogNoticeModel {
@@ -39,10 +40,12 @@ export function agentTurnLogNoticeModel(
 export function agentTurnLossNotice(
   facts: AgentTurnLogFacts | null,
   eventsTruncated: boolean,
-  { readerAvailable = false, retention }: AgentTurnWindowOptions = {},
+  { readerAvailable = false, retention, discardReported = false }: AgentTurnWindowOptions = {},
 ): string | null {
   const evidence = agentTurnLogEvidence(facts);
   const windowNotice = eventsTruncated ? agentTurnWindowNotice(retention) : null;
+  if (evidence === null && readerAvailable && retention === "clientWindow") return null;
+  if (evidence === null && discardReported && retention === "serverGap") return null;
   if (evidence === null) return windowNotice;
   const display = agentTurnWindowDisplay(eventsTruncated, evidence);
   if (display === "complete") return null;

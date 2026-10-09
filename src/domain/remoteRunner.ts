@@ -78,6 +78,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     gitSync?: boolean;
     portPreview?: boolean;
     speechTranscription?: boolean;
+    eventBackwardPaging?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
@@ -156,6 +157,8 @@ export type RemoteRunnerEventPage = RemoteRunnerPage<RemoteRunnerEvent> &
     outputTruncatedBeforeSequence?: number;
     outputStartsAtLineBoundary?: boolean;
   }>;
+export type RemoteRunnerEventsBeforeRequest = RemoteRunnerTaskRequest &
+  Readonly<{ before: number }>;
 export type RemoteRunnerDiff = Readonly<{
   patch: string;
   truncated: boolean;
@@ -255,6 +258,7 @@ export interface RemoteRunnerGateway {
   transcribeSpeech?(
     request: RemoteRunnerTranscribeSpeechRequest,
   ): Promise<RemoteRunnerSpeechTranscript>;
+  listEventsBefore?(request: RemoteRunnerEventsBeforeRequest): Promise<RemoteRunnerEventPage>;
   listRepositoryHosts?(request: RemoteRunnerServerRequest): Promise<RepositoryHostsSnapshot>;
   lookupRepository?(
     request: RemoteRunnerServerRequest & Readonly<{ request: RepositoryLookupRequest }>,

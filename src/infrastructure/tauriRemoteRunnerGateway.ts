@@ -5,6 +5,7 @@ import type * as R from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import { agentCliKindOfRemoteRunnerProvider } from "../domain/remoteRunnerProvider";
 import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
+import { assertRemoteRunnerBackwardPage } from "../domain/remoteRunnerBackwardPage";
 import { watchRemoteRunnerInventory } from "./watchRemoteRunnerInventory";
 import { validateRemoteHistorySearchPage } from "../domain/remoteRunnerHistorySearch";
 
@@ -53,6 +54,7 @@ export const REMOTE_RUNNER_COMMANDS = {
   cancelPendingMessage: "remote_runner_cancel_pending_message",
   resumePendingMessages: "remote_runner_resume_pending_messages",
   listEvents: "remote_runner_list_events",
+  listEventsBefore: "remote_runner_list_events",
   getDiff: "remote_runner_get_diff",
   getTurnChanges: "remote_runner_get_turn_changes",
   getTurnFileDiff: "remote_runner_get_turn_file_diff",
@@ -251,6 +253,11 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   listEvents(request: R.RemoteRunnerTaskRequest & Readonly<{ after: number }>) {
     return this.call("listEvents", request);
+  }
+  async listEventsBefore(request: R.RemoteRunnerEventsBeforeRequest) {
+    const page = await this.call("listEventsBefore", request);
+    assertRemoteRunnerBackwardPage(page, request);
+    return page;
   }
   async getTurnChanges(request: R.RemoteRunnerTaskRequest) {
     const response = await this.call("getTurnChanges", request);

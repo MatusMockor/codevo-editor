@@ -29,6 +29,8 @@ struct Capabilities {
     #[serde(default, deserialize_with = "optional_bool")]
     task_isolation: Option<bool>,
     event_replay: bool,
+    #[serde(default, deserialize_with = "optional_bool")]
+    event_backward_paging: Option<bool>,
     task_drafts: Option<bool>,
     image_attachments: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
@@ -104,6 +106,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.turn_changes,
         caps.task_isolation,
         caps.event_replay,
+        caps.event_backward_paging,
         caps.task_drafts,
         caps.image_attachments,
         caps.text_attachments,
@@ -220,6 +223,26 @@ mod tests {
             serde_json::json!([]),
         ] {
             value["capabilities"]["subagentLifecycleRetention"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
+    }
+
+    #[test]
+    fn backward_paging_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        assert!(validate(value.clone()).is_ok());
+        for supported in [true, false] {
+            value["capabilities"]["eventBackwardPaging"] = supported.into();
+            assert!(validate(value.clone()).is_ok());
+        }
+        for invalid in [
+            Value::Null,
+            "true".into(),
+            1.into(),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            value["capabilities"]["eventBackwardPaging"] = invalid;
             assert!(validate(value.clone()).is_err());
         }
     }
