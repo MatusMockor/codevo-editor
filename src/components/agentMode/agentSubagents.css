@@ -276,13 +276,14 @@ button.cv-spawn-member__head {
 }
 
 .cv-agents-row[data-action="stop"] {
-  grid-template-columns: 6px minmax(0, 1fr) auto auto;
+  grid-template-columns: 6px minmax(0, 1fr) auto minmax(80px, auto);
 }
 
 .cv-agents-row__stop {
   grid-column: 4;
   grid-row: 1 / 4;
   align-self: center;
+  justify-self: end;
   display: inline-flex;
   box-sizing: border-box;
   align-items: center;
