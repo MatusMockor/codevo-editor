@@ -5,6 +5,7 @@ import {
   type AgentStopConfirmation,
 } from "../../application/useAgentStopController";
 import { runningTurn } from "../../domain/agentThread";
+import type { AgentTurnHaltSource } from "../../domain/agentTurnHaltRecord";
 import type { AgentStopConfirmationView } from "./AgentStopConfirmationBanner";
 import { agentSessionTasksStoppable } from "./useAgentSessionTaskStops";
 
@@ -19,8 +20,8 @@ export interface AgentComposerStopControls {
   readonly running: boolean;
   readonly sessionTasksStoppable: boolean;
   readonly stopConfirmation: AgentStopConfirmationView | null;
-  onStop(): void;
-  onStopNow(): void;
+  onStop(source: AgentTurnHaltSource): void;
+  onStopNow(source: AgentTurnHaltSource): void;
 }
 
 interface IdleSessionTarget {
@@ -77,16 +78,22 @@ export function useAgentComposerStop(
     if (idleThreadId === null) return;
     return cancelStop;
   }, [cancelStop, idleOwnerId, idleThreadId]);
-  const onStop = useCallback((): void => {
-    const threadId = runningThreadIdRef.current ?? idleRef.current?.threadId ?? null;
-    if (threadId === null) return;
-    requestStop(threadId);
-  }, [requestStop]);
-  const onStopNow = useCallback((): void => {
-    const threadId = runningThreadIdRef.current;
-    if (threadId === null) return;
-    stopNow(threadId);
-  }, [stopNow]);
+  const onStop = useCallback(
+    (source: AgentTurnHaltSource): void => {
+      const threadId = runningThreadIdRef.current ?? idleRef.current?.threadId ?? null;
+      if (threadId === null) return;
+      requestStop(threadId, source);
+    },
+    [requestStop],
+  );
+  const onStopNow = useCallback(
+    (source: AgentTurnHaltSource): void => {
+      const threadId = runningThreadIdRef.current;
+      if (threadId === null) return;
+      stopNow(threadId, source);
+    },
+    [stopNow],
+  );
   const sessionActions = useMemo(
     () => ({
       stopTasks: (threadId: string): void => {

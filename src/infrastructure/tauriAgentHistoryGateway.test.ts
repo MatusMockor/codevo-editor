@@ -158,7 +158,7 @@ it("preserves one workspace revision when another workspace loads", async () => 
     .fn<InvokeAgentThreadStoreCommand>()
     .mockImplementation(async (command, args) =>
       command === "load_agent_history"
-        ? { threads: [], unreadable: [], evicted: 0, revisions: {} }
+        ? { threads: [], unreadable: [], evicted: 0, revisions: {}, haltRequests: {} }
         : { revision: (args.request as { expectedRevision: number }).expectedRevision + 1 },
     );
   const gateway = new TauriAgentHistoryGateway(invoke, () => true);
@@ -189,6 +189,7 @@ it("keeps its acknowledged revision when an earlier load settles after the save"
     unreadable: [],
     evicted: 0,
     revisions: { [original.thread.threadId]: 0 },
+    haltRequests: {},
   });
   await loading;
   await gateway.saveAgentThread(original);
@@ -215,7 +216,14 @@ it("publishes every acknowledged revision without putting internal authority on 
   expect(onRevision.mock.calls).toEqual([[4], [5]]);
   for (const [, args] of invoke.mock.calls) {
     const wire = args.request as Record<string, unknown>;
-    expect(Object.keys(wire).sort()).toEqual(["expectedRevision", "ownerId", "rootKey", "thread"]);
+    expect(Object.keys(wire).sort()).toEqual([
+      "expectedRevision",
+      "haltRequests",
+      "ownerId",
+      "rootKey",
+      "thread",
+    ]);
+    expect(wire.haltRequests).toEqual([]);
     expect(wire.thread).not.toHaveProperty("historyRevision");
   }
 });
@@ -290,6 +298,7 @@ it.each(["lost transport", "The saved thread update is stale; reload its current
         unreadable: [],
         evicted: 0,
         revisions: { [stored.threadId]: 5 },
+        haltRequests: {},
       })
       .mockResolvedValueOnce({ revision: 6 });
     const gateway = new TauriAgentHistoryGateway(invoke, () => true);
@@ -397,6 +406,7 @@ it("keeps every follow-up and main reply of a long turn through a save and a rel
         unreadable: [],
         evicted: 0,
         revisions: { [threadId]: revision },
+        haltRequests: {},
       };
     });
   const conversation = Array.from({ length: 20 }, (_, index) =>
@@ -421,4 +431,100 @@ it("keeps every follow-up and main reply of a long turn through a save and a rel
   expect(turn?.events.slice(0, conversation.length)).toEqual(conversation);
   expect(turn?.events.length).toBeLessThanOrEqual(512);
   expect(turn?.eventsTruncated).toBe(true);
+});
+
+describe("stop request records on the history wire", () => {
+  const haltRequest = {
+    source: "composerEscape",
+    mode: "softInterrupt",
+    requestedAtEpochMs: 1_000,
+    escalation: { source: "interruptRefused", requestedAtEpochMs: 1_400 },
+  } as const;
+
+  function backend() {
+    const saved: Record<string, unknown>[] = [];
+    const invoke = vi
+      .fn<InvokeAgentThreadStoreCommand>()
+      .mockImplementation(async (_command, args) => {
+        const wire = args.request as Record<string, unknown>;
+        saved.push(wire);
+        return { revision: (wire.expectedRevision as number) + 1 };
+      });
+    return { invoke, saved };
+  }
+
+  it("sends the record beside the thread and never inside the turn payload", async () => {
+    const { invoke, saved } = backend();
+    const gateway = new TauriAgentHistoryGateway(invoke, () => true);
+    const halted = logTurn({ turnId: "halted", status: { kind: "stopped" }, haltRequest });
+
+    await gateway.saveAgentThread(request([logTurn({ turnId: "plain" }), halted]));
+
+    expect(saved.map((wire) => wire.haltRequests)).toEqual([
+      [],
+      [{ turnId: "halted", ...haltRequest }],
+    ]);
+    for (const wire of saved) {
+      expect(JSON.stringify(wire.thread)).not.toContain("haltRequest");
+    }
+  });
+
+  it("resends an acknowledged turn once a stop request is recorded on it", async () => {
+    const { invoke, saved } = backend();
+    const gateway = new TauriAgentHistoryGateway(invoke, () => true);
+    const running = logTurn({ status: { kind: "running" }, endedAtEpochMs: null });
+    await gateway.saveAgentThread(request([running]));
+    await gateway.saveAgentThread(request([running]));
+    expect(saved.map((wire) => wire.haltRequests)).toEqual([[], []]);
+
+    await gateway.saveAgentThread(request([{ ...running, haltRequested: true, haltRequest }]));
+
+    expect(saved).toHaveLength(3);
+    expect(saved[2]?.haltRequests).toEqual([{ turnId: running.turnId, ...haltRequest }]);
+    expect(JSON.stringify(saved[2]?.thread)).not.toContain("haltRequest");
+  });
+
+  it("restores the record on its exact turn and loads a thread whose record is unknown", async () => {
+    const save = request([logTurn({ status: { kind: "stopped" } })]);
+    const thread = serializeAgentHistoryThread(save.thread);
+    const snapshot = (haltRequests: Record<string, unknown>) => ({
+      threads: [thread],
+      unreadable: [],
+      evicted: 0,
+      revisions: { [save.thread.threadId]: 1 },
+      haltRequests,
+    });
+    const stored = { turnId: save.thread.turns[0]?.turnId, ...haltRequest };
+    const invoke = vi
+      .fn<InvokeAgentThreadStoreCommand>()
+      .mockResolvedValueOnce(snapshot({ [save.thread.threadId]: [stored] }))
+      .mockResolvedValueOnce(
+        snapshot({ [save.thread.threadId]: [{ ...stored, source: "triggerFromANewerBuild" }] }),
+      )
+      .mockResolvedValueOnce(snapshot({ "another-thread": [stored] }));
+    const gateway = new TauriAgentHistoryGateway(invoke, () => true);
+
+    const restored = await gateway.loadAgentThreads(save);
+    const unknown = await gateway.loadAgentThreads(save);
+    const foreign = await gateway.loadAgentThreads(save);
+
+    expect(restored.threads[0]?.turns[0]?.haltRequest).toEqual(haltRequest);
+    expect(restored.threads[0]?.turns[0]?.haltRequested).toBeUndefined();
+    expect(unknown.threads).toHaveLength(1);
+    expect(unknown.threads[0]?.turns[0]?.haltRequest).toBeUndefined();
+    expect(foreign.threads[0]?.turns[0]?.haltRequest).toBeUndefined();
+  });
+
+  it("rejects a load response without the halt request envelope", async () => {
+    const save = request();
+    const invoke = vi.fn<InvokeAgentThreadStoreCommand>().mockResolvedValue({
+      threads: [],
+      unreadable: [],
+      evicted: 0,
+      revisions: {},
+    });
+    const gateway = new TauriAgentHistoryGateway(invoke, () => true);
+
+    await expect(gateway.loadAgentThreads(save)).rejects.toThrow(TypeError);
+  });
 });

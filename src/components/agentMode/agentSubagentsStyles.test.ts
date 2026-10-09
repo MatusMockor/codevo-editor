@@ -58,6 +58,27 @@ describe("agent subagent styles", () => {
     expect(declaration(".cv-agents__foot", "height")).toBe("32px");
   });
 
+  it("paints the row stop as a danger pill and quiets it while stopping", () => {
+    const stop = ".cv-agents-row__stop";
+    const stopping = '.cv-agents-row__stop[aria-disabled="true"]';
+    const hover = '.cv-agents-row__stop:hover:enabled:not([aria-disabled="true"])';
+    expect(declaration(stop, "color")).toBe("var(--cv-danger)");
+    expect(declaration(stop, "background")).toBe("var(--cv-danger-soft)");
+    expect(declaration(stop, "box-shadow")).toBe("var(--cv-ring-danger-soft)");
+    expect(declaration(stop, "border")).toBe("0");
+    expect(declaration(stop, "height")).toBe("24px");
+    expect(declaration(hover, "color")).toBe("var(--cv-danger)");
+    expect(varReferences(declaration(hover, "background") ?? "")).toEqual(["--cv-danger"]);
+    expect(declaration(stopping, "color")).toBe("var(--cv-fg-subtle)");
+    expect(declaration(stopping, "box-shadow")).toBe("none");
+    expect(declaration(stopping, "cursor")).toBe("default");
+    expect(varReferences(declaration(stopping, "background") ?? "")).toEqual(["--cv-tint-1"]);
+    expect(declaration(stopping, "height")).toBeUndefined();
+    expect(sheet.source).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.cv-agents-row__stop,[\s\S]*transition: none/,
+    );
+  });
+
   it("uses static status dots and animates only the live spawn lead", () => {
     const animated = parsed.rules.filter((rule) =>
       rule.declarations.some((entry) => entry.property === "animation" && entry.value !== "none"),

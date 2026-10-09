@@ -63,7 +63,7 @@ describe("AgentSessionDock", () => {
         .querySelector<HTMLButtonElement>('button[aria-label="Stop agent and background work"]')
         ?.click(),
     );
-    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stop).toHaveBeenCalledExactlyOnceWith("sessionDock");
   });
 
   it("omits Stop when the bar has no background work or no stop port", () => {

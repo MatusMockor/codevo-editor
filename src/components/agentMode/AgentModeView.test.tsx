@@ -801,7 +801,7 @@ describe("AgentModeView", () => {
     act(() =>
       promptField().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" })),
     );
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerEscape" });
   });
 
   it.each(["queue", "steer"] as const)(
@@ -845,7 +845,7 @@ describe("AgentModeView", () => {
       expect(sendFollowUp).not.toHaveBeenCalled();
 
       click("button.agent-composer__stop");
-      expect(stop).toHaveBeenCalledWith("agt-1");
+      expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerStopButton" });
     },
   );
 
@@ -1237,7 +1237,50 @@ describe("AgentModeView", () => {
     act(() => {
       promptField().dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
     });
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "composerEscape" });
+  });
+
+  it("cancels the edit on Escape in the transcript and leaves the running agent alone there", () => {
+    const session = queuedEditSession();
+    const stop = vi.fn(async () => undefined);
+    const edits = {
+      beginDeferredFollowUpEdit: vi.fn(() => session),
+      commitDeferredFollowUpEdit: vi.fn(async () => true),
+      cancelDeferredFollowUpEdit: vi.fn(),
+      stop,
+    };
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+    clickText("Refactor the parser");
+    click('button[aria-label="Edit queued message"]');
+    render({ agents: queuedEditSurface(queuedImageEntry(session.lease), edits) });
+    const transcript = host.querySelector<HTMLElement>(".agent-session__scroll");
+    expect(transcript).not.toBeNull();
+    const pressEscapeInTranscript = (): KeyboardEvent => {
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Escape",
+      });
+      act(() => {
+        transcript?.dispatchEvent(event);
+      });
+      return event;
+    };
+
+    const cancelling = pressEscapeInTranscript();
+
+    expect(cancelling.defaultPrevented).toBe(true);
+    expect(edits.cancelDeferredFollowUpEdit).toHaveBeenCalledExactlyOnceWith(session);
+    expect(stop).not.toHaveBeenCalled();
+    expect(host.querySelector('[aria-label="Editing queued message"]')).toBeNull();
+    render({ agents: queuedEditSurface(queuedImageEntry(), edits) });
+
+    const stray = pressEscapeInTranscript();
+
+    expect(stray.defaultPrevented).toBe(false);
+    expect(edits.cancelDeferredFollowUpEdit).toHaveBeenCalledTimes(1);
+    expect(stop).not.toHaveBeenCalled();
+    expect(host.querySelector('button[aria-label="Stop agent"]')).not.toBeNull();
   });
 
   it("keeps the composer untouched when the queued message can no longer be edited", () => {
@@ -1355,7 +1398,7 @@ describe("AgentModeView", () => {
     click('[aria-label="Thread actions for Refactor the parser"]');
     clickMenuItem("Stop agent");
 
-    expect(stop).toHaveBeenCalledWith("agt-1");
+    expect(stop).toHaveBeenCalledWith("agt-1", { kind: "ui", source: "threadMenu" });
 
     render({ agents: surface({ archive, remove, stop, threads: [threadView({})] }) });
 

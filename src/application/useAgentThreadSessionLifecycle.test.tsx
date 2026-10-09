@@ -160,7 +160,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
     const harness = render(thread({ turns: [running] }), fake);
 
     await act(async () => {
-      await expect(harness.hook().interrupt(THREAD_ID)).resolves.toBe(true);
+      await expect(harness.hook().interrupt(THREAD_ID, "composerEscape")).resolves.toBe(true);
     });
 
     expect(fake.interruptAgentTask).toHaveBeenCalledWith({
@@ -172,6 +172,8 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
       threadId: THREAD_ID,
       ownerId: OWNER_ID,
       turnId: "agt-1-t2",
+      trigger: { kind: "ui", source: "composerEscape" },
+      mode: "softInterrupt",
     });
   });
 
@@ -184,7 +186,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
     const harness = render(thread({ turns: [running] }), fake);
 
     await act(async () => {
-      await expect(harness.hook().interrupt(THREAD_ID)).resolves.toBe(false);
+      await expect(harness.hook().interrupt(THREAD_ID, "composerEscape")).resolves.toBe(false);
     });
   });
 
@@ -197,7 +199,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
     const harness = render(thread({ turns: [running] }), fake);
 
     await act(async () => {
-      await expect(harness.hook().interrupt(THREAD_ID)).resolves.toBe(false);
+      await expect(harness.hook().interrupt(THREAD_ID, "composerEscape")).resolves.toBe(false);
     });
   });
 
@@ -213,14 +215,14 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
       const harness = render(current, fake);
       const threadId = current?.threadId ?? THREAD_ID;
       await act(async () => {
-        await expect(harness.hook().interrupt(threadId)).resolves.toBe(false);
+        await expect(harness.hook().interrupt(threadId, "composerEscape")).resolves.toBe(false);
       });
       expect(fake.interruptAgentTask).not.toHaveBeenCalled();
       expect(harness.recordHaltRequest).not.toHaveBeenCalled();
     }
     const unwired = render(thread({ turns: [running] }), undefined);
     await act(async () => {
-      await expect(unwired.hook().interrupt(THREAD_ID)).resolves.toBe(false);
+      await expect(unwired.hook().interrupt(THREAD_ID, "composerEscape")).resolves.toBe(false);
     });
   });
 
@@ -230,7 +232,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
     const harness = render(thread({ turns: [running] }), fake);
 
     await act(async () => {
-      await expect(harness.hook().interrupt(THREAD_ID)).resolves.toBe(false);
+      await expect(harness.hook().interrupt(THREAD_ID, "composerEscape")).resolves.toBe(false);
     });
 
     expect(harness.reportError).toHaveBeenCalledWith("Agents", failure);
@@ -242,7 +244,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
     const harness = render(thread({ turns: [running] }), fake);
     let outcome!: Promise<boolean>;
     act(() => {
-      outcome = harness.hook().interrupt(THREAD_ID);
+      outcome = harness.hook().interrupt(THREAD_ID, "composerEscape");
     });
 
     harness.scenario.current = thread({
@@ -264,7 +266,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
     const harness = render(thread({ turns: [running] }), fake);
     let outcome!: Promise<boolean>;
     act(() => {
-      outcome = harness.hook().interrupt(THREAD_ID);
+      outcome = harness.hook().interrupt(THREAD_ID, "composerEscape");
     });
 
     harness.scenario.current = thread({
@@ -288,7 +290,7 @@ describe("useAgentThreadSessionLifecycle interrupt", () => {
     const harness = render(thread({ turns: [running] }), fake);
     let outcome!: Promise<boolean>;
     act(() => {
-      outcome = harness.hook().interrupt(THREAD_ID);
+      outcome = harness.hook().interrupt(THREAD_ID, "composerEscape");
     });
 
     harness.unmount();

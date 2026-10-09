@@ -16,6 +16,7 @@ import {
   runningTurn,
   type AgentThread,
 } from "../domain/agentThread";
+import type { AgentTurnHaltTrigger } from "../domain/agentTurnHaltRecord";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import {
   AGENT_TASKS_SOURCE,
@@ -159,7 +160,7 @@ export interface AgentTurnDispatchSurface {
   resumeDeferredFollowUps(threadId: string): Promise<void>;
   restartDeferredFollowUp(threadId: string, id: string): Promise<void>;
   clearDeferredForOwner(ownerId: string): void;
-  stop(threadId: string): Promise<void>;
+  stop(threadId: string, trigger: AgentTurnHaltTrigger): Promise<void>;
   hasLiveTasksForOwner(ownerId: string): boolean;
   stopProjectTasks(ownerId: string, repositoryRoots: ReadonlyArray<string>): Promise<void>;
 }
@@ -922,7 +923,7 @@ export function useAgentTurnDispatch(
   });
 
   const stop = useCallback(
-    async (threadId: string): Promise<void> => {
+    async (threadId: string, trigger: AgentTurnHaltTrigger): Promise<void> => {
       const deps = dependenciesRef.current;
       onThreadStopped(threadId);
       const thread = deps.store.currentState().threads.get(threadId);
@@ -934,6 +935,9 @@ export function useAgentTurnDispatch(
         threadId,
         ownerId: thread.owner.ownerId,
         turnId: turn.turnId,
+        trigger,
+        mode: "hardStop",
+        requestedAtEpochMs: (deps.now ?? Date.now)(),
       });
       const stopRecorded = startContextRef.current.startIntents.requestStop(turn.turnId);
       const stopped = await attempt(() =>

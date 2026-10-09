@@ -7,6 +7,7 @@ import type { AgentCommandCatalogServerProject } from "../domain/agentCommandCat
 import type { AgentSessionBackground } from "../domain/agentSessionBackground";
 import type { AgentBackgroundTaskStopOutcome } from "../domain/agentThreadSession";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "../domain/agentTurnChanges";
+import type { AgentTurnHaltSource, AgentTurnHaltTrigger } from "../domain/agentTurnHaltRecord";
 import type {
   AgentThreadOrganizationPatch,
   AgentThreadDropSection,
@@ -480,8 +481,8 @@ export interface AgentThreadsSurface {
   importExternalSession(
     request: ExternalSessionImportRequest,
   ): Promise<ExternalSessionImportResult | null>;
-  stop(threadId: string): Promise<void>;
-  interrupt?(threadId: string): Promise<boolean>;
+  stop(threadId: string, trigger: AgentTurnHaltTrigger): Promise<void>;
+  interrupt?(threadId: string, source: AgentTurnHaltSource): Promise<boolean>;
   endSession?(threadId: string): Promise<AgentSessionEndResult>;
   inspectSessionBackground?(threadId: string): Promise<AgentSessionBackgroundInspection>;
   stopSessionBackgroundTask?(threadId: string, taskId: string): Promise<AgentSessionTaskStopResult>;

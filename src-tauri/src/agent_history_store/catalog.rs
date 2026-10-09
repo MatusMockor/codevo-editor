@@ -10,9 +10,11 @@ pub(crate) struct ThreadPage {
     pub revisions: std::collections::BTreeMap<String, u64>,
 }
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FoundImport {
     pub thread: AgentThread,
     pub revision: u64,
+    pub halt_requests: Vec<super::TurnHaltRequest>,
 }
 impl AgentHistoryStore {
     pub(crate) fn read_threads(
@@ -106,7 +108,7 @@ impl AgentHistoryStore {
             let revision=page.revision;
             if page.turns.is_empty() && page.has_earlier {return Err("The saved turn exceeds the bounded history page size.".into());}
             thread.turns=page.turns;thread.turns_truncated|=page.has_earlier;
-            Ok(Some(FoundImport{thread,revision}))
+            Ok(Some(FoundImport{thread,revision,halt_requests:page.halt_requests}))
         })
     }
 }

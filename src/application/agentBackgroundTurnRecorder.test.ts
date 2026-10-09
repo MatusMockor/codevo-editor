@@ -184,6 +184,9 @@ describe("recordAgentBackgroundTurn", () => {
       threadId: THREAD_ID,
       ownerId: OWNER_ID,
       turnId: LEAD_TURN_ID,
+      trigger: { kind: "ui", source: "composerStopButton" },
+      mode: "hardStop",
+      requestedAtEpochMs: 40,
     });
     scene.receive(reply("after the stop request"));
 

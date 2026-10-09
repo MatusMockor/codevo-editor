@@ -1,4 +1,4 @@
-use super::{legacy::AgentTurn, sql, TurnPage, MAX_PAGE_TURNS};
+use super::{halt_requests, legacy::AgentTurn, sql, TurnPage, MAX_PAGE_TURNS};
 use rusqlite::{Connection, OptionalExtension};
 pub(super) fn read(
     connection: &Connection,
@@ -46,11 +46,14 @@ pub(super) fn read(
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
     ))?;
     let mut turns = Vec::<AgentTurn>::new();
+    let mut halts = Vec::new();
     let mut bytes = 0;
     let mut has_earlier = false;
     for row in rows {
         let (turn_id, payload) = sql(row)?;
-        if turns.len() == MAX_PAGE_TURNS || bytes + payload.len() + 1 > budget {
+        let halt = halt_requests::read(connection, id, &turn_id);
+        let cost = payload.len() + 1 + halt_requests::wire_bytes(halt.as_slice());
+        if turns.len() == MAX_PAGE_TURNS || bytes + cost > budget {
             has_earlier = true;
             break;
         }
@@ -61,13 +64,16 @@ pub(super) fn read(
         }
         header.turns = vec![turn.clone()];
         super::validate(root, &header)?;
-        bytes += payload.len() + 1;
+        bytes += cost;
         turns.push(turn);
+        halts.extend(halt);
     }
     turns.reverse();
+    halts.reverse();
     let before_turn_id = turns.first().map(|turn| turn.turn_id.clone());
     Ok(TurnPage {
         turns,
+        halt_requests: halts,
         has_earlier,
         before_turn_id,
         revision: revision as u64,

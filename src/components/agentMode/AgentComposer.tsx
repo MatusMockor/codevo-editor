@@ -37,6 +37,7 @@ import {
 } from "../../domain/agentTask";
 import type { AgentComposerTarget } from "./agentComposerCheckout";
 import type { AgentComposerPreviousWorktreeChoice } from "./agentComposerPreviousWorktree";
+import type { AgentTurnHaltSource } from "../../domain/agentTurnHaltRecord";
 import type { AgentWorkspaceLocation } from "../../domain/agentWorkspaceLocation";
 import { AgentComposerAttachments } from "./AgentComposerAttachments";
 import {
@@ -91,6 +92,7 @@ import { AgentComposerApprovalPanel } from "./composer/AgentComposerApprovalPane
 import type { AgentComposerInteraction } from "./composer/agentComposerInteraction";
 import { AgentComposerQuestionPanel } from "./composer/AgentComposerQuestionPanel";
 import { useAgentComposerFocusReturn } from "./composer/useAgentComposerInteractionFocus";
+import { useAgentStopConfirmationFocus } from "./useAgentStopConfirmationFocus";
 import {
   agentComposerRecoveryCaption,
   type AgentComposerRecoveryOutcome,
@@ -175,8 +177,8 @@ export interface AgentComposerProps {
   onOpenEnvironmentSettings?(): void;
   onShowUsageLimits?(): void;
   onOpenMcpServers?(): void;
-  onStop?(): void;
-  onStopNow?(): void;
+  onStop?(source: AgentTurnHaltSource): void;
+  onStopNow?(source: AgentTurnHaltSource): void;
   readonly stopConfirmation?: AgentStopConfirmationView | null;
   readonly endSessionConfirmation?: AgentEndSessionConfirmationView | null;
   readonly sessionRestartConfirmation?: AgentSessionRestartConfirmation | null;
@@ -291,6 +293,7 @@ export function AgentComposer({
   const interactionActive = interaction !== null && interaction.kind !== "notice";
   const slabRef = useRef<HTMLDivElement>(null);
   useAgentComposerFocusReturn(interactionActive, slabRef, textareaRef);
+  useAgentStopConfirmationFocus(stopConfirmation?.kind ?? null, textareaRef);
   const focusPrompt = (): void => textareaRef.current?.focus({ preventScroll: true });
   const steering = mode.kind === "steer";
   const blockedReason = mode.kind === "followUp" ? mode.blockedReason : null;
@@ -654,7 +657,7 @@ export function AgentComposer({
       if (!running && !sessionTasksStoppable) return;
       event.preventDefault();
       event.stopPropagation();
-      if (!event.repeat) onStop?.();
+      if (!event.repeat) onStop?.("composerEscape");
       return;
     }
     if (event.key !== "Enter") return;

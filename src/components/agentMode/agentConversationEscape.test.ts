@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { agentConversationEscapeApplies, agentEscapeIsUnclaimed } from "./agentConversationEscape";
+import {
+  agentConversationEscapeApplies,
+  agentEscapeIsUnclaimed,
+  agentFocusIsClaimed,
+} from "./agentConversationEscape";
 import { agentConversationEscapeAction } from "./useAgentConversationEscape";
 
 function conversation(markup = ""): HTMLElement {
@@ -129,12 +133,9 @@ describe("agentConversationEscapeApplies", () => {
 });
 
 describe("agentConversationEscapeAction", () => {
-  it("cancels a queued-message edit before stopping the running agent", () => {
+  it("cancels a queued-message edit", () => {
     const onCancel = vi.fn();
-    const onStop = vi.fn();
     const action = agentConversationEscapeAction({
-      running: true,
-      onStop,
       queuedEdit: {
         threadId: "agt-1",
         lease: 1,
@@ -145,25 +146,28 @@ describe("agentConversationEscapeAction", () => {
         commit: async () => true,
       },
     });
+    expect(action).not.toBeNull();
     action?.();
     expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers nothing without a queued-message edit", () => {
+    expect(agentConversationEscapeAction({})).toBeNull();
+    expect(agentConversationEscapeAction({ queuedEdit: null })).toBeNull();
+  });
+
+  it("never stops a running agent", () => {
+    const onStop = vi.fn();
+    const composer = { queuedEdit: null, running: true, sessionTasksStoppable: false, onStop };
+    expect(agentConversationEscapeAction(composer)).toBeNull();
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it("stops only a running agent", () => {
+  it("never asks to stop an idle thread's live session tasks", () => {
     const onStop = vi.fn();
-    expect(agentConversationEscapeAction({ running: false, onStop })).toBeNull();
-    agentConversationEscapeAction({ running: true, onStop })?.();
-    expect(onStop).toHaveBeenCalledTimes(1);
-  });
-
-  it("asks to stop an idle thread's live session tasks", () => {
-    const onStop = vi.fn();
-    expect(
-      agentConversationEscapeAction({ running: false, sessionTasksStoppable: false, onStop }),
-    ).toBeNull();
-    agentConversationEscapeAction({ running: false, sessionTasksStoppable: true, onStop })?.();
-    expect(onStop).toHaveBeenCalledTimes(1);
+    const composer = { queuedEdit: null, running: false, sessionTasksStoppable: true, onStop };
+    expect(agentConversationEscapeAction(composer)).toBeNull();
+    expect(onStop).not.toHaveBeenCalled();
   });
 });
 
@@ -261,5 +265,63 @@ describe("agentEscapeIsUnclaimed", () => {
     expect(agentEscapeIsUnclaimed(escapeAt(root.querySelector("button") ?? root), document)).toBe(
       false,
     );
+  });
+});
+
+describe("agentFocusIsClaimed", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it("leaves focus free on the body and on a plain button", () => {
+    const root = conversation("<button>Stop</button>");
+
+    expect(agentFocusIsClaimed(document)).toBe(false);
+    root.querySelector("button")?.focus();
+    expect(agentFocusIsClaimed(document)).toBe(false);
+  });
+
+  it.each([
+    ["a text field", "<input />"],
+    ["a text area", "<textarea></textarea>"],
+    ["an editable region", '<div contenteditable="true" tabindex="0"></div>'],
+    ["a menu item", '<div role="menu"><button>Rename</button></div>'],
+    ["a dialog control", '<div role="dialog"><button>Close</button></div>'],
+    ["a terminal", '<div class="xterm"><button>Cell</button></div>'],
+    ["an editor", '<div class="monaco-editor"><button>Line</button></div>'],
+  ])("is claimed by %s that holds focus", (_name, markup) => {
+    const root = conversation(markup);
+    const target = root.querySelector<HTMLElement>("button, input, textarea, [contenteditable]");
+
+    target?.focus();
+
+    expect(document.activeElement).toBe(target);
+    expect(agentFocusIsClaimed(document)).toBe(true);
+  });
+
+  it.each([
+    ["an expanded menu trigger", '<button aria-haspopup="menu" aria-expanded="true">Base</button>'],
+    ["an open agent popover", '<button>Base</button><div class="agent-popover"></div>'],
+  ])("is claimed by %s whose trigger keeps focus", (_name, markup) => {
+    const root = conversation(markup);
+
+    root.querySelector("button")?.focus();
+
+    expect(agentFocusIsClaimed(document)).toBe(true);
+  });
+
+  it("is free again once the menu trigger collapses", () => {
+    const root = conversation('<button aria-haspopup="menu" aria-expanded="false">Base</button>');
+
+    root.querySelector("button")?.focus();
+
+    expect(agentFocusIsClaimed(document)).toBe(false);
+  });
+
+  it("is claimed by an open modal even when focus rests on the body", () => {
+    conversation('<div aria-modal="true"></div>');
+
+    expect(document.activeElement).toBe(document.body);
+    expect(agentFocusIsClaimed(document)).toBe(true);
   });
 });

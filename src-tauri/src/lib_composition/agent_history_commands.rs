@@ -7,7 +7,9 @@ use std::sync::Arc;
 use tauri::State;
 #[path = "../agent_history_store/mod.rs"]
 pub(crate) mod agent_history_store;
-use agent_history_store::{legacy::AgentThread, AgentHistoryStore, HistorySnapshot, TurnPage};
+use agent_history_store::{
+    legacy::AgentThread, AgentHistoryStore, HistorySnapshot, TurnHaltRequest, TurnPage,
+};
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct HistoryOwnerRequest {
@@ -21,6 +23,7 @@ pub(crate) struct HistorySaveRequest {
     owner_id: String,
     thread: AgentThread,
     expected_revision: u64,
+    halt_requests: Vec<TurnHaltRequest>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -52,11 +55,12 @@ pub(crate) async fn save_agent_history_thread(
 ) -> Result<agent_history_store::HistorySaveReceipt, String> {
     let store = Arc::clone(&store);
     run_blocking_command(move || {
-        store.save(
+        store.save_with_halt_requests(
             &request.root_key,
             &request.owner_id,
             &request.thread,
             request.expected_revision,
+            &request.halt_requests,
         )
     })
     .await

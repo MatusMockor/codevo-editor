@@ -2,11 +2,13 @@ pub(crate) use super::super::agent_thread_store_commands::agent_thread_store as 
 pub(crate) mod artifact_turns;
 mod catalog;
 pub(crate) mod connection;
+pub(crate) mod halt_requests;
 mod migration;
 mod pages;
 pub(crate) use catalog::{FoundImport, ThreadPage};
 pub(crate) mod imports;
 
+pub(crate) use halt_requests::TurnHaltRequest;
 use legacy::{AgentThread, AgentThreadDocument, AgentTurn, AGENT_THREAD_SCHEMA_VERSION};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
@@ -25,11 +27,13 @@ pub(crate) struct HistorySnapshot {
     pub unreadable: Vec<legacy::UnreadableAgentThread>,
     pub evicted: usize,
     pub revisions: std::collections::BTreeMap<String, u64>,
+    pub halt_requests: std::collections::BTreeMap<String, Vec<TurnHaltRequest>>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TurnPage {
     pub turns: Vec<AgentTurn>,
+    pub halt_requests: Vec<TurnHaltRequest>,
     pub has_earlier: bool,
     pub before_turn_id: Option<String>,
     pub revision: u64,
@@ -54,6 +58,7 @@ impl AgentHistoryStore {
         let mut connection = connection::open(&self.base_dir, root_key, owner_id)?;
         work(&mut connection)
     }
+    #[cfg(test)]
     pub(crate) fn save(
         &self,
         root: &str,
@@ -61,15 +66,26 @@ impl AgentHistoryStore {
         thread: &AgentThread,
         expected_revision: u64,
     ) -> Result<HistorySaveReceipt, String> {
+        self.save_with_halt_requests(root, owner, thread, expected_revision, &[])
+    }
+    pub(crate) fn save_with_halt_requests(
+        &self,
+        root: &str,
+        owner: &str,
+        thread: &AgentThread,
+        expected_revision: u64,
+        halts: &[TurnHaltRequest],
+    ) -> Result<HistorySaveReceipt, String> {
         if expected_revision >= legacy::MAX_AGENT_SAFE_INTEGER {
             return Err("Agent history revision is out of bounds.".into());
         }
         validate(root, thread)?;
+        halt_requests::validate(thread, halts)?;
         let bytes = serde_json::to_vec(thread).map_err(|e| e.to_string())?;
         if bytes.len() > MAX_PAGE_BYTES {
             return Err("Agent thread save batch exceeds 4 MiB.".into());
         }
-        let fingerprint = format!("{:x}", Sha256::digest(&bytes));
+        let fingerprint = save_fingerprint(&bytes, halts)?;
         self.with_connection(root, owner, |connection| {
             let tx = sql(
                 connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -107,6 +123,7 @@ impl AgentHistoryStore {
                 );
             }
             upsert(&tx, thread)?;
+            halt_requests::record(&tx, &thread.thread_id, halts)?;
             let revision = expected_revision + 1;
             sql(tx.execute(
                 "UPDATE threads SET revision=?2,last_save_hash=?3 WHERE thread_id=?1",
@@ -131,6 +148,7 @@ impl AgentHistoryStore {
             let rows = sql(statement.query_map([], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))))?;
             let mut threads = Vec::new();
             let mut revisions=std::collections::BTreeMap::new();
+            let mut halts = std::collections::BTreeMap::new();
             let mut remaining = MAX_PAGE_BYTES - 65536;
             for row in rows {
                 let (id,payload)=sql(row)?;
@@ -153,6 +171,10 @@ impl AgentHistoryStore {
                         .map_err(|e| e.to_string())?
                         .len(),
                 );
+                remaining = remaining.saturating_sub(halt_requests::wire_bytes(&page.halt_requests));
+                if !page.halt_requests.is_empty() {
+                    halts.insert(thread.thread_id.clone(), page.halt_requests);
+                }
                 threads.push(thread);
             }
             threads.reverse();
@@ -161,6 +183,7 @@ impl AgentHistoryStore {
                 unreadable,
                 evicted: 0,
                 revisions,
+                halt_requests: halts,
             })
         })
     }
@@ -230,6 +253,7 @@ impl AgentHistoryStore {
             let snapshot_cleanup = imports::snapshot_cleanup(&tx, id, &self.base_dir)?;
             sql(tx.execute("DELETE FROM import_identity WHERE thread_id=?1", [id]))?;
             sql(tx.execute("DELETE FROM turns WHERE thread_id=?1", [id]))?;
+            halt_requests::delete(&tx, id)?;
             sql(tx.execute("DELETE FROM imported_exchanges WHERE thread_id=?1", [id]))?;
             sql(tx.execute("DELETE FROM imported_checkpoints WHERE thread_id=?1", [id]))?;
             sql(tx.execute("DELETE FROM imported_legacy WHERE thread_id=?1", [id]))?;
@@ -255,6 +279,14 @@ impl AgentHistoryStore {
         }
         Ok(())
     }
+}
+fn save_fingerprint(thread: &[u8], halts: &[TurnHaltRequest]) -> Result<String, String> {
+    let mut hasher = Sha256::new();
+    hasher.update(thread);
+    if !halts.is_empty() {
+        hasher.update(serde_json::to_vec(halts).map_err(|e| e.to_string())?);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 fn validate(root: &str, thread: &AgentThread) -> Result<(), String> {
     if thread.updated_at_epoch_ms > legacy::MAX_AGENT_SAFE_INTEGER

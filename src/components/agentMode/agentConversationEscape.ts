@@ -48,6 +48,14 @@ export function agentEscapeIsUnclaimed(event: KeyboardEvent, document: Document)
   return target.closest(OWN_ESCAPE_SELECTOR) === null;
 }
 
+export function agentFocusIsClaimed(document: Document): boolean {
+  if (document.querySelector(OPEN_MODAL_SELECTOR) !== null) return true;
+  if (agentPopoverOpen(document)) return true;
+  const active = document.activeElement;
+  if (active === null) return false;
+  return active.closest(OWN_ESCAPE_SELECTOR) !== null;
+}
+
 function isPlainUnhandledEscape(event: KeyboardEvent): boolean {
   if (event.key !== "Escape") return false;
   if (event.defaultPrevented) return false;

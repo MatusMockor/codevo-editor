@@ -86,14 +86,14 @@ describe("useAgentStopController", () => {
 
   it("hard-stops immediately while the foreground runs", () => {
     const { hook, hardStop } = setup(turn([{ kind: "assistantText", text: "Working" }]));
-    act(() => hook.result.current.requestStop("thread-1"));
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    expect(hardStop).toHaveBeenCalledWith("thread-1", { kind: "ui", source: "composerStopButton" });
     expect(hook.result.current.confirmation).toBeNull();
   });
 
   it("second press within the window hard-stops", () => {
     const { hook, hardStop } = setup(turn(backgroundOnly));
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(hardStop).not.toHaveBeenCalled();
     expect(hook.result.current.confirmation).toEqual({
       kind: "confirmBackground",
@@ -101,35 +101,38 @@ describe("useAgentStopController", () => {
       turnId: "agt-1-t1",
       liveTaskCount: 1,
     });
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(hardStop).toHaveBeenCalledTimes(1);
     expect(hook.result.current.confirmation).toBeNull();
   });
 
   it("disarms after the window so a late press asks again", () => {
     const { hook, hardStop, advance } = setup(turn(backgroundOnly));
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     advance(AGENT_STOP_CONFIRMATION_WINDOW_MS);
     expect(hook.result.current.confirmation).toBeNull();
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(hardStop).not.toHaveBeenCalled();
     expect(hook.result.current.confirmation).not.toBeNull();
   });
 
   it("cancel keeps the work running", () => {
     const { hook, hardStop } = setup(turn(backgroundOnly));
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     act(() => hook.result.current.cancelStop());
     expect(hook.result.current.confirmation).toBeNull();
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(hardStop).not.toHaveBeenCalled();
   });
 
   it("stopNow ends everything without asking", () => {
     const { hook, hardStop } = setup(turn(backgroundOnly));
-    act(() => hook.result.current.requestStop("thread-1"));
-    act(() => hook.result.current.stopNow("thread-1"));
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    act(() => hook.result.current.stopNow("thread-1", "stopConfirmationBanner"));
+    expect(hardStop).toHaveBeenCalledWith("thread-1", {
+      kind: "ui",
+      source: "stopConfirmationBanner",
+    });
     expect(hook.result.current.confirmation).toBeNull();
   });
 });
@@ -154,16 +157,16 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
-    expect(interrupt).toHaveBeenCalledWith("thread-1");
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    expect(interrupt).toHaveBeenCalledWith("thread-1", "composerStopButton");
     expect(hardStop).not.toHaveBeenCalled();
     expect(hook.result.current.confirmation).toEqual({
       kind: "interrupting",
       threadId: "thread-1",
       turnId: "agt-1-t1",
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    await act(async () => hook.result.current.requestStop("thread-1", "composerEscape"));
+    expect(hardStop).toHaveBeenCalledWith("thread-1", { kind: "ui", source: "composerEscape" });
     expect(interrupt).toHaveBeenCalledTimes(1);
     expect(hook.result.current.confirmation).toBeNull();
   });
@@ -178,8 +181,11 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    await act(async () => hook.result.current.requestStop("thread-1", "composerEscape"));
+    expect(hardStop).toHaveBeenCalledWith("thread-1", {
+      kind: "interruptRefused",
+      source: "composerEscape",
+    });
     expect(hook.result.current.confirmation).toBeNull();
   });
 
@@ -193,8 +199,11 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    expect(hardStop).toHaveBeenCalledWith("thread-1", {
+      kind: "interruptRefused",
+      source: "composerStopButton",
+    });
     expect(hook.result.current.confirmation).toBeNull();
   });
 
@@ -208,12 +217,12 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
     act(() => hook.result.current.cancelStop());
     expect(hook.result.current.confirmation).toBeNull();
-    await act(async () => hook.result.current.requestStop("thread-1"));
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(interrupt).toHaveBeenCalledTimes(1);
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    expect(hardStop).toHaveBeenCalledWith("thread-1", { kind: "ui", source: "composerStopButton" });
   });
 
   it("a stale interrupt from a previous turn never hard-stops a new turn", async () => {
@@ -226,10 +235,10 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
     act(() => hook.result.current.cancelStop());
     current = working("agt-1-t2");
-    await act(async () => hook.result.current.requestStop("thread-1"));
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(hardStop).not.toHaveBeenCalled();
     expect(interrupt).toHaveBeenCalledTimes(2);
     expect(hook.result.current.confirmation).toEqual({
@@ -249,10 +258,10 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
-    await act(async () => hook.result.current.requestStop("thread-2"));
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    await act(async () => hook.result.current.requestStop("thread-2", "composerStopButton"));
     expect(hardStop).not.toHaveBeenCalled();
-    expect(interrupt).toHaveBeenLastCalledWith("thread-2");
+    expect(interrupt).toHaveBeenLastCalledWith("thread-2", "composerStopButton");
   });
 
   it("remembers the interrupted turn per thread across A B A", async () => {
@@ -265,12 +274,12 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    await act(async () => hook.result.current.requestStop("thread-1"));
-    await act(async () => hook.result.current.requestStop("thread-2"));
-    await act(async () => hook.result.current.requestStop("thread-1"));
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    await act(async () => hook.result.current.requestStop("thread-2", "composerStopButton"));
+    await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(interrupt).toHaveBeenCalledTimes(2);
     expect(hardStop).toHaveBeenCalledTimes(1);
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    expect(hardStop).toHaveBeenCalledWith("thread-1", { kind: "ui", source: "composerStopButton" });
   });
 
   it("a second press while the interrupt is pending hard-stops and a late acceptance stays hidden", async () => {
@@ -289,8 +298,8 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    act(() => hook.result.current.requestStop("thread-1"));
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(hardStop).toHaveBeenCalledTimes(1);
     await act(async () => accept(true));
     expect(hook.result.current.confirmation).toBeNull();
@@ -315,12 +324,12 @@ describe("useAgentStopController with interrupt", () => {
         interrupt,
         now: () => 1_000,
       });
-      act(() => hook.result.current.requestStop("thread-1"));
+      act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
       current = working("agt-1-t2");
       await act(async () => reply(accepted));
       expect(hook.result.current.confirmation).toBeNull();
       expect(hardStop).not.toHaveBeenCalled();
-      await act(async () => hook.result.current.requestStop("thread-1"));
+      await act(async () => hook.result.current.requestStop("thread-1", "composerStopButton"));
       expect(hardStop).not.toHaveBeenCalled();
       expect(interrupt).toHaveBeenCalledTimes(2);
     },
@@ -342,8 +351,8 @@ describe("useAgentStopController with interrupt", () => {
       interrupt,
       now: () => 1_000,
     });
-    act(() => hook.result.current.requestStop("thread-1"));
-    act(() => hook.result.current.stopNow("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    act(() => hook.result.current.stopNow("thread-1", "stopConfirmationBanner"));
     await act(async () => accept(false));
     expect(hardStop).toHaveBeenCalledTimes(1);
   });
@@ -395,7 +404,7 @@ describe("useAgentStopController interrupt deadline", () => {
 
   it("ends the interrupting state when the backend interrupt deadline passes, counted from the request", async () => {
     const { hook, advance } = setupDelayedInterrupt(1_500);
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     expect(hook.result.current.confirmation).toBeNull();
     await advance(1_500);
     expect(hook.result.current.confirmation).toEqual({
@@ -413,12 +422,12 @@ describe("useAgentStopController interrupt deadline", () => {
     const { hook, hardStop, interrupt, advance } = setupDelayedInterrupt(
       AGENT_INTERRUPT_SETTLE_DEADLINE_MS,
     );
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     await advance(AGENT_INTERRUPT_SETTLE_DEADLINE_MS);
     expect(hook.result.current.confirmation).toBeNull();
     expect(hardStop).not.toHaveBeenCalled();
-    act(() => hook.result.current.requestStop("thread-1"));
-    expect(hardStop).toHaveBeenCalledWith("thread-1");
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
+    expect(hardStop).toHaveBeenCalledWith("thread-1", { kind: "ui", source: "composerStopButton" });
     expect(interrupt).toHaveBeenCalledTimes(1);
   });
 
@@ -427,7 +436,7 @@ describe("useAgentStopController interrupt deadline", () => {
     const hardStop = vi.fn(async (_threadId: string) => undefined);
     const current = turn(backgroundOnly);
     const hook = renderHook({ readRunningTurn: () => current, hardStop, now: () => now });
-    act(() => hook.result.current.requestStop("thread-1"));
+    act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
     now += AGENT_STOP_CONFIRMATION_WINDOW_MS - 1;
     act(() => {
       vi.advanceTimersByTime(AGENT_STOP_CONFIRMATION_WINDOW_MS - 1);
@@ -468,7 +477,7 @@ describe("useAgentStopController interrupt deadline", () => {
 
     it("asks first and stops the session's tasks on a second request inside the window", () => {
       const { hook, hardStop, stopSessionBackground, advance } = setupIdle(1);
-      act(() => hook.result.current.requestStop("thread-1"));
+      act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
       expect(hook.result.current.confirmation).toEqual({
         kind: "confirmSessionBackground",
         threadId: "thread-1",
@@ -476,7 +485,7 @@ describe("useAgentStopController interrupt deadline", () => {
       });
       expect(stopSessionBackground).not.toHaveBeenCalled();
       advance(AGENT_STOP_CONFIRMATION_WINDOW_MS - 1);
-      act(() => hook.result.current.requestStop("thread-1"));
+      act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
       expect(stopSessionBackground).toHaveBeenCalledWith("thread-1");
       expect(hardStop).not.toHaveBeenCalled();
       expect(hook.result.current.confirmation).toBeNull();
@@ -484,10 +493,10 @@ describe("useAgentStopController interrupt deadline", () => {
 
     it("lets the confirmation lapse and asks again after the window", () => {
       const { hook, stopSessionBackground, advance } = setupIdle(2);
-      act(() => hook.result.current.requestStop("thread-1"));
+      act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
       advance(AGENT_STOP_CONFIRMATION_WINDOW_MS);
       expect(hook.result.current.confirmation).toBeNull();
-      act(() => hook.result.current.requestStop("thread-1"));
+      act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
       expect(stopSessionBackground).not.toHaveBeenCalled();
       expect(hook.result.current.confirmation).toMatchObject({
         kind: "confirmSessionBackground",
@@ -497,7 +506,7 @@ describe("useAgentStopController interrupt deadline", () => {
 
     it("stays inert for an idle thread without live session tasks", () => {
       const { hook, hardStop, stopSessionBackground } = setupIdle(0);
-      act(() => hook.result.current.requestStop("thread-1"));
+      act(() => hook.result.current.requestStop("thread-1", "composerStopButton"));
       expect(hook.result.current.confirmation).toBeNull();
       expect(stopSessionBackground).not.toHaveBeenCalled();
       expect(hardStop).not.toHaveBeenCalled();

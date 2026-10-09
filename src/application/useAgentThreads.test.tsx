@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { agentTurnUiHalt } from "../domain/agentTurnHaltRecord";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -51,6 +52,8 @@ import {
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentQuestionRequest } from "../domain/agentQuestion";
+
+const STOP_TRIGGER = agentTurnUiHalt("composerStopButton");
 
 const ROOT = "/workspace/app";
 const OWNER = "workspace-a";
@@ -344,7 +347,7 @@ describe("useAgentThreads facade", () => {
     await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
     const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
 
-    await act(() => harness.hook().stop(threadId));
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
 
     expect(harness.agent.stopAgentTask).toHaveBeenCalledWith({
       taskId: harness.startedRequests[0]?.taskId,
@@ -1586,14 +1589,101 @@ describe("useAgentThreads Claude session lifecycle", () => {
 
     let interrupted: Promise<boolean> = Promise.resolve(true);
     act(() => {
-      interrupted = harness.hook().interrupt?.(threadId) ?? Promise.resolve(true);
+      interrupted = harness.hook().interrupt?.(threadId, "composerEscape") ?? Promise.resolve(true);
     });
     expect(session.interruptAgentTask).toHaveBeenCalledTimes(1);
     expect(lastTurnOf(harness.hook(), threadId)?.haltRequested).toBe(true);
+    const requested = lastTurnOf(harness.hook(), threadId)?.haltRequest;
+    expect(requested).toEqual({
+      source: "composerEscape",
+      mode: "softInterrupt",
+      requestedAtEpochMs: expect.any(Number),
+    });
 
     await act(async () => answer({ kind: "unsupported" }));
     await expect(interrupted).resolves.toBe(false);
     expect(lastTurnOf(harness.hook(), threadId)?.haltRequested).toBe(true);
+
+    await act(() =>
+      harness.hook().stop(threadId, { kind: "interruptRefused", source: "composerEscape" }),
+    );
+    await act(() => harness.hook().stop(threadId, STOP_TRIGGER));
+    expect(lastTurnOf(harness.hook(), threadId)?.haltRequest).toEqual({
+      ...requested,
+      escalation: { source: "interruptRefused", requestedAtEpochMs: expect.any(Number) },
+    });
+    harness.unmount();
+  });
+
+  it("saves the stop request with its turn at once and keeps it after the turn settles", async () => {
+    const harness = renderThreads({ agentThreadSessionGateway: sessionGateway() });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
+    const savedHalts = () =>
+      harness.store.saveAgentThread.mock.calls.map(([request]) => {
+        const turns = request.thread.turns;
+        return turns[turns.length - 1]?.haltRequest;
+      });
+    await waitForReact(() => expect(savedHalts().length).toBeGreaterThan(0));
+    expect(savedHalts().every((record) => record === undefined)).toBe(true);
+
+    await act(() => harness.hook().stop(threadId, { kind: "ui", source: "threadMenu" }));
+
+    const record = {
+      source: "threadMenu",
+      mode: "hardStop",
+      requestedAtEpochMs: expect.any(Number),
+    };
+    await waitForReact(() => expect(savedHalts()[savedHalts().length - 1]).toEqual(record));
+    const saved = harness.store.saveAgentThread.mock.calls;
+    expect(saved[saved.length - 1]?.[0].thread.turns.map((turn) => turn.status.kind)).toEqual([
+      "running",
+    ]);
+
+    await act(async () => {
+      harness.emitStatus(threadId, 2, { kind: "stopped" });
+    });
+    expect(lastTurnOf(harness.hook(), threadId)?.status).toEqual({ kind: "stopped" });
+    expect(lastTurnOf(harness.hook(), threadId)?.haltRequest).toEqual(record);
+    harness.unmount();
+  });
+
+  it("leaves no record on a turn that stops without a frontend stop request", async () => {
+    const harness = renderThreads({ agentThreadSessionGateway: sessionGateway() });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const threadId = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
+
+    await act(() => harness.hook().stopProjectTasks(OWNER, [ROOT]));
+    await act(async () => {
+      harness.emitStatus(threadId, 2, { kind: "stopped" });
+    });
+
+    const turn = lastTurnOf(harness.hook(), threadId);
+    expect(turn?.status).toEqual({ kind: "stopped" });
+    expect(turn?.haltRequested).toBeUndefined();
+    expect(turn?.haltRequest).toBeUndefined();
+    for (const [request] of harness.store.saveAgentThread.mock.calls) {
+      expect(request.thread.turns.every((saved) => saved.haltRequest === undefined)).toBe(true);
+    }
+    harness.unmount();
+  });
+
+  it("ignores a stop request addressed to another thread's turn", async () => {
+    const harness = renderThreads({ agentThreadSessionGateway: sessionGateway() });
+    await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
+    const first = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    const second = (await act(() => harness.hook().startThread(startRequest())))?.threadId ?? "";
+    act(() => harness.emitStatus(first, 1, { kind: "running" }));
+    act(() => harness.emitStatus(second, 1, { kind: "running" }));
+
+    await act(() => harness.hook().stop(second, STOP_TRIGGER));
+
+    expect(first).not.toBe(second);
+    expect(lastTurnOf(harness.hook(), second)?.haltRequest?.source).toBe("composerStopButton");
+    expect(lastTurnOf(harness.hook(), first)?.haltRequest).toBeUndefined();
+    expect(lastTurnOf(harness.hook(), first)?.haltRequested).toBeUndefined();
     harness.unmount();
   });
 
@@ -1613,9 +1703,14 @@ describe("useAgentThreads Claude session lifecycle", () => {
 
     let stopped: Promise<void> = Promise.resolve();
     act(() => {
-      stopped = harness.hook().stop(threadId);
+      stopped = harness.hook().stop(threadId, STOP_TRIGGER);
     });
     expect(lastTurnOf(harness.hook(), threadId)?.haltRequested).toBe(true);
+    expect(lastTurnOf(harness.hook(), threadId)?.haltRequest).toEqual({
+      source: "composerStopButton",
+      mode: "hardStop",
+      requestedAtEpochMs: expect.any(Number),
+    });
     await act(async () => settle());
     await act(() => stopped);
     await act(async () => {
@@ -1630,6 +1725,10 @@ describe("useAgentThreads Claude session lifecycle", () => {
     expect(sent).toBe(true);
     const turns = harness.hook().threads[0]?.thread.turns ?? [];
     expect(turns.map((turn) => turn.haltRequested)).toEqual([true, undefined]);
+    expect(turns.map((turn) => turn.haltRequest?.source)).toEqual([
+      "composerStopButton",
+      undefined,
+    ]);
     const saves = harness.store.saveAgentThread.mock.calls;
     const lastSaved = saves[saves.length - 1]?.[0].thread;
     expect(JSON.stringify(serializeAgentThread(lastSaved as AgentThread))).not.toContain(

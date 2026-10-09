@@ -1,6 +1,7 @@
 import type { AgentTurn } from "./agentThread";
 import { AGENT_TASK_ID_PATTERN, type AgentCliKind } from "./agentTask";
 import { parseAgentHistoryTurn } from "./agentThreadWire";
+import { attachAgentTurnHaltRequests } from "./agentTurnHaltRecord";
 
 export const MAX_AGENT_HISTORY_PAGE_TURNS = 64;
 export interface FindAgentHistoryImportRequest {
@@ -27,7 +28,7 @@ export interface AgentHistoryTurnPage {
 export function parseAgentHistoryTurnPage(value: unknown): AgentHistoryTurnPage {
   if (typeof value !== "object" || value === null || Array.isArray(value)) invalid();
   const page = value as Record<string, unknown>;
-  const keys = ["turns", "hasEarlier", "beforeTurnId", "revision"];
+  const keys = ["turns", "hasEarlier", "beforeTurnId", "revision", "haltRequests"];
   if (
     Object.keys(page).length !== keys.length ||
     Object.keys(page).some((key) => !keys.includes(key))
@@ -36,8 +37,9 @@ export function parseAgentHistoryTurnPage(value: unknown): AgentHistoryTurnPage 
   if (!Array.isArray(page.turns) || page.turns.length > MAX_AGENT_HISTORY_PAGE_TURNS) invalid();
   if (typeof page.hasEarlier !== "boolean") invalid();
   if (!Number.isSafeInteger(page.revision) || (page.revision as number) < 0) invalid();
-  const turns = page.turns.map((turn, index) =>
-    parseAgentHistoryTurn(turn, `page.turns[${index}]`),
+  const turns = attachAgentTurnHaltRequests(
+    page.turns.map((turn, index) => parseAgentHistoryTurn(turn, `page.turns[${index}]`)),
+    page.haltRequests,
   );
   if (new Set(turns.map((turn) => turn.turnId)).size !== turns.length) invalid();
   const beforeTurnId = page.beforeTurnId;

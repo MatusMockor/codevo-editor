@@ -1,4 +1,4 @@
-use super::{imports, legacy, sql};
+use super::{halt_requests, imports, legacy, sql};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{
     fs,
@@ -131,6 +131,7 @@ pub(super) fn open(base: &Path, root: &str, owner: &str) -> Result<Connection, S
         sql(connection.execute_batch("ALTER TABLE threads ADD COLUMN last_save_hash TEXT;"))?;
     }
     imports::ensure_schema(&connection)?;
+    halt_requests::ensure_schema(&connection)?;
     sql(connection.pragma_update(None, "user_version", 2))?;
     sql(connection.execute_batch("COMMIT"))?;
     validate_owner(&connection, root, owner)?;

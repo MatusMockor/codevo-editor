@@ -225,7 +225,7 @@ describe("AgentComposer stop confirmation", () => {
     const stopEverything = stopConfirmationButton("Stop everything");
     stopEverything.focus();
     act(() => stopEverything.click());
-    expect(onStopNow).toHaveBeenCalledTimes(1);
+    expect(onStopNow).toHaveBeenCalledExactlyOnceWith("stopConfirmationBanner");
     expect(document.activeElement).toBe(textarea());
 
     const keepRunning = stopConfirmationButton("Keep running");

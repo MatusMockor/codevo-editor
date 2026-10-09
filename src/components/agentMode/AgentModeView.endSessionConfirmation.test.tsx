@@ -209,11 +209,11 @@ describe("where the End Claude session confirmation is rendered", () => {
 
   it("stacks beside the stop confirmation as a sibling tab instead of nesting or leaving the stack", async () => {
     await mount();
-    const transcript = host.querySelector<HTMLElement>(".agent-session__scroll");
-    expect(transcript).not.toBeNull();
+    const prompt = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea");
+    expect(prompt).not.toBeNull();
     act(() => {
-      transcript?.focus();
-      transcript?.dispatchEvent(
+      prompt?.focus();
+      prompt?.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
       );
     });

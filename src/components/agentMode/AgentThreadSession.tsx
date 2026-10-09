@@ -39,6 +39,7 @@ import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
 import type { MonacoAppTheme } from "../../domain/settings";
 import { NO_AGENT_SESSION_REPLY } from "../../domain/agentSessionBackground";
 import { isTerminalAgentTurnStatus } from "../../domain/agentThread";
+import type { AgentTurnHaltSource } from "../../domain/agentTurnHaltRecord";
 import type { AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { useAgentAttachmentLightbox } from "./useAgentAttachmentLightbox";
@@ -142,7 +143,7 @@ export interface AgentThreadSessionProps {
   readonly onRetryExternalHistory?: () => void;
   readonly turnLog?: AgentTurnLogFactsSource | null;
   onReviewInDiff(threadId: string): void;
-  onStopBackground?(): void;
+  onStopBackground?(source: AgentTurnHaltSource): void;
   readonly sessionTaskControls?: AgentSessionTaskControls | null;
   onStopSessionTask?(threadId: string, taskId: string): void;
   onEndSession?(): void;

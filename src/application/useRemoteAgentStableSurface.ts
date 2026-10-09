@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { unsupportedAgentTurnChanges } from "../domain/agentTurnChanges";
+import type { AgentTurnHaltSource } from "../domain/agentTurnHaltRecord";
 import type { AgentQueuedEditCommit, AgentQueuedEditSession } from "./agentQueuedFollowUpEdit";
 import type {
   AgentSessionBackgroundInspection,
@@ -67,9 +68,9 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
       ) => current.current.commitDeferredFollowUpEdit?.(session, commit) ?? Promise.resolve(false),
       importExternalSession: (...args) => current.current.importExternalSession(...args),
       stop: (...args) => current.current.stop(...args),
-      interrupt: (threadId: string) => {
+      interrupt: (threadId: string, source: AgentTurnHaltSource) => {
         if (isRemoteAgentIdentity(threadId)) return Promise.resolve(false);
-        return current.current.interrupt?.(threadId) ?? Promise.resolve(false);
+        return current.current.interrupt?.(threadId, source) ?? Promise.resolve(false);
       },
       endSession: (threadId: string): Promise<AgentSessionEndResult> => {
         if (isRemoteAgentIdentity(threadId)) return Promise.resolve("none");

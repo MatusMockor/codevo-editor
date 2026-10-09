@@ -416,7 +416,7 @@ describe("AgentComposer dictation and Escape", () => {
     expect(composer.onStop).not.toHaveBeenCalled();
   });
 
-  it("takes Escape before the conversation-level agent stop when focus is outside the prompt", async () => {
+  it("cancels dictation on Escape outside the prompt and never stops the agent from there", async () => {
     const composer = mountDictationComposer(steering);
     await composer.record();
     act(() => composer.outsideButton().focus());
@@ -428,8 +428,10 @@ describe("AgentComposer dictation and Escape", () => {
     expect(composer.audio?.microphoneLive()).toBe(false);
     expect(composer.onStop).not.toHaveBeenCalled();
 
-    composer.press(composer.outsideButton(), "Escape");
-    expect(composer.onStop).toHaveBeenCalledTimes(1);
+    const second = composer.press(composer.outsideButton(), "Escape");
+
+    expect(second.defaultPrevented).toBe(false);
+    expect(composer.onStop).not.toHaveBeenCalled();
   });
 
   it("leaves Escape to another text field that owns it", async () => {
