@@ -124,8 +124,6 @@
   box-sizing: border-box;
   width: 320px;
   max-height: min(520px, calc(100vh - 16px));
-  scrollbar-color: var(--cv-fg-disabled) transparent;
-  scrollbar-width: thin;
 }
 
 .agent-picker__group {

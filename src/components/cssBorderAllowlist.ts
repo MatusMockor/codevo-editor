@@ -6,7 +6,6 @@ export type BorderRuleEntry = {
 export const SEPARATOR_INSET_CONSUMERS: readonly BorderRuleEntry[] = [];
 
 export const LEGACY_BORDER_RATCHET: readonly BorderRuleEntry[] = [
-  { sheet: "App.css", selector: "::-webkit-scrollbar-thumb" },
   { sheet: "App.css", selector: ".call-hierarchy" },
   { sheet: "App.css", selector: ".call-hierarchy-header" },
   { sheet: "App.css", selector: ".call-hierarchy-section + .call-hierarchy-section" },

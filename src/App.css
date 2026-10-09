@@ -3791,15 +3791,17 @@ kbd {
   padding: 2px 6px;
 }
 
-/* Subtle, blended scrollbars — thin overlay-style thumb, no visible track */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--cv-fg-subtle) 35%, transparent) transparent;
+/* Subtle, blended scrollbars — slim rounded thumb, no visible track */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--cv-fg-subtle) 20%, transparent) transparent;
+  }
 }
 
 ::-webkit-scrollbar {
-  width: 11px;
-  height: 11px;
+  width: 6px;
+  height: 6px;
   background: transparent;
 }
 
@@ -3808,16 +3810,12 @@ kbd {
 }
 
 ::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
   border-radius: var(--cv-r-pill);
-  background: color-mix(in srgb, var(--cv-fg-subtle) 32%, transparent);
-  background-clip: padding-box;
-  transition: background-color var(--cv-motion-base) var(--cv-ease);
+  background: color-mix(in srgb, var(--cv-fg-subtle) 20%, transparent);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--cv-fg-subtle) 60%, transparent);
-  background-clip: padding-box;
+  background: color-mix(in srgb, var(--cv-fg-subtle) 32%, transparent);
 }
 
 ::-webkit-scrollbar-corner {
