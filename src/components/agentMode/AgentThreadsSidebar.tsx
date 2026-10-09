@@ -55,6 +55,8 @@ import {
 } from "./agentRailProjectLayout";
 import type { AgentRailProjectGroupActions } from "./AgentRailProjectGroup";
 import { agentRailProjectSignals } from "./agentRailProjectSignal";
+import { NO_AGENT_STARTING_THREADS, type AgentStartingThread } from "./agentStartingThreads";
+import { useAgentRailStartingRows } from "./useAgentRailStartingRows";
 import type { AgentRailProjectDisclosure } from "./useAgentRailProjectDisclosure";
 import {
   agentRailStatusLookup,
@@ -124,6 +126,7 @@ export interface AgentThreadsSidebarProps {
   readonly providerManagement: AgentProviderManagementSurface;
   readonly pendingClones?: ReadonlyArray<RemoteAddProjectPendingClone>;
   readonly pendingClone?: RemoteAddProjectPendingClone | null;
+  readonly startingThreads?: ReadonlyArray<AgentStartingThread>;
   readonly evidenceOf?: AgentTurnLogEvidenceLookup;
   readonly turnLog?: AgentTurnLogFactsSource | null;
   onOpenPendingClone?(id?: string): void;
@@ -191,6 +194,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   scopeEntries,
   search,
   selectedThreadId,
+  startingThreads = NO_AGENT_STARTING_THREADS,
   turnLog = null,
   workingRail = AGENT_RAIL_WORKING_RAIL_OFF,
 }: AgentThreadsSidebarProps) {
@@ -251,6 +255,12 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   const ownedViews = useMemo(
     () => agentRailOwnedViews(views, visibleEntries),
     [visibleEntries, views],
+  );
+  const startingRows = useAgentRailStartingRows(
+    startingThreads,
+    visibleEntries,
+    scopeEntries,
+    views,
   );
   const organized = useMemo(() => {
     const now = Math.max(organizationNow, Date.now());
@@ -593,6 +603,7 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
               projectLabels={projectLabels}
               sections={sections}
               selectedThreadId={selectedThreadId}
+              startingRows={startingRows}
               working={workingShelf}
             />
           </AgentRowServerNamesContext.Provider>

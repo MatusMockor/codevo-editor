@@ -19,8 +19,10 @@ import {
   type AgentComposerStopSurface,
 } from "./useAgentComposerStop";
 import type { AgentPendingSend, AgentPendingSendOutcome } from "./agentPendingSend";
+import type { AgentStartingThread } from "./agentStartingThreads";
 import {
   agentPendingSendSelection,
+  composerPendingSendOwner,
   composerPendingSendTarget,
   holdComposerAttachments,
   pendingSendOutcome,
@@ -192,6 +194,7 @@ export interface AgentComposerControllerState {
   readonly composerLabel: string | null;
   readonly composerProps: AgentComposerControllerProps;
   readonly pendingSend: AgentPendingSend | null;
+  readonly startingThreads: ReadonlyArray<AgentStartingThread>;
   dismissPendingSend(): void;
   readonly submissionBlocked: boolean;
   submit(
@@ -594,9 +597,19 @@ export function useAgentComposerControllerState({
         provider: submission.launch.provider,
       });
       const pendingId =
-        pendingTarget === null ? null : pendingSends.begin(pendingTarget, prompt, hold.drafts);
+        pendingTarget === null
+          ? null
+          : pendingSends.begin(
+              pendingTarget,
+              prompt,
+              hold.drafts,
+              composerPendingSendOwner(authority),
+            );
       const settlePendingSend = (outcome: AgentPendingSendOutcome): void => {
         if (pendingId !== null) pendingSends.settle(pendingId, outcome);
+      };
+      const markThreadIdentified = (threadId: string): void => {
+        if (pendingId !== null) pendingSends.markIdentified(pendingId, threadId);
       };
       const withdrawPendingSend = (error: unknown): never => {
         settlePendingSend("withdrawn");
@@ -686,6 +699,7 @@ export function useAgentComposerControllerState({
               unsafeInPlaceConfirmationKey,
               launch: submission.launch,
               dangerousLaunchConfirmed: submission.dangerousLaunchConfirmed,
+              onThreadIdentified: markThreadIdentified,
             });
           } finally {
             hold.settle(started !== null);
@@ -826,6 +840,7 @@ export function useAgentComposerControllerState({
     composerLabel,
     composerProps,
     pendingSend: pendingSends.visible,
+    startingThreads: pendingSends.starting,
     dismissPendingSend: pendingSends.dismiss,
     submissionBlocked,
     submit,

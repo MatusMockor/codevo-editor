@@ -499,6 +499,7 @@ describe("AgentModeView", () => {
       worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
+      onThreadIdentified: expect.any(Function),
     });
   });
 
@@ -533,6 +534,7 @@ describe("AgentModeView", () => {
       worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
+      onThreadIdentified: expect.any(Function),
     });
   });
 
@@ -555,6 +557,7 @@ describe("AgentModeView", () => {
       worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
+      onThreadIdentified: expect.any(Function),
     });
   });
 
@@ -2115,6 +2118,7 @@ describe("AgentModeView", () => {
       worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
+      onThreadIdentified: expect.any(Function),
     });
   });
 
@@ -2159,6 +2163,7 @@ describe("AgentModeView", () => {
       worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
+      onThreadIdentified: expect.any(Function),
     });
   });
 
@@ -2499,6 +2504,7 @@ describe("AgentModeView", () => {
       worktreeBase: { kind: "head" },
       launch: DEFAULT_DISPATCH_LAUNCH,
       dangerousLaunchConfirmed: true,
+      onThreadIdentified: expect.any(Function),
     });
     expect(submitButton().disabled).toBe(true);
   });

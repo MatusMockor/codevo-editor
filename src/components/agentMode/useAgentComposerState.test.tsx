@@ -183,6 +183,7 @@ describe("useAgentComposerState", () => {
       worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
+      onThreadIdentified: expect.any(Function),
     });
     expect(current().composer.composerProps.prompt).toBe("");
     expect(current().navigation.selectedThreadId).toBe("agt-new");
@@ -418,6 +419,7 @@ describe("useAgentComposerState", () => {
       worktreeBase: { kind: "head" },
       launch,
       dangerousLaunchConfirmed: false,
+      onThreadIdentified: expect.any(Function),
     });
   });
 

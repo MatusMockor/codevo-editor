@@ -31,6 +31,7 @@ import {
   type AgentProjectAuthority,
   type AgentTaskLaunchAuthority,
 } from "./agentProjectAuthority";
+import { notifyAgentThreadIdentified } from "./agentThreadIdentification";
 import type {
   AgentFollowUpRequest,
   AgentFollowUpRestartConsent,
@@ -517,6 +518,9 @@ export function useAgentTurnDispatch(
       }
       mintedIdsRef.current.add(threadId).add(turnId);
       beginPendingTurn(agentCliKind);
+      notifyAgentThreadIdentified(request.onThreadIdentified, threadId, (error) =>
+        dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, error),
+      );
       let releaseSlot: (() => void) | undefined;
       let reuseLease: AgentWorktreeStartLease | null = null;
       try {

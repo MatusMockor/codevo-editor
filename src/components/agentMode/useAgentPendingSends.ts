@@ -11,17 +11,26 @@ import {
   reduceAgentPendingSends,
   type AgentPendingSend,
   type AgentPendingSendOutcome,
+  type AgentPendingSendOwner,
   type AgentPendingSendSelection,
   type AgentPendingSendTarget,
 } from "./agentPendingSend";
+import {
+  NO_AGENT_STARTING_THREADS,
+  agentStartingThreads,
+  type AgentStartingThread,
+} from "./agentStartingThreads";
 
 export interface AgentPendingSendsCoordinator {
   readonly visible: AgentPendingSend | null;
+  readonly starting: ReadonlyArray<AgentStartingThread>;
   begin(
     target: AgentPendingSendTarget,
     prompt: string,
     drafts: ReadonlyArray<AgentComposerAttachmentDraft>,
+    owner?: AgentPendingSendOwner | null,
   ): number;
+  markIdentified(id: number, threadId: string): void;
   settle(id: number, outcome: AgentPendingSendOutcome): void;
   dismiss(): void;
 }
@@ -45,6 +54,7 @@ export function useAgentPendingSends(
       target: AgentPendingSendTarget,
       prompt: string,
       drafts: ReadonlyArray<AgentComposerAttachmentDraft>,
+      owner: AgentPendingSendOwner | null = null,
     ): number => {
       sequence.current += 1;
       const id = sequence.current;
@@ -57,20 +67,33 @@ export function useAgentPendingSends(
           attachments: agentPendingSendAttachments(drafts),
           sentAtEpochMs: now(),
           status: "sending",
+          ...(owner === null ? {} : { owner }),
         },
       });
       return id;
     },
     [now],
   );
+  const markIdentified = useCallback((id: number, threadId: string): void => {
+    if (mounted.current) dispatch({ kind: "identified", id, threadId });
+  }, []);
   const settle = useCallback((id: number, outcome: AgentPendingSendOutcome): void => {
     if (mounted.current) dispatch({ kind: "settle", id, outcome });
   }, []);
   const visibleId = visible?.id ?? null;
+  const startingRef = useRef(NO_AGENT_STARTING_THREADS);
+  const starting = useMemo(
+    () => agentStartingThreads(state, visibleId, startingRef.current),
+    [state, visibleId],
+  );
+  startingRef.current = starting;
   const dismiss = useCallback((): void => {
     if (visibleId !== null) dispatch({ kind: "dismiss", id: visibleId });
   }, [visibleId]);
-  return useMemo(() => ({ visible, begin, settle, dismiss }), [begin, dismiss, settle, visible]);
+  return useMemo(
+    () => ({ visible, starting, begin, markIdentified, settle, dismiss }),
+    [begin, dismiss, markIdentified, settle, starting, visible],
+  );
 }
 
 export interface AgentComposerSendHold {
@@ -175,6 +198,17 @@ export function composerPendingSendTarget(
   if (route.steer) return null;
   if (context.queuedEditThreadId === route.threadId) return null;
   return { kind: "followUp", threadId: route.threadId, baseTurnId: context.baseTurnId };
+}
+
+export type ComposerSendOwnerSource =
+  | { readonly kind: "followUp" }
+  | { readonly kind: "new"; readonly ownerId: string; readonly generation: number };
+
+export function composerPendingSendOwner(
+  source: ComposerSendOwnerSource,
+): AgentPendingSendOwner | null {
+  if (source.kind !== "new") return null;
+  return { ownerId: source.ownerId, generation: source.generation };
 }
 
 export function pendingSendOutcome(

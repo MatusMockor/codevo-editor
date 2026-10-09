@@ -357,6 +357,7 @@ export interface AgentThreadStartRequest extends AgentTurnAttachmentRequest {
   readonly unsafeInPlaceConfirmationKey: string | null;
   readonly launch: AgentLaunchOptions;
   readonly dangerousLaunchConfirmed?: boolean;
+  onThreadIdentified?(threadId: string): void;
 }
 
 export interface AgentThreadStartResult {

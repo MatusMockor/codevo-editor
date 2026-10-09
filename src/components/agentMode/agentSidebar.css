@@ -377,6 +377,14 @@
   background: var(--cv-row-active);
 }
 
+.cv-card-row.is-starting {
+  cursor: default;
+}
+
+.cv-card-row.is-starting:not(.is-current):hover {
+  background: transparent;
+}
+
 .cv-card-row.is-fade {
   opacity: 0.7;
 }

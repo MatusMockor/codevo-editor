@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composerPendingSendTarget } from "./useAgentPendingSends";
+import { composerPendingSendOwner, composerPendingSendTarget } from "./useAgentPendingSends";
 
 const NEW = { kind: "new", projectRootKey: "/app" } as const;
 const FOLLOW_UP = { kind: "followUp", threadId: "agt-1", steer: false } as const;
@@ -41,5 +41,28 @@ describe("composerPendingSendTarget", () => {
     expect(
       composerPendingSendTarget(FOLLOW_UP, { ...IDLE, queuedEditThreadId: "agt-2" }),
     ).not.toBeNull();
+  });
+});
+
+describe("composerPendingSendOwner", () => {
+  it("captures the exact project owner a new thread is sent under", () => {
+    const authority = {
+      kind: "new",
+      projectRootKey: "/app",
+      repositoryRoot: "/app",
+      ownerId: "agent-root:app",
+      generation: 4,
+    } as const;
+
+    expect(composerPendingSendOwner(authority)).toEqual({
+      ownerId: "agent-root:app",
+      generation: 4,
+    });
+  });
+
+  it("captures no owner for a follow-up", () => {
+    const authority = { ...FOLLOW_UP, ownerId: "agent-root:app" } as const;
+
+    expect(composerPendingSendOwner(authority)).toBeNull();
   });
 });

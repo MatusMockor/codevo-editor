@@ -399,6 +399,116 @@ describe("useAgentTurnDispatch startThread", () => {
     },
   );
 
+  it("identifies the minted thread id synchronously, before the first await of the start", async () => {
+    const lease = createDeferred<boolean>();
+    const ensureProjectLease = vi.fn(async () => lease.promise);
+    const harness = renderDispatch({ leaseToken: null, ensureProjectLease });
+    const onThreadIdentified = vi.fn();
+
+    let result: AgentThreadStartResult | null = null;
+    await act(async () => {
+      const starting = harness
+        .hook()
+        .startThread(startRequest({ isolation: "in-place", onThreadIdentified }));
+      expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+      expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+      expect(harness.actions).toEqual([]);
+      await waitForReact(() => expect(ensureProjectLease).toHaveBeenCalledWith(ROOT_A));
+      expect(harness.state().threads.size).toBe(0);
+      lease.resolve(true);
+      result = await starting;
+    });
+
+    const threadId = harness.startedRequests[0]?.threadId;
+    expect(result).toEqual({ threadId });
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(onThreadIdentified).toHaveBeenCalledWith(threadId);
+    expect([...harness.state().threads.keys()]).toEqual([threadId]);
+    harness.unmount();
+  });
+
+  it("starts, registers and acknowledges the turn when the identification observer throws", async () => {
+    const harness = renderDispatch();
+    const failure = new Error("observer failed");
+    const onThreadIdentified = vi.fn(() => {
+      throw failure;
+    });
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ onThreadIdentified })),
+    );
+
+    const started = harness.startedRequests[0];
+    expect(result).toEqual({ threadId: started?.threadId });
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(harness.reportError).toHaveBeenCalledWith(AGENT_TASKS_SOURCE, failure);
+    expect(harness.agent.acknowledgeAgentTaskStart).toHaveBeenCalledWith({
+      taskId: started?.taskId,
+      workspaceId: OWNER_A,
+    });
+    expect(harness.agent.stopAgentTask).not.toHaveBeenCalled();
+    expect([...harness.state().threads.keys()]).toEqual([started?.threadId]);
+    expect(harness.hook().pendingTurnCount("claudeCode")).toBe(0);
+    harness.unmount();
+  });
+
+  it("identifies the thread once even when the backend then rejects the start", async () => {
+    const harness = renderDispatch();
+    harness.agent.startAgentTask.mockRejectedValueOnce(
+      new AgentTaskStartRejectedError("Too many agent tasks are starting or running."),
+    );
+    const onThreadIdentified = vi.fn();
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ onThreadIdentified })),
+    );
+
+    expect(result).toBeNull();
+    expect(onThreadIdentified).toHaveBeenCalledTimes(1);
+    expect(harness.state().threads.size).toBe(0);
+    harness.unmount();
+  });
+
+  it("never identifies a thread when admission refuses the start", async () => {
+    const harness = renderDispatch();
+    const onThreadIdentified = vi.fn();
+
+    const result = await act(() =>
+      harness.hook().startThread(startRequest({ prompt: "   ", onThreadIdentified })),
+    );
+
+    expect(result).toBeNull();
+    expect(onThreadIdentified).not.toHaveBeenCalled();
+    expect(harness.agent.startAgentTask).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("never identifies a thread for a start refused because the project is already dispatching", async () => {
+    const lease = createDeferred<boolean>();
+    const ensureProjectLease = vi.fn(async () => lease.promise);
+    const harness = renderDispatch({ leaseToken: null, ensureProjectLease });
+    const first = vi.fn();
+    const second = vi.fn();
+
+    let refused: AgentThreadStartResult | null = { threadId: "pending" };
+    await act(async () => {
+      const starting = harness
+        .hook()
+        .startThread(startRequest({ isolation: "in-place", onThreadIdentified: first }));
+      refused = await harness
+        .hook()
+        .startThread(startRequest({ isolation: "in-place", onThreadIdentified: second }));
+      expect(harness.notice()?.message).toBe(AGENT_DISPATCH_IN_PROGRESS_NOTICE);
+      lease.resolve(true);
+      await starting;
+    });
+
+    expect(refused).toBeNull();
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
   it("tracks the exact provider while a new turn is pending before publication", async () => {
     const lease = createDeferred<boolean>();
     const ensureProjectLease = vi.fn(async () => lease.promise);

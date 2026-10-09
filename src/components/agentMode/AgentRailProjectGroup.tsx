@@ -17,6 +17,8 @@ import {
 import { agentRailProjectSignal, type AgentRailProjectSignal } from "./agentRailProjectSignal";
 import type { AgentRailProjectSection } from "./agentRailProjectLayout";
 import { agentRailProjectEmptyLabel } from "./agentRailWorkingSection";
+import { AgentRailStartingRow } from "./AgentRailStartingRow";
+import { NO_AGENT_STARTING_THREADS, type AgentStartingThread } from "./agentStartingThreads";
 
 export interface AgentRailProjectGroupActions {
   onToggleCollapsed(projectRootKey: string): void;
@@ -31,6 +33,7 @@ export interface AgentRailProjectGroupProps {
   readonly current: boolean;
   readonly actions: AgentRailProjectGroupActions;
   readonly pendingInteractions: ReadonlyMap<string, AgentPendingInteraction>;
+  readonly starting?: ReadonlyArray<AgentStartingThread>;
   readonly children: ReactNode;
 }
 
@@ -40,8 +43,10 @@ export function AgentRailProjectGroup({
   current,
   pendingInteractions,
   project,
+  starting = NO_AGENT_STARTING_THREADS,
 }: AgentRailProjectGroupProps) {
   const { collapsed, entry, overflow } = project;
+  const startingRows = collapsed ? NO_AGENT_STARTING_THREADS : starting;
   const key = entry.projectRootKey;
   const label = entry.label;
   const anchorRef = useRef<HTMLDivElement | null>(null);
@@ -132,8 +137,11 @@ export function AgentRailProjectGroup({
       </Menu>
       {(!collapsed || project.rows.length > 0) && (
         <ul aria-label={`${label} threads`} className="cv-sb-project__threads" role="group">
+          {startingRows.map((thread) => (
+            <AgentRailStartingRow key={thread.key} thread={thread} />
+          ))}
           {children}
-          {!collapsed && project.threads.length === 0 && (
+          {!collapsed && project.threads.length === 0 && startingRows.length === 0 && (
             <li className="cv-sb-project__empty" role="none">
               {agentRailProjectEmptyLabel(project.working, project.shelved)}
             </li>

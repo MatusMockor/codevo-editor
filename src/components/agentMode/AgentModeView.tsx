@@ -142,6 +142,7 @@ import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
 import { useAgentRemoteFileLinks } from "./useAgentRemoteFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
+import { useAgentOwnedStartingThreads } from "./useAgentOwnedStartingThreads";
 import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
 import { AgentDictationProvider } from "./dictation/AgentDictationProvider";
 import { agentComposerThreadLocation } from "./agentComposerThreadLocation";
@@ -590,6 +591,7 @@ function LocalAgentModeView({
     onThreadStarted: navigation.selectStartedThread,
     onSelectProjectEnvironment,
   });
+  const startingThreads = useAgentOwnedStartingThreads(composer.startingThreads, projects);
   const submitComposer = useAgentLatestCallback(composer.submit);
   const changeIsolation = useAgentLatestCallback(composer.composerProps.onIsolationChange);
   const changeLaunch = useAgentLatestCallback(composer.composerProps.onLaunchChange);
@@ -1199,6 +1201,7 @@ function LocalAgentModeView({
                   scopeEntries={navigation.scopeEntries}
                   search={navigation.search}
                   selectedThreadId={selectedThread?.thread.threadId ?? null}
+                  startingThreads={startingThreads}
                   turnLog={agents.turnLog ?? null}
                 />
               </AgentThreadBranchMemoryContext.Provider>

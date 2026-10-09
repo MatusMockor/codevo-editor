@@ -19,6 +19,8 @@ import {
 import { agentLaunchWithoutBrowser, serializeAgentLaunchOptions } from "../domain/agentLaunch";
 import { isRemoteStartBase, type RemoteStartBase } from "../domain/remoteGitSyncWire";
 import { remoteRunnerEchoesLaunch } from "../domain/remoteRunnerLaunchEcho";
+import { notifyAgentThreadIdentified } from "./agentThreadIdentification";
+import { remoteAgentThreadKey } from "./remoteAgentProjection";
 
 export interface RemoteAgentMutationTarget {
   readonly serverId: string;
@@ -56,6 +58,8 @@ export const REMOTE_ORIGIN_BASE_NEEDS_WORKTREE =
   "Starting from an origin branch needs a new worktree on the server.";
 export const REMOTE_UNSTARTED_DRAFT_NOTICE =
   "The draft was not started, so nothing is running on the server. Send the message again; if this repeats, update the server runner.";
+export const REMOTE_START_OBSERVER_FAILED_NOTICE =
+  "The conversation list could not track this start. The conversation itself is not affected.";
 export const REMOTE_POSSIBLY_RUNNING_NOTICE =
   "The server may still be running this message: find the task in the server conversations and stop it if it should not run. Sending again starts a separate task.";
 type Pending = {
@@ -80,6 +84,19 @@ function key(target: RemoteAgentMutationTarget): string {
     target.projectId,
     target.conversationId ?? null,
   ]);
+}
+function identifyStartedThread(
+  request: Request,
+  target: RemoteAgentMutationTarget,
+  draftId: string,
+  report: (message: string) => void,
+): void {
+  if (!("onThreadIdentified" in request)) return;
+  notifyAgentThreadIdentified(
+    request.onThreadIdentified,
+    remoteAgentThreadKey(target.serverId, target.runnerId, draftId),
+    () => report(REMOTE_START_OBSERVER_FAILED_NOTICE),
+  );
 }
 function sameParts(left: readonly RemoteRunnerPart[], right: readonly RemoteRunnerPart[]): boolean {
   return (
@@ -311,6 +328,8 @@ export function useRemoteAgentMutations(options: Options) {
             REMOTE_POSSIBLY_RUNNING_NOTICE,
           );
       } else {
+        const knownDraftId = command.draftId;
+        if (knownDraftId) identifyStartedThread(request, target, knownDraftId, options.report);
         const wire = {
           serverId: target.serverId,
           idempotencyKey: command.idempotencyKey,
@@ -339,6 +358,7 @@ export function useRemoteAgentMutations(options: Options) {
               : REMOTE_POSSIBLY_RUNNING_NOTICE,
           );
         command.draftId = task.id;
+        if (!knownDraftId) identifyStartedThread(request, target, task.id, options.report);
         if (task.status === "draft") {
           task = await gateway.startTask({
             serverId: target.serverId,
