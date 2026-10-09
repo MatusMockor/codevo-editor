@@ -42,7 +42,7 @@ export interface RemoteAgentTranscriptSegment {
 type ChannelFraming =
   | { readonly kind: "framed" }
   | { readonly kind: "midLine" }
-  | { readonly kind: "unknown"; readonly carriedBytes: number };
+  | { readonly kind: "unknown"; readonly carriedBytes: number; readonly cut: boolean };
 
 interface SegmentCursor {
   readonly parser: AgentOutputParserState;
@@ -53,6 +53,11 @@ interface SegmentCursor {
 interface SegmentStep {
   readonly cursor: SegmentCursor;
   readonly events: readonly AgentTurnEvent[];
+}
+
+interface LineEnds {
+  readonly inPage: boolean;
+  readonly atFinish: boolean;
 }
 
 interface SettledFraming {
@@ -94,7 +99,8 @@ const NO_EVENTS: readonly AgentTurnEvent[] = [];
 const NEWLINE = 10;
 const FRAMED: ChannelFraming = { kind: "framed" };
 const MID_LINE: ChannelFraming = { kind: "midLine" };
-const UNKNOWN: ChannelFraming = { kind: "unknown", carriedBytes: 0 };
+const UNKNOWN: ChannelFraming = { kind: "unknown", carriedBytes: 0, cut: false };
+const CUT: ChannelFraming = { kind: "unknown", carriedBytes: 0, cut: true };
 const TERMINAL_EVENT_TYPES: ReadonlySet<RemoteRunnerEvent["type"]> = new Set([
   "task.succeeded",
   "task.failed",
@@ -108,12 +114,8 @@ export function remoteAgentTranscriptSegment(
   const lead = boundedRemoteAgentTranscriptLead(input.lead, input.limits);
   let cursor = initialCursor(input.provider, lead, input.outputStart);
   for (const event of lead.events) cursor = feedOutput(cursor, event, event.text).cursor;
-  const stdout = settledFraming(cursor.stdout, completesLine(input, "stdout"), true);
-  const stderr = settledFraming(
-    cursor.stderr,
-    completesLine(input, "stderr"),
-    lead.stderr === "cut",
-  );
+  const stdout = settledFraming(cursor.stdout, endsLine(input, "stdout"), true);
+  const stderr = settledFraming(cursor.stderr, endsLine(input, "stderr"), false);
   return parsedSegment(
     { parser: cursor.parser, stdout: stdout.framing, stderr: stderr.framing },
     input,
@@ -310,27 +312,33 @@ function initialFraming(
   atLineBoundary: boolean | undefined,
 ): ChannelFraming {
   if (lead === "resumed") return FRAMED;
-  if (lead === "cut" || atLineBoundary === undefined) return UNKNOWN;
+  if (lead === "cut") return CUT;
+  if (atLineBoundary === undefined) return UNKNOWN;
   return atLineBoundary ? FRAMED : MID_LINE;
 }
 
 function settledFraming(
   framing: ChannelFraming,
-  completes: boolean,
+  ends: LineEnds,
   silenceIsUncertain: boolean,
 ): SettledFraming {
   if (framing.kind !== "unknown") return { framing, clipped: false };
   if (framing.carriedBytes > MAX_AGENT_OUTPUT_LINE_BYTES) return { framing, clipped: false };
-  if (framing.carriedBytes > 0) return { framing, clipped: completes };
-  return { framing: FRAMED, clipped: silenceIsUncertain && completes };
+  if (framing.carriedBytes > 0 || framing.cut)
+    return { framing, clipped: ends.inPage || ends.atFinish };
+  return { framing: FRAMED, clipped: silenceIsUncertain && ends.inPage };
 }
 
-function completesLine(
+function endsLine(
   input: RemoteAgentTranscriptSegmentInput,
   channel: AgentTaskOutputStream,
-): boolean {
-  if (remoteRunnerEventsEndLine(input.events, channel)) return true;
-  return input.finish && remoteRunnerEventsCarryOutput(input.events, channel);
+): LineEnds {
+  return {
+    inPage:
+      remoteRunnerEventsEndLine(input.events, channel) ||
+      (input.finish && remoteRunnerEventsCarryOutput(input.events, channel)),
+    atFinish: input.finish,
+  };
 }
 
 function feedOutput(cursor: SegmentCursor, event: RemoteRunnerEvent, text?: string): SegmentStep {
@@ -354,7 +362,7 @@ function framedText(
   if (framing.kind === "midLine") return { text: "", framing };
   return {
     text: "",
-    framing: { kind: "unknown", carriedBytes: framing.carriedBytes + utf8ByteLength(text) },
+    framing: { ...framing, carriedBytes: framing.carriedBytes + utf8ByteLength(text) },
   };
 }
 

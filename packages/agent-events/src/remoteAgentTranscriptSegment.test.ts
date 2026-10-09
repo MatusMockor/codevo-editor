@@ -552,6 +552,94 @@ describe("remote transcript segment page caps", () => {
   });
 });
 
+describe("remote transcript segment unproven line starts", () => {
+  const ended: RemoteRunnerEvent = {
+    taskId: "task",
+    sequence: 90,
+    type: "task.succeeded",
+    createdAt: CREATED_AT,
+  };
+
+  it("keeps a stream unframed after its whole lead was cut away, up to its next newline", () => {
+    const tight = { ...LIMITS, maxLeadBytes: 2 };
+    const lead = [output(1, "xxx")];
+    const events = [output(2, says("fake") + says("real"))];
+
+    expect(boundedRemoteAgentTranscriptLead(lead, tight)).toEqual({
+      events: [],
+      stdout: "cut",
+      stderr: "whole",
+    });
+    expect(parse({ lead, outputStart: AT_START, events, limits: tight })).toEqual({
+      events: [said("real")],
+      clipped: true,
+    });
+    expect(parse({ lead, outputStart: AT_START, events: [output(2, "{")], limits: tight })).toEqual(
+      { events: [], clipped: false },
+    );
+  });
+
+  it("applies the same rule to a stderr lead that was cut away", () => {
+    const tight = { ...LIMITS, maxLeadBytes: 2 };
+    const lead = [output(1, "xxx", "stderr")];
+    const events = [output(2, "tail\nwhole\n", "stderr")];
+
+    expect(parse({ lead, outputStart: AT_START, events, limits: tight })).toEqual({
+      events: [{ kind: "unknownLine", stream: "stderr", raw: "whole", clipped: false }],
+      clipped: true,
+    });
+    expect(parse({ lead, outputStart: AT_START, events })).toEqual({
+      events: [
+        { kind: "unknownLine", stream: "stderr", raw: "xxxtail", clipped: false },
+        { kind: "unknownLine", stream: "stderr", raw: "whole", clipped: false },
+      ],
+      clipped: false,
+    });
+  });
+
+  it.each(["stdout", "stderr"] as const)(
+    "reports an unterminated %s line of the lead that a terminal-only page would flush",
+    (stream) => {
+      const lead = [output(1, "prefix ", stream)];
+      const whole = parse({ lead, outputStart: AT_START, events: [ended], finish: true });
+
+      expect(parse({ lead, outputStart: null, events: [ended], finish: true })).toEqual({
+        events: [],
+        clipped: true,
+      });
+      expect(whole).toEqual({
+        events: [{ kind: "unknownLine", stream, raw: "prefix ", clipped: false }],
+        clipped: false,
+      });
+      expect(whole.events).toEqual(
+        parse({ lead: [], outputStart: AT_START, events: [...lead, ended], finish: true }).events,
+      );
+      expect(parse({ lead, outputStart: null, events: [ended] })).toEqual({
+        events: [],
+        clipped: false,
+      });
+    },
+  );
+
+  it("keeps the oversize exemption for a pending line longer than the line cap", () => {
+    const lead = chunks("z".repeat(300_000), [100_000, 200_000], 1);
+
+    expect(parse({ lead, outputStart: null, events: [ended], finish: true })).toEqual({
+      events: [],
+      clipped: false,
+    });
+  });
+
+  it("reports nothing for a stream that stayed silent up to the end of the task", () => {
+    const lead = [output(1, says("one"))];
+
+    expect(parse({ lead, outputStart: null, events: [ended], finish: true })).toEqual({
+      events: [],
+      clipped: false,
+    });
+  });
+});
+
 describe("remote transcript segment records", () => {
   it("flushes an unterminated last line only when the task ended", () => {
     const events = [output(1, says("one") + "trailing")];

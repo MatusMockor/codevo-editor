@@ -1,6 +1,7 @@
 import type { RemoteRunnerEvent } from "../domain/remoteRunner";
 
 export const REMOTE_OUTPUT_DISCARDED_ERROR = "The server discarded earlier output for this thread.";
+export const MAX_REMOTE_REPLAY_INPUTS = 32;
 
 export interface RemoteReplayGap {
   readonly throughSequence: number;
@@ -28,7 +29,7 @@ export function retainRemoteReplayWindow(
 ): RemoteReplayWindow {
   // Accepted inputs have their own bounded budget and survive output eviction.
   const inputs = events.filter((event) => event.type === "task.input");
-  const retainedInputs = inputs.slice(-32);
+  const retainedInputs = inputs.slice(-MAX_REMOTE_REPLAY_INPUTS);
   const outputEvents = events.filter((event) => event.type !== "task.input");
   let bytes = outputEvents.reduce((sum, event) => sum + (event.text?.length ?? 0) * 2, 0);
   let start = 0;
@@ -50,11 +51,11 @@ export function retainRemoteReplayWindow(
   }
   return {
     events:
-      start === 0 && inputs.length <= 32
+      start === 0 && inputs.length <= MAX_REMOTE_REPLAY_INPUTS
         ? events
         : [...retainedInputs, ...outputEvents.slice(start)].sort((a, b) => a.sequence - b.sequence),
     gap,
-    truncated: start > 0 || inputs.length > 32,
+    truncated: start > 0 || inputs.length > MAX_REMOTE_REPLAY_INPUTS,
     ...(droppedOutputFrom === undefined ? {} : { droppedOutputFrom }),
   };
 }

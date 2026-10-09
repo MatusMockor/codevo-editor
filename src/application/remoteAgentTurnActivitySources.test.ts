@@ -62,6 +62,20 @@ describe("remote turn activity sources", () => {
     expect([first.generation, second.generation, replaced.generation]).toEqual([1, 2, 3]);
   });
 
+  it("keeps reading through the port of the first binding while the source stays the same", async () => {
+    const first = runnerWith(["a"]);
+    const later = runnerWith(["a"]);
+    const sources = new RemoteAgentTurnActivitySources();
+    const source = sources.resolve({ ...binding(first, "a"), gateway: first }, () => true);
+    const again = sources.resolve({ ...binding(later, "a"), gateway: first }, () => true);
+
+    await read(again, { at: "tail" });
+
+    expect(again).toBe(source);
+    expect(first.calls.length).toBeGreaterThan(0);
+    expect(later.calls).toEqual([]);
+  });
+
   it("revokes a replaced or pruned source and leaves the surviving one readable", async () => {
     const runner = runnerWith(["a", "b"]);
     const sources = new RemoteAgentTurnActivitySources();

@@ -13,6 +13,10 @@ import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import { RemoteAgentProjection, type RemoteAgentProjectionInput } from "./remoteAgentProjection";
 import { droppedServerEvictedOutput, retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
 import {
+  remoteAgentTurnLocalReplayPort,
+  remoteTurnLocalReplayOf,
+} from "./remoteAgentTurnLocalReplayPort";
+import {
   RemoteAgentTurnActivitySources,
   sameRemoteTurnActivityBinding,
   type RemoteTurnActivityAuthority,
@@ -255,7 +259,7 @@ export function useRemoteAgentThreadHistory(dependencies: Dependencies): AgentTh
     newer,
     latest,
     activitySource: (threadId, turnId) => {
-      const binding = activityBinding(dependencies, page, threadId, turnId);
+      const binding = activityBinding(dependencies, page, threadId, turnId, () => deps.current);
       if (binding === null) return null;
       return activity.resolve(binding, activityAuthority);
     },
@@ -267,7 +271,7 @@ function activityCurrent(
   bound: RemoteTurnActivityBinding,
 ): boolean {
   return sameRemoteTurnActivityBinding(
-    activityBinding(deps, page, bound.scope.threadId, bound.scope.turnId),
+    activityBinding(deps, page, bound.scope.threadId, bound.scope.turnId, () => deps),
     bound,
   );
 }
@@ -276,6 +280,7 @@ function activityBinding(
   page: DisplayPage | null,
   threadId: string,
   turnId: string,
+  current: () => Dependencies,
 ): RemoteTurnActivityBinding | null {
   const resolved = resolve(deps, threadId);
   const gateway = deps.gateway;
@@ -289,7 +294,10 @@ function activityBinding(
   return {
     owner: deps.owner,
     gateway,
-    port: { listEventsBefore: (request) => listEventsBefore.call(gateway, request) },
+    port: remoteAgentTurnLocalReplayPort(
+      { listEventsBefore: (request) => listEventsBefore.call(gateway, request) },
+      (taskId) => remoteTurnLocalReplayOf(resolve(current(), threadId)?.snapshot ?? null, taskId),
+    ),
     serverId: resolved.snapshot.serverId,
     runnerId: resolved.runnerId,
     provider: thread.provider.kind === "claudeCode" ? "claude" : "codex",

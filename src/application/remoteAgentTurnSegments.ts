@@ -182,7 +182,8 @@ export class RemoteTurnSegments {
     if (page.outputStart) return { events: [], outputStart: outputStartOf(page) };
     let events: readonly RemoteRunnerEvent[] = [];
     let stdoutAnchored = false;
-    let stderrAnchored = !completesStderrLine(page, finish);
+    let stderrAnchored = false;
+    let stderrSought = completesStderrLine(page.events, finish);
     for (let depth = 1; depth <= MAX_REMOTE_TURN_LEAD_PAGES; depth += 1) {
       const older = await this.raw.load(index + depth, budget);
       if (older === null) return { events, outputStart: null };
@@ -190,7 +191,8 @@ export class RemoteTurnSegments {
       if (older.outputStart) return { events, outputStart: outputStartOf(older) };
       stdoutAnchored ||= remoteRunnerEventsEndLine(older.events, "stdout");
       stderrAnchored ||= remoteRunnerEventsEndLine(older.events, "stderr");
-      if (stdoutAnchored && stderrAnchored) return { events, outputStart: null };
+      stderrSought ||= finish && remoteRunnerEventsCarryOutput(older.events, "stderr");
+      if (stdoutAnchored && (stderrAnchored || !stderrSought)) return { events, outputStart: null };
     }
     return { events, outputStart: null };
   }
@@ -224,9 +226,9 @@ function outputStartOf(page: RemoteTurnRawPage): RemoteAgentTranscriptOutputStar
   };
 }
 
-function completesStderrLine(page: RemoteTurnRawPage, finish: boolean): boolean {
-  if (remoteRunnerEventsEndLine(page.events, "stderr")) return true;
-  return finish && remoteRunnerEventsCarryOutput(page.events, "stderr");
+function completesStderrLine(events: readonly RemoteRunnerEvent[], finish: boolean): boolean {
+  if (remoteRunnerEventsEndLine(events, "stderr")) return true;
+  return finish && remoteRunnerEventsCarryOutput(events, "stderr");
 }
 
 function overCap(retained: RemoteTurnSegmentsRetention): boolean {

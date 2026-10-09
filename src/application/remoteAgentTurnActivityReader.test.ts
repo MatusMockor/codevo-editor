@@ -1,4 +1,4 @@
-import { OVERSIZE_AGENT_OUTPUT_LINE_RAW } from "@codevo/agent-events";
+import { OVERSIZE_AGENT_OUTPUT_LINE_RAW, remoteAgentTranscriptSegment } from "@codevo/agent-events";
 import { describe, expect, it } from "vitest";
 import type { AgentTurnEvent } from "../domain/agentThread";
 import {
@@ -443,6 +443,69 @@ describe("remote turn activity reader stderr framing", () => {
     expect(texts(result.entries).filter((text) => text.startsWith("raw:"))).toEqual([]);
     expect(texts(result.entries)).toHaveLength(33);
     expect(result.window?.clipped).toBe(true);
+  });
+});
+
+describe("remote turn activity reader task end", () => {
+  it("flushes lines left unterminated before a last raw page that only ends the task", async () => {
+    const runner = new FakeRunnerEvents(5);
+    for (let index = 0; index < 8; index += 1) runner.output(TASK, claudeTextLine(`line ${index}`));
+    runner.output(TASK, "warning without end", "stderr");
+    runner.output(TASK, "stdout without end");
+    runner.lifecycle(TASK, "task.succeeded");
+    const all = runner.eventsOf(TASK);
+    const forward = remoteAgentTranscriptSegment({
+      provider: "claude",
+      lead: [],
+      outputStart: { stdoutAtLineBoundary: true, stderrAtLineBoundary: true },
+      events: all,
+      finish: true,
+      limits: REMOTE_TURN_SEGMENT_LIMITS,
+    });
+
+    const result = await readToStart(readerFor(runner));
+
+    expect(all).toHaveLength(11);
+    expect(runner.calls[0]?.before).toBe(Number.MAX_SAFE_INTEGER);
+    expect(result.entries.map((entry) => entry.event)).toEqual(forward.events);
+    expect(texts(result.entries).slice(-2)).toEqual([
+      "raw:stdout without end",
+      "raw:warning without end",
+    ]);
+    expect(result.window?.clipped).toBe(false);
+    expectContiguous(result.entries);
+  });
+
+  it("reports a clip when the pending stderr line starts beyond the look-behind", async () => {
+    const runner = new FakeRunnerEvents(5);
+    runner.output(TASK, claudeTextLine("first"));
+    runner.output(TASK, "prefix ", "stderr");
+    for (let page = 0; page < 5; page += 1) {
+      for (let index = 0; index < 4; index += 1)
+        runner.output(TASK, claudeTextLine(`line ${page}-${index}`));
+      runner.output(TASK, "more ", "stderr");
+    }
+    for (const text of ["third last", "second last", "last"])
+      runner.output(TASK, claudeTextLine(text));
+    runner.lifecycle(TASK, "task.succeeded");
+
+    const result = await readToStart(readerFor(runner));
+
+    expect(runner.eventsOf(TASK).length % 5).toBe(1);
+    expect(texts(result.entries).filter((text) => text.startsWith("raw:"))).toEqual([]);
+    expect(texts(result.entries)).toHaveLength(24);
+    expect(result.window?.clipped).toBe(true);
+  });
+
+  it("looks no further back for stderr when a finished turn never wrote any", async () => {
+    const runner = new FakeRunnerEvents(5);
+    for (let index = 0; index < 30; index += 1)
+      runner.output(TASK, claudeTextLine(`line ${index}`));
+    runner.lifecycle(TASK, "task.succeeded");
+
+    await read(readerFor(runner), { at: "tail" }, 2);
+
+    expect(runner.calls).toHaveLength(2);
   });
 });
 
