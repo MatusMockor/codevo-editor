@@ -1,4 +1,8 @@
 import { AgentHistoryCatalog } from "./AgentHistoryCatalog";
+import {
+  agentHistoryCatalogRailThreadIds,
+  agentHistoryCatalogScope,
+} from "./agentHistoryCatalogScope";
 import type { AgentHistoryCatalogSurface } from "../../application/useAgentHistoryCatalog";
 import {
   memo,
@@ -86,7 +90,6 @@ import {
   agentRailSections,
   agentRailViews,
   agentThreadRevealForMatch,
-  type AgentRailSections,
   type AgentRailScope,
   type AgentRailScopeEntry,
   type AgentThreadMenuCommand,
@@ -255,8 +258,8 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
   useAgentRailOrganizationClock(workingRail, organized.now);
   const catalogRootKey = catalog?.page?.rootKey ?? null;
   const shownInRailThreadIds = useMemo(
-    () => railThreadIds(organized.sections, catalogRootKey),
-    [catalogRootKey, organized.sections],
+    () => agentHistoryCatalogRailThreadIds(views, scopeEntries, catalogRootKey),
+    [catalogRootKey, scopeEntries, views],
   );
   const workingPending =
     workingRail.workingSection === "off"
@@ -586,6 +589,11 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
           <AgentHistoryCatalog
             catalog={catalog}
             onSelect={onSelectThread}
+            scope={agentHistoryCatalogScope(catalog.projects, {
+              focus: projectFocus,
+              visibleEntries,
+              currentProjectRootKey,
+            })}
             shownInRailThreadIds={shownInRailThreadIds}
           />
         )}
@@ -601,18 +609,6 @@ export const AgentThreadsSidebar = memo(function AgentThreadsSidebar({
     </aside>
   );
 });
-
-function railThreadIds(sections: AgentRailSections, rootKey: string | null): ReadonlySet<string> {
-  const ids = new Set<string>();
-  if (rootKey === null) return ids;
-  const shown = [sections.pinned, sections.active, sections.snoozed ?? [], sections.settled ?? []];
-  for (const views of shown) {
-    for (const view of views) {
-      if (view.thread.owner.rootKey === rootKey) ids.add(view.thread.threadId);
-    }
-  }
-  return ids;
-}
 
 function focusExpandSidebar(): void {
   const expand = document.querySelector<HTMLButtonElement>('button[aria-label="Expand sidebar"]');

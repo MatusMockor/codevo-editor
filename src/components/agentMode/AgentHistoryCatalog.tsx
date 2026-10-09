@@ -7,6 +7,10 @@ import {
   SAVED_CONVERSATION_ROW_SELECTOR,
   type AgentHistoryCatalogRowActions,
 } from "./AgentHistoryCatalogRow";
+import {
+  agentHistoryCatalogScopeIncludes,
+  type AgentHistoryCatalogScope,
+} from "./agentHistoryCatalogScope";
 import { agentProjectMonogram } from "./agentProjectMonogram";
 import { boundedSavedConversationTitle } from "../../domain/agentSavedConversationTitle";
 import "./agentSidebar.css";
@@ -15,33 +19,51 @@ import "./agentHistoryCatalog.css";
 export function AgentHistoryCatalog({
   catalog,
   onSelect,
+  scope,
   shownInRailThreadIds = NO_THREAD_IDS,
 }: {
   readonly catalog: AgentHistoryCatalogSurface;
   readonly onSelect: (threadId: string) => void;
+  readonly scope: AgentHistoryCatalogScope;
   readonly shownInRailThreadIds?: ReadonlySet<string>;
 }) {
+  const { choose, close } = catalog;
+  const openRootKey = catalog.page?.rootKey ?? null;
+  const inScope = agentHistoryCatalogScopeIncludes(scope, openRootKey);
+  const page = inScope ? catalog.page : null;
+  const strayRootKey = inScope ? null : openRootKey;
+  const strayDeleting = strayRootKey !== null && catalog.page?.deletingThreadId != null;
+  const targetRootKey = scope.kind === "available" ? scope.defaultRootKey : null;
   const rows = useMemo(
-    () => catalog.rows.filter((row) => !shownInRailThreadIds.has(row.threadId)),
-    [catalog.rows, shownInRailThreadIds],
+    () =>
+      inScope ? catalog.rows.filter((row) => !shownInRailThreadIds.has(row.threadId)) : NO_ROWS,
+    [catalog.rows, inScope, shownInRailThreadIds],
   );
   const mounted = useRef(true);
   const listRef = useRef<HTMLUListElement | null>(null);
   const focusAfterDelete = useRef<PendingDeleteFocus | null>(null);
   useLayoutEffect(() => {
     const pending = focusAfterDelete.current;
-    if (pending === null || catalog.page?.deletingThreadId != null) return;
+    if (pending === null || page?.deletingThreadId != null) return;
     if (rows.some((row) => row.threadId === pending.threadId)) return;
     focusAfterDelete.current = null;
     const elements = rowElements(listRef.current);
     elements[Math.min(pending.index, elements.length - 1)]?.focus();
-  }, [catalog.page?.deletingThreadId, rows]);
+  }, [page?.deletingThreadId, rows]);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
+  useEffect(() => {
+    if (strayRootKey === null || strayDeleting) return;
+    if (targetRootKey === null) {
+      close();
+      return;
+    }
+    void choose(targetRootKey);
+  }, [choose, close, strayDeleting, strayRootKey, targetRootKey]);
   const actions = useMemo<AgentHistoryCatalogRowActions>(
     () => ({
       open: (threadId) => {
@@ -65,9 +87,9 @@ export function AgentHistoryCatalog({
     }),
     [catalog, onSelect, rows],
   );
-  const page = catalog.page;
-  if (catalog.projects.length === 0) return null;
-  const project = catalog.projects.find((candidate) => candidate.rootKey === page?.rootKey);
+  if (scope.kind === "unavailable") return null;
+  const { projects, defaultRootKey } = scope;
+  const project = projects.find((candidate) => candidate.rootKey === page?.rootKey);
   const busy = page !== null && (page.loading || page.deletingThreadId !== null);
   const deleting = catalog.rows.find((row) => row.threadId === page?.deletingThreadId);
   const empty =
@@ -80,12 +102,13 @@ export function AgentHistoryCatalog({
         aria-expanded={page !== null}
         className="cv-sb-shelf agent-history-catalog__toggle"
         data-shelf="saved-conversations"
+        disabled={strayDeleting}
         onClick={() => {
           if (page) {
-            catalog.close();
+            close();
             return;
           }
-          void catalog.choose(catalog.projects[0].rootKey);
+          void choose(defaultRootKey);
         }}
         type="button"
       >
@@ -99,15 +122,15 @@ export function AgentHistoryCatalog({
             <span aria-hidden="true" className="cv-favicon">
               {agentProjectMonogram(project?.label ?? "")}
             </span>
-            {catalog.projects.length > 1 ? (
+            {projects.length > 1 ? (
               <select
                 aria-label="Saved conversation project"
                 className="agent-history-catalog__project"
                 disabled={busy}
                 value={page.rootKey}
-                onChange={(event) => void catalog.choose(event.target.value)}
+                onChange={(event) => void choose(event.target.value)}
               >
-                {catalog.projects.map((candidate) => (
+                {projects.map((candidate) => (
                   <option key={candidate.rootKey} value={candidate.rootKey}>
                     {candidate.label}
                   </option>
@@ -166,6 +189,7 @@ interface PendingDeleteFocus {
 }
 
 const NO_THREAD_IDS: ReadonlySet<string> = new Set();
+const NO_ROWS: AgentHistoryCatalogSurface["rows"] = [];
 const ROW_NAVIGATION_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 const NO_SAVED_CONVERSATIONS = "No saved conversations.";
 const SAVED_CONVERSATIONS_ALREADY_OPEN = "Conversations on this page are already open.";

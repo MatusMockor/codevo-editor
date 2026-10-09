@@ -807,9 +807,64 @@ describe("AgentThreadsSidebar", () => {
     expect(rowIds()).toEqual(["agt-1", "api-1"]);
     expect(savedTitles()).toEqual(["Api archived", "Api saved"]);
 
+    const focused = { projectRootKey: OTHER, repositoryRoot: OTHER };
+    render({ groups, catalog, projectFocus: "active", scope: focused });
+    expect(rowIds()).toEqual(["api-1"]);
+    expect(savedTitles()).toEqual(["Api archived", "Api saved"]);
+    expect(host.querySelector(".agent-history-catalog select")).toBeNull();
+    expect(host.querySelector(".agent-history-catalog h3")?.textContent).toBe("api");
+    expect(catalog.choose).not.toHaveBeenCalled();
+  });
+
+  it("never lists another project's live threads as saved while the rail is focused", () => {
+    const groups = [
+      group(ROOT, "app", [settled("agt-1", "App thread")]),
+      group(OTHER, "api", [
+        settled("api-1", "Api one", { repositoryRoot: OTHER }),
+        settled("api-2", "Api two", { repositoryRoot: OTHER }),
+      ]),
+    ];
+    const catalog = savedCatalog(OTHER, [
+      savedRow("api-1", "Api one"),
+      savedRow("api-2", "Api two"),
+      savedRow("api-saved", "Api saved"),
+    ]);
+
     render({ groups, catalog, projectFocus: "active" });
     expect(rowIds()).toEqual(["agt-1"]);
-    expect(savedTitles()).toEqual(["Api thread", "Api archived", "Api saved"]);
+    expect(savedTitles()).toEqual([]);
+    expect(host.querySelector(".agent-history-catalog__header")).toBeNull();
+    expect(catalog.choose).toHaveBeenCalledExactlyOnceWith(ROOT);
+
+    render({ groups, catalog, projectFocus: "active" });
+    expect(savedTitles()).toEqual([]);
+    expect(catalog.choose).toHaveBeenCalledOnce();
+
+    render({ groups, catalog, projectFocus: "all" });
+    expect(rowIds()).toEqual(["agt-1", "api-1", "api-2"]);
+    expect(savedTitles()).toEqual(["Api saved"]);
+  });
+
+  it("opens saved conversations on the focused project, not the first one", () => {
+    const groups = [group(ROOT, "app", []), group(OTHER, "api", [])];
+    const closed = { ...savedCatalog(ROOT, []), page: null };
+    const scope = { projectRootKey: OTHER, repositoryRoot: OTHER };
+
+    render({ groups, catalog: closed, projectFocus: "active", scope });
+    click('[data-shelf="saved-conversations"]');
+    expect(closed.choose).toHaveBeenCalledExactlyOnceWith(OTHER);
+
+    render({ groups, catalog: closed, projectFocus: "all", scope });
+    click('[data-shelf="saved-conversations"]');
+    expect(closed.choose).toHaveBeenLastCalledWith(OTHER);
+
+    const remote = { projectRootKey: "remote:srv:/srv/api", repositoryRoot: "/srv/api" };
+    const withRemote = [...groups, group(remote.projectRootKey, "remote api", [])];
+    render({ groups: withRemote, catalog: closed, projectFocus: "active", scope: remote });
+    expect(host.querySelector(".agent-history-catalog")).toBeNull();
+    render({ groups: withRemote, catalog: closed, projectFocus: "all", scope: remote });
+    click('[data-shelf="saved-conversations"]');
+    expect(closed.choose).toHaveBeenLastCalledWith(ROOT);
   });
 
   it("counts collapsed Settled and Snoozed rail rows as already open", () => {
