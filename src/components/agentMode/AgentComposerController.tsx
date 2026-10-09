@@ -1,6 +1,7 @@
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { memo, useMemo, useState, type ReactNode } from "react";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
+import { agentPendingRequestAvailability } from "../../application/agentPendingRequestReachability";
 import { agentQuestionOwner } from "../../application/agentQuestionOwner";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
@@ -92,6 +93,7 @@ export const AgentComposerController = memo(function AgentComposerController({
     <>
       {interactions !== undefined && (
         <AgentComposerInteractionSource
+          availability={agentPendingRequestAvailability(interactions.thread)}
           gateway={interactions.gateway}
           key={ownerKey}
           onChange={setInteraction}
@@ -235,6 +237,10 @@ function sameInteractions(
   if (left === undefined || right === undefined) return left === right;
   if (left.gateway !== right.gateway) return false;
   if (left.thread?.lifecycle !== right.thread?.lifecycle) return false;
+  if (
+    agentPendingRequestAvailability(left.thread) !== agentPendingRequestAvailability(right.thread)
+  )
+    return false;
   return (
     JSON.stringify(agentQuestionOwner(left.thread)) ===
     JSON.stringify(agentQuestionOwner(right.thread))

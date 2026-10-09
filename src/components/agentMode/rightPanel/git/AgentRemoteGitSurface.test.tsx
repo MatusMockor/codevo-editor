@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../../../domain/remoteRunnerReachability";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import wireContract from "../../../../../contracts/remote-git-sync-wire.json";
@@ -77,6 +78,7 @@ function serverThread(
       conversationId: "7389088c-0000-4000-8000-000000000000",
       latestTaskId: "7389088c-0000-4000-8000-000000000000",
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
       ...(gitShip ? { gitShip: true } : {}),
     },
   });

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act, StrictMode, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -1122,6 +1123,7 @@ describe("useAgentComposerState", () => {
         latestTaskId: "task",
         pendingMessages: false,
         resume: { available: false, reason: "task_not_finished" },
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
     };
     render(threadsSurfaceFixture({ threads: [view], stop }));
@@ -1173,6 +1175,7 @@ describe("useAgentComposerState", () => {
           conversationId: "agt-1",
           latestTaskId: "agt-1-t1",
           resume: { available: false, reason: "session_unavailable" },
+          reachability: REMOTE_RUNNER_REACHABLE,
         },
       };
       const project = {
@@ -1452,6 +1455,7 @@ describe("useAgentComposerState", () => {
               conversationId: "conversation",
               latestTaskId: "task",
               resume: { available: true, reason: null },
+              reachability: REMOTE_RUNNER_REACHABLE,
             },
           },
         ],

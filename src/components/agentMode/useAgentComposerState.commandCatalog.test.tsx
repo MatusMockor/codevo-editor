@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -67,6 +68,7 @@ function remoteThread(): AgentThreadView {
       conversationId: base.thread.threadId,
       latestTaskId: "task",
       resume: { available: true, reason: null },
+      reachability: REMOTE_RUNNER_REACHABLE,
     },
   };
 }

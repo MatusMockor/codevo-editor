@@ -3,15 +3,27 @@ import type { AgentApprovalGateway, AgentApprovalOwner } from "./agentApprovalPo
 import {
   AGENT_PENDING_REQUEST_POLL_MS,
   agentPendingRequestSnapshotAfterPoll,
+  agentPendingRequestSnapshotWhileSuspended,
   emptyAgentPendingRequestSnapshot,
+  sameAgentPendingRequestItems,
   startAgentPendingRequestPolling,
+  type AgentPendingRequestAvailability,
   type AgentPendingRequestSnapshot,
+  type AgentPendingRequestSnapshotPolicy,
 } from "./agentPendingRequestPolling";
-import type { AgentApprovalDecision, AgentApprovalRequest } from "../domain/agentApproval";
+import type {
+  AgentApprovalDecision,
+  AgentApprovalFact,
+  AgentApprovalRequest,
+} from "../domain/agentApproval";
 
 export const AGENT_APPROVAL_POLL_MS = AGENT_PENDING_REQUEST_POLL_MS;
 
-const APPROVALS_UNREACHABLE_NOTICE = "Approvals could not be refreshed. Reconnecting…";
+const NO_APPROVAL_REQUESTS: readonly AgentApprovalRequest[] = Object.freeze([]);
+const APPROVAL_SNAPSHOTS: AgentPendingRequestSnapshotPolicy<AgentApprovalRequest> = {
+  unreachableNotice: "Approvals could not be refreshed. Reconnecting…",
+  sameRequest: sameApprovalRequest,
+};
 
 interface Scope {
   readonly lease: object;
@@ -33,6 +45,7 @@ export function useAgentApprovals(
   gateway: AgentApprovalGateway | null,
   owner: AgentApprovalOwner | null,
   running: boolean,
+  availability: AgentPendingRequestAvailability = "available",
 ): AgentApprovalsSurface {
   const active = useRef<Scope | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -46,26 +59,31 @@ export function useAgentApprovals(
     const scope: Scope = { lease: {}, owner, busy: false, revision: 0 };
     active.current = scope;
     setSnapshot(emptyAgentPendingRequestSnapshot(scope.lease));
-    const stopPolling = startAgentPendingRequestPolling<AgentApprovalRequest>({
+    return () => {
+      if (active.current === scope) active.current = null;
+    };
+  }, [gateway, owner, running]);
+
+  useLayoutEffect(() => {
+    const scope = active.current;
+    if (!gateway || !owner || !scope) return;
+    if (availability !== "available") {
+      setSnapshot((previous) =>
+        agentPendingRequestSnapshotWhileSuspended(previous, scope.lease, APPROVAL_SNAPSHOTS),
+      );
+      return;
+    }
+    return startAgentPendingRequestPolling<AgentApprovalRequest>({
       cadence: running ? "repeating" : "once",
       isCurrent: () => active.current === scope,
       revision: () => scope.revision,
       list: () => gateway.listApprovals(owner),
       publish: (outcome) =>
         setSnapshot((previous) =>
-          agentPendingRequestSnapshotAfterPoll(
-            previous,
-            scope.lease,
-            outcome,
-            APPROVALS_UNREACHABLE_NOTICE,
-          ),
+          agentPendingRequestSnapshotAfterPoll(previous, scope.lease, outcome, APPROVAL_SNAPSHOTS),
         ),
     });
-    return () => {
-      if (active.current === scope) active.current = null;
-      stopPolling();
-    };
-  }, [gateway, owner, running]);
+  }, [availability, gateway, owner, running]);
 
   const answer = useCallback(
     async (requestId: string, decision: AgentApprovalDecision) => {
@@ -117,9 +135,34 @@ export function useAgentApprovals(
 
   const visible = snapshot !== null && snapshot.lease === active.current?.lease ? snapshot : null;
   return {
-    requests: visible?.requests ?? [],
+    requests: visible?.requests ?? NO_APPROVAL_REQUESTS,
     answering: visible?.answering ?? null,
     error: visible?.error ?? null,
     answer,
   };
+}
+
+function sameApprovalRequest(left: AgentApprovalRequest, right: AgentApprovalRequest): boolean {
+  return (
+    left.id === right.id &&
+    left.status === right.status &&
+    left.taskId === right.taskId &&
+    left.provider === right.provider &&
+    left.kind === right.kind &&
+    approvalDecision(left) === approvalDecision(right) &&
+    left.detailTruncated === right.detailTruncated &&
+    left.title === right.title &&
+    left.detail === right.detail &&
+    sameAgentPendingRequestItems(left.decisions, right.decisions, Object.is) &&
+    sameAgentPendingRequestItems(left.facts, right.facts, sameApprovalFact)
+  );
+}
+
+function approvalDecision(request: AgentApprovalRequest): AgentApprovalDecision | null {
+  if (request.status !== "approved" && request.status !== "denied") return null;
+  return request.decision;
+}
+
+function sameApprovalFact(left: AgentApprovalFact, right: AgentApprovalFact): boolean {
+  return left.label === right.label && left.value === right.value;
 }

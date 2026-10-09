@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentShipState } from "../../domain/agentShip";
@@ -49,6 +50,7 @@ function remote(view: AgentThreadView, serverId = "linux"): AgentThreadView {
       conversationId: "conversation",
       latestTaskId: "task",
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
     },
   };
 }

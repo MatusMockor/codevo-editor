@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -86,6 +87,7 @@ describe("AgentSurfaceHost", () => {
         conversationId: "conversation",
         latestTaskId: "task",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
     };
     const readDirectory = vi.fn(listing);
@@ -147,6 +149,7 @@ describe("AgentSurfaceHost", () => {
       conversationId: "conversation",
       latestTaskId: "task",
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
     };
     for (const scope of [
       { ...remoteSurface.scope, taskId: "foreign" },

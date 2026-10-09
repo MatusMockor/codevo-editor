@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../domain/remoteRunnerReachability";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +115,7 @@ function setup(items: readonly RemoteRunnerPendingMessage[] = []) {
             conversationId: "conversation",
             latestTaskId: "task",
             resume: null,
+            reachability: REMOTE_RUNNER_REACHABLE,
           },
         }),
       ],

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
@@ -118,6 +119,7 @@ it("ships a server thread through runner Git sync but never integrates or remove
       conversationId: "root",
       latestTaskId: "root",
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
       gitShip: true,
     },
   });
@@ -171,6 +173,7 @@ it("refreshes a server thread once per settled turn even when the surface is reb
     conversationId: "root",
     latestTaskId: "root",
     resume: null,
+    reachability: REMOTE_RUNNER_REACHABLE,
     gitShip: true,
   } as const;
   const view = (latestTaskId: string) =>

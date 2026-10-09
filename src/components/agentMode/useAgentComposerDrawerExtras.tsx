@@ -5,11 +5,13 @@ import type { AgentThreadBranchMemorySurface } from "../../application/useAgentT
 import type { UsageAccountStates } from "../usage/usagePresentation";
 import { AgentBranchChangedNotice } from "./AgentBranchChangedNotice";
 import { AgentComposerDrawerEnd } from "./AgentComposerDrawerEnd";
+import { AgentServerReachabilityBanner } from "./AgentServerReachabilityBanner";
 import type { AgentLiveCheckoutBranches } from "./agentLiveCheckoutBranch";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
 import type { AgentComposerDrawerContext } from "./composer/AgentComposerFrame";
 import { AgentComposerUsageLimitsNotice } from "./usage/AgentComposerUsageLimitsNotice";
 import { useComposerUsageLimitsNotice } from "./usage/useComposerUsageLimitsNotice";
+import { useAgentServerReachabilityBanner } from "./useAgentServerReachabilityBanner";
 import { useAgentStartedThreadBranch } from "./useAgentStartedThreadBranch";
 
 const UNAVAILABLE_GUARD_REASON = "Branch switching is unavailable in this view.";
@@ -24,6 +26,7 @@ export interface AgentComposerThreadBranchInput {
   readonly thread: AgentThreadView | null;
   readonly branchMemory: AgentThreadBranchMemorySurface | null;
   readonly liveCheckoutBranches: AgentLiveCheckoutBranches | null | undefined;
+  readonly retryServer?: () => Promise<void>;
 }
 
 const NO_THREAD_BRANCH: AgentComposerThreadBranchInput = {
@@ -65,14 +68,19 @@ export function useAgentComposerDrawerExtras(
   );
   const notice = useComposerUsageLimitsNotice(accountUsage);
   const branchNotice = started.notice;
+  const serverBanner = useAgentServerReachabilityBanner(
+    threadBranch.thread,
+    threadBranch.retryServer,
+  );
   const banners = useMemo(
     () => (
       <>
         <AgentComposerUsageLimitsNotice notice={notice} />
         <AgentBranchChangedNotice notice={branchNotice} />
+        <AgentServerReachabilityBanner banner={serverBanner} />
       </>
     ),
-    [branchNotice, notice],
+    [branchNotice, notice, serverBanner],
   );
   return { banners, onShowUsageLimits: notice.show, renderDrawerEnd };
 }

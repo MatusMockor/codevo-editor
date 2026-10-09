@@ -30,12 +30,13 @@ function renderHook<P, R>(hook: (props: P) => R, options?: { initialProps: P }) 
   rerender(options?.initialProps as P);
   return { result, rerender, unmount };
 }
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentQuestionGateway, AgentQuestionOwner } from "./agentQuestionPorts";
 import type { AgentQuestionRequest } from "../domain/agentQuestion";
 import {
   AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD as FAILURE_THRESHOLD,
   AGENT_PENDING_REQUEST_POLL_MS as POLL_MS,
+  type AgentPendingRequestAvailability,
 } from "./agentPendingRequestPolling";
 import { useAgentQuestions } from "./useAgentQuestions";
 const owner: AgentQuestionOwner = {
@@ -80,14 +81,16 @@ async function nextPoll() {
     await vi.advanceTimersByTimeAsync(POLL_MS);
   });
 }
-function renderObservedQuestions(
-  port: AgentQuestionGateway,
-  initialProps: { target: AgentQuestionOwner; running: boolean },
-) {
+interface ObservedProps {
+  target: AgentQuestionOwner;
+  running: boolean;
+  availability?: AgentPendingRequestAvailability;
+}
+function renderObservedQuestions(port: AgentQuestionGateway, initialProps: ObservedProps) {
   const errors: (string | null)[] = [];
   const rendered = renderHook(
-    ({ target, running }: { target: AgentQuestionOwner; running: boolean }) => {
-      const surface = useAgentQuestions(port, target, running);
+    ({ target, running, availability }: ObservedProps) => {
+      const surface = useAgentQuestions(port, target, running, availability);
       errors.push(surface.error);
       return surface;
     },
@@ -147,6 +150,16 @@ describe("useAgentQuestions", () => {
       await answer;
     });
     expect(result.current.requests).toEqual([]);
+  });
+  it("keeps the same empty requests across renders without an owner", () => {
+    const port = gateway();
+    const { result, rerender } = renderHook(({ target }) => useAgentQuestions(port, target, true), {
+      initialProps: { target: null as AgentQuestionOwner | null },
+    });
+    const first = result.current.requests;
+    rerender({ target: null });
+    expect(first).toEqual([]);
+    expect(result.current.requests).toBe(first);
   });
   it("keeps unanswered data and exposes retry after an uncertain network result", async () => {
     const port = gateway();
@@ -381,5 +394,206 @@ describe("useAgentQuestions", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+describe("useAgentQuestions availability", () => {
+  const remoteOwner: AgentQuestionOwner = {
+    kind: "remote",
+    serverId: "linux",
+    runnerId: "runner",
+    taskId: "task",
+  };
+  const notice = "Questions could not be refreshed. Reconnecting…";
+  const owners = [
+    { name: "a local owner", target: owner },
+    { name: "a remote owner", target: remoteOwner },
+  ];
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  function freshlyListing(port: AgentQuestionGateway, listed: () => AgentQuestionRequest) {
+    const list = vi.mocked(port.list);
+    list.mockImplementation(() => Promise.resolve([structuredClone(listed())]));
+    return list;
+  }
+  async function polls(count: number) {
+    for (let poll = 0; poll < count; poll += 1) await nextPoll();
+  }
+
+  it.each(owners)(
+    "asks the gateway nothing and holds no timer while unreachable for $name",
+    async ({ target }) => {
+      const port = gateway();
+      const { result, errors } = renderObservedQuestions(port, {
+        target,
+        running: true,
+        availability: "unreachable",
+      });
+      await polls(FAILURE_THRESHOLD + 2);
+      expect(port.list).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(result.current.requests).toEqual([]);
+      expect(new Set(errors)).toEqual(new Set([null]));
+    },
+  );
+  it.each(owners)(
+    "keeps the listed questions while unreachable and polls at once on return for $name",
+    async ({ target }) => {
+      const port = gateway();
+      const list = vi.mocked(port.list);
+      const next = { ...question, id: "next" };
+      const { result, rerender } = renderObservedQuestions(port, { target, running: true });
+      await settlePoll();
+      const listed = result.current.requests;
+      expect(listed).toEqual([question]);
+      rerender({ target, running: true, availability: "unreachable" });
+      await polls(FAILURE_THRESHOLD + 2);
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(result.current.requests).toBe(listed);
+      list.mockResolvedValue([next]);
+      rerender({ target, running: true, availability: "available" });
+      await settlePoll();
+      expect(list).toHaveBeenCalledTimes(2);
+      expect(result.current.requests).toEqual([next]);
+      await nextPoll();
+      expect(list).toHaveBeenCalledTimes(3);
+    },
+  );
+  it("hides the reconnecting notice once unreachable and starts a fresh failure streak on return", async () => {
+    const port = gateway();
+    const list = vi.mocked(port.list);
+    list.mockResolvedValueOnce([question]);
+    list.mockRejectedValue(new Error("offline"));
+    const { result, rerender } = renderObservedQuestions(port, { target: owner, running: true });
+    await settlePoll();
+    await polls(FAILURE_THRESHOLD);
+    const listed = result.current.requests;
+    expect(result.current.error).toBe(notice);
+    rerender({ target: owner, running: true, availability: "unreachable" });
+    expect(result.current.error).toBeNull();
+    expect(result.current.requests).toBe(listed);
+    rerender({ target: owner, running: true, availability: "available" });
+    await settlePoll();
+    await polls(FAILURE_THRESHOLD - 2);
+    expect(result.current.error).toBeNull();
+    await nextPoll();
+    expect(result.current.error).toBe(notice);
+    expect(result.current.requests).toBe(listed);
+  });
+  it("discards a poll that was in flight when the runner became unreachable", async () => {
+    const late = deferred<readonly AgentQuestionRequest[]>();
+    const port = gateway();
+    const list = vi.mocked(port.list);
+    list.mockResolvedValueOnce([question]).mockImplementationOnce(() => late.promise);
+    const { result, rerender } = renderObservedQuestions(port, { target: owner, running: true });
+    await settlePoll();
+    await nextPoll();
+    expect(list).toHaveBeenCalledTimes(2);
+    rerender({ target: owner, running: true, availability: "unreachable" });
+    await act(async () => {
+      late.resolve([{ ...question, id: "stale" }]);
+      await late.promise;
+    });
+    expect(result.current.requests).toEqual([question]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("runs a single poll loop after the availability flaps", async () => {
+    const late = deferred<readonly AgentQuestionRequest[]>();
+    const port = gateway();
+    const list = vi.mocked(port.list);
+    list.mockImplementationOnce(() => late.promise);
+    const { result, rerender } = renderObservedQuestions(port, { target: owner, running: true });
+    rerender({ target: owner, running: true, availability: "unreachable" });
+    rerender({ target: owner, running: true, availability: "available" });
+    await settlePoll();
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(result.current.requests).toEqual([question]);
+    await act(async () => {
+      late.resolve([{ ...question, id: "stale" }]);
+      await late.promise;
+    });
+    expect(result.current.requests).toEqual([question]);
+    expect(vi.getTimerCount()).toBe(1);
+    await nextPoll();
+    expect(list).toHaveBeenCalledTimes(3);
+  });
+  it("keeps the requests and the answer callback while polls list the same questions", async () => {
+    const port = gateway();
+    const list = freshlyListing(port, () => question);
+    const { result } = renderObservedQuestions(port, { target: owner, running: true });
+    await settlePoll();
+    const listed = result.current.requests;
+    const answer = result.current.answer;
+    await polls(4);
+    expect(list).toHaveBeenCalledTimes(5);
+    expect(result.current.requests).toBe(listed);
+    expect(result.current.answer).toBe(answer);
+  });
+  it.each<{ readonly name: string; readonly changed: AgentQuestionRequest }>([
+    { name: "another status", changed: { ...question, status: "cancelled" } },
+    {
+      name: "another prompt",
+      changed: { ...question, questions: [{ ...question.questions[0], prompt: "Which one?" }] },
+    },
+    {
+      name: "another option label",
+      changed: {
+        ...question,
+        questions: [
+          { ...question.questions[0], options: [{ id: "a", label: "B", description: "" }] },
+        ],
+      },
+    },
+    {
+      name: "an answer",
+      changed: { ...question, status: "answered", answers: response.answers },
+    },
+  ])("publishes a poll that lists $name", async ({ changed }) => {
+    const port = gateway();
+    let current: AgentQuestionRequest = question;
+    freshlyListing(port, () => current);
+    const { result } = renderObservedQuestions(port, { target: owner, running: true });
+    await settlePoll();
+    const listed = result.current.requests;
+    current = changed;
+    await nextPoll();
+    expect(result.current.requests).not.toBe(listed);
+    expect(result.current.requests).toEqual([changed]);
+  });
+  it("leaves no timer when unmounted while unreachable", async () => {
+    const port = gateway();
+    const { rerender, unmount } = renderObservedQuestions(port, { target: owner, running: true });
+    await settlePoll();
+    rerender({ target: owner, running: true, availability: "unreachable" });
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    await polls(2);
+    expect(port.list).toHaveBeenCalledTimes(1);
+  });
+  it("reports an answer that fails while unreachable and keeps it retryable without polling", async () => {
+    const port = gateway();
+    vi.mocked(port.answer).mockRejectedValueOnce(new Error("The runner is unreachable."));
+    const { result, rerender } = renderObservedQuestions(port, {
+      target: remoteOwner,
+      running: true,
+    });
+    await settlePoll();
+    rerender({ target: remoteOwner, running: true, availability: "unreachable" });
+    await act(async () => {
+      await expect(result.current.answer(question.id, response)).rejects.toThrow("unreachable");
+    });
+    expect(result.current.error).toBe(
+      "The answer could not be confirmed. Retry to safely check or send it.",
+    );
+    expect(result.current.requests[0].status).toBe("pending");
+    await act(() => result.current.answer(question.id, response));
+    expect(result.current.requests[0].status).toBe("answered");
+    expect(result.current.error).toBeNull();
+    expect(port.list).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

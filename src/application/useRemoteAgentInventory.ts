@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RemoteRunnerGateway,
   RemoteRunnerPendingMessage,
@@ -6,6 +6,15 @@ import type {
   RemoteRunnerTask,
 } from "../domain/remoteRunner";
 import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
+import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
+import {
+  remoteRunnerFailureReason,
+  remoteRunnerReachability,
+  remoteRunnerRefreshReachability,
+  REMOTE_RUNNER_REACHABLE,
+  REMOTE_RUNNER_RECONNECTING,
+  type RemoteRunnerReachability,
+} from "../domain/remoteRunnerReachability";
 import {
   emptyRemoteInventory,
   loadRemoteAgentInventory,
@@ -15,6 +24,7 @@ import {
 } from "./remoteAgentInventoryLoad";
 import { mergeRemoteTasks } from "./remoteRunnerTaskState";
 import { startRemoteInventoryRefresh } from "./remoteInventoryRefresh";
+import { probeRemoteRunnerDescriptor } from "./remoteRunnerDescriptorProbe";
 import {
   mergeLoadedThreadMetadata,
   publishedRemoteThreadMetadata,
@@ -26,11 +36,50 @@ interface Options {
   readonly workspaceOwner: string | null;
   readonly selectedThreadId: string | null;
 }
+interface ObservedRefresh {
+  readonly reachability: RemoteRunnerReachability;
+  readonly reason: string | null;
+}
+interface RefreshObservation extends ObservedRefresh {
+  readonly serverId: string;
+}
+interface LeasedInventory {
+  readonly lease: object;
+  readonly snapshots: readonly RemoteAgentInventorySnapshot[];
+  readonly observed: ReadonlyMap<string, ObservedRefresh>;
+}
+const NO_OBSERVATIONS: ReadonlyMap<string, ObservedRefresh> = new Map();
+const endpoint = (server: RemoteRunnerServer) =>
+  JSON.stringify([server.id, server.host, server.username, server.port]);
+function sameObservation(left: ObservedRefresh | undefined, right: ObservedRefresh): boolean {
+  return left?.reachability === right.reachability && left.reason === right.reason;
+}
+function observedRefreshes(
+  previous: ReadonlyMap<string, ObservedRefresh>,
+  configured: ReadonlySet<string>,
+  observation: RefreshObservation | undefined,
+): ReadonlyMap<string, ObservedRefresh> {
+  const stale = [...previous.keys()].some((id) => !configured.has(id));
+  const unchanged =
+    observation === undefined ||
+    !configured.has(observation.serverId) ||
+    sameObservation(previous.get(observation.serverId), observation);
+  if (!stale && unchanged) return previous;
+  const next = new Map([...previous].filter(([id]) => configured.has(id)));
+  if (observation !== undefined && configured.has(observation.serverId))
+    next.set(observation.serverId, {
+      reachability: observation.reachability,
+      reason: observation.reason,
+    });
+  return next;
+}
 export type RemotePendingUpdate =
   | readonly RemoteRunnerPendingMessage[]
   | ((items: readonly RemoteRunnerPendingMessage[]) => readonly RemoteRunnerPendingMessage[]);
 export interface RemoteAgentInventorySurface {
   readonly snapshots: readonly RemoteAgentInventorySnapshot[];
+  readonly reachability: ReadonlyMap<string, RemoteRunnerReachability>;
+  readonly reconnectingReasons: ReadonlyMap<string, string>;
   readonly loading: boolean;
   refresh(): Promise<void>;
   publishTask(serverId: string, task: RemoteRunnerTask): void;
@@ -45,8 +94,6 @@ export function useRemoteAgentInventory({
   selectedThreadId,
 }: Options): RemoteAgentInventorySurface {
   const configuration = JSON.stringify(servers);
-  const endpoint = (server: RemoteRunnerServer) =>
-    JSON.stringify([server.id, server.host, server.username, server.port]);
   const pendingRevisions = useRef(new Map<string, number>());
   const provenance = useRef(new Map<string, string>());
   const owner = useRef({ gateway, workspaceOwner });
@@ -62,11 +109,9 @@ export function useRemoteAgentInventory({
     authority.current = { lease, configuration, selectedThreadId };
   const captured = authority.current;
   const mounted = useRef(false);
-  const cache = useRef<{ lease: object; snapshots: readonly RemoteAgentInventorySnapshot[] }>({
-    lease,
-    snapshots: [],
-  });
-  if (cache.current.lease !== lease) cache.current = { lease, snapshots: [] };
+  const cache = useRef<LeasedInventory>({ lease, snapshots: [], observed: NO_OBSERVATIONS });
+  if (cache.current.lease !== lease)
+    cache.current = { lease, snapshots: [], observed: NO_OBSERVATIONS };
   const unconfirmed = useRef({
     lease,
     configuration,
@@ -81,11 +126,12 @@ export function useRemoteAgentInventory({
   serversRef.current = servers;
   const valid = useCallback(() => mounted.current && authority.current === captured, [captured]);
   const publish = useCallback(
-    (snapshots: readonly RemoteAgentInventorySnapshot[]) => {
+    (snapshots: readonly RemoteAgentInventorySnapshot[], observation?: RefreshObservation) => {
       if (!valid()) return;
       const configured = new Set(serversRef.current.slice(0, 64).map((server) => server.id));
       cache.current = {
         lease,
+        observed: observedRefreshes(cache.current.observed, configured, observation),
         snapshots: snapshots
           .filter((item) => configured.has(item.serverId))
           .map((item) => {
@@ -105,6 +151,14 @@ export function useRemoteAgentInventory({
     },
     [valid, lease, selectedThreadId],
   );
+  const holdsRemovedServers = useCallback(() => {
+    const configured = new Set(serversRef.current.slice(0, 64).map((server) => server.id));
+    return [
+      ...cache.current.snapshots.map((item) => item.serverId),
+      ...cache.current.observed.keys(),
+      ...provenance.current.keys(),
+    ].some((id) => !configured.has(id));
+  }, []);
   const refresh = useCallback(async () => {
     if (!valid() || gateway === null) return;
     if (active.current?.owner === captured) {
@@ -125,27 +179,38 @@ export function useRemoteAgentInventory({
     try {
       do {
         operation.dirty = false;
+        if (holdsRemovedServers()) publish(cache.current.snapshots);
         for (const server of serversRef.current.slice(0, 64)) {
           if (!valid()) return;
           const previous =
             cache.current.snapshots.find((item) => item.serverId === server.id) ??
             emptyRemoteInventory(server.id, server.connected);
           if (!server.connected) {
-            publish([
-              ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
-              {
-                ...previous,
-                connected: false,
-                inventoryTruncated: false,
-                error: "Server disconnected.",
-              },
-            ]);
+            publish(
+              [
+                ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
+                {
+                  ...previous,
+                  connected: false,
+                  inventoryTruncated: false,
+                  error: "Server disconnected.",
+                },
+              ],
+              { serverId: server.id, reachability: REMOTE_RUNNER_RECONNECTING, reason: null },
+            );
             continue;
           }
           const pendingRevision = pendingRevisions.current.get(server.id) ?? 0;
+          const probe = probeRemoteRunnerDescriptor(gateway);
+          let observed: ObservedRefresh = { reachability: REMOTE_RUNNER_REACHABLE, reason: null };
           let result: RemoteAgentInventorySnapshot;
           try {
-            result = await loadRemoteAgentInventory(gateway, previous, selectedThreadId, valid);
+            result = await loadRemoteAgentInventory(
+              probe.gateway,
+              previous,
+              selectedThreadId,
+              valid,
+            );
             if (!valid()) return;
             const merged = mergeLoadedThreadMetadata(
               result.threadMetadata,
@@ -155,28 +220,46 @@ export function useRemoteAgentInventory({
             result = { ...result, threadMetadata: merged.threadMetadata };
           } catch (error) {
             if (!valid() || error instanceof RemoteInventoryRevoked) return;
+            const expectedRunnerId = previous.descriptor?.runnerId ?? null;
+            const followUp = await probe.followUp({ serverId: server.id }, expectedRunnerId);
+            if (!valid()) return;
+            observed = {
+              reachability: remoteRunnerRefreshReachability({
+                kind: "failed",
+                error,
+                expectedRunnerId,
+                answeredRunnerId: probe.answeredRunnerId(),
+                followUp,
+              }),
+              reason: remoteRunnerFailureReason(
+                followUp.kind === "failed" ? followUp.error : error,
+              ),
+            };
             const cached = cache.current.snapshots.find((item) => item.serverId === server.id);
             result = {
               ...previous,
               threadMetadata: (cached ?? previous).threadMetadata,
               connected: false,
               inventoryTruncated: false,
-              error: error instanceof Error ? error.message : "Could not refresh remote tasks.",
+              error: remoteRunnerErrorMessage(error, "Could not refresh remote tasks."),
             };
           }
           provenance.current.set(server.id, endpoint(server));
           const latest = cache.current.snapshots.find((item) => item.serverId === server.id);
-          publish([
-            ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
-            {
-              ...result,
-              tasks: mergeRemoteTasks(result.tasks, latest?.tasks ?? []),
-              pendingMessages:
-                pendingRevision === (pendingRevisions.current.get(server.id) ?? 0)
-                  ? result.pendingMessages
-                  : latest?.pendingMessages,
-            },
-          ]);
+          publish(
+            [
+              ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
+              {
+                ...result,
+                tasks: mergeRemoteTasks(result.tasks, latest?.tasks ?? []),
+                pendingMessages:
+                  pendingRevision === (pendingRevisions.current.get(server.id) ?? 0)
+                    ? result.pendingMessages
+                    : latest?.pendingMessages,
+              },
+            ],
+            { serverId: server.id, ...observed },
+          );
         }
       } while (operation.dirty && valid());
     } finally {
@@ -184,7 +267,7 @@ export function useRemoteAgentInventory({
       settle();
       if (valid()) setLoadingOwner(null);
     }
-  }, [valid, gateway, captured, selectedThreadId, publish]);
+  }, [valid, gateway, captured, selectedThreadId, publish, holdsRemovedServers]);
   useEffect(() => {
     mounted.current = true;
     const stop = startRemoteInventoryRefresh({
@@ -265,9 +348,34 @@ export function useRemoteAgentInventory({
     },
     [valid, publish],
   );
+  const published = useMemo(() => {
+    const reachability = new Map<string, RemoteRunnerReachability>();
+    const reconnectingReasons = new Map<string, string>();
+    if (state.lease !== lease) return { reachability, reconnectingReasons };
+    for (const server of servers.slice(0, 64)) {
+      if (!state.snapshots.some((item) => item.serverId === server.id)) continue;
+      const observed = state.observed.get(server.id);
+      const current = remoteRunnerReachability({
+        serverConnected: server.connected,
+        connectionCurrent: provenance.current.get(server.id) === endpoint(server),
+        lastRefresh: observed?.reachability ?? null,
+      });
+      reachability.set(server.id, current);
+      if (
+        observed !== undefined &&
+        observed.reason !== null &&
+        current === observed.reachability &&
+        current.kind === "reconnecting"
+      )
+        reconnectingReasons.set(server.id, observed.reason);
+    }
+    return { reachability, reconnectingReasons };
+  }, [state, lease, servers]);
   return {
     publishPending,
     publishThreadMetadata,
+    reachability: published.reachability,
+    reconnectingReasons: published.reconnectingReasons,
     snapshots:
       state.lease === lease
         ? state.snapshots

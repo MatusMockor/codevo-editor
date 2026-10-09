@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -54,6 +55,7 @@ function recoverable(): AgentThreadView {
       latestTaskId: "task",
       pendingMessages: false,
       resume: { available: false, reason: "session_unavailable" },
+      reachability: REMOTE_RUNNER_REACHABLE,
     },
   };
 }

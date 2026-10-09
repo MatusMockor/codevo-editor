@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import { remoteAgentProjectKey } from "../../application/remoteAgentProjection";
@@ -92,6 +93,7 @@ function remoteThread(
       conversationId: threadId,
       latestTaskId: `${threadId}-task`,
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
     },
     lifecycle: agentThreadLifecycle(thread),
     thread,

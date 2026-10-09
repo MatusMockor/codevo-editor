@@ -1,26 +1,39 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import {
   agentPendingRequestSnapshotAfterPoll,
+  agentPendingRequestSnapshotWhileSuspended,
   emptyAgentPendingRequestSnapshot,
+  sameAgentPendingRequestItems,
   startAgentPendingRequestPolling,
+  type AgentPendingRequestAvailability,
   type AgentPendingRequestSnapshot,
+  type AgentPendingRequestSnapshotPolicy,
 } from "./agentPendingRequestPolling";
 import type { AgentQuestionGateway, AgentQuestionOwner } from "./agentQuestionPorts";
 import {
   parseAgentQuestionResponse,
+  type AgentQuestion,
+  type AgentQuestionAnswer,
+  type AgentQuestionOption,
   type AgentQuestionRequest,
   type AgentQuestionResponse,
 } from "../domain/agentQuestion";
 
 type Snapshot = AgentPendingRequestSnapshot<AgentQuestionRequest>;
 
-const QUESTIONS_UNREACHABLE_NOTICE = "Questions could not be refreshed. Reconnecting…";
+const NO_QUESTION_REQUESTS: readonly AgentQuestionRequest[] = Object.freeze([]);
+const NO_QUESTION_ANSWERS: readonly AgentQuestionAnswer[] = Object.freeze([]);
+const QUESTION_SNAPSHOTS: AgentPendingRequestSnapshotPolicy<AgentQuestionRequest> = {
+  unreachableNotice: "Questions could not be refreshed. Reconnecting…",
+  sameRequest: sameQuestionRequest,
+};
 
 /** Serial polling survives reconnects, while each selection owns a fresh generation. */
 export function useAgentQuestions(
   gateway: AgentQuestionGateway | null,
   owner: AgentQuestionOwner | null,
   running: boolean,
+  availability: AgentPendingRequestAvailability = "available",
 ) {
   const active = useRef<{
     lease: object;
@@ -38,26 +51,31 @@ export function useAgentQuestions(
     const scope = { lease: {}, owner, busy: false, revision: 0 };
     active.current = scope;
     setSnapshot(emptyAgentPendingRequestSnapshot(scope.lease));
-    const stopPolling = startAgentPendingRequestPolling<AgentQuestionRequest>({
+    return () => {
+      if (active.current === scope) active.current = null;
+    };
+  }, [gateway, owner, running]);
+
+  useLayoutEffect(() => {
+    const scope = active.current;
+    if (!gateway || !owner || !scope) return;
+    if (availability !== "available") {
+      setSnapshot((previous) =>
+        agentPendingRequestSnapshotWhileSuspended(previous, scope.lease, QUESTION_SNAPSHOTS),
+      );
+      return;
+    }
+    return startAgentPendingRequestPolling<AgentQuestionRequest>({
       cadence: running ? "repeating" : "once",
       isCurrent: () => active.current === scope,
       revision: () => scope.revision,
       list: () => gateway.list(owner),
       publish: (outcome) =>
         setSnapshot((previous) =>
-          agentPendingRequestSnapshotAfterPoll(
-            previous,
-            scope.lease,
-            outcome,
-            QUESTIONS_UNREACHABLE_NOTICE,
-          ),
+          agentPendingRequestSnapshotAfterPoll(previous, scope.lease, outcome, QUESTION_SNAPSHOTS),
         ),
     });
-    return () => {
-      if (active.current === scope) active.current = null;
-      stopPolling();
-    };
-  }, [gateway, owner, running]);
+  }, [availability, gateway, owner, running]);
 
   const answer = useCallback(
     async (requestId: string, response: AgentQuestionResponse) => {
@@ -109,9 +127,50 @@ export function useAgentQuestions(
   );
   const visible = snapshot?.lease === active.current?.lease ? snapshot : null;
   return {
-    requests: visible?.requests ?? [],
+    requests: visible?.requests ?? NO_QUESTION_REQUESTS,
     answering: visible?.answering ?? null,
     error: visible?.error ?? null,
     answer,
   };
+}
+
+function sameQuestionRequest(left: AgentQuestionRequest, right: AgentQuestionRequest): boolean {
+  return (
+    left.id === right.id &&
+    left.status === right.status &&
+    left.taskId === right.taskId &&
+    left.provider === right.provider &&
+    sameAgentPendingRequestItems(left.questions, right.questions, sameQuestion) &&
+    sameAgentPendingRequestItems(questionAnswers(left), questionAnswers(right), sameQuestionAnswer)
+  );
+}
+
+function questionAnswers(request: AgentQuestionRequest): readonly AgentQuestionAnswer[] {
+  if (request.status !== "answered") return NO_QUESTION_ANSWERS;
+  return request.answers;
+}
+
+function sameQuestion(left: AgentQuestion, right: AgentQuestion): boolean {
+  return (
+    left.id === right.id &&
+    left.multiple === right.multiple &&
+    left.allowCustom === right.allowCustom &&
+    left.header === right.header &&
+    left.prompt === right.prompt &&
+    sameAgentPendingRequestItems(left.options, right.options, sameQuestionOption)
+  );
+}
+
+function sameQuestionOption(left: AgentQuestionOption, right: AgentQuestionOption): boolean {
+  return (
+    left.id === right.id && left.label === right.label && left.description === right.description
+  );
+}
+
+function sameQuestionAnswer(left: AgentQuestionAnswer, right: AgentQuestionAnswer): boolean {
+  return (
+    left.questionId === right.questionId &&
+    left.text === right.text &&
+    sameAgentPendingRequestItems(left.optionIds, right.optionIds, Object.is)
+  );
 }

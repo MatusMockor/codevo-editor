@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useState } from "react";
 import { isAgentApprovalGateway } from "../../../application/agentApprovalPorts";
+import type { AgentPendingRequestAvailability } from "../../../application/agentPendingRequestPolling";
 import type {
   AgentQuestionGateway,
   AgentQuestionOwner,
@@ -17,6 +18,7 @@ export interface AgentComposerInteractionSourceProps {
   readonly gateway: AgentQuestionGateway | null;
   readonly owner: AgentQuestionOwner | null;
   readonly running: boolean;
+  readonly availability?: AgentPendingRequestAvailability;
   readonly questionAttachments?: AgentComposerQuestionAttachmentTarget;
   onChange(interaction: AgentComposerInteraction | null): void;
 }
@@ -31,6 +33,7 @@ export function AgentComposerInteractionSource({
   onChange,
   owner,
   running,
+  availability = "available",
   questionAttachments = NO_QUESTION_ATTACHMENTS,
 }: AgentComposerInteractionSourceProps) {
   const [ownerLease] = useState(owner);
@@ -39,13 +42,24 @@ export function AgentComposerInteractionSource({
     answering: approvalAnswering,
     error: approvalError,
     answer: answerApproval,
-  } = useAgentApprovals(isAgentApprovalGateway(gateway) ? gateway : null, ownerLease, running);
+  } = useAgentApprovals(
+    isAgentApprovalGateway(gateway) ? gateway : null,
+    ownerLease,
+    running,
+    availability,
+  );
   const {
     requests: questionRequests,
     answering: questionAnswering,
     error: questionError,
     answer: answerQuestion,
-  } = useAgentQuestions(gateway, ownerLease, running);
+  } = useAgentQuestions(gateway, ownerLease, running, availability);
+  const attachmentKind = questionAttachments.kind;
+  const attachmentSubject = questionAttachmentSubject(questionAttachments);
+  const attachments = useMemo(
+    () => questionAttachmentTarget(attachmentKind, attachmentSubject),
+    [attachmentKind, attachmentSubject],
+  );
   const interaction = useMemo(
     () =>
       pickAgentComposerInteraction({
@@ -57,7 +71,7 @@ export function AgentComposerInteractionSource({
         },
         questions: {
           requests: questionRequests,
-          attachments: questionAttachments,
+          attachments,
           answering: questionAnswering,
           error: questionError,
           answer: async (requestId, response) => {
@@ -75,7 +89,7 @@ export function AgentComposerInteractionSource({
       questionAnswering,
       questionError,
       answerQuestion,
-      questionAttachments,
+      attachments,
       running,
     ],
   );
@@ -84,4 +98,33 @@ export function AgentComposerInteractionSource({
   }, [interaction, onChange]);
   useLayoutEffect(() => () => onChange(null), [onChange]);
   return null;
+}
+
+function questionAttachmentSubject(target: AgentComposerQuestionAttachmentTarget): string {
+  switch (target.kind) {
+    case "thread":
+      return target.threadId;
+    case "unavailable":
+      return target.reason;
+    default: {
+      const exhaustive: never = target;
+      return exhaustive;
+    }
+  }
+}
+
+function questionAttachmentTarget(
+  kind: AgentComposerQuestionAttachmentTarget["kind"],
+  subject: string,
+): AgentComposerQuestionAttachmentTarget {
+  switch (kind) {
+    case "thread":
+      return { kind, threadId: subject };
+    case "unavailable":
+      return { kind, reason: subject };
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
 }

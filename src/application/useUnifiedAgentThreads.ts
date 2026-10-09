@@ -4,6 +4,10 @@ import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { RemoteRunnerGateway, RemoteRunnerServer } from "../domain/remoteRunner";
 import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
+import {
+  isRemoteRunnerReachable,
+  REMOTE_RUNNER_REACHABLE,
+} from "../domain/remoteRunnerReachability";
 import type { AgentThreadsSurface, AgentThreadView } from "./agentThreadPorts";
 import type { AgentAttachmentOwner } from "./useAgentComposerAttachments";
 import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
@@ -14,6 +18,11 @@ import {
 } from "./remoteAgentProjection";
 import { useRemoteHistorySearchPort } from "./useRemoteHistorySearchPort";
 import { useRemoteAgentInventory } from "./useRemoteAgentInventory";
+import {
+  remoteAgentNoticeMessage,
+  type RemoteAgentBlockedAction,
+  type RemoteAgentNoticeState,
+} from "./remoteAgentReachabilityNotice";
 import { useRemoteAgentSteer } from "./useRemoteAgentSteer";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
@@ -137,19 +146,10 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     (captured: object) => mounted.current && authority.current === captured,
     [],
   );
-  const [noticeState, setNotice] = useState<{
-    owner: object;
-    message: string;
-    threadId?: string;
-  } | null>(null);
-  const notice =
-    noticeState?.owner === owner &&
-    (noticeState.threadId === undefined || noticeState.threadId === selectedThreadId)
-      ? noticeState.message
-      : null;
+  const [noticeState, setNotice] = useState<RemoteAgentNoticeState | null>(null);
   const report = useCallback(
     (message: string) => {
-      if (valid(owner)) setNotice({ owner, message });
+      if (valid(owner)) setNotice({ kind: "message", owner, message });
     },
     [owner, valid],
   );
@@ -161,7 +161,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const reportThread = useCallback(
     (threadId: string, message: string) => {
       if (valid(owner) && owner.selectedThreadId === threadId)
-        setNotice({ owner, threadId, message });
+        setNotice({ kind: "message", owner, threadId, message });
     },
     [owner, valid],
   );
@@ -171,6 +171,17 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     workspaceOwner: null,
     selectedThreadId,
   });
+  const reachabilityOf = (serverId: string) =>
+    inventory.reachability.get(serverId) ?? REMOTE_RUNNER_REACHABLE;
+  const notice =
+    noticeState?.owner === owner
+      ? remoteAgentNoticeMessage(noticeState, {
+          selectedThreadId,
+          reachabilityOf,
+          serverNameOf: (serverId) =>
+            servers.find((server) => server.id === serverId)?.name ?? null,
+        })
+      : null;
   const metadata = useServerThreadMetadata({
     gateway,
     snapshots: inventory.snapshots,
@@ -284,6 +295,8 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
             snapshot.descriptor.capabilities.interactiveQuestions === true,
           portPreviewSupported: snapshot.descriptor.capabilities.portPreview === true,
           attachmentsByTask,
+          reachability: inventory.reachability.get(snapshot.serverId),
+          reachabilityDetail: inventory.reconnectingReasons.get(snapshot.serverId),
         })) {
           const presented = projectMetadata(view);
           if (presented) views.push(presented);
@@ -298,7 +311,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       }
     }
     return { views, errors, nextProjections };
-  }, [inventory.snapshots, projectMetadata, attachmentValues]);
+  }, [
+    inventory.snapshots,
+    inventory.reachability,
+    inventory.reconnectingReasons,
+    projectMetadata,
+    attachmentValues,
+  ]);
   useLayoutEffect(() => {
     projections.current = projected.nextProjections;
   }, [projected]);
@@ -361,7 +380,14 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     () => new Map([...local.deferredFollowUps, ...pendingMessages.deferred]),
     [local.deferredFollowUps, pendingMessages.deferred],
   );
+  const blockedByOutage = (id: string, action: RemoteAgentBlockedAction): boolean => {
+    const serverId = remoteById.get(id)?.execution?.serverId;
+    if (serverId === undefined || isRemoteRunnerReachable(reachabilityOf(serverId))) return false;
+    if (valid(owner)) setNotice({ kind: "unreachable", owner, unreachable: { serverId, action } });
+    return true;
+  };
   const targetForThread = (id: string) => {
+    if (blockedByOutage(id, "command")) return null;
     const target = remoteById.get(id)?.execution;
     if (
       !target ||
@@ -520,10 +546,15 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     local.attachmentImages,
     remoteAttachments.attachmentImages,
   );
+  const outageShownByBanner =
+    selectedRemote?.execution !== undefined &&
+    !isRemoteRunnerReachable(selectedRemote.execution.reachability);
   const remoteError =
     projected.errors.get(effectiveServerId ?? "") ??
     metadata.persistenceError ??
-    inventory.snapshots.find((snapshot) => snapshot.serverId === effectiveServerId)?.error ??
+    (outageShownByBanner
+      ? null
+      : inventory.snapshots.find((snapshot) => snapshot.serverId === effectiveServerId)?.error) ??
     null;
   const historySearch = useRemoteHistorySearchPort({
     gateway,
@@ -723,14 +754,16 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
         report("Retry the original immediate message before sending another message.");
         return false;
       }
+      if (blockedByOutage(request.threadId, "send")) return false;
       const target = targetForThread(request.threadId);
+      if (target === null) return false;
       const view = remoteById.get(request.threadId);
       if (view?.thread.provider.kind !== request.launch.provider || view.thread.archived)
         return false;
       if (
         !inventory.snapshots.some(
           (snapshot) =>
-            snapshot.serverId === target?.serverId &&
+            snapshot.serverId === target.serverId &&
             snapshot.descriptor?.capabilities.taskLaunchOptions === true,
         )
       ) {
@@ -743,13 +776,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       )
         return pendingMessages.enqueue(request);
       return (
-        target !== null &&
         (await mutations.followUp(request, target, agentThreadDispatchKey(request.threadId))) !==
-          null
+        null
       );
     },
     steer: async (request) => {
       if (isRemoteAgentIdentity(request.threadId)) {
+        if (blockedByOutage(request.threadId, "send")) return "kept";
         if (request.delivery === "immediate") {
           if (pendingMessages.hasUnconfirmed(request.threadId)) {
             report("Retry the original queued message before changing its delivery.");

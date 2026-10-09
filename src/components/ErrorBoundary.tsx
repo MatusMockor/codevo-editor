@@ -1,5 +1,11 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
+export interface ErrorBoundaryFailure {
+  readonly error: Error;
+  readonly componentStack: string | null;
+  retry(): void;
+}
+
 interface ErrorBoundaryProps {
   children: ReactNode;
   /** Heading shown in the fallback notice. */
@@ -15,10 +21,12 @@ interface ErrorBoundaryProps {
    * automatically when the offending input (e.g. the selected diff) changes.
    */
   resetKeys?: ReadonlyArray<unknown>;
+  renderFallback?(failure: ErrorBoundaryFailure): ReactNode;
 }
 
 interface ErrorBoundaryState {
   error: Error | null;
+  componentStack: string | null;
 }
 
 const DEFAULT_TITLE = "Something went wrong rendering this view";
@@ -32,14 +40,11 @@ const DEFAULT_TITLE = "Something went wrong rendering this view";
  * workspace/session state and does not touch shared runtime state, so wrapping
  * any panel is safe across project tabs.
  */
-export class ErrorBoundary extends Component<
-  ErrorBoundaryProps,
-  ErrorBoundaryState
-> {
-  state: ErrorBoundaryState = { error: null };
+export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null, componentStack: null };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
+    return { error, componentStack: null };
   }
 
   componentDidUpdate(previousProps: ErrorBoundaryProps): void {
@@ -58,10 +63,17 @@ export class ErrorBoundary extends Component<
     // Surface the crash for diagnostics without re-throwing (which would defeat
     // the boundary). The component stack pinpoints the offending subtree.
     console.error("ErrorBoundary caught a render error", error, info);
+
+    if (this.props.renderFallback === undefined) {
+      return;
+    }
+
+    const componentStack = info.componentStack ?? null;
+    this.setState((state) => (state.error === error ? { componentStack } : null));
   }
 
   private clearError = (): void => {
-    this.setState({ error: null });
+    this.setState({ error: null, componentStack: null });
   };
 
   private onRetry = (): void => {
@@ -74,11 +86,17 @@ export class ErrorBoundary extends Component<
       return this.props.children;
     }
 
+    if (this.props.renderFallback !== undefined) {
+      return this.props.renderFallback({
+        error: this.state.error,
+        componentStack: this.state.componentStack,
+        retry: this.onRetry,
+      });
+    }
+
     return (
       <div className="error-boundary-fallback" role="alert">
-        <p className="error-boundary-title">
-          {this.props.title ?? DEFAULT_TITLE}
-        </p>
+        <p className="error-boundary-title">{this.props.title ?? DEFAULT_TITLE}</p>
         <p className="error-boundary-message">
           {this.state.error.message || "An unexpected error occurred."}
         </p>

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -274,6 +275,7 @@ describe("AgentThreadHeader", () => {
           conversationId: "conversation-1",
           latestTaskId: "task-1",
           resume: null,
+          reachability: REMOTE_RUNNER_REACHABLE,
         },
       },
     });
@@ -611,5 +613,6 @@ function remoteExecution(): NonNullable<AgentThreadView["execution"]> {
     conversationId: "conversation-1",
     latestTaskId: "task-1",
     resume: null,
+    reachability: REMOTE_RUNNER_REACHABLE,
   };
 }
