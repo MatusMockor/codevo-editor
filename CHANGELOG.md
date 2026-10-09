@@ -7,6 +7,24 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.109] - 2026-10-09
+
+### Added
+
+- Project switching shows each project's agent thread status.
+- New conversations appear in the thread list as soon as the first message is sent.
+- Files changed by an agent turn appear in a collapsible tree card.
+- Earlier activity in long remote turns can be loaded from the runner, with activity
+  already in memory displayed immediately.
+
+### Fixed
+
+- Saved conversations follow the project focused in the agent rail.
+- Pressing Escape outside the prompt no longer stops an agent turn.
+- Running-row Stop controls remain readable in light themes, and elapsed time stays
+  in place while a turn is stopping.
+- Slim custom scrollbars render consistently instead of using the platform default.
+
 ## [0.2.0-beta.108] - 2026-10-09
 
 ### Changed
