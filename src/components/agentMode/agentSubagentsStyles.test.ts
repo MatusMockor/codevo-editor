@@ -67,12 +67,13 @@ describe("agent subagent styles", () => {
     expect(declaration(stop, "box-shadow")).toBe("var(--cv-ring-danger-soft)");
     expect(declaration(stop, "border")).toBe("0");
     expect(declaration(stop, "height")).toBe("24px");
-    expect(declaration(hover, "color")).toBe("var(--cv-danger)");
-    expect(varReferences(declaration(hover, "background") ?? "")).toEqual(["--cv-danger"]);
+    expect(declaration(hover, "box-shadow")).toBe("var(--cv-ring-danger)");
+    expect(declaration(hover, "background")).toBeUndefined();
+    expect(declaration(hover, "color")).toBeUndefined();
     expect(declaration(stopping, "color")).toBe("var(--cv-fg-subtle)");
     expect(declaration(stopping, "box-shadow")).toBe("none");
     expect(declaration(stopping, "cursor")).toBe("default");
-    expect(varReferences(declaration(stopping, "background") ?? "")).toEqual(["--cv-tint-1"]);
+    expect(declaration(stopping, "background")).toBe("var(--cv-tint-1)");
     expect(declaration(stopping, "height")).toBeUndefined();
     expect(sheet.source).toMatch(
       /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.cv-agents-row__stop,[\s\S]*transition: none/,

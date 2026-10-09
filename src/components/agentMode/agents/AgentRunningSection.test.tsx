@@ -160,6 +160,8 @@ describe("Agents panel running section", () => {
     expect(
       stop?.querySelectorAll('svg.cv-agents-row__stop-glyph[aria-hidden="true"]'),
     ).toHaveLength(1);
+    expect(stop?.querySelector("svg")?.getAttribute("fill")).toBe("currentColor");
+    expect(stop?.querySelector("svg rect")).not.toBeNull();
     act(() => stop?.focus());
     act(() => stop?.click());
     expect(stopTask).toHaveBeenCalledExactlyOnceWith("s1");

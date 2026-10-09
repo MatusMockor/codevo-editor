@@ -311,8 +311,7 @@ button.cv-spawn-member__head {
 }
 
 .cv-agents-row__stop:hover:enabled:not([aria-disabled="true"]) {
-  background: color-mix(in srgb, var(--cv-danger) 20%, transparent);
-  color: var(--cv-danger);
+  box-shadow: var(--cv-ring-danger);
 }
 
 .cv-agents-row__stop:focus-visible {
