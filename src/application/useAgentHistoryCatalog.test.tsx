@@ -80,6 +80,20 @@ function setup() {
     },
   };
 }
+function pendingRead(h: ReturnType<typeof setup>) {
+  let resolve!: (page: AgentHistoryThreadPage) => void;
+  h.read.mockReturnValueOnce(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  return (page: AgentHistoryThreadPage) => resolve(page);
+}
+const olderPage: AgentHistoryThreadPage = {
+  threads: [catalogThread("agt-2-0a1b"), catalogThread("agt-3-0a1b")],
+  beforeThreadId: "agt-3-0a1b",
+  hasEarlier: false,
+};
 describe("saved conversation browsing", () => {
   it("replaces pages and restores the latest tail with current project ownership", async () => {
     const h = setup();
@@ -232,6 +246,123 @@ describe("saved conversation browsing", () => {
     expect(h.surface.page?.error).toBeNull();
     act(() => h.surface.close());
     expect(h.surface.page).toBeNull();
+  });
+  it("is on the newest page after choosing or returning, and not after paging back", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    expect(h.surface.page?.atNewest).toBe(true);
+    await act(() => h.surface.older());
+    expect(h.read).toHaveBeenLastCalledWith(
+      expect.objectContaining({ beforeThreadId: catalogThread().threadId }),
+    );
+    expect(h.surface.page?.atNewest).toBe(false);
+    await act(() => h.surface.older());
+    expect(h.surface.page?.atNewest).toBe(false);
+    await act(() => h.surface.latest());
+    expect(h.read).toHaveBeenLastCalledWith(expect.objectContaining({ beforeThreadId: null }));
+    expect(h.surface.page?.atNewest).toBe(true);
+    await act(() => h.surface.older());
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    expect(h.surface.page?.atNewest).toBe(true);
+  });
+  it("keeps the shown page's place while the next page loads", async () => {
+    const h = setup();
+    const page: AgentHistoryThreadPage = {
+      threads: [catalogThread()],
+      beforeThreadId: catalogThread().threadId,
+      hasEarlier: true,
+    };
+    let settle = pendingRead(h);
+    let pending!: Promise<void>;
+    act(() => {
+      pending = h.surface.choose(catalogProject.rootKey);
+    });
+    expect(h.surface.page).toMatchObject({ loading: true, atNewest: true });
+    await act(async () => {
+      settle(page);
+      await pending;
+    });
+    expect(h.surface.page).toMatchObject({ loading: false, atNewest: true });
+
+    settle = pendingRead(h);
+    act(() => {
+      pending = h.surface.older();
+    });
+    expect(h.surface.page).toMatchObject({ loading: true, atNewest: true });
+    await act(async () => {
+      settle(page);
+      await pending;
+    });
+    expect(h.surface.page).toMatchObject({ loading: false, atNewest: false });
+
+    settle = pendingRead(h);
+    act(() => {
+      pending = h.surface.latest();
+    });
+    expect(h.surface.page).toMatchObject({ loading: true, atNewest: false });
+    await act(async () => {
+      settle(page);
+      await pending;
+    });
+    expect(h.surface.page).toMatchObject({ loading: false, atNewest: true });
+  });
+  it("keeps the shown page's place when the next read fails", async () => {
+    const h = setup();
+    h.read.mockRejectedValueOnce(new Error("broken"));
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    expect(h.surface.page).toMatchObject({ atNewest: true, threads: [] });
+    expect(h.surface.page?.error).toContain("Try again");
+
+    await act(() => h.surface.latest());
+    h.read.mockRejectedValueOnce(new Error("broken"));
+    await act(() => h.surface.older());
+    expect(h.surface.page?.error).toContain("Try again");
+    expect(h.surface.page?.atNewest).toBe(true);
+
+    await act(() => h.surface.older());
+    expect(h.surface.page).toMatchObject({ atNewest: false, error: null });
+    h.read.mockRejectedValueOnce(new Error("broken"));
+    await act(() => h.surface.latest());
+    expect(h.surface.page?.error).toContain("Try again");
+    expect(h.surface.page?.atNewest).toBe(false);
+  });
+  it("keeps its place through a rename, an archive and a row removal", async () => {
+    const h = setup();
+    await act(() => h.surface.choose(catalogProject.rootKey));
+    h.read.mockResolvedValueOnce(olderPage);
+    await act(() => h.surface.older());
+    expect(h.surface.page?.atNewest).toBe(false);
+    await act(async () => {
+      expect(await h.surface.rename("agt-2-0a1b", "Renamed")).toBe(true);
+    });
+    expect(h.surface.page?.atNewest).toBe(false);
+    await act(async () => {
+      expect(await h.surface.setArchived("agt-2-0a1b", true)).toBe(true);
+    });
+    expect(h.surface.page?.atNewest).toBe(false);
+    let finish!: () => void;
+    h.deleteSavedThread.mockReturnValueOnce(
+      new Promise<void>((done) => {
+        finish = done;
+      }),
+    );
+    let removing!: Promise<boolean>;
+    act(() => {
+      removing = h.surface.remove("agt-3-0a1b");
+    });
+    expect(h.surface.page).toMatchObject({ deletingThreadId: "agt-3-0a1b", atNewest: false });
+    await act(async () => {
+      finish();
+      expect(await removing).toBe(true);
+    });
+    expect(h.surface.page?.threads.map((thread) => thread.threadId)).toEqual(["agt-2-0a1b"]);
+    expect(h.surface.page).toMatchObject({ deletingThreadId: null, atNewest: false });
+
+    await act(() => h.surface.latest());
+    await act(async () => {
+      expect(await h.surface.remove(catalogThread().threadId)).toBe(true);
+    });
+    expect(h.surface.page?.atNewest).toBe(true);
   });
 });
 

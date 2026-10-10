@@ -891,7 +891,7 @@ describe("AgentThreadsSidebar", () => {
     );
     expect(savedTitles()).toEqual([]);
     expect(host.querySelector(".agent-history-catalog__empty")?.textContent).toBe(
-      "Conversations on this page are already open.",
+      "All saved conversations are already open.",
     );
   });
 
@@ -2304,6 +2304,7 @@ function savedCatalog(
       threads: [],
       beforeThreadId: null,
       hasEarlier: false,
+      atNewest: true,
       loading: false,
       deletingThreadId: null,
       error: null,

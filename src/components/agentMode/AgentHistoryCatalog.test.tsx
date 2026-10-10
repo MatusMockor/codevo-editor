@@ -50,6 +50,7 @@ function surface(
       threads: [catalogThread()],
       hasEarlier: true,
       beforeThreadId: catalogThread().threadId,
+      atNewest: false,
       loading: false,
       deletingThreadId: null,
       error: null,
@@ -139,6 +140,13 @@ function rerender(
   );
 }
 
+function paged(
+  catalog: AgentHistoryCatalogSurface,
+  patch: Partial<NonNullable<AgentHistoryCatalogSurface["page"]>>,
+): AgentHistoryCatalogSurface {
+  return { ...catalog, page: { ...catalog.page!, ...patch } };
+}
+
 function rebuiltEachRender() {
   const choose = vi.fn().mockResolvedValue(undefined);
   const close = vi.fn();
@@ -178,6 +186,17 @@ const rowTitles = () => rowButtons().map((item) => item.getAttribute("title"));
 const emptyText = () =>
   document.querySelector(".agent-history-catalog__empty")?.textContent ?? null;
 const ALREADY_OPEN = "Conversations on this page are already open.";
+const ALL_ALREADY_OPEN = "All saved conversations are already open.";
+const pagingFooter = () => document.querySelector(".agent-history-catalog__paging");
+const pagingLabels = () =>
+  Array.from(document.querySelectorAll(".agent-history-catalog__paging button")).map(
+    (item) => item.textContent,
+  );
+const projectHeader = () => document.querySelector(".agent-history-catalog__header");
+const shelfChildTags = () =>
+  Array.from(document.querySelector(".agent-history-catalog")?.children ?? []).map(
+    (item) => item.tagName,
+  );
 const statusText = () => document.querySelector('[role="status"]')?.textContent ?? null;
 function openMenu(label: string) {
   act(() =>
@@ -390,9 +409,90 @@ describe("saved conversations UI", () => {
 
   it("says there are no saved conversations when nothing is listed and nothing is earlier", () => {
     const catalog = surface([]);
-    render({ ...catalog, page: { ...catalog.page!, hasEarlier: false } });
+    render(paged(catalog, { hasEarlier: false, atNewest: true }));
     expect(emptyText()).toBe("No saved conversations.");
+    expect(shelfChildTags()).toEqual(["BUTTON", "P"]);
+  });
+
+  it.each([
+    { hasEarlier: false, atNewest: true, labels: [] },
+    { hasEarlier: true, atNewest: true, labels: ["Older conversations"] },
+    { hasEarlier: false, atNewest: false, labels: ["Back to newest"] },
+    { hasEarlier: true, atNewest: false, labels: ["Older conversations", "Back to newest"] },
+  ])(
+    "offers only the paging controls that lead somewhere: $labels",
+    ({ hasEarlier, atNewest, labels }) => {
+      render(paged(surface(), { hasEarlier, atNewest }));
+      expect(pagingLabels()).toEqual(labels);
+      expect(pagingFooter() === null).toBe(labels.length === 0);
+    },
+  );
+
+  it("offers a refresh beside an error on the newest page", () => {
+    const catalog = surface([]);
+    render(paged(catalog, { hasEarlier: false, atNewest: true, error: "Could not load" }));
+    expect(pagingLabels()).toEqual(["Refresh"]);
+    act(() => button("Refresh").click());
+    expect(catalog.latest).toHaveBeenCalledOnce();
+    rerender(paged(catalog, { hasEarlier: true, atNewest: true, error: "Could not load" }));
+    expect(pagingLabels()).toEqual(["Older conversations", "Refresh"]);
+    rerender(paged(catalog, { hasEarlier: false, atNewest: false, error: "Could not load" }));
+    expect(pagingLabels()).toEqual(["Back to newest"]);
+    rerender(paged(catalog, { hasEarlier: false, atNewest: true }));
+    expect(pagingFooter()).toBeNull();
+  });
+
+  it("does not claim there are no saved conversations on an emptied older page", () => {
+    render(paged(surface([]), { hasEarlier: false, atNewest: false }));
+    expect(emptyText()).toBeNull();
+    expect(pagingLabels()).toEqual(["Back to newest"]);
+  });
+
+  it("locks the offered paging controls while the page is busy", () => {
+    const catalog = surface();
+    render(paged(catalog, { loading: true }));
     expect(button("Older conversations").disabled).toBe(true);
+    expect(button("Back to newest").disabled).toBe(true);
+    rerender(paged(catalog, { deletingThreadId: catalogThread().threadId }));
+    expect(button("Older conversations").disabled).toBe(true);
+    expect(button("Back to newest").disabled).toBe(true);
+    rerender(catalog);
+    expect(button("Older conversations").disabled).toBe(false);
+    expect(button("Back to newest").disabled).toBe(false);
+  });
+
+  it("heads a single project only when it lists a conversation", () => {
+    const catalog = surface([row()]);
+    const shown = new Set([catalogThread().threadId]);
+    render(catalog);
+    expect(projectHeader()?.querySelector(".cv-favicon") ?? null).not.toBeNull();
+    expect(document.querySelector("h3")?.textContent).toBe(catalogProject.label);
+    rerender(catalog, shown);
+    expect(projectHeader()).toBeNull();
+    expect(document.querySelector("h3")).toBeNull();
+    rerender(paged(catalog, { loading: true }), shown);
+    expect(statusText()).toBe("Loading saved conversations…");
+    expect(projectHeader()).toBeNull();
+    rerender(paged(catalog, { error: "Could not load" }), shown);
+    expect(projectHeader()).toBeNull();
+    rerender(paged(catalog, { notice: "Deleted" }), shown);
+    expect(projectHeader()).toBeNull();
+    rerender(surface([]));
+    expect(projectHeader()).toBeNull();
+  });
+
+  it("keeps the project switch when several projects are in scope and nothing is listed", () => {
+    const catalog = paged(twoProjects(catalogProject.rootKey), {
+      hasEarlier: false,
+      atNewest: true,
+    });
+    render(catalog);
+    expect(rowButtons()).toEqual([]);
+    expect(emptyText()).toBe("No saved conversations.");
+    expect(document.querySelector("select")?.value).toBe(catalogProject.rootKey);
+    expect(projectHeader()?.querySelector(".cv-favicon") ?? null).not.toBeNull();
+    expect(document.querySelector("h3")).toBeNull();
+    expect(pagingFooter()).toBeNull();
   });
 
   it("hides a row the rail already shows and lists the ones it does not", () => {
@@ -420,9 +520,24 @@ describe("saved conversations UI", () => {
     expect(rowButtons()).toEqual([]);
     expect(emptyText()).toBe(ALREADY_OPEN);
     expect(button("Older conversations").disabled).toBe(false);
-    rerender({ ...catalog, page: { ...catalog.page!, hasEarlier: false } }, shown);
+    rerender(paged(catalog, { hasEarlier: false }), shown);
     expect(emptyText()).toBe(ALREADY_OPEN);
-    expect(button("Older conversations").disabled).toBe(true);
+    expect(pagingLabels()).toEqual(["Back to newest"]);
+    rerender(paged(catalog, { atNewest: true }), shown);
+    expect(emptyText()).toBe(ALREADY_OPEN);
+    expect(pagingLabels()).toEqual(["Older conversations"]);
+  });
+
+  it("says in one quiet line that every saved conversation is already open", () => {
+    const catalog = surface([row(), row({ threadId: "agt-2-0a1b", title: "Second" })]);
+    const shown = new Set([catalogThread().threadId, "agt-2-0a1b"]);
+    render(paged(catalog, { hasEarlier: false, atNewest: true }), vi.fn(), shown);
+    expect(emptyText()).toBe(ALL_ALREADY_OPEN);
+    expect(shelfChildTags()).toEqual(["BUTTON", "P"]);
+    rerender(paged(catalog, { hasEarlier: false, atNewest: true }), new Set());
+    expect(emptyText()).toBeNull();
+    expect(rowTitles()).toEqual([catalogThread().title, "Second"]);
+    expect(shelfChildTags()).toEqual(["BUTTON", "HEADER", "UL"]);
   });
 
   it("keeps the empty texts out of the way of loading, errors and notices", () => {

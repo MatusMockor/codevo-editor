@@ -113,6 +113,7 @@ function catalogFixture(): AgentHistoryCatalogSurface {
       threads: [],
       hasEarlier: false,
       beforeThreadId: null,
+      atNewest: true,
       loading: false,
       deletingThreadId: null,
       error: null,

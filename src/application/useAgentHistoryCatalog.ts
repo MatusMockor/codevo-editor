@@ -22,6 +22,7 @@ export interface AgentHistoryCatalogGateway {
 }
 export interface AgentHistoryCatalogPage extends AgentHistoryThreadPage {
   readonly rootKey: string;
+  readonly atNewest: boolean;
   readonly loading: boolean;
   readonly deletingThreadId: string | null;
   readonly error: string | null;
@@ -120,6 +121,7 @@ export function useAgentHistoryCatalog(dependencies: Dependencies): AgentHistory
         threads: previous?.threads ?? [],
         beforeThreadId: previous?.beforeThreadId ?? null,
         hasEarlier: previous?.hasEarlier ?? false,
+        atNewest: previous?.atNewest ?? true,
         loading: true,
         deletingThreadId: null,
         error: null,
@@ -142,6 +144,7 @@ export function useAgentHistoryCatalog(dependencies: Dependencies): AgentHistory
           page: {
             ...page,
             rootKey,
+            atNewest: beforeThreadId === null,
             loading: false,
             deletingThreadId: null,
             error: null,

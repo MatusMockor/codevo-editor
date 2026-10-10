@@ -95,7 +95,16 @@ export function AgentHistoryCatalog({
   const empty =
     page === null || busy || page.error || page.notice
       ? null
-      : emptyMessage(rows.length, catalog.rows.length, page.hasEarlier);
+      : emptyMessage({
+          listed: rows.length,
+          onPage: catalog.rows.length,
+          hasEarlier: page.hasEarlier,
+          atNewest: page.atNewest,
+        });
+  const headed = projects.length > 1 || rows.length > 0;
+  const offersOlder = page !== null && page.hasEarlier;
+  const offersNewest = page !== null && !page.atNewest;
+  const offersRefresh = page !== null && page.error !== null && page.atNewest;
   return (
     <section aria-label="Saved conversations" className="agent-history-catalog">
       <button
@@ -118,28 +127,30 @@ export function AgentHistoryCatalog({
       </button>
       {page && (
         <>
-          <header className="agent-history-catalog__header">
-            <span aria-hidden="true" className="cv-favicon">
-              {agentProjectMonogram(project?.label ?? "")}
-            </span>
-            {projects.length > 1 ? (
-              <select
-                aria-label="Saved conversation project"
-                className="agent-history-catalog__project"
-                disabled={busy}
-                value={page.rootKey}
-                onChange={(event) => void choose(event.target.value)}
-              >
-                {projects.map((candidate) => (
-                  <option key={candidate.rootKey} value={candidate.rootKey}>
-                    {candidate.label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <h3 className="agent-history-catalog__project">{project?.label}</h3>
-            )}
-          </header>
+          {headed && (
+            <header className="agent-history-catalog__header">
+              <span aria-hidden="true" className="cv-favicon">
+                {agentProjectMonogram(project?.label ?? "")}
+              </span>
+              {projects.length > 1 ? (
+                <select
+                  aria-label="Saved conversation project"
+                  className="agent-history-catalog__project"
+                  disabled={busy}
+                  value={page.rootKey}
+                  onChange={(event) => void choose(event.target.value)}
+                >
+                  {projects.map((candidate) => (
+                    <option key={candidate.rootKey} value={candidate.rootKey}>
+                      {candidate.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <h3 className="agent-history-catalog__project">{project?.label}</h3>
+              )}
+            </header>
+          )}
           {page.loading && <p role="status">Loading saved conversations…</p>}
           {deleting && (
             <p role="status">{`Deleting “${boundedSavedConversationTitle(deleting.title, 60)}”…`}</p>
@@ -164,19 +175,40 @@ export function AgentHistoryCatalog({
             </ul>
           )}
           {empty && <p className="agent-history-catalog__empty">{empty}</p>}
-          <footer className="agent-history-catalog__paging">
-            <Button
-              disabled={busy || !page.hasEarlier}
-              onClick={() => void catalog.older()}
-              size="sm"
-              variant="ghost"
-            >
-              Older conversations
-            </Button>
-            <Button disabled={busy} onClick={() => void catalog.latest()} size="sm" variant="ghost">
-              Back to newest
-            </Button>
-          </footer>
+          {(offersOlder || offersNewest || offersRefresh) && (
+            <footer className="agent-history-catalog__paging">
+              {offersOlder && (
+                <Button
+                  disabled={busy}
+                  onClick={() => void catalog.older()}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Older conversations
+                </Button>
+              )}
+              {offersNewest && (
+                <Button
+                  disabled={busy}
+                  onClick={() => void catalog.latest()}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Back to newest
+                </Button>
+              )}
+              {offersRefresh && (
+                <Button
+                  disabled={busy}
+                  onClick={() => void catalog.latest()}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Refresh
+                </Button>
+              )}
+            </footer>
+          )}
         </>
       )}
     </section>
@@ -188,17 +220,26 @@ interface PendingDeleteFocus {
   readonly index: number;
 }
 
+interface ShelfListing {
+  readonly listed: number;
+  readonly onPage: number;
+  readonly hasEarlier: boolean;
+  readonly atNewest: boolean;
+}
+
 const NO_THREAD_IDS: ReadonlySet<string> = new Set();
 const NO_ROWS: AgentHistoryCatalogSurface["rows"] = [];
 const ROW_NAVIGATION_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 const NO_SAVED_CONVERSATIONS = "No saved conversations.";
 const SAVED_CONVERSATIONS_ALREADY_OPEN = "Conversations on this page are already open.";
+const ALL_SAVED_CONVERSATIONS_ALREADY_OPEN = "All saved conversations are already open.";
 
-function emptyMessage(listed: number, onPage: number, hasEarlier: boolean): string | null {
+function emptyMessage({ listed, onPage, hasEarlier, atNewest }: ShelfListing): string | null {
   if (listed > 0) return null;
-  if (onPage > 0) return SAVED_CONVERSATIONS_ALREADY_OPEN;
-  if (hasEarlier) return null;
-  return NO_SAVED_CONVERSATIONS;
+  if (onPage === 0 && (hasEarlier || !atNewest)) return null;
+  if (onPage === 0) return NO_SAVED_CONVERSATIONS;
+  if (!hasEarlier && atNewest) return ALL_SAVED_CONVERSATIONS_ALREADY_OPEN;
+  return SAVED_CONVERSATIONS_ALREADY_OPEN;
 }
 
 function rowElements(list: HTMLUListElement | null): ReadonlyArray<HTMLButtonElement> {
