@@ -3,6 +3,7 @@ import type { AgentAccountUsageLoadState } from "../domain/agentAccountUsage";
 import type { AgentAccountUsageSourcesPort } from "../domain/agentAccountUsageSources";
 import type { AgentAccountUsageRefreshOutcome } from "./agentAccountUsageRefresh";
 import type { RemoteGitProjectKey, RemoteGitSyncPort } from "../domain/remoteGitSync";
+import type { RemoteRunnerReachability } from "../domain/remoteRunnerReachability";
 import type { AgentCommandCatalogServerProject } from "../domain/agentCommandCatalogTarget";
 import type { AgentSessionBackground } from "../domain/agentSessionBackground";
 import type { AgentBackgroundTaskStopOutcome } from "../domain/agentThreadSession";
@@ -278,6 +279,8 @@ export interface RemoteAgentThreadExecution {
   readonly conversationId: string;
   readonly latestTaskId: string;
   readonly resume: RemoteRunnerTaskResume | null;
+  readonly reachability: RemoteRunnerReachability;
+  readonly reachabilityDetail?: string;
 }
 
 export interface AgentThreadView {

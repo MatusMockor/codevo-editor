@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../../domain/remoteRunnerReachability";
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -66,6 +67,7 @@ const REMOTE_EXECUTION = {
   conversationId: "conversation",
   latestTaskId: "task",
   resume: null,
+  reachability: REMOTE_RUNNER_REACHABLE,
 } as const;
 
 describe("right panel under a streaming thread", () => {

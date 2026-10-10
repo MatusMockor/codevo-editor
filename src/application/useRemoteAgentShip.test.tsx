@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../domain/remoteRunnerReachability";
 import { act, createElement, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -70,6 +71,7 @@ const viewOf = (projectId: string): AgentThreadView =>
       conversationId: `${projectId}-task`,
       latestTaskId: `${projectId}-task`,
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
     },
   }) as unknown as AgentThreadView;
 const views = new Map(PROJECT_IDS.map((id) => [threadIdOf(id), viewOf(id)]));

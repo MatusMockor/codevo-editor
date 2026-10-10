@@ -77,6 +77,7 @@ import { AgentCodeColorizerContext, type AgentCodeColorizer } from "./agentCodeC
 import { defaultAgentCodeColorizer } from "./shikiAgentCodeColorizer";
 import { AgentSessionDock } from "./conversation/AgentSessionDock";
 import { agentSessionActivityBar } from "./conversation/agentSessionActivityBar";
+import { agentLiveWhileServerReachable } from "./agentTurnLiveIndicators";
 import { useAgentRunningWork } from "./agents/useAgentRunningWork";
 import type { AgentSessionTaskControls } from "./conversation/agentSessionTaskControls";
 import {
@@ -596,6 +597,8 @@ function AgentThreadSessionBody({
                     prose={prose}
                     provider={record.provider.kind}
                     executionTarget={thread.execution?.kind ?? "local"}
+                    reachability={thread.execution?.reachability}
+                    serverId={serverId}
                     renderProbe={turnRenderProbe}
                     textClipboard={textClipboard}
                     turn={turn}
@@ -662,7 +665,7 @@ function AgentThreadSessionBody({
       </div>
 
       <AgentSessionDock
-        activity={activityBar}
+        activity={agentLiveWhileServerReachable(thread.execution?.reachability, activityBar)}
         follow={follow}
         onOpenAgents={agents.openPanel}
         onRevealQueue={revealQueue}

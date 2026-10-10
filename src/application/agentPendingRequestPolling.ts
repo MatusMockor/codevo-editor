@@ -14,6 +14,13 @@ export type AgentPendingRequestPollOutcome<Request> =
 
 export type AgentPendingRequestPollCadence = "once" | "repeating";
 
+export type AgentPendingRequestAvailability = "available" | "unreachable";
+
+export interface AgentPendingRequestSnapshotPolicy<Request> {
+  readonly unreachableNotice: string;
+  sameRequest(left: Request, right: Request): boolean;
+}
+
 export interface AgentPendingRequestPolling<Request> {
   readonly cadence: AgentPendingRequestPollCadence;
   isCurrent(): boolean;
@@ -32,20 +39,57 @@ export function agentPendingRequestSnapshotAfterPoll<Request>(
   previous: AgentPendingRequestSnapshot<Request> | null,
   lease: object,
   outcome: AgentPendingRequestPollOutcome<Request>,
-  unreachableMessage: string,
+  policy: AgentPendingRequestSnapshotPolicy<Request>,
 ): AgentPendingRequestSnapshot<Request> {
-  const owned = previous?.lease === lease ? previous : null;
-  const answering = owned?.answering ?? null;
+  const owned =
+    previous?.lease === lease ? previous : emptyAgentPendingRequestSnapshot<Request>(lease);
   switch (outcome.kind) {
-    case "listed":
-      return { lease, requests: outcome.requests, answering, error: null };
+    case "listed": {
+      const unchanged = sameAgentPendingRequestItems(
+        owned.requests,
+        outcome.requests,
+        policy.sameRequest,
+      );
+      return snapshotWith(owned, unchanged ? owned.requests : outcome.requests, null);
+    }
     case "unreachable":
-      return { lease, requests: owned?.requests ?? [], answering, error: unreachableMessage };
+      return snapshotWith(owned, owned.requests, policy.unreachableNotice);
     default: {
       const exhaustive: never = outcome;
       return exhaustive;
     }
   }
+}
+
+export function agentPendingRequestSnapshotWhileSuspended<Request>(
+  previous: AgentPendingRequestSnapshot<Request> | null,
+  lease: object,
+  policy: AgentPendingRequestSnapshotPolicy<Request>,
+): AgentPendingRequestSnapshot<Request> | null {
+  if (previous?.lease !== lease || previous.error !== policy.unreachableNotice) return previous;
+  return { ...previous, error: null };
+}
+
+export function sameAgentPendingRequestItems<Item>(
+  left: readonly Item[],
+  right: readonly Item[],
+  same: (left: Item, right: Item) => boolean,
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => {
+    const candidate = right[index];
+    return candidate !== undefined && same(item, candidate);
+  });
+}
+
+function snapshotWith<Request>(
+  current: AgentPendingRequestSnapshot<Request>,
+  requests: readonly Request[],
+  error: string | null,
+): AgentPendingRequestSnapshot<Request> {
+  if (current.requests === requests && current.error === error) return current;
+  return { ...current, requests, error };
 }
 
 export function agentPendingRequestFailureNoticeThreshold(

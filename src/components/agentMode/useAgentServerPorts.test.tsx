@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -133,6 +134,7 @@ function serverThread(
       conversationId: "conversation-1",
       latestTaskId: taskId,
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
       portPreview,
     },
   };

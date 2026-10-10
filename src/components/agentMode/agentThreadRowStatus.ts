@@ -17,6 +17,7 @@ import {
   type AgentTurn,
   type AgentTurnStatus,
 } from "../../domain/agentThread";
+import type { RemoteRunnerReachability } from "../../domain/remoteRunnerReachability";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
   agentTurnContentLost,
@@ -27,7 +28,7 @@ export type AgentRowStatus =
   | {
       readonly kind: "working";
       readonly startedAtEpochMs: number;
-      readonly activity?: "background" | "monitoring" | "replying";
+      readonly activity?: AgentRowWorkingActivity;
     }
   | { readonly kind: "approval" }
   | { readonly kind: "input" }
@@ -41,6 +42,9 @@ export type AgentRowStatus =
   | { readonly kind: "stopped" }
   | { readonly kind: "done" }
   | { readonly kind: "none" };
+
+export type AgentRowWorkingActivity =
+  "background" | "monitoring" | "replying" | "serverReconnecting" | "serverDisconnected";
 
 export type AgentRowStatusTone = "work" | "warn" | "ok" | "fail" | "quiet";
 
@@ -60,6 +64,13 @@ export function agentRowStatus(
   const running = runningTurn(view.thread);
   const session = view.sessionBackground;
   if (running !== null) {
+    const serverActivity = unreachableServerActivity(view.execution?.reachability);
+    if (serverActivity !== null)
+      return {
+        kind: "working",
+        startedAtEpochMs: running.startedAtEpochMs,
+        activity: serverActivity,
+      };
     if (signals.pending === "approval") return { kind: "approval" };
     if (signals.pending === "input") return { kind: "input" };
     const activity =
@@ -110,10 +121,7 @@ export function agentRowIsLive(status: AgentRowStatus): boolean {
 export function agentRowStatusLabel(status: AgentRowStatus): string | null {
   switch (status.kind) {
     case "working":
-      if (status.activity === "replying") return "Replying";
-      if (status.activity === "monitoring") return "Monitoring";
-      if (status.activity === "background") return "Working in background";
-      return "Working";
+      return workingStatusLabel(status.activity);
     case "approval":
       return "Approval";
     case "input":
@@ -140,9 +148,14 @@ export function agentRowStatusTitle(status: AgentRowStatus): string | null {
       : `Working with ${agentCountLabel(status.count)}`;
   if (status.kind === "approval") return "Waiting for your approval";
   if (status.kind === "input") return "Waiting for your answer";
-  if (status.kind === "working" && status.activity === "replying")
-    return "Writing a follow-up reply";
-  return null;
+  if (status.kind !== "working") return null;
+  return workingStatusTitle(status.activity);
+}
+
+export function agentRowStatusTicks(status: AgentRowStatus): boolean {
+  if (status.kind === "agents") return true;
+  if (status.kind !== "working") return false;
+  return status.activity !== "serverReconnecting" && status.activity !== "serverDisconnected";
 }
 
 export function agentRowStatusTone(status: AgentRowStatus): AgentRowStatusTone {
@@ -190,6 +203,58 @@ export function agentRowWorkingDurationLabel(elapsedMs: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function unreachableServerActivity(
+  reachability: RemoteRunnerReachability | undefined,
+): "serverReconnecting" | "serverDisconnected" | null {
+  if (reachability === undefined) return null;
+  switch (reachability.kind) {
+    case "reachable":
+      return null;
+    case "reconnecting":
+      return "serverReconnecting";
+    case "disconnected":
+      return "serverDisconnected";
+    default:
+      return unsupportedReachability(reachability);
+  }
+}
+
+function workingStatusLabel(activity: AgentRowWorkingActivity | undefined): string {
+  switch (activity) {
+    case undefined:
+      return "Working";
+    case "replying":
+      return "Replying";
+    case "monitoring":
+      return "Monitoring";
+    case "background":
+      return "Working in background";
+    case "serverReconnecting":
+      return "Waiting for server";
+    case "serverDisconnected":
+      return "Server disconnected";
+    default:
+      return unsupportedActivity(activity);
+  }
+}
+
+function workingStatusTitle(activity: AgentRowWorkingActivity | undefined): string | null {
+  switch (activity) {
+    case undefined:
+    case "monitoring":
+    case "background":
+      return null;
+    case "replying":
+      return "Writing a follow-up reply";
+    case "serverReconnecting":
+      return "The server is reconnecting. This is the last known state.";
+    case "serverDisconnected":
+      return "The server is disconnected. This is the last known state.";
+    default:
+      return unsupportedActivity(activity);
+  }
 }
 
 function agentCountLabel(count: number): string {
@@ -245,6 +310,14 @@ function isFailedTurnStatus(status: AgentTurnStatus): boolean {
 
 function isStoppedTurnStatus(status: AgentTurnStatus): boolean {
   return status.kind === "stopped" || status.kind === "interrupted";
+}
+
+function unsupportedActivity(activity: never): never {
+  throw new TypeError(`Unsupported agent row activity: ${String(activity)}.`);
+}
+
+function unsupportedReachability(reachability: never): never {
+  throw new TypeError(`Unsupported remote runner reachability: ${String(reachability)}.`);
 }
 
 function unsupportedRowStatus(status: never): never {

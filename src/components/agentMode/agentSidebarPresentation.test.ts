@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
@@ -339,6 +340,7 @@ describe("mark unread availability", () => {
       conversationId: base.thread.threadId,
       latestTaskId: base.thread.threadId,
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
     },
   });
 

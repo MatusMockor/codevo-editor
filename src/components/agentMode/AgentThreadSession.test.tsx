@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { agentThreadAttention, agentThreadUnread } from "../../domain/agentThread";
 import { act, StrictMode } from "react";
@@ -2059,6 +2060,7 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
             conversationId: "conversation",
             latestTaskId: "task",
             resume: null,
+            reachability: REMOTE_RUNNER_REACHABLE,
           },
         }
       : {}),

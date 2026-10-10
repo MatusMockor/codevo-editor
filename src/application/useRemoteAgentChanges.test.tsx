@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../domain/remoteRunnerReachability";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
@@ -18,6 +19,7 @@ const target: RemoteAgentThreadExecution = {
   conversationId: "root",
   latestTaskId: "latest",
   resume: null,
+  reachability: REMOTE_RUNNER_REACHABLE,
 };
 const files: RemoteRunnerTaskFiles = {
   files: [{ path: "src/a.ts", status: "modified" }],

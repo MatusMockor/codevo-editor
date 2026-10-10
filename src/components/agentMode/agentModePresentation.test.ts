@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import {
   agentThreadAttention,
   agentThreadsReducer,
@@ -158,6 +159,7 @@ describe("agentModePresentation", () => {
         conversationId: "conversation",
         latestTaskId: "task",
         resume: { available: true, reason: null },
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
     };
     expect(blockedReason(remote, { agentCliConfigured: false })).toBeNull();

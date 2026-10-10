@@ -24,6 +24,7 @@ import {
 } from "../../domain/agentThread";
 import { agentTurnContentLost } from "../../domain/agentTurnContentLoss";
 import { isAgentBackgroundTurn } from "../../domain/agentTurnOrigin";
+import type { RemoteRunnerReachability } from "../../domain/remoteRunnerReachability";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { AgentActivityItems } from "./AgentActivityItems";
 import type { AgentProseContext, AgentProseStream } from "./AgentAssistantText";
@@ -39,6 +40,7 @@ import { AgentProviderErrorHint, AgentTurnItemView } from "./AgentTurnItemView";
 import { AgentTurnOriginLabel, AgentTurnPrompt } from "./AgentTurnParts";
 import { AgentTurnMeta } from "./conversation/AgentTurnMeta";
 import { AgentLiveRow } from "./conversation/AgentLiveRow";
+import { AgentServerWaitRow } from "./conversation/AgentServerWaitRow";
 import {
   AgentCodexStartingNote,
   AgentWaitingForOutputNote,
@@ -80,6 +82,7 @@ import {
   type AgentTurnEndMarker,
 } from "./agentTurnErrorPresentation";
 import { agentTurnTiming } from "./agentTurnHeadPresentation";
+import { agentTurnLiveIndicators, agentTurnServerWait } from "./agentTurnLiveIndicators";
 import { itemHighlight, type AgentTurnHighlight } from "./agentTurnHighlightModel";
 import {
   agentTurnItemKey,
@@ -114,7 +117,9 @@ export interface AgentTurnViewProps {
   readonly prose: AgentProseContext;
   readonly provider: AgentCliKind;
   readonly executionTarget: "local" | "remote";
+  readonly reachability?: RemoteRunnerReachability;
   readonly renderProbe?: (turnId: string) => void;
+  readonly serverId?: string;
   readonly onOpenAgents: () => void;
   readonly subagents: AgentRuntimeSubagents;
   readonly textClipboard: TextClipboardGateway | null;
@@ -133,7 +138,9 @@ export const AgentTurnView = memo(function AgentTurnView({
   onOpenAgents,
   prose: threadProse,
   provider,
+  reachability,
   renderProbe,
+  serverId,
   subagents,
   textClipboard,
   turn,
@@ -215,7 +222,6 @@ export const AgentTurnView = memo(function AgentTurnView({
     ? agentBackgroundWaitTitle(agentBackgroundWait(background, subagents))
     : null;
   const foregroundRunning = running && !backgroundOnly;
-  const stream = proseStream(foregroundRunning, streamed);
   const errorContext = useMemo(
     () =>
       createTurnErrorContext(
@@ -298,11 +304,26 @@ export const AgentTurnView = memo(function AgentTurnView({
         (item.kind === "result" && !item.isError && item.text.trim() === ""),
     );
   const toolDisclosure = useAgentTurnToolDisclosure();
+  const codexStarting = turn.status.kind === "pending" && provider === "codex";
+  const serverWait = agentTurnServerWait(running, reachability);
+  const live = agentTurnLiveIndicators(serverWait, {
+    workRunning: foregroundRunning,
+    stream: proseStream(foregroundRunning, streamed),
+    backgroundTitle,
+    backgroundIndicator,
+    compactionActivity: compacting,
+    codexStarting: codexStarting && !compacting,
+    waitingForOutput: empty && foregroundRunning && compaction.kind === "idle" && !codexStarting,
+    timing: agentTurnTiming(turn),
+  });
+  const stream = live.stream;
   const foldThinking =
     activityWindow === null &&
     agentActivityEndsThinking(projection.items, stream === "streaming" ? "live" : "settled");
   const liveStatus =
-    compacting || backgroundOnly || liveActivity === null || empty ? null : (
+    serverWait !== null ? (
+      <AgentServerWaitRow reachability={serverWait} serverId={serverId ?? null} />
+    ) : compacting || backgroundOnly || liveActivity === null || empty ? null : (
       <AgentTurnLiveStatus
         activity={liveActivity}
         foldThinking={foldThinking}
@@ -348,9 +369,7 @@ export const AgentTurnView = memo(function AgentTurnView({
         )}
 
         <div className="agent-answer">
-          {turn.status.kind === "pending" && provider === "codex" && !compacting && (
-            <AgentCodexStartingNote />
-          )}
+          {live.codexStarting && <AgentCodexStartingNote />}
           <div className="agent-turn__events">
             <AgentTurnEarlierControl
               canRevealMemory={
@@ -377,7 +396,7 @@ export const AgentTurnView = memo(function AgentTurnView({
             {(workFold !== null || activityWindow !== null) && (
               <AgentTurnWork
                 compacting={compacting}
-                backgroundTitle={backgroundTitle}
+                backgroundTitle={live.backgroundTitle}
                 liveStatus={liveStatus}
                 attachmentImages={attachmentImages}
                 errorContext={errorContext}
@@ -385,7 +404,7 @@ export const AgentTurnView = memo(function AgentTurnView({
                 items={savedItems ?? workFold?.workItems ?? []}
                 key={running ? "running-work" : "settled-work"}
                 prose={prose}
-                running={foregroundRunning}
+                running={live.workRunning}
                 settlement={
                   activityWindow === null ? toolSettlement : savedToolSettlement(turn.status)
                 }
@@ -453,7 +472,7 @@ export const AgentTurnView = memo(function AgentTurnView({
             {workFold === null && activityWindow === null && liveStatus}
             {!compacting && (
               <AgentBackgroundActivity
-                indicator={backgroundIndicator}
+                indicator={live.backgroundIndicator}
                 onOpenAgents={onOpenAgents}
               />
             )}
@@ -462,13 +481,8 @@ export const AgentTurnView = memo(function AgentTurnView({
                 Context compaction failed{compaction.message ? `: ${compaction.message}` : "."}
               </p>
             )}
-            {compacting && <AgentCompactionActivity />}
-            {empty &&
-              foregroundRunning &&
-              compaction.kind === "idle" &&
-              !(turn.status.kind === "pending" && provider === "codex") && (
-                <AgentWaitingForOutputNote />
-              )}
+            {live.compactionActivity && <AgentCompactionActivity />}
+            {live.waitingForOutput && <AgentWaitingForOutputNote />}
           </div>
 
           {!running && artifactScope !== null && (
@@ -501,7 +515,7 @@ export const AgentTurnView = memo(function AgentTurnView({
             <AgentTurnMeta
               agentLabel={agentTurnMetaAgentLabel(provider, turn.launch)}
               atEpochMs={agentTurnMetaAt(turn)}
-              timing={agentTurnTiming(turn)}
+              timing={live.timing}
             />
           )}
         </div>

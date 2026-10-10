@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { waitForReact as waitFor } from "../test/reactTestLifecycle";
 import type { AgentApprovalGateway, AgentApprovalOwner } from "./agentApprovalPorts";
 import {
   AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD as FAILURE_THRESHOLD,
   AGENT_PENDING_REQUEST_POLL_MS as POLL_MS,
+  type AgentPendingRequestAvailability,
 } from "./agentPendingRequestPolling";
 import type { AgentApprovalRequest } from "../domain/agentApproval";
 import { useAgentApprovals, type AgentApprovalsSurface } from "./useAgentApprovals";
@@ -20,6 +21,7 @@ interface Props {
   readonly gateway: AgentApprovalGateway | null;
   readonly owner: AgentApprovalOwner | null;
   readonly running: boolean;
+  readonly availability?: AgentPendingRequestAvailability;
 }
 
 function renderApprovals(initial: Props) {
@@ -28,7 +30,12 @@ function renderApprovals(initial: Props) {
   const result = {} as { current: AgentApprovalsSurface };
   const errors: (string | null)[] = [];
   function Harness(props: Props) {
-    result.current = useAgentApprovals(props.gateway, props.owner, props.running);
+    result.current = useAgentApprovals(
+      props.gateway,
+      props.owner,
+      props.running,
+      props.availability,
+    );
     errors.push(result.current.error);
     return null;
   }
@@ -160,6 +167,24 @@ describe("useAgentApprovals", () => {
     });
     expect(result.current.requests).toEqual([]);
     expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<{ readonly name: string; readonly props: Props }>([
+    {
+      name: "a remote owner",
+      props: {
+        gateway: listingGateway(() => Promise.resolve([])),
+        owner: { kind: "remote", serverId: "server", runnerId: "runner", taskId: "task-a" },
+        running: true,
+      },
+    },
+    { name: "no gateway", props: { gateway: null, owner: owner("task-a"), running: true } },
+  ])("keeps the same empty requests across renders for $name", ({ props }) => {
+    const { result, rerender } = renderApprovals(props);
+    const first = result.current.requests;
+    rerender(props);
+    expect(first).toEqual([]);
+    expect(result.current.requests).toBe(first);
   });
 
   it("shows no error while a new turn's task is not registered yet and lists its approvals once it is", async () => {
@@ -331,5 +356,179 @@ describe("useAgentApprovals", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("useAgentApprovals availability", () => {
+  const notice = "Approvals could not be refreshed. Reconnecting…";
+  const pending = approval("task-a");
+  const available = { owner: owner("task-a"), running: true } as const;
+  const unreachable = { ...available, availability: "unreachable" } as const;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function freshlyListingGateway(listed: () => AgentApprovalRequest) {
+    return listingGateway(() => Promise.resolve([structuredClone(listed())]));
+  }
+
+  async function polls(count: number) {
+    for (let poll = 0; poll < count; poll += 1) await nextPoll();
+  }
+
+  it("asks the gateway nothing and holds no timer while unreachable", async () => {
+    const gateway = listingGateway(() => Promise.resolve([pending]));
+    const { result, errors } = renderApprovals({ gateway, ...unreachable });
+    await polls(FAILURE_THRESHOLD + 2);
+    expect(gateway.listApprovals).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(result.current.requests).toEqual([]);
+    expect(new Set(errors)).toEqual(new Set([null]));
+  });
+
+  it("keeps the listed approvals while unreachable and polls at once on return", async () => {
+    const next = approval("task-a", "approval-next");
+    const gateway = listingGateway(() => Promise.resolve([pending]));
+    const { result, rerender } = renderApprovals({ gateway, ...available });
+    await settlePoll();
+    const listed = result.current.requests;
+    expect(listed).toEqual([pending]);
+    rerender({ gateway, ...unreachable });
+    await polls(FAILURE_THRESHOLD + 2);
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(result.current.requests).toBe(listed);
+    gateway.listApprovals.mockResolvedValue([next]);
+    rerender({ gateway, ...available });
+    await settlePoll();
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(2);
+    expect(result.current.requests).toEqual([next]);
+    await nextPoll();
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(3);
+  });
+
+  it("hides the reconnecting notice once unreachable and starts a fresh failure streak on return", async () => {
+    const gateway = listingGateway(() => Promise.reject(new Error("offline")));
+    gateway.listApprovals.mockResolvedValueOnce([pending]);
+    const { result, rerender } = renderApprovals({ gateway, ...available });
+    await settlePoll();
+    await polls(FAILURE_THRESHOLD);
+    const listed = result.current.requests;
+    expect(result.current.error).toBe(notice);
+    rerender({ gateway, ...unreachable });
+    expect(result.current.error).toBeNull();
+    expect(result.current.requests).toBe(listed);
+    rerender({ gateway, ...available });
+    await settlePoll();
+    await polls(FAILURE_THRESHOLD - 2);
+    expect(result.current.error).toBeNull();
+    await nextPoll();
+    expect(result.current.error).toBe(notice);
+    expect(result.current.requests).toBe(listed);
+  });
+
+  it("discards a poll that was in flight when the runner became unreachable", async () => {
+    const late = deferred<readonly AgentApprovalRequest[]>();
+    const gateway = listingGateway(() => late.promise);
+    gateway.listApprovals.mockResolvedValueOnce([pending]);
+    const { result, rerender } = renderApprovals({ gateway, ...available });
+    await settlePoll();
+    await nextPoll();
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(2);
+    rerender({ gateway, ...unreachable });
+    await act(async () => {
+      late.resolve([approval("task-a", "stale")]);
+      await late.promise;
+    });
+    expect(result.current.requests).toEqual([pending]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("runs a single poll loop after the availability flaps", async () => {
+    const late = deferred<readonly AgentApprovalRequest[]>();
+    const gateway = listingGateway(() => Promise.resolve([pending]));
+    gateway.listApprovals.mockImplementationOnce(() => late.promise);
+    const { result, rerender } = renderApprovals({ gateway, ...available });
+    rerender({ gateway, ...unreachable });
+    rerender({ gateway, ...available });
+    await settlePoll();
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(2);
+    expect(result.current.requests).toEqual([pending]);
+    await act(async () => {
+      late.resolve([approval("task-a", "stale")]);
+      await late.promise;
+    });
+    expect(result.current.requests).toEqual([pending]);
+    expect(vi.getTimerCount()).toBe(1);
+    await nextPoll();
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the requests and the answer callback while polls list the same approvals", async () => {
+    const gateway = freshlyListingGateway(() => pending);
+    const { result } = renderApprovals({ gateway, ...available });
+    await settlePoll();
+    const listed = result.current.requests;
+    const answer = result.current.answer;
+    await polls(4);
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(5);
+    expect(result.current.requests).toBe(listed);
+    expect(result.current.answer).toBe(answer);
+  });
+
+  it.each<{ readonly name: string; readonly changed: AgentApprovalRequest }>([
+    { name: "another status", changed: { ...pending, status: "expired" } },
+    { name: "a decision", changed: { ...pending, status: "approved", decision: "allowOnce" } },
+    { name: "another detail", changed: { ...pending, detail: "npm run lint" } },
+    { name: "another fact", changed: { ...pending, facts: [{ label: "cwd", value: "/repo" }] } },
+    { name: "other decisions", changed: { ...pending, decisions: ["deny"] } },
+  ])("publishes a poll that lists $name", async ({ changed }) => {
+    let current = pending;
+    const gateway = freshlyListingGateway(() => current);
+    const { result } = renderApprovals({ gateway, ...available });
+    await settlePoll();
+    const listed = result.current.requests;
+    current = changed;
+    await nextPoll();
+    expect(result.current.requests).not.toBe(listed);
+    expect(result.current.requests).toEqual([changed]);
+  });
+
+  it("leaves no timer when unmounted while unreachable", async () => {
+    const gateway = listingGateway(() => Promise.resolve([pending]));
+    const { rerender } = renderApprovals({ gateway, ...available });
+    await settlePoll();
+    rerender({ gateway, ...unreachable });
+    cleanups.splice(0).forEach((cleanup) => cleanup());
+    expect(vi.getTimerCount()).toBe(0);
+    await polls(2);
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a decision that fails while unreachable and keeps it retryable without polling", async () => {
+    const gateway = listingGateway(() => Promise.resolve([pending]));
+    vi.mocked(gateway.answerApproval)
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({ ...pending, status: "denied", decision: "deny" });
+    const { result, rerender } = renderApprovals({ gateway, ...available });
+    await settlePoll();
+    rerender({ gateway, ...unreachable });
+    await act(async () => {
+      await expect(result.current.answer(pending.id, "deny")).rejects.toThrow("offline");
+    });
+    expect(result.current.error).toBe(
+      "The decision could not be confirmed. It may have expired; retry to check.",
+    );
+    expect(result.current.requests[0]?.status).toBe("pending");
+    await act(() => result.current.answer(pending.id, "deny"));
+    expect(result.current.requests[0]?.status).toBe("denied");
+    expect(result.current.error).toBeNull();
+    expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

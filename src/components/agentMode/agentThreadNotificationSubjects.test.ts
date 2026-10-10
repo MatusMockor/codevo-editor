@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import {
   createAgentThreadNotificationCenter,
@@ -155,6 +156,7 @@ describe("agentThreadNotificationSubjects", () => {
           conversationId: "c-1",
           latestTaskId: "task-1",
           resume: null,
+          reachability: REMOTE_RUNNER_REACHABLE,
         },
         thread: {
           ...view.thread,

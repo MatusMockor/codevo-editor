@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it, vi } from "vitest";
 import type {
   TerminalGateway,
@@ -398,6 +399,7 @@ describe("remote surface boundary", () => {
         conversationId: "conversation",
         latestTaskId: "task",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       } as const,
     };
     expect(agentSurfaceBlockedReason("diff", remote, true, SURFACE_FIXTURE_ROOT)).toBeNull();

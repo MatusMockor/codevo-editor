@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -284,6 +285,7 @@ function view(remote: boolean, extra: ReadonlyArray<AgentTurnEvent> = []): Agent
             conversationId: "conversation-1",
             latestTaskId: "0f8fad5b-d9cb-469f-a165-70867728950e",
             resume: null,
+            reachability: REMOTE_RUNNER_REACHABLE,
           },
         }
       : {}),

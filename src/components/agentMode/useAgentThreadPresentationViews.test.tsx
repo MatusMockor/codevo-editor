@@ -5,8 +5,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentSessionBackground } from "../../domain/agentSessionBackground";
 import type { AgentTurn } from "../../domain/agentThread";
+import {
+  remoteRunnerDisconnected,
+  REMOTE_RUNNER_REACHABLE,
+  REMOTE_RUNNER_RECONNECTING,
+} from "../../domain/remoteRunnerReachability";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
-import { useAgentThreadPresentationViews } from "./useAgentThreadPresentationViews";
+import {
+  useAgentSurfacePresentationView,
+  useAgentThreadPresentationViews,
+} from "./useAgentThreadPresentationViews";
 
 const STARTED_AT = 1_700_000_000_000;
 
@@ -118,5 +126,70 @@ describe("useAgentThreadPresentationViews", () => {
 
     expect(present([streamed])).toBe(first);
     expect(presented[0]).toBe(started);
+  });
+
+  it("presents a remote thread again when only its server reachability changes", () => {
+    const execution = {
+      kind: "remote",
+      serverId: "linux",
+      runnerId: "runner",
+      projectId: "project",
+      conversationId: "conversation",
+      latestTaskId: "turn-running",
+      resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
+    } as const;
+    const reachable: AgentThreadView = { ...view("agt-1", [runningTurn]), execution };
+    const first = present([reachable]);
+    expect(present([{ ...reachable, execution: { ...execution } }])).toBe(first);
+
+    const reconnecting: AgentThreadView = {
+      ...reachable,
+      execution: { ...execution, reachability: REMOTE_RUNNER_RECONNECTING },
+    };
+    const second = present([reconnecting]);
+    expect(second).not.toBe(first);
+    expect(second[0]).toBe(reconnecting);
+
+    const explained: AgentThreadView = {
+      ...reconnecting,
+      execution: {
+        ...reconnecting.execution!,
+        reachabilityDetail: "SSH tunnel authentication failed.",
+      },
+    };
+    expect(present([explained])[0]).toBe(explained);
+    expect(present([{ ...explained }])[0]).toBe(explained);
+  });
+
+  it("presents the surface thread again when only its server reachability changes", () => {
+    const execution = {
+      kind: "remote",
+      serverId: "linux",
+      runnerId: "runner",
+      projectId: "project",
+      conversationId: "conversation",
+      latestTaskId: "turn-running",
+      resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
+    } as const;
+    const reachable: AgentThreadView = { ...view("agt-1", [runningTurn]), execution };
+    let surface: AgentThreadView | null = null;
+    function SurfaceHarness({ thread }: { readonly thread: AgentThreadView }) {
+      surface = useAgentSurfacePresentationView(thread);
+      return null;
+    }
+    const show = (thread: AgentThreadView): AgentThreadView | null => {
+      act(() => root.render(createElement(SurfaceHarness, { thread })));
+      return surface;
+    };
+
+    expect(show(reachable)).toBe(reachable);
+    expect(show({ ...reachable, execution: { ...execution } })).toBe(reachable);
+    const disconnected: AgentThreadView = {
+      ...reachable,
+      execution: { ...execution, reachability: remoteRunnerDisconnected("serverDisconnected") },
+    };
+    expect(show(disconnected)).toBe(disconnected);
   });
 });

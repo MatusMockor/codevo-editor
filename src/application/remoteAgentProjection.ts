@@ -24,6 +24,10 @@ import type {
 import type { AgentThreadView } from "./agentThreadPorts";
 import { stabilizeRemoteAgentViews } from "./remoteAgentProjectionStability";
 import type { AgentAttachment } from "../domain/agentAttachment";
+import {
+  REMOTE_RUNNER_REACHABLE,
+  type RemoteRunnerReachability,
+} from "../domain/remoteRunnerReachability";
 
 export function remoteAgentProjectKey(
   serverId: string,
@@ -83,6 +87,8 @@ export interface RemoteAgentProjectionInput {
   readonly replayTruncated?: ReadonlySet<string>;
   readonly replayDiscarded?: ReadonlySet<string>;
   readonly attachmentsByTask?: ReadonlyMap<string, readonly AgentAttachment[]>;
+  readonly reachability?: RemoteRunnerReachability;
+  readonly reachabilityDetail?: string;
 }
 
 export function projectRemoteAgentThreads(
@@ -351,6 +357,10 @@ function projectConversation(
       conversationId,
       latestTaskId: latest.id,
       resume: input.resumes.get(latest.id) ?? null,
+      reachability: input.reachability ?? REMOTE_RUNNER_REACHABLE,
+      ...(input.reachabilityDetail === undefined
+        ? {}
+        : { reachabilityDetail: input.reachabilityDetail }),
     },
   };
 }

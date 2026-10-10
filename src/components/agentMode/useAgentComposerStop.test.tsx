@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
@@ -199,6 +200,7 @@ describe("useAgentComposerStop for an idle thread with live session tasks", () =
           conversationId: "c",
           latestTaskId: "t",
           resume: null,
+          reachability: REMOTE_RUNNER_REACHABLE,
         },
       }),
       session,

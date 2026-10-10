@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import type { GitShipStatus } from "../../domain/gitIntegration";
 import {
@@ -74,6 +75,7 @@ describe("agentComposerThreadLocation", () => {
         conversationId: "c-1",
         latestTaskId: "task-1",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
       thread: inPlace().thread,
     });

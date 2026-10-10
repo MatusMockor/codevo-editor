@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentThreadViews } from "../../application/agentThreadViewProjection";
@@ -783,6 +784,7 @@ describe("remote thread notification subject", () => {
         conversationId: "c-1",
         latestTaskId: "task-1",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
       thread: {
         ...BASE,

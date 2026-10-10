@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -208,6 +209,7 @@ describe("AgentThreadRow", () => {
         conversationId: "conversation-1",
         latestTaskId: "task-1",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
     });
     openContextMenu();
@@ -241,6 +243,7 @@ describe("AgentThreadRow", () => {
     conversationId: "conversation-1",
     latestTaskId: "task-1",
     resume: null,
+    reachability: REMOTE_RUNNER_REACHABLE,
   } as const;
 
   const runtimeBadge = (): HTMLElement => {
@@ -556,6 +559,7 @@ describe("AgentThreadRow", () => {
         conversationId: "conversation-1",
         latestTaskId: "task-1",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
     };
     renderLocated(view, { servers: [{ id: "server-1", name: "build-box" }] });

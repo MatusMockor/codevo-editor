@@ -14,6 +14,7 @@ import { AgentCompactRelativeTime, AgentRowElapsed } from "./agentClock";
 import type { AgentThreadRowRuntime } from "./agentThreadRowLocation";
 import {
   agentRowStatusLabel,
+  agentRowStatusTicks,
   agentRowStatusTitle,
   agentRowStatusTone,
   type AgentRowStatus,
@@ -56,7 +57,7 @@ export function AgentThreadRowStatusSlot({
     >
       <AgentRowStatusGlyph status={status} />
       <span className="cv-card-row__status-label">{label}</span>
-      {isWorkingStatus(status) && (
+      {isWorkingStatus(status) && agentRowStatusTicks(status) && (
         <span aria-hidden="true" className="cv-card-row__tick">
           <AgentRowElapsed startedAtEpochMs={status.startedAtEpochMs} />
         </span>

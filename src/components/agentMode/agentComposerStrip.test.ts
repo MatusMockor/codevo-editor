@@ -1,3 +1,4 @@
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import type { GitShipStatus } from "../../domain/gitIntegration";
 import { THIS_COMPUTER, agentThreadLocation } from "../../domain/agentWorkspaceLocation";
@@ -199,6 +200,7 @@ describe("agentComposerThreadBranch", () => {
         conversationId: "c-1",
         latestTaskId: "task-1",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
       thread: {
         ...surfaceThreadView().thread,
@@ -218,6 +220,7 @@ describe("agentComposerThreadBranch", () => {
       conversationId: "c-1",
       latestTaskId: "task-1",
       resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
       gitShip: true,
     } as const;
     const status: GitShipStatus = {

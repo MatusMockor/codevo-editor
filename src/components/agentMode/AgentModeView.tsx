@@ -95,6 +95,7 @@ import { AgentComposerController } from "./AgentComposerController";
 import { AgentQuestionAttachmentsContext } from "./composer/agentQuestionAttachmentsContext";
 import { AgentPanelWindowControls } from "./AgentPanelLayoutControls";
 import { AgentRailResizeHandle } from "./AgentRailResizeHandle";
+import { AgentRegionBoundary } from "./AgentRegionBoundary";
 import { AgentSurfaceHost } from "./AgentSurfaceHost";
 import { remoteAddProjectCloneActive } from "./remoteAddProject/remoteAddProjectPresentation";
 import { AgentNoticeBar } from "./AgentNoticeBar";
@@ -1146,6 +1147,7 @@ function LocalAgentModeView({
     thread: selectedThread,
     branchMemory: threadBranchMemory,
     liveCheckoutBranches: chrome.liveCheckoutBranches,
+    retryServer: refreshRemoteProjects,
   });
   return (
     <AgentAgentsPanelProvider
@@ -1162,49 +1164,55 @@ function LocalAgentModeView({
         <AgentClockProvider nowTickMs={nowTickMs}>
           <div className="agent-mode__grid">
             {layout.rail === "collapsed" ? null : (
-              <AgentThreadBranchMemoryContext.Provider value={threadBranchMemory.memory}>
-                <AgentThreadsSidebar
-                  catalog={projectRename.catalog}
-                  collapseShortcut={chrome.shortcuts?.sidebar ?? null}
-                  footerActivity={footerActivity}
-                  addProjectAvailable={chrome.addProject !== null}
-                  evidenceOf={turnEvidenceOf}
-                  groups={groups}
-                  onAddProject={openAddProject}
-                  onCancelPendingClone={cancelPendingClone}
-                  onDismissPendingClone={dismissPendingClone}
-                  pendingClones={creation.pendingClones}
-                  onOpenPendingClone={openPendingClone}
-                  onCollapseSidebar={toggleRail}
-                  onNewThread={requestNewThread}
-                  newThreadTitle={newThreadTitle}
-                  onNewThreadInProject={newThreadInProject}
-                  onFocusProject={focusRailProject}
-                  onShowAllProjects={showAllRailProjects}
-                  onSwitchProject={switchRailProject}
-                  projectDisclosure={projectDisclosure}
-                  projectFocus={projectFocus.focus}
-                  workingRail={workingRail.rail}
-                  onOpenProviderSettings={agents.configureAgentCli}
-                  onOpenSourceControl={onOpenSourceControl}
-                  onOpenUsage={onOpenUsageSettings}
-                  onProjectCommand={projectMenuCommand}
-                  onSelectThread={navigation.selectThread}
-                  onThreadBulkCommand={threadBulkCommand}
-                  onThreadMenuCommand={threadMenuCommand}
-                  onTogglePin={togglePin}
-                  overflowRootPaths={overflowRootPaths}
-                  pendingInteractions={pendingInteractions}
-                  providerEnabled={effectiveProviderEnabled}
-                  providerManagement={agents.providerManagement}
-                  scope={railScope}
-                  scopeEntries={navigation.scopeEntries}
-                  search={navigation.search}
-                  selectedThreadId={selectedThread?.thread.threadId ?? null}
-                  startingThreads={startingThreads}
-                  turnLog={agents.turnLog ?? null}
-                />
-              </AgentThreadBranchMemoryContext.Provider>
+              <AgentRegionBoundary
+                clipboard={textClipboard}
+                region="sidebar"
+                resetKeys={[selectedThreadId, selectedServerId, railScope?.projectRootKey ?? null]}
+              >
+                <AgentThreadBranchMemoryContext.Provider value={threadBranchMemory.memory}>
+                  <AgentThreadsSidebar
+                    catalog={projectRename.catalog}
+                    collapseShortcut={chrome.shortcuts?.sidebar ?? null}
+                    footerActivity={footerActivity}
+                    addProjectAvailable={chrome.addProject !== null}
+                    evidenceOf={turnEvidenceOf}
+                    groups={groups}
+                    onAddProject={openAddProject}
+                    onCancelPendingClone={cancelPendingClone}
+                    onDismissPendingClone={dismissPendingClone}
+                    pendingClones={creation.pendingClones}
+                    onOpenPendingClone={openPendingClone}
+                    onCollapseSidebar={toggleRail}
+                    onNewThread={requestNewThread}
+                    newThreadTitle={newThreadTitle}
+                    onNewThreadInProject={newThreadInProject}
+                    onFocusProject={focusRailProject}
+                    onShowAllProjects={showAllRailProjects}
+                    onSwitchProject={switchRailProject}
+                    projectDisclosure={projectDisclosure}
+                    projectFocus={projectFocus.focus}
+                    workingRail={workingRail.rail}
+                    onOpenProviderSettings={agents.configureAgentCli}
+                    onOpenSourceControl={onOpenSourceControl}
+                    onOpenUsage={onOpenUsageSettings}
+                    onProjectCommand={projectMenuCommand}
+                    onSelectThread={navigation.selectThread}
+                    onThreadBulkCommand={threadBulkCommand}
+                    onThreadMenuCommand={threadMenuCommand}
+                    onTogglePin={togglePin}
+                    overflowRootPaths={overflowRootPaths}
+                    pendingInteractions={pendingInteractions}
+                    providerEnabled={effectiveProviderEnabled}
+                    providerManagement={agents.providerManagement}
+                    scope={railScope}
+                    scopeEntries={navigation.scopeEntries}
+                    search={navigation.search}
+                    selectedThreadId={selectedThread?.thread.threadId ?? null}
+                    startingThreads={startingThreads}
+                    turnLog={agents.turnLog ?? null}
+                  />
+                </AgentThreadBranchMemoryContext.Provider>
+              </AgentRegionBoundary>
             )}
             {layout.rail === "expanded" && (
               <AgentRailResizeHandle
@@ -1247,187 +1255,197 @@ function LocalAgentModeView({
                 recovery={composer.composerProps.recovery ?? null}
                 view={sessionThread}
               />
-              {projects.length === 0 &&
-              creation.pendingClones.length === 0 &&
-              selectedServerId === null &&
-              selectedThreadId === null ? (
-                projectsLoaded ? (
-                  <NoProjectsHero onAddProject={openAddProject} />
-                ) : null
-              ) : creation.visible &&
-                creation.pending !== null &&
-                creation.pendingClone !== null ? (
-                <AgentCloneComposer
-                  creation={creation}
-                  agents={{
-                    ...agents,
-                    attachments:
+              <AgentRegionBoundary
+                clipboard={textClipboard}
+                region="conversation"
+                resetKeys={[selectedThreadId, selectedServerId, creation.visible]}
+              >
+                {projects.length === 0 &&
+                creation.pendingClones.length === 0 &&
+                selectedServerId === null &&
+                selectedThreadId === null ? (
+                  projectsLoaded ? (
+                    <NoProjectsHero onAddProject={openAddProject} />
+                  ) : null
+                ) : creation.visible &&
+                  creation.pending !== null &&
+                  creation.pendingClone !== null ? (
+                  <AgentCloneComposer
+                    creation={creation}
+                    agents={{
+                      ...agents,
+                      attachments:
+                        creation.pending.environment === null
+                          ? cloneAttachments.local
+                          : cloneAttachments.remote,
+                    }}
+                    projects={projects}
+                    providerEnabled={
                       creation.pending.environment === null
-                        ? cloneAttachments.local
-                        : cloneAttachments.remote,
-                  }}
-                  projects={projects}
-                  providerEnabled={
-                    creation.pending.environment === null
-                      ? providerEnabled
-                      : REMOTE_PROVIDERS_ENABLED
-                  }
-                  providerManagement={agents.providerManagement}
-                  modelFavoritesPersistence={modelFavoritesPersistence}
-                  endSessionConfirmation={menu.endSessionConfirmation}
-                  onThreadStarted={navigation.selectStartedThread}
-                  onOpenProviderSettings={agents.configureAgentCli}
-                  onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-                  onTrustProject={trustProject}
-                />
-              ) : selectedThreadId === null &&
-                selectedServerId !== null &&
-                composer.target === null ? (
-                <AgentRemoteDraftProjectChooser
-                  projects={composerProjects}
-                  cloneRunning={remoteAddCloneRunning}
-                  onAddProject={openRemoteAddProject}
-                  onOpenSettings={onOpenEnvironmentSettings}
-                  onSelect={(project) => {
-                    const live = projects.find(
-                      (candidate) =>
-                        candidate.rootKey === project.rootKey &&
-                        candidate.ownerId === project.ownerId &&
-                        candidate.generation === project.generation,
-                    );
-                    if (
-                      live === undefined ||
-                      live.trust !== "trusted" ||
-                      selectedServerId === null ||
-                      !live.rootKey.startsWith(`remote:${encodeURIComponent(selectedServerId)}:`)
-                    )
-                      return;
-                    const group = groups.find(
-                      (candidate) =>
-                        candidate.projectRootKey === live.rootKey ||
-                        candidate.memberProjectRootKeys?.includes(live.rootKey),
-                    );
-                    setProjectSelectionIntent((current) => current + 1);
-                    navigation.setRailScope({
-                      projectRootKey: live.rootKey,
-                      repositoryRoot: live.rootPath,
-                      memberProjectRootKeys: group?.memberProjectRootKeys,
-                    });
-                    composer.startNewThread(project.rootKey, project.rootPath);
-                  }}
-                />
-              ) : (
-                <AgentThreadSession
-                  activeDiffTurnId={diffScopes.activeDiffTurnId}
-                  awaiting={
-                    sessionThread === null
-                      ? null
-                      : (pendingInteractions.get(sessionThread.thread.threadId) ?? null)
-                  }
-                  history={sessionThread?.execution?.kind === "remote" ? undefined : agents.history}
-                  importedHistory={
-                    sessionThread === null
-                      ? undefined
-                      : agents.externalHistory?.pages?.get(sessionThread.thread.threadId)
-                  }
-                  hasEarlierImportedHistory={
-                    sessionThread === null
-                      ? false
-                      : agents.externalHistory?.hasEarlier?.get(sessionThread.thread.threadId)
-                  }
-                  onEarlierImportedHistory={
-                    sessionThread === null || agents.externalHistory?.loadEarlier === undefined
-                      ? undefined
-                      : () => {
-                          void agents.externalHistory?.loadEarlier?.(sessionThread.thread.threadId);
-                        }
-                  }
-                  artifactLoader={artifactLoader}
-                  artifactPreview={artifactPreview}
-                  localFileLinks={localFileLinks}
-                  remoteFileLinks={remoteFileLinks.port}
-                  serverLoopback={serverPorts.serverLoopback}
-                  attachmentImages={agents.attachmentImages}
-                  inlineImages={agents.inlineImages}
-                  onRevealAttachment={revealAttachment}
-                  findBar={
-                    find.open ? (
-                      <AgentThreadFindBar
-                        currentIndex={find.hitIndex}
-                        hitCount={find.hits.length}
-                        onChangeQuery={find.setQuery}
-                        onClose={navigation.closeFindBar}
-                        onNavigate={find.navigate}
-                        query={find.query}
-                        truncated={find.truncated}
-                      />
-                    ) : null
-                  }
-                  findOpen={find.open}
-                  goToTurnSignal={goToTurnSignal}
-                  externalHistoryState={
-                    sessionThread === null
-                      ? undefined
-                      : agents.externalHistory?.states.get(sessionThread.thread.threadId)
-                  }
-                  onRetryExternalHistory={
-                    sessionThread === null || agents.externalHistory === undefined
-                      ? undefined
-                      : () => {
-                          void agents.externalHistory?.load(sessionThread.thread.threadId);
-                        }
-                  }
-                  composerRepositoryLabel={headerProject?.label ?? composer.composerLabel}
-                  findHitIndex={navigation.findHitIndex}
-                  findHits={find.open ? find.hits : undefined}
-                  findQuery={find.open ? find.query : undefined}
-                  deferredFollowUps={
-                    sessionThread === null
-                      ? undefined
-                      : deferredFollowUpsForThread(
-                          agents.deferredFollowUps,
-                          sessionThread.thread.threadId,
-                        )
-                  }
-                  onRemoveDeferredFollowUp={agents.removeDeferredFollowUp}
-                  onEditDeferredFollowUp={
-                    sessionThread === null ||
-                    sessionThread.execution?.kind === "remote" ||
-                    !queuedEdit.supported
-                      ? undefined
-                      : queuedEdit.begin
-                  }
-                  onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
-                  onSendDeferredFollowUpNow={
-                    sessionThread !== null &&
-                    (sessionThread.execution?.kind === "remote"
-                      ? sessionThread.execution.taskSteering === true
-                      : agentThreadIsSteerable(sessionThread.thread))
-                      ? agents.sendDeferredFollowUpNow
-                      : undefined
-                  }
-                  onReviewInDiff={reviewInDiff}
-                  onStopBackground={composer.composerProps.onStopNow}
-                  sessionTaskControls={sessionBackground.controls}
-                  onStopSessionTask={sessionBackground.onStopTask}
-                  onEndSession={sessionBackground.onEndSession}
-                  pendingSend={composer.pendingSend}
-                  onDismissPendingSend={composer.dismissPendingSend}
-                  onOpenTurnDiff={openRecordedDiff}
-                  turnChangesRevision={
-                    sessionThread
-                      ? (agents.getTurnChangesRevision?.(sessionThread.thread.threadId) ??
-                        agents.turnChangesRevision)
-                      : agents.turnChangesRevision
-                  }
-                  getTurnChanges={agents.getTurnChanges}
-                  monacoTheme={monacoTheme}
-                  reveal={find.reveal}
-                  textClipboard={textClipboard}
-                  thread={sessionThread}
-                  turnLog={agents.turnLog ?? null}
-                />
-              )}
+                        ? providerEnabled
+                        : REMOTE_PROVIDERS_ENABLED
+                    }
+                    providerManagement={agents.providerManagement}
+                    modelFavoritesPersistence={modelFavoritesPersistence}
+                    endSessionConfirmation={menu.endSessionConfirmation}
+                    onThreadStarted={navigation.selectStartedThread}
+                    onOpenProviderSettings={agents.configureAgentCli}
+                    onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+                    onTrustProject={trustProject}
+                  />
+                ) : selectedThreadId === null &&
+                  selectedServerId !== null &&
+                  composer.target === null ? (
+                  <AgentRemoteDraftProjectChooser
+                    projects={composerProjects}
+                    cloneRunning={remoteAddCloneRunning}
+                    onAddProject={openRemoteAddProject}
+                    onOpenSettings={onOpenEnvironmentSettings}
+                    onSelect={(project) => {
+                      const live = projects.find(
+                        (candidate) =>
+                          candidate.rootKey === project.rootKey &&
+                          candidate.ownerId === project.ownerId &&
+                          candidate.generation === project.generation,
+                      );
+                      if (
+                        live === undefined ||
+                        live.trust !== "trusted" ||
+                        selectedServerId === null ||
+                        !live.rootKey.startsWith(`remote:${encodeURIComponent(selectedServerId)}:`)
+                      )
+                        return;
+                      const group = groups.find(
+                        (candidate) =>
+                          candidate.projectRootKey === live.rootKey ||
+                          candidate.memberProjectRootKeys?.includes(live.rootKey),
+                      );
+                      setProjectSelectionIntent((current) => current + 1);
+                      navigation.setRailScope({
+                        projectRootKey: live.rootKey,
+                        repositoryRoot: live.rootPath,
+                        memberProjectRootKeys: group?.memberProjectRootKeys,
+                      });
+                      composer.startNewThread(project.rootKey, project.rootPath);
+                    }}
+                  />
+                ) : (
+                  <AgentThreadSession
+                    activeDiffTurnId={diffScopes.activeDiffTurnId}
+                    awaiting={
+                      sessionThread === null
+                        ? null
+                        : (pendingInteractions.get(sessionThread.thread.threadId) ?? null)
+                    }
+                    history={
+                      sessionThread?.execution?.kind === "remote" ? undefined : agents.history
+                    }
+                    importedHistory={
+                      sessionThread === null
+                        ? undefined
+                        : agents.externalHistory?.pages?.get(sessionThread.thread.threadId)
+                    }
+                    hasEarlierImportedHistory={
+                      sessionThread === null
+                        ? false
+                        : agents.externalHistory?.hasEarlier?.get(sessionThread.thread.threadId)
+                    }
+                    onEarlierImportedHistory={
+                      sessionThread === null || agents.externalHistory?.loadEarlier === undefined
+                        ? undefined
+                        : () => {
+                            void agents.externalHistory?.loadEarlier?.(
+                              sessionThread.thread.threadId,
+                            );
+                          }
+                    }
+                    artifactLoader={artifactLoader}
+                    artifactPreview={artifactPreview}
+                    localFileLinks={localFileLinks}
+                    remoteFileLinks={remoteFileLinks.port}
+                    serverLoopback={serverPorts.serverLoopback}
+                    attachmentImages={agents.attachmentImages}
+                    inlineImages={agents.inlineImages}
+                    onRevealAttachment={revealAttachment}
+                    findBar={
+                      find.open ? (
+                        <AgentThreadFindBar
+                          currentIndex={find.hitIndex}
+                          hitCount={find.hits.length}
+                          onChangeQuery={find.setQuery}
+                          onClose={navigation.closeFindBar}
+                          onNavigate={find.navigate}
+                          query={find.query}
+                          truncated={find.truncated}
+                        />
+                      ) : null
+                    }
+                    findOpen={find.open}
+                    goToTurnSignal={goToTurnSignal}
+                    externalHistoryState={
+                      sessionThread === null
+                        ? undefined
+                        : agents.externalHistory?.states.get(sessionThread.thread.threadId)
+                    }
+                    onRetryExternalHistory={
+                      sessionThread === null || agents.externalHistory === undefined
+                        ? undefined
+                        : () => {
+                            void agents.externalHistory?.load(sessionThread.thread.threadId);
+                          }
+                    }
+                    composerRepositoryLabel={headerProject?.label ?? composer.composerLabel}
+                    findHitIndex={navigation.findHitIndex}
+                    findHits={find.open ? find.hits : undefined}
+                    findQuery={find.open ? find.query : undefined}
+                    deferredFollowUps={
+                      sessionThread === null
+                        ? undefined
+                        : deferredFollowUpsForThread(
+                            agents.deferredFollowUps,
+                            sessionThread.thread.threadId,
+                          )
+                    }
+                    onRemoveDeferredFollowUp={agents.removeDeferredFollowUp}
+                    onEditDeferredFollowUp={
+                      sessionThread === null ||
+                      sessionThread.execution?.kind === "remote" ||
+                      !queuedEdit.supported
+                        ? undefined
+                        : queuedEdit.begin
+                    }
+                    onResumeDeferredFollowUps={agents.resumeDeferredFollowUps}
+                    onSendDeferredFollowUpNow={
+                      sessionThread !== null &&
+                      (sessionThread.execution?.kind === "remote"
+                        ? sessionThread.execution.taskSteering === true
+                        : agentThreadIsSteerable(sessionThread.thread))
+                        ? agents.sendDeferredFollowUpNow
+                        : undefined
+                    }
+                    onReviewInDiff={reviewInDiff}
+                    onStopBackground={composer.composerProps.onStopNow}
+                    sessionTaskControls={sessionBackground.controls}
+                    onStopSessionTask={sessionBackground.onStopTask}
+                    onEndSession={sessionBackground.onEndSession}
+                    pendingSend={composer.pendingSend}
+                    onDismissPendingSend={composer.dismissPendingSend}
+                    onOpenTurnDiff={openRecordedDiff}
+                    turnChangesRevision={
+                      sessionThread
+                        ? (agents.getTurnChangesRevision?.(sessionThread.thread.threadId) ??
+                          agents.turnChangesRevision)
+                        : agents.turnChangesRevision
+                    }
+                    getTurnChanges={agents.getTurnChanges}
+                    monacoTheme={monacoTheme}
+                    reveal={find.reveal}
+                    textClipboard={textClipboard}
+                    thread={sessionThread}
+                    turnLog={agents.turnLog ?? null}
+                  />
+                )}
+              </AgentRegionBoundary>
               {sessionThread !== null &&
                 agents.hasUnconfirmedMessage?.(sessionThread.thread.threadId) && (
                   <AgentUnconfirmedMessageNotice
@@ -1459,39 +1477,45 @@ function LocalAgentModeView({
                 </div>
               )}
               {!creation.visible && (
-                <AgentQuestionAttachmentsContext.Provider
-                  value={agents.questionAttachments ?? null}
+                <AgentRegionBoundary
+                  clipboard={textClipboard}
+                  region="composer"
+                  resetKeys={[selectedThreadId, selectedServerId, composerProps.draftKey]}
                 >
-                  <AgentComposerController
-                    followUpBehavior={followUpBehavior}
-                    executionServerId={
-                      selectedThread?.execution?.serverId ??
-                      pendingRemoteIdentity?.serverId ??
-                      (resolvingRemoteThread
-                        ? "unavailable"
-                        : selectedThread === null
-                          ? selectedServerId
-                          : null)
-                    }
-                    compactionOffer={
-                      selectedThread?.execution?.kind === "remote" ? null : compactionOffer
-                    }
-                    composerProps={composerProps}
-                    modelFavoritesPersistence={modelFavoritesPersistence}
-                    onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-                    onOpenProviderSettings={agents.configureAgentCli}
-                    providerManagement={agents.providerManagement}
-                    providerEnabled={effectiveProviderEnabled}
-                    submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
-                    submit={submitComposer}
-                    interactions={{ gateway: questionGateway, thread: sessionThread }}
-                    banners={composerExtras.banners}
-                    endSessionConfirmation={menu.endSessionConfirmation}
-                    onShowUsageLimits={composerExtras.onShowUsageLimits}
-                    onOpenMcpServers={onOpenMcpSettings}
-                    renderDrawerEnd={composerExtras.renderDrawerEnd}
-                  />
-                </AgentQuestionAttachmentsContext.Provider>
+                  <AgentQuestionAttachmentsContext.Provider
+                    value={agents.questionAttachments ?? null}
+                  >
+                    <AgentComposerController
+                      followUpBehavior={followUpBehavior}
+                      executionServerId={
+                        selectedThread?.execution?.serverId ??
+                        pendingRemoteIdentity?.serverId ??
+                        (resolvingRemoteThread
+                          ? "unavailable"
+                          : selectedThread === null
+                            ? selectedServerId
+                            : null)
+                      }
+                      compactionOffer={
+                        selectedThread?.execution?.kind === "remote" ? null : compactionOffer
+                      }
+                      composerProps={composerProps}
+                      modelFavoritesPersistence={modelFavoritesPersistence}
+                      onOpenEnvironmentSettings={onOpenEnvironmentSettings}
+                      onOpenProviderSettings={agents.configureAgentCli}
+                      providerManagement={agents.providerManagement}
+                      providerEnabled={effectiveProviderEnabled}
+                      submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
+                      submit={submitComposer}
+                      interactions={{ gateway: questionGateway, thread: sessionThread }}
+                      banners={composerExtras.banners}
+                      endSessionConfirmation={menu.endSessionConfirmation}
+                      onShowUsageLimits={composerExtras.onShowUsageLimits}
+                      onOpenMcpServers={onOpenMcpSettings}
+                      renderDrawerEnd={composerExtras.renderDrawerEnd}
+                    />
+                  </AgentQuestionAttachmentsContext.Provider>
+                </AgentRegionBoundary>
               )}
             </AgentAttachmentDropColumn>
           </div>
@@ -1529,42 +1553,49 @@ function LocalAgentModeView({
         )}
       </section>
       {surface.surfaceHost.mounted && (
-        <AgentSurfaceHost
-          draftIsolation={composer.composerProps.isolation}
-          draftPreviousWorktree={
-            composer.composerProps.previousWorktree?.selected === true
-              ? composer.composerProps.previousWorktree.available
-              : null
-          }
-          agents={surfaceAgents}
-          agentsPanel={AGENTS_PANEL_SURFACE}
-          diffScope={diffScopes.scope}
-          onDiffScopeChange={diffScopes.setScope}
-          remoteDraft={surfaceThread === null && selectedServerId !== null}
-          remoteSurface={remoteSurface}
-          remoteFileReveal={remoteFileLinks.reveal}
-          shipActions={shipActions}
-          scripts={scripts}
-          chooserAutoFocus={surface.chooserRequested}
-          chrome={chrome}
+        <AgentRegionBoundary
+          clipboard={textClipboard}
           hidden={surface.surfaceHost.hidden}
-          layout={layout}
-          layoutControls={layoutControls}
-          leadingControls={
-            layout.rail === "collapsed" && layout.rightPanelMaximized ? sidebarReveal : null
-          }
-          onResizeWidth={surface.resizeRightPanel}
-          onActivateSurface={activateSurface}
-          onCloseSurfaceTab={closeSurfaceTab}
-          onOpenSurface={openSurfaceCommand}
-          onSwitchScope={chrome.addProject === null ? null : addProject.addProject}
-          onTrustScope={trustProject}
-          projects={displayProjects}
-          scope={surfaceScope}
-          thread={surfaceThread}
-          threadRootPath={surfaceThreadRootPath}
-          workspaceRoot={workspaceRoot}
-        />
+          region="rightPanel"
+          resetKeys={[selectedThreadId, selectedServerId, layout.activeSurface, layout.rightPanel]}
+        >
+          <AgentSurfaceHost
+            draftIsolation={composer.composerProps.isolation}
+            draftPreviousWorktree={
+              composer.composerProps.previousWorktree?.selected === true
+                ? composer.composerProps.previousWorktree.available
+                : null
+            }
+            agents={surfaceAgents}
+            agentsPanel={AGENTS_PANEL_SURFACE}
+            diffScope={diffScopes.scope}
+            onDiffScopeChange={diffScopes.setScope}
+            remoteDraft={surfaceThread === null && selectedServerId !== null}
+            remoteSurface={remoteSurface}
+            remoteFileReveal={remoteFileLinks.reveal}
+            shipActions={shipActions}
+            scripts={scripts}
+            chooserAutoFocus={surface.chooserRequested}
+            chrome={chrome}
+            hidden={surface.surfaceHost.hidden}
+            layout={layout}
+            layoutControls={layoutControls}
+            leadingControls={
+              layout.rail === "collapsed" && layout.rightPanelMaximized ? sidebarReveal : null
+            }
+            onResizeWidth={surface.resizeRightPanel}
+            onActivateSurface={activateSurface}
+            onCloseSurfaceTab={closeSurfaceTab}
+            onOpenSurface={openSurfaceCommand}
+            onSwitchScope={chrome.addProject === null ? null : addProject.addProject}
+            onTrustScope={trustProject}
+            projects={displayProjects}
+            scope={surfaceScope}
+            thread={surfaceThread}
+            threadRootPath={surfaceThreadRootPath}
+            workspaceRoot={workspaceRoot}
+          />
+        </AgentRegionBoundary>
       )}
       <AgentProjectRenameDialog
         onCancel={projectRename.cancel}

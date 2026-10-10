@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -163,6 +164,7 @@ describe("failed turn of a remote run that ended with a runner code", () => {
         conversationId: "conversation",
         latestTaskId: "task",
         resume: null,
+        reachability: REMOTE_RUNNER_REACHABLE,
       },
       thread: {
         threadId: "thread",

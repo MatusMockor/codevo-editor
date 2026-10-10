@@ -7,6 +7,41 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.110] - 2026-10-10
+
+### Added
+
+- Remote server outages are shown as their own state. The composer says when a server
+  is reconnecting or disconnected and offers Retry now or Reconnect, and a running
+  remote turn shows that it is waiting for the server instead of working.
+
+### Fixed
+
+- Restarting a remote server during a running turn, or opening a remote thread with a
+  pending agent question, no longer blanks the agent workspace.
+- A failure in the sidebar, conversation, composer, or right panel stays inside that
+  area with a retry instead of taking down the whole agent view.
+- Messages sent while a remote server is unavailable are held back with a clear reason,
+  and the draft and attachments are kept.
+
+## [0.2.0-beta.109] - 2026-10-09
+
+### Added
+
+- Project switching shows each project's agent thread status.
+- New conversations appear in the thread list as soon as the first message is sent.
+- Files changed by an agent turn appear in a collapsible tree card.
+- Earlier activity in long remote turns can be loaded from the runner, with activity
+  already in memory displayed immediately.
+
+### Fixed
+
+- Saved conversations follow the project focused in the agent rail.
+- Pressing Escape outside the prompt no longer stops an agent turn.
+- Running-row Stop controls remain readable in light themes, and elapsed time stays
+  in place while a turn is stopping.
+- Slim custom scrollbars render consistently instead of using the platform default.
+
 ## [0.2.0-beta.108] - 2026-10-09
 
 ### Changed

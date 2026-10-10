@@ -156,6 +156,8 @@ function sameExecution(
     left.projectId === right.projectId &&
     left.conversationId === right.conversationId &&
     left.latestTaskId === right.latestTaskId &&
+    left.reachability === right.reachability &&
+    left.reachabilityDetail === right.reachabilityDetail &&
     left.resume?.available === right.resume?.available &&
     left.resume?.reason === right.resume?.reason
   );
