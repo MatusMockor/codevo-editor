@@ -1,10 +1,29 @@
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
 import { subscribeRemoteInventory } from "./remoteInventorySubscriptions";
 
+export type RemoteInventoryRefreshOutcome = "settled" | "recovering";
+
 interface Options {
   readonly gateway: RemoteRunnerGateway | null;
   readonly serverIds: readonly string[];
-  readonly refresh: () => Promise<void>;
+  readonly refresh: () => Promise<RemoteInventoryRefreshOutcome>;
+}
+
+const RECOVERY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000, 16_000, 30_000];
+
+function recoveryAttempts(outcome: RemoteInventoryRefreshOutcome, attempts: number): number {
+  switch (outcome) {
+    case "settled":
+      return 0;
+    case "recovering":
+      return Math.min(attempts + 1, RECOVERY_DELAYS_MS.length);
+    default:
+      return unsupportedOutcome(outcome);
+  }
+}
+
+function unsupportedOutcome(outcome: never): never {
+  throw new TypeError(`Unsupported remote inventory refresh outcome: ${String(outcome)}.`);
 }
 
 /** One owned refresh queue: event bursts retain a dirty bit, never an unbounded queue. */
@@ -12,11 +31,15 @@ export function startRemoteInventoryRefresh({ gateway, serverIds, refresh }: Opt
   let disposed = false;
   let running = false;
   let dirty = false;
+  let attempts = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const live = new Set<string>();
   const subscriptions = new Set<() => void>();
   const ids = [...new Set(serverIds)].slice(0, 64);
-  const delay = () => (ids.length > 0 && live.size === ids.length ? 60_000 : 2_000);
+  const delay = () => {
+    if (ids.length === 0 || live.size !== ids.length) return 2_000;
+    return RECOVERY_DELAYS_MS[attempts - 1] ?? 60_000;
+  };
   const schedule = (milliseconds: number) => {
     if (disposed) return;
     if (timer !== undefined) clearTimeout(timer);
@@ -34,9 +57,10 @@ export function startRemoteInventoryRefresh({ gateway, serverIds, refresh }: Opt
     running = true;
     dirty = false;
     try {
-      await refresh();
+      attempts = recoveryAttempts(await refresh(), attempts);
     } catch {
       // The inventory owns its error display. A rejected refresh must not end recovery.
+      attempts = recoveryAttempts("recovering", attempts);
     } finally {
       running = false;
       if (!disposed) schedule(dirty ? 250 : delay());

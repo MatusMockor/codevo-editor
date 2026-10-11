@@ -1,3 +1,5 @@
+import { REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE } from "./remoteRunnerErrors";
+
 export const SPEECH_MAX_TRANSCRIPT_CHARACTERS = 4000;
 
 export type SpeechTranscriptionFailureReason =
@@ -8,7 +10,6 @@ export type SpeechTranscription =
 
 const RUNNER_SPEECH_FAILURE =
   /^Runner speech transcription failed: (not_found|invalid_input|too_large|unsupported_media|busy|speech_unavailable) \(HTTP [1-5][0-9]{2}\)\.$/;
-const BUSY_MESSAGES: ReadonlySet<string> = new Set(["Runner is busy; retry shortly"]);
 const DISCONNECTED_MESSAGES: ReadonlySet<string> = new Set([
   "Server is not connected",
   "Server connection changed during request",
@@ -55,7 +56,7 @@ export function speechTranscriptionErrorMessage(error: unknown): string {
 export function classifySpeechTranscriptionError(error: unknown): SpeechTranscriptionFailureReason {
   const message = speechTranscriptionErrorMessage(error);
   if (DISCONNECTED_MESSAGES.has(message)) return "server-disconnected";
-  if (BUSY_MESSAGES.has(message)) return "server-busy";
+  if (message === REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE) return "server-busy";
   if (RUNNER_SPEECH_FAILURE.exec(message)?.[1] === "busy") return "server-busy";
   return "transcription-failed";
 }

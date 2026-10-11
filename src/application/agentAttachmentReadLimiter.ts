@@ -1,18 +1,11 @@
+import { isTransientRunnerBusyError } from "../domain/remoteRunnerErrors";
 import { attempt, type Attempt } from "./agentProjectAuthority";
 
 export const MAX_AGENT_ATTACHMENT_CONCURRENT_READS = 2;
 export const AGENT_ATTACHMENT_READ_RETRY_DELAYS_MS: ReadonlyArray<number> = [250, 500, 1_000];
 export const AGENT_ATTACHMENT_READ_QUEUE_FULL_REASON = "Too many image previews are waiting.";
 
-const TRANSIENT_RUNNER_BUSY_MESSAGES: ReadonlySet<string> = new Set([
-  "Runner request failed (HTTP 503).",
-  "Runner is busy; retry shortly",
-]);
-
-export function isTransientRunnerBusyError(error: unknown): boolean {
-  const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
-  return TRANSIENT_RUNNER_BUSY_MESSAGES.has(message.trim());
-}
+export { isTransientRunnerBusyError };
 
 export interface AgentAttachmentReadJob<TValue> {
   readonly read: () => Promise<TValue>;

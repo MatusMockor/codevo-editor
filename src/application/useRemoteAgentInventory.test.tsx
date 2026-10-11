@@ -360,11 +360,11 @@ it("keeps a published record when the reload it raced with fails", async () => {
     h.surface.publishThreadMetadata("server", saved);
   });
   await act(async () => {
-    listing.fail(new Error("Runner request failed (HTTP 503)."));
+    listing.fail(new Error("Runner request failed (HTTP 500)."));
     await reloading;
   });
   expect(h.surface.snapshots[0]?.connected).toBe(false);
-  expect(h.surface.snapshots[0]?.error).toBe("Runner request failed (HTTP 503).");
+  expect(h.surface.snapshots[0]?.error).toBe("Runner request failed (HTTP 500).");
   expect(metadataOf(h)?.get("task")).toBe(saved);
 
   await act(async () => h.surface.refresh());

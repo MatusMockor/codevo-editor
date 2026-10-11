@@ -277,6 +277,212 @@ describe("remote inventory reachability ownership", () => {
     });
   });
 
+  describe("a refresh refused as busy", () => {
+    const BUSY = "Runner is busy; retry shortly";
+    const snapshot = () => surface.snapshots.find((entry) => entry.serverId === "linux");
+
+    async function mountLive(): Promise<FakeRunnerHost> {
+      const linux = new FakeRunnerHost({ id: "linux", name: "Linux" });
+      fleet = fakeRunnerFleetGateway([linux]);
+      options = { workspaceOwner: "A", servers: [linux.server] };
+      await render();
+      await advance(10);
+      linux.emit("connected");
+      await advance(300);
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_REACHABLE);
+      return linux;
+    }
+
+    function refuse(linux: FakeRunnerHost, failure: unknown): void {
+      linux.failure = failure;
+      linux.up = false;
+    }
+
+    it.each([BUSY, "Runner request failed (HTTP 503)."])(
+      "keeps a reachable server reachable and connected after %j",
+      async (busy) => {
+        const linux = await mountLive();
+        refuse(linux, busy);
+        linux.emit("changed");
+        await advance(300);
+
+        expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_REACHABLE);
+        expect(surface.reconnectingReasons.size).toBe(0);
+        expect(snapshot()?.connected).toBe(true);
+        expect(snapshot()?.error).toBeNull();
+        expect(snapshot()?.tasks).toHaveLength(1);
+      },
+    );
+
+    it("keeps the server connected when only a later request of the refresh is refused", async () => {
+      const linux = await mountLive();
+      fleet.spies.listProjects.mockImplementationOnce(() => Promise.reject(BUSY));
+      linux.emit("changed");
+      await advance(300);
+
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_REACHABLE);
+      expect(snapshot()?.connected).toBe(true);
+      expect(snapshot()?.error).toBeNull();
+    });
+
+    it.each([BUSY, "Runner request failed (HTTP 503)."])(
+      "reports a replaced runner proven after %j without the busy text",
+      async (busy) => {
+        const linux = await mountLive();
+        fleet.spies.listProjects.mockImplementationOnce(() => {
+          linux.runnerId = "replacement";
+          return Promise.reject(busy);
+        });
+        linux.emit("changed");
+        await advance(300);
+
+        expect(surface.reachability.get("linux")).toBe(remoteRunnerDisconnected("runnerReplaced"));
+        expect(surface.reconnectingReasons.size).toBe(0);
+        expect(snapshot()?.connected).toBe(false);
+        expect(snapshot()?.error).toBe("Could not refresh remote tasks.");
+      },
+    );
+
+    it.each([BUSY, "Runner request failed (HTTP 503)."])(
+      "reports the outage its follow-up found after %j with the real failure",
+      async (busy) => {
+        const linux = await mountLive();
+        fleet.spies.listProjects.mockImplementationOnce(() => {
+          refuse(linux, new Error("SSH tunnel is down."));
+          return Promise.reject(busy);
+        });
+        linux.emit("changed");
+        await advance(300);
+
+        expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_RECONNECTING);
+        expect(surface.reconnectingReasons.get("linux")).toBe("SSH tunnel is down.");
+        expect(snapshot()?.connected).toBe(false);
+        expect(snapshot()?.error).toBe("SSH tunnel is down.");
+      },
+    );
+
+    it("keeps the real failure as the error when only its follow-up is refused", async () => {
+      const linux = await mountLive();
+      fleet.spies.listProjects.mockImplementationOnce(() => {
+        refuse(linux, BUSY);
+        return Promise.reject(new Error("The connection closed during the request."));
+      });
+      linux.emit("changed");
+      await advance(300);
+
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_RECONNECTING);
+      expect(surface.reconnectingReasons.get("linux")).toBe(
+        "The connection closed during the request.",
+      );
+      expect(snapshot()?.error).toBe("The connection closed during the request.");
+    });
+
+    it("retries well before the live reconciliation interval and then recovers", async () => {
+      const linux = await mountLive();
+      refuse(linux, BUSY);
+      linux.emit("changed");
+      await advance(300);
+      const refused = fleet.spies.getRunner.mock.calls.length;
+
+      await advance(1_900);
+      expect(fleet.spies.getRunner).toHaveBeenCalledTimes(refused);
+      await advance(100);
+      expect(fleet.spies.getRunner).toHaveBeenCalledTimes(refused + 1);
+
+      linux.up = true;
+      await advance(4_000);
+      expect(fleet.spies.getRunner).toHaveBeenCalledTimes(refused + 2);
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_REACHABLE);
+      await advance(59_000);
+      expect(fleet.spies.getRunner).toHaveBeenCalledTimes(refused + 2);
+    });
+
+    it("knows nothing yet when the first refresh is refused and names no outage reason", async () => {
+      const linux = new FakeRunnerHost({ id: "linux", name: "Linux" });
+      refuse(linux, BUSY);
+      fleet = fakeRunnerFleetGateway([linux]);
+      options = { workspaceOwner: "A", servers: [linux.server] };
+      await render();
+      await advance(10);
+
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_RECONNECTING);
+      expect(surface.reconnectingReasons.size).toBe(0);
+      expect(snapshot()?.connected).toBe(false);
+      expect(snapshot()?.error).not.toContain("busy");
+
+      linux.up = true;
+      await advance(2_100);
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_REACHABLE);
+      expect(snapshot()?.connected).toBe(true);
+      expect(snapshot()?.error).toBeNull();
+    });
+
+    it("does not confirm a changed endpoint it could not refresh", async () => {
+      const linux = await mountLive();
+      refuse(linux, BUSY);
+      await render({ servers: [{ ...linux.server, port: 2222 }] });
+      await advance(10);
+
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_RECONNECTING);
+      expect(surface.reconnectingReasons.size).toBe(0);
+      expect(snapshot()?.connected).toBe(false);
+    });
+
+    it("does not present the refused first refresh of a new owner as connected", async () => {
+      const linux = await mountLive();
+      refuse(linux, BUSY);
+      await render({ workspaceOwner: "B" });
+      await advance(10);
+
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_RECONNECTING);
+      expect(surface.reconnectingReasons.size).toBe(0);
+      expect(snapshot()?.connected).toBe(false);
+      expect(snapshot()?.error).toBeNull();
+    });
+
+    it("reports a real failure after a refused refresh and clears it on success", async () => {
+      const linux = await mountLive();
+      refuse(linux, BUSY);
+      linux.emit("changed");
+      await advance(300);
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_REACHABLE);
+
+      linux.failure = new Error("SSH tunnel is down.");
+      linux.emit("changed");
+      await advance(300);
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_RECONNECTING);
+      expect(surface.reconnectingReasons.get("linux")).toBe("SSH tunnel is down.");
+      expect(snapshot()?.connected).toBe(false);
+
+      linux.failure = BUSY;
+      linux.emit("changed");
+      await advance(300);
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_RECONNECTING);
+      expect(surface.reconnectingReasons.get("linux")).toBe("SSH tunnel is down.");
+      expect(snapshot()?.connected).toBe(false);
+
+      linux.up = true;
+      linux.emit("changed");
+      await advance(300);
+      expect(surface.reachability.get("linux")).toBe(REMOTE_RUNNER_REACHABLE);
+      expect(surface.reconnectingReasons.size).toBe(0);
+      expect(snapshot()?.connected).toBe(true);
+      expect(snapshot()?.error).toBeNull();
+    });
+
+    it("keeps the live cadence for a replaced runner that needs the user", async () => {
+      const linux = await mountLive();
+      linux.runnerId = "replacement";
+      linux.emit("changed");
+      await advance(300);
+      expect(surface.reachability.get("linux")).toBe(remoteRunnerDisconnected("runnerReplaced"));
+      const replaced = fleet.spies.getRunner.mock.calls.length;
+
+      await advance(59_000);
+      expect(fleet.spies.getRunner).toHaveBeenCalledTimes(replaced);
+    });
+  });
+
   it("starts a removed and re-added server without its old observation", async () => {
     const linux = new FakeRunnerHost({ id: "linux", name: "Linux" });
     fleet = fakeRunnerFleetGateway([linux]);

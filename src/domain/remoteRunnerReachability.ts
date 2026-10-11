@@ -1,4 +1,7 @@
-import { isRemoteRunnerRequestRejectedError } from "./remoteRunnerErrors";
+import {
+  isRemoteRunnerRequestRejectedError,
+  isTransientRunnerBusyError,
+} from "./remoteRunnerErrors";
 
 export type RemoteRunnerDisconnectReason = "serverDisconnected" | "runnerReplaced";
 
@@ -13,6 +16,13 @@ export const REMOTE_RUNNER_REACHABLE: RemoteRunnerReachability = Object.freeze({
 
 export const REMOTE_RUNNER_RECONNECTING: RemoteRunnerReachability = Object.freeze({
   kind: "reconnecting",
+});
+
+export type RemoteRunnerRefreshObservation =
+  RemoteRunnerReachability | { readonly kind: "inconclusive" };
+
+export const REMOTE_RUNNER_REFRESH_INCONCLUSIVE: RemoteRunnerRefreshObservation = Object.freeze({
+  kind: "inconclusive",
 });
 
 const REMOTE_RUNNER_DISCONNECTED: Readonly<
@@ -62,7 +72,7 @@ export function remoteRunnerDisconnected(
 
 export function remoteRunnerRefreshReachability(
   outcome: RemoteRunnerRefreshOutcome,
-): RemoteRunnerReachability {
+): RemoteRunnerRefreshObservation {
   switch (outcome.kind) {
     case "succeeded":
       return REMOTE_RUNNER_REACHABLE;
@@ -100,10 +110,32 @@ export function remoteRunnerFailureReason(error: unknown): string | null {
   return `${message.slice(0, MAX_REMOTE_RUNNER_FAILURE_REASON_LENGTH - 1)}…`;
 }
 
-function failedRefreshReachability(failure: FailedRefresh): RemoteRunnerReachability {
+export function remoteRunnerRefreshFailureCause(failure: FailedRefresh): unknown {
+  const decisive = decisiveError(failure);
+  if (isTransientRunnerBusyError(decisive)) return undefined;
+  return decisive;
+}
+
+export function remoteRunnerFailedRefreshAwaitsRetry(
+  observation: RemoteRunnerRefreshObservation,
+): boolean {
+  switch (observation.kind) {
+    case "disconnected":
+      return false;
+    case "reachable":
+    case "reconnecting":
+    case "inconclusive":
+      return true;
+    default:
+      return unsupportedObservation(observation);
+  }
+}
+
+function failedRefreshReachability(failure: FailedRefresh): RemoteRunnerRefreshObservation {
   const errors = failureErrors(failure);
   const messages = errors.map(classifiedMessage);
   if (runnerWasReplaced(failure, messages)) return remoteRunnerDisconnected("runnerReplaced");
+  if (isTransientRunnerBusyError(decisiveError(failure))) return REMOTE_RUNNER_REFRESH_INCONCLUSIVE;
   if (failure.followUp.kind === "answered") return REMOTE_RUNNER_REACHABLE;
   if (messages.includes(REMOTE_RUNNER_SERVER_NOT_CONNECTED_MESSAGE))
     return remoteRunnerDisconnected("serverDisconnected");
@@ -114,6 +146,12 @@ function failedRefreshReachability(failure: FailedRefresh): RemoteRunnerReachabi
 function failureErrors(failure: FailedRefresh): readonly unknown[] {
   if (failure.followUp.kind === "failed") return [failure.error, failure.followUp.error];
   return [failure.error];
+}
+
+function decisiveError(failure: FailedRefresh): unknown {
+  if (failure.followUp.kind !== "failed") return failure.error;
+  if (isTransientRunnerBusyError(failure.followUp.error)) return failure.error;
+  return failure.followUp.error;
 }
 
 function runnerAnswered(failure: FailedRefresh): boolean {
@@ -155,6 +193,10 @@ function rawMessage(error: unknown): string {
 
 function unsupportedFollowUp(followUp: never): never {
   throw new TypeError(`Unsupported remote runner descriptor follow-up: ${String(followUp)}.`);
+}
+
+function unsupportedObservation(observation: never): never {
+  throw new TypeError(`Unsupported remote runner refresh observation: ${String(observation)}.`);
 }
 
 function unsupportedOutcome(outcome: never): never {

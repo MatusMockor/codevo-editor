@@ -8,8 +8,10 @@ import type {
 import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
 import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import {
+  remoteRunnerFailedRefreshAwaitsRetry,
   remoteRunnerFailureReason,
   remoteRunnerReachability,
+  remoteRunnerRefreshFailureCause,
   remoteRunnerRefreshReachability,
   REMOTE_RUNNER_REACHABLE,
   REMOTE_RUNNER_RECONNECTING,
@@ -23,7 +25,10 @@ import {
   type RemoteAgentInventorySnapshot,
 } from "./remoteAgentInventoryLoad";
 import { mergeRemoteTasks } from "./remoteRunnerTaskState";
-import { startRemoteInventoryRefresh } from "./remoteInventoryRefresh";
+import {
+  startRemoteInventoryRefresh,
+  type RemoteInventoryRefreshOutcome,
+} from "./remoteInventoryRefresh";
 import { probeRemoteRunnerDescriptor } from "./remoteRunnerDescriptorProbe";
 import {
   mergeLoadedThreadMetadata,
@@ -121,7 +126,11 @@ export function useRemoteAgentInventory({
     unconfirmed.current = { lease, configuration, servers: new Map() };
   const [state, setState] = useState(cache.current);
   const [loadingOwner, setLoadingOwner] = useState<object | null>(null);
-  const active = useRef<{ owner: object; settled: Promise<void>; dirty: boolean } | null>(null);
+  const active = useRef<{
+    owner: object;
+    settled: Promise<RemoteInventoryRefreshOutcome>;
+    dirty: boolean;
+  } | null>(null);
   const serversRef = useRef(servers);
   serversRef.current = servers;
   const valid = useCallback(() => mounted.current && authority.current === captured, [captured]);
@@ -159,29 +168,30 @@ export function useRemoteAgentInventory({
       ...provenance.current.keys(),
     ].some((id) => !configured.has(id));
   }, []);
-  const refresh = useCallback(async () => {
-    if (!valid() || gateway === null) return;
+  const reload = useCallback(async (): Promise<RemoteInventoryRefreshOutcome> => {
+    if (!valid() || gateway === null) return "settled";
     if (active.current?.owner === captured) {
       active.current.dirty = true;
-      await active.current.settled;
-      return;
+      return active.current.settled;
     }
-    let settle!: () => void;
+    let settle!: (outcome: RemoteInventoryRefreshOutcome) => void;
     const operation = {
       owner: captured,
       dirty: false,
-      settled: new Promise<void>((resolve) => {
+      settled: new Promise<RemoteInventoryRefreshOutcome>((resolve) => {
         settle = resolve;
       }),
     };
     active.current = operation;
     setLoadingOwner(captured);
+    let outcome: RemoteInventoryRefreshOutcome = "settled";
     try {
       do {
         operation.dirty = false;
+        outcome = "settled";
         if (holdsRemovedServers()) publish(cache.current.snapshots);
         for (const server of serversRef.current.slice(0, 64)) {
-          if (!valid()) return;
+          if (!valid()) return outcome;
           const previous =
             cache.current.snapshots.find((item) => item.serverId === server.id) ??
             emptyRemoteInventory(server.id, server.connected);
@@ -202,7 +212,10 @@ export function useRemoteAgentInventory({
           }
           const pendingRevision = pendingRevisions.current.get(server.id) ?? 0;
           const probe = probeRemoteRunnerDescriptor(gateway);
-          let observed: ObservedRefresh = { reachability: REMOTE_RUNNER_REACHABLE, reason: null };
+          let observed: ObservedRefresh | undefined = {
+            reachability: REMOTE_RUNNER_REACHABLE,
+            reason: null,
+          };
           let result: RemoteAgentInventorySnapshot;
           try {
             result = await loadRemoteAgentInventory(
@@ -211,7 +224,7 @@ export function useRemoteAgentInventory({
               selectedThreadId,
               valid,
             );
-            if (!valid()) return;
+            if (!valid()) return outcome;
             const merged = mergeLoadedThreadMetadata(
               result.threadMetadata,
               unconfirmed.current.servers.get(server.id),
@@ -219,32 +232,38 @@ export function useRemoteAgentInventory({
             unconfirmed.current.servers.set(server.id, merged.unconfirmed);
             result = { ...result, threadMetadata: merged.threadMetadata };
           } catch (error) {
-            if (!valid() || error instanceof RemoteInventoryRevoked) return;
+            if (!valid() || error instanceof RemoteInventoryRevoked) return outcome;
             const expectedRunnerId = previous.descriptor?.runnerId ?? null;
             const followUp = await probe.followUp({ serverId: server.id }, expectedRunnerId);
-            if (!valid()) return;
-            observed = {
-              reachability: remoteRunnerRefreshReachability({
-                kind: "failed",
-                error,
-                expectedRunnerId,
-                answeredRunnerId: probe.answeredRunnerId(),
-                followUp,
-              }),
-              reason: remoteRunnerFailureReason(
-                followUp.kind === "failed" ? followUp.error : error,
-              ),
-            };
+            if (!valid()) return outcome;
+            const failure = {
+              kind: "failed",
+              error,
+              expectedRunnerId,
+              answeredRunnerId: probe.answeredRunnerId(),
+              followUp,
+            } as const;
+            const observation = remoteRunnerRefreshReachability(failure);
+            if (remoteRunnerFailedRefreshAwaitsRetry(observation)) outcome = "recovering";
             const cached = cache.current.snapshots.find((item) => item.serverId === server.id);
+            observed = undefined;
             result = {
               ...previous,
               threadMetadata: (cached ?? previous).threadMetadata,
-              connected: false,
+              connected: cached?.connected ?? false,
               inventoryTruncated: false,
-              error: remoteRunnerErrorMessage(error, "Could not refresh remote tasks."),
             };
+            if (observation.kind !== "inconclusive") {
+              const cause = remoteRunnerRefreshFailureCause(failure);
+              observed = { reachability: observation, reason: remoteRunnerFailureReason(cause) };
+              result = {
+                ...result,
+                connected: false,
+                error: remoteRunnerErrorMessage(cause, "Could not refresh remote tasks."),
+              };
+            }
           }
-          provenance.current.set(server.id, endpoint(server));
+          if (observed !== undefined) provenance.current.set(server.id, endpoint(server));
           const latest = cache.current.snapshots.find((item) => item.serverId === server.id);
           publish(
             [
@@ -258,28 +277,32 @@ export function useRemoteAgentInventory({
                     : latest?.pendingMessages,
               },
             ],
-            { serverId: server.id, ...observed },
+            observed && { serverId: server.id, ...observed },
           );
         }
       } while (operation.dirty && valid());
     } finally {
       if (active.current === operation) active.current = null;
-      settle();
+      settle(outcome);
       if (valid()) setLoadingOwner(null);
     }
+    return outcome;
   }, [valid, gateway, captured, selectedThreadId, publish, holdsRemovedServers]);
+  const refresh = useCallback(async () => {
+    await reload();
+  }, [reload]);
   useEffect(() => {
     mounted.current = true;
     const stop = startRemoteInventoryRefresh({
       gateway,
       serverIds: serversRef.current.filter((server) => server.connected).map((server) => server.id),
-      refresh,
+      refresh: reload,
     });
     return () => {
       mounted.current = false;
       stop();
     };
-  }, [refresh, gateway]);
+  }, [reload, gateway]);
   useEffect(() => {
     if (state.lease !== lease || !state.snapshots.some((snapshot) => snapshot.inventoryTruncated))
       return;

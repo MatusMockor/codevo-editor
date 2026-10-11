@@ -8,13 +8,16 @@ import {
   MAX_REMOTE_RUNNER_FAILURE_REASON_LENGTH,
   NO_REMOTE_RUNNER_DESCRIPTOR_FOLLOW_UP,
   remoteRunnerDisconnected,
+  remoteRunnerFailedRefreshAwaitsRetry,
   remoteRunnerFailureReason,
   remoteRunnerNeedsDescriptorFollowUp,
   remoteRunnerReachability,
+  remoteRunnerRefreshFailureCause,
   remoteRunnerRefreshReachability,
   REMOTE_RUNNER_IDENTITY_CHANGED_PATTERN,
   REMOTE_RUNNER_REACHABLE,
   REMOTE_RUNNER_RECONNECTING,
+  REMOTE_RUNNER_REFRESH_INCONCLUSIVE,
   REMOTE_RUNNER_SERVER_NOT_CONNECTED_MESSAGE,
   type RemoteRunnerDescriptorFollowUp,
 } from "./remoteRunnerReachability";
@@ -44,6 +47,8 @@ const answered = (
     answeredRunnerId,
     followUp,
   });
+
+const BUSY_REFUSALS = ["Runner is busy; retry shortly", "Runner request failed (HTTP 503)."];
 
 const rustSource = (name: string): string =>
   readFileSync(`${process.cwd()}/src-tauri/src/remote_runner/${name}`, "utf8");
@@ -171,6 +176,125 @@ describe("remote runner reachability", () => {
     expect(derive(true, true, null)).toBe(REMOTE_RUNNER_RECONNECTING);
     expect(derive(true, true, REMOTE_RUNNER_REACHABLE)).toBe(REMOTE_RUNNER_REACHABLE);
     expect(derive(true, true, REPLACED)).toBe(REPLACED);
+  });
+});
+
+describe("a refresh the editor or the runner refused as busy", () => {
+  it.each(BUSY_REFUSALS)("says nothing about reachability for %j", (busy) => {
+    expect(unanswered(busy)).toBe(REMOTE_RUNNER_REFRESH_INCONCLUSIVE);
+    expect(unanswered(new Error(` ${busy} `), null)).toBe(REMOTE_RUNNER_REFRESH_INCONCLUSIVE);
+    expect(answered(NO_REMOTE_RUNNER_DESCRIPTOR_FOLLOW_UP, busy)).toBe(
+      REMOTE_RUNNER_REFRESH_INCONCLUSIVE,
+    );
+    expect(answered({ kind: "answered", runnerId: "runner" }, busy)).toBe(
+      REMOTE_RUNNER_REFRESH_INCONCLUSIVE,
+    );
+    expect(answered({ kind: "failed", error: busy }, busy)).toBe(
+      REMOTE_RUNNER_REFRESH_INCONCLUSIVE,
+    );
+    expect(Object.isFrozen(REMOTE_RUNNER_REFRESH_INCONCLUSIVE)).toBe(true);
+  });
+
+  it.each(BUSY_REFUSALS)("still reports a runner proven replaced after %j", (busy) => {
+    expect(answered({ kind: "answered", runnerId: "other" }, busy)).toBe(REPLACED);
+    expect(answered({ kind: "answered", runnerId: "other" }, busy, null)).toBe(REPLACED);
+    expect(answered(NO_REMOTE_RUNNER_DESCRIPTOR_FOLLOW_UP, busy, "runner", "other")).toBe(REPLACED);
+    expect(
+      answered(
+        {
+          kind: "failed",
+          error: "Runner identity changed. Reconnect the server before continuing.",
+        },
+        busy,
+      ),
+    ).toBe(REPLACED);
+  });
+
+  it.each(BUSY_REFUSALS)("lets a real follow-up failure decide after %j", (busy) => {
+    expect(answered({ kind: "failed", error: new Error("The runner is unreachable.") }, busy)).toBe(
+      REMOTE_RUNNER_RECONNECTING,
+    );
+    expect(
+      answered({ kind: "failed", error: REMOTE_RUNNER_SERVER_NOT_CONNECTED_MESSAGE }, busy),
+    ).toBe(NOT_CONNECTED);
+  });
+
+  it.each(BUSY_REFUSALS)("keeps a real failure when only the follow-up got %j", (busy) => {
+    const followUp: RemoteRunnerDescriptorFollowUp = { kind: "failed", error: busy };
+    expect(answered(followUp)).toBe(REMOTE_RUNNER_RECONNECTING);
+    expect(answered(followUp, REMOTE_RUNNER_SERVER_NOT_CONNECTED_MESSAGE)).toBe(NOT_CONNECTED);
+  });
+
+  it("does not treat an overlong, empty, or merely similar message as busy", () => {
+    expect(unanswered(`Runner is busy; retry shortly${"x".repeat(2_000)}`)).toBe(
+      REMOTE_RUNNER_RECONNECTING,
+    );
+    expect(unanswered("")).toBe(REMOTE_RUNNER_RECONNECTING);
+    expect(unanswered("Runner request failed (HTTP 500).")).toBe(REMOTE_RUNNER_RECONNECTING);
+    expect(unanswered({ message: "Runner is busy; retry shortly" })).toBe(
+      REMOTE_RUNNER_RECONNECTING,
+    );
+  });
+
+  it("describes a failed refresh by its real failure, never by a busy refusal", () => {
+    const cause = (
+      error: unknown,
+      followUp: RemoteRunnerDescriptorFollowUp,
+      answeredRunnerId: string | null = "runner",
+    ) =>
+      remoteRunnerRefreshFailureCause({
+        kind: "failed",
+        error,
+        expectedRunnerId: "runner",
+        answeredRunnerId,
+        followUp,
+      });
+    const tunnel = new Error("SSH tunnel is down.");
+    const none = NO_REMOTE_RUNNER_DESCRIPTOR_FOLLOW_UP;
+    expect(cause("The connection closed.", none)).toBe("The connection closed.");
+    expect(cause("The connection closed.", { kind: "answered", runnerId: "runner" })).toBe(
+      "The connection closed.",
+    );
+    expect(cause("The connection closed.", { kind: "failed", error: tunnel })).toBe(tunnel);
+    for (const busy of BUSY_REFUSALS) {
+      expect(cause("The connection closed.", { kind: "failed", error: busy })).toBe(
+        "The connection closed.",
+      );
+      expect(cause(busy, { kind: "failed", error: tunnel })).toBe(tunnel);
+      expect(cause(busy, { kind: "answered", runnerId: "other" })).toBeUndefined();
+      expect(cause(busy, none, "other")).toBeUndefined();
+      expect(cause(new Error(busy), { kind: "failed", error: busy })).toBeUndefined();
+      expect(cause(busy, none, null)).toBeUndefined();
+    }
+  });
+
+  it.each(BUSY_REFUSALS)("classifies and describes a mixed failure after %j", (busy) => {
+    const replaced = {
+      kind: "failed",
+      error: busy,
+      expectedRunnerId: "runner",
+      answeredRunnerId: "runner",
+      followUp: { kind: "answered", runnerId: "other" },
+    } as const;
+    expect(remoteRunnerRefreshReachability(replaced)).toBe(REPLACED);
+    expect(remoteRunnerFailureReason(remoteRunnerRefreshFailureCause(replaced))).toBeNull();
+
+    const outage = {
+      ...replaced,
+      followUp: { kind: "failed", error: "SSH tunnel is down." },
+    } as const;
+    expect(remoteRunnerRefreshReachability(outage)).toBe(REMOTE_RUNNER_RECONNECTING);
+    expect(remoteRunnerFailureReason(remoteRunnerRefreshFailureCause(outage))).toBe(
+      "SSH tunnel is down.",
+    );
+  });
+
+  it("retries every failed refresh soon except a disconnect that needs the user", () => {
+    expect(remoteRunnerFailedRefreshAwaitsRetry(REMOTE_RUNNER_REFRESH_INCONCLUSIVE)).toBe(true);
+    expect(remoteRunnerFailedRefreshAwaitsRetry(REMOTE_RUNNER_RECONNECTING)).toBe(true);
+    expect(remoteRunnerFailedRefreshAwaitsRetry(REMOTE_RUNNER_REACHABLE)).toBe(true);
+    expect(remoteRunnerFailedRefreshAwaitsRetry(REPLACED)).toBe(false);
+    expect(remoteRunnerFailedRefreshAwaitsRetry(NOT_CONNECTED)).toBe(false);
   });
 });
 

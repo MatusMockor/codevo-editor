@@ -15,3 +15,15 @@ export function remoteRunnerErrorMessage(error: unknown, fallback: string): stri
   const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
   return message.length > 0 && message.length <= 1000 ? message : fallback;
 }
+
+export const REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE = "Runner is busy; retry shortly";
+
+const TRANSIENT_RUNNER_BUSY_MESSAGES: ReadonlySet<string> = new Set([
+  "Runner request failed (HTTP 503).",
+  REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE,
+]);
+
+export function isTransientRunnerBusyError(error: unknown): boolean {
+  const message = typeof error === "string" ? error : error instanceof Error ? error.message : "";
+  return TRANSIENT_RUNNER_BUSY_MESSAGES.has(message.trim());
+}
