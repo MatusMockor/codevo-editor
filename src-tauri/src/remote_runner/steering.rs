@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid, validate_parts, Part},
 };
@@ -57,7 +57,7 @@ pub async fn remote_runner_steer_task(
     request: SteerRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         let body = request.body()?;
         let result = state.call(
             &request.server_id,
@@ -77,7 +77,7 @@ pub async fn remote_runner_steer_pending_message(
     request: SteerPendingRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         id(&request.server_id)?;
         let result = state.call(
             &request.server_id,

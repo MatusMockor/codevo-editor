@@ -1,5 +1,5 @@
 use super::{
-    commands::{blocking, OPERATIONS_BUSY},
+    commands::{blocking, OperationClass, OPERATIONS_BUSY},
     project_management::call_lease,
     service::{ConnectionLease, RemoteRunnerState},
     types::id,
@@ -193,9 +193,11 @@ pub async fn remote_runner_get_mcp_servers(
         .map_err(|_| SERVER_UNAVAILABLE)?;
     ensure_exact_runner(&lease, &request.runner_id)?;
     let probe_lease = lease.clone();
-    let outcome = blocking(move || Ok(read_servers(&probe_lease, &path, provider)))
-        .await
-        .map_err(|failure| contract_error(&failure))?;
+    let outcome = blocking(OperationClass::Bulk, move || {
+        Ok(read_servers(&probe_lease, &path, provider))
+    })
+    .await
+    .map_err(|failure| contract_error(&failure))?;
     ensure_exact_runner(&lease, &request.runner_id)?;
     Ok(outcome?)
 }

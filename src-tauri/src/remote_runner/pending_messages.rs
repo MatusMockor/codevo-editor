@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     continuation::ContinueRequest,
     service::RemoteRunnerState,
     types::{id, uuid, TaskRequest},
@@ -33,7 +33,7 @@ pub async fn remote_runner_list_pending_messages(
     request: TaskRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         id(&request.server_id)?;
         state.call(
             &request.server_id,
@@ -52,7 +52,7 @@ pub async fn remote_runner_enqueue_message(
     request: ContinueRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         let body = request.body()?;
         state.call(
             &request.server_id,
@@ -71,7 +71,7 @@ pub async fn remote_runner_cancel_pending_message(
     request: CancelPendingRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         id(&request.server_id)?;
         state.call(
             &request.server_id,
@@ -90,7 +90,7 @@ pub async fn remote_runner_resume_pending_messages(
     request: TaskRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         id(&request.server_id)?;
         let path = format!("{}/resume", pending_path(&request.task_id, None)?);
         state.call(&request.server_id, "POST", &path, None, vec![])

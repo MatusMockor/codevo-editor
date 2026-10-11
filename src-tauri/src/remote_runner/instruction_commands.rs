@@ -1,4 +1,8 @@
-use super::{commands::blocking, instruction_collection, instruction_wire::InstructionSnapshot};
+use super::{
+    commands::{blocking, OperationClass},
+    instruction_collection,
+    instruction_wire::InstructionSnapshot,
+};
 use crate::{trust::WorkspaceTrustService, workspace_registry::WorkspaceRegistry};
 use serde::Deserialize;
 use std::{
@@ -43,7 +47,7 @@ pub async fn remote_runner_collect_instructions(
     request: CollectInstructionsRequest,
 ) -> Result<InstructionSnapshot, String> {
     let permit = CollectionPermit::acquire()?;
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         let _permit = permit;
         let registry = app.state::<WorkspaceRegistry>();
         let trust = app.state::<Mutex<WorkspaceTrustService>>();

@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     transport::Session,
     types::{id, Server},
@@ -45,7 +45,7 @@ pub async fn remote_runner_repository_identity(
     request: RepositoryIdentityRequest,
 ) -> Result<RepositoryIdentityResponse, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         let path = request.path()?;
         let lease = state.connection_lease(&request.server_id)?;
         if lease.server().runner_id.as_deref() != Some(request.runner_id.as_str()) {

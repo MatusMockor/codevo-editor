@@ -1,6 +1,6 @@
 //! Task-scoped generated output access; credentials remain in the native transport.
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid},
 };
@@ -138,7 +138,7 @@ pub async fn resolve_remote_agent_artifact(
     request: ResolveArtifactRequest,
 ) -> Result<ArtifactMetadata, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         validate_path(&request.path)?;
         let value = call(
             &state,
@@ -182,7 +182,7 @@ pub async fn read_remote_agent_artifact(
     request: ReadArtifactRequest,
 ) -> Result<tauri::ipc::Response, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         uuid(&request.artifact_id)?;
         let path = format!(
             "{}/{}/content",

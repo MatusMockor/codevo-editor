@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid, validate_parts, Part, TaskRequest},
 };
@@ -52,7 +52,7 @@ pub async fn remote_runner_get_task_resume(
     request: TaskRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         state.call(
             &request.server_id,
             "GET",
@@ -70,7 +70,7 @@ pub async fn remote_runner_continue_task(
     request: ContinueRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         let body = request.body()?;
         state.call(
             &request.server_id,

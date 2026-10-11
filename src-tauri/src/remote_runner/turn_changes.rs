@@ -1,6 +1,6 @@
 //! Bounded immutable turn-change reads on the exact admitted server connection.
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     project_management::call_lease,
     service::RemoteRunnerState,
     types::{id, uuid, TaskRequest},
@@ -152,7 +152,10 @@ pub async fn remote_runner_get_turn_changes(
 ) -> Result<TurnChanges, String> {
     let path = task_path(&request.server_id, &request.task_id, "turn-changes")?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || parse_summary(call_lease(lease, "GET", &path, None)?, &request.task_id)).await
+    blocking(OperationClass::Bulk, move || {
+        parse_summary(call_lease(lease, "GET", &path, None)?, &request.task_id)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn remote_runner_get_turn_file_diff(
@@ -164,7 +167,7 @@ pub async fn remote_runner_get_turn_file_diff(
         return Err("Invalid turn file path".into());
     }
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         parse_diff(
             call_lease(
                 lease,

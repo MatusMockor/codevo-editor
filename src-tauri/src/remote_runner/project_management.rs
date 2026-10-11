@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::{ConnectionLease, RemoteRunnerState},
     types::{id, ServerRequest},
 };
@@ -105,7 +105,10 @@ pub async fn remote_runner_repository_hosts(
 ) -> Result<Value, String> {
     id(&request.server_id)?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || call_lease(lease, "GET", "/v1/repositories/hosts", None)).await
+    blocking(OperationClass::Bulk, move || {
+        call_lease(lease, "GET", "/v1/repositories/hosts", None)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn remote_runner_lookup_repository(
@@ -115,7 +118,10 @@ pub async fn remote_runner_lookup_repository(
     id(&request.server_id)?;
     let body = lookup_body(&request.request)?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || call_lease(lease, "POST", "/v1/repositories/lookup", Some(body))).await
+    blocking(OperationClass::Bulk, move || {
+        call_lease(lease, "POST", "/v1/repositories/lookup", Some(body))
+    })
+    .await
 }
 #[tauri::command]
 pub async fn remote_runner_search_repositories(
@@ -125,7 +131,10 @@ pub async fn remote_runner_search_repositories(
     id(&request.server_id)?;
     let body = search_body(&request.request)?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || call_lease(lease, "POST", "/v1/repositories/search", Some(body))).await
+    blocking(OperationClass::Bulk, move || {
+        call_lease(lease, "POST", "/v1/repositories/search", Some(body))
+    })
+    .await
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -219,7 +228,7 @@ pub async fn remote_runner_project_directories(
     let body = request
         .path
         .map_or_else(|| json!({}), |path| json!({"path":path}));
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         validate_directories(call_lease(
             lease,
             "POST",

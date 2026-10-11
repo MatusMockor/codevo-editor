@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid},
 };
@@ -88,6 +88,22 @@ enum SurfaceOperation {
         #[serde(rename = "terminalId")]
         terminal_id: String,
     },
+}
+fn operation_class(operation: &SurfaceOperation) -> OperationClass {
+    match operation {
+        SurfaceOperation::OpenTerminal { .. }
+        | SurfaceOperation::WriteTerminal { .. }
+        | SurfaceOperation::ResizeTerminal { .. }
+        | SurfaceOperation::CloseTerminal { .. } => OperationClass::Control,
+        SurfaceOperation::Capabilities {}
+        | SurfaceOperation::ListDirectory { .. }
+        | SurfaceOperation::ReadFile { .. }
+        | SurfaceOperation::WriteFile { .. }
+        | SurfaceOperation::History { .. }
+        | SurfaceOperation::CommitFiles { .. }
+        | SurfaceOperation::CommitDiff { .. }
+        | SurfaceOperation::PollTerminal { .. } => OperationClass::Bulk,
+    }
 }
 fn relative(path: &str, root: bool) -> Result<(), String> {
     if (root && path.is_empty())
@@ -250,12 +266,13 @@ pub async fn remote_runner_surface(
     request: SurfaceRequest,
 ) -> Result<Value, String> {
     let (method, path, body) = request.plan()?;
+    let class = operation_class(&request.operation);
     // Capture the exact generation before scheduling work, never reacquire by server ID.
     let lease = state.connection_lease(&request.server_id)?;
     if lease.runner_id() != request.runner_id {
         return Err("Runner identity changed".into());
     }
-    blocking(move || {
+    blocking(class, move || {
         let session = lease.session()?;
         if !lease.is_current() {
             return Err("Runner connection was superseded".into());

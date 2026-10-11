@@ -1,6 +1,9 @@
 //! Provider slash-command catalog from the exact selected runner for a server-hosted project.
 use super::{
-    commands::blocking, project_management::call_lease, service::RemoteRunnerState, types::id,
+    commands::{blocking, OperationClass},
+    project_management::call_lease,
+    service::RemoteRunnerState,
+    types::id,
 };
 use crate::agent_command_catalog_domain::{parse_foreign_catalog, AgentCommandCatalog};
 use crate::agent_task_spawner::AgentCliInvocation;
@@ -86,7 +89,7 @@ pub async fn remote_runner_get_command_catalog(
         return Err(CHANGED.into());
     }
     let probe_lease = lease.clone();
-    let catalog = blocking(move || {
+    let catalog = blocking(OperationClass::Bulk, move || {
         let descriptor = call_lease(probe_lease.clone(), "GET", "/v1/runner", None)?;
         admit_descriptor(descriptor, probe_lease.runner_id())?;
         validate(call_lease(probe_lease, "GET", &path, None)?, provider)

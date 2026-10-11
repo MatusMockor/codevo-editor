@@ -1,5 +1,8 @@
 use super::types::uuid;
-use super::{commands::blocking, service::RemoteRunnerState};
+use super::{
+    commands::{blocking, OperationClass},
+    service::RemoteRunnerState,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -36,7 +39,7 @@ pub async fn remote_runner_clone_project(
 ) -> Result<Value, String> {
     let body = request.body()?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         super::project_management::call_lease(lease, "POST", "/v1/projects/clone", Some(body))
     })
     .await
@@ -50,7 +53,10 @@ pub async fn remote_runner_get_project_clone(
     super::types::id(&request.server_id)?;
     let path = clone_path(&request.clone_id, false)?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || super::project_management::call_lease(lease, "GET", &path, None)).await
+    blocking(OperationClass::Bulk, move || {
+        super::project_management::call_lease(lease, "GET", &path, None)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -61,7 +67,10 @@ pub async fn remote_runner_cancel_project_clone(
     super::types::id(&request.server_id)?;
     let path = clone_path(&request.clone_id, true)?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || super::project_management::call_lease(lease, "POST", &path, None)).await
+    blocking(OperationClass::Control, move || {
+        super::project_management::call_lease(lease, "POST", &path, None)
+    })
+    .await
 }
 
 fn clone_path(clone_id: &str, cancel: bool) -> Result<String, String> {

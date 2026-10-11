@@ -1,6 +1,6 @@
 use super::{
     canonical_wire::Canonical,
-    commands::blocking,
+    commands::{blocking, OperationClass},
     git_sync_wire::{
         operation_route, parse_branch_list, parse_checkout_status, parse_commit_result,
         parse_operation, parse_thread_status, refused, CommitBody, GitErrorBody, GitOperationKind,
@@ -218,7 +218,7 @@ pub async fn remote_runner_git(
     if lease.runner_id() != request.runner_id() {
         return Err(RUNNER_CHANGED.into());
     }
-    blocking(move || execute(&lease, &request)).await
+    blocking(OperationClass::Bulk, move || execute(&lease, &request)).await
 }
 
 #[cfg(test)]

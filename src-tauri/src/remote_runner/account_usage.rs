@@ -1,6 +1,9 @@
 //! Account-wide usage from the exact selected runner, without returning credentials.
 use super::{
-    commands::blocking, project_management::call_lease, service::RemoteRunnerState, types::id,
+    commands::{blocking, OperationClass},
+    project_management::call_lease,
+    service::RemoteRunnerState,
+    types::id,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -144,7 +147,7 @@ pub async fn remote_runner_get_account_usage(
     if lease.runner_id() != request.runner_id {
         return Err("Server connection changed during request".into());
     }
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         let descriptor = call_lease(lease.clone(), "GET", "/v1/runner", None)?;
         admit_descriptor(descriptor, lease.runner_id())?;
         validate(

@@ -1,5 +1,8 @@
 use super::{
-    commands::blocking, project_management::call_lease, service::RemoteRunnerState, types::id,
+    commands::{blocking, OperationClass},
+    project_management::call_lease,
+    service::RemoteRunnerState,
+    types::id,
 };
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -97,7 +100,7 @@ pub async fn remote_runner_transcribe_speech(
 ) -> Result<SpeechTranscription, String> {
     request.validate()?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         let descriptor = call_lease(lease.clone(), "GET", "/v1/runner", None)?;
         admit_descriptor(descriptor, lease.runner_id())?;
         let session = lease.session()?;

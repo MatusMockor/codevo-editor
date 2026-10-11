@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid, TaskRequest},
 };
@@ -41,7 +41,7 @@ pub async fn remote_runner_list_task_files(
     request: TaskRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         state.call(
             &request.server_id,
             "GET",
@@ -59,7 +59,7 @@ pub async fn remote_runner_get_task_file_diff(
     request: FileDiffRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         file_path(&request.path)?;
         state.call(
             &request.server_id,

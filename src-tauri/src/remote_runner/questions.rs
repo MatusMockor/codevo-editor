@@ -1,6 +1,6 @@
 //! Exact-connection question transport; provider protocol identifiers remain on the runner.
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid},
 };
@@ -127,7 +127,7 @@ pub async fn list_remote_agent_questions(
     request: RemoteQuestionsRequest,
 ) -> Result<Vec<AgentQuestionRequest>, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         let path = path(&request.task_id)?;
         with_connection(&state, &request.server_id, &request.runner_id, |call| {
             parse_list(call("GET", &path, None)?, &request.task_id)
@@ -141,7 +141,7 @@ pub async fn answer_remote_agent_question(
     request: RemoteQuestionAnswerRequest,
 ) -> Result<AgentQuestionRequest, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         uuid(&request.request_id)?;
         if serde_json::to_vec(&request.response)
             .map_err(|_| "Invalid question response")?

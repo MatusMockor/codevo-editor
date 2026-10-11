@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid},
 };
@@ -154,7 +154,7 @@ pub async fn remote_runner_search_history(
 ) -> Result<HistorySearchPage, String> {
     let path = search_path(&request)?;
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         let value = state.call(&request.server_id, "GET", &path, None, vec![])?;
         validate_page(value, &request)
     })

@@ -1,5 +1,5 @@
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     service::RemoteRunnerState,
     types::{id, uuid},
 };
@@ -27,7 +27,10 @@ pub async fn remote_runner_get_attachment(
     request: AttachmentRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || state.call(&request.server_id, "GET", &request.path()?, None, vec![])).await
+    blocking(OperationClass::Bulk, move || {
+        state.call(&request.server_id, "GET", &request.path()?, None, vec![])
+    })
+    .await
 }
 
 #[tauri::command]
@@ -36,7 +39,7 @@ pub async fn remote_runner_read_attachment(
     request: AttachmentRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         state.call(
             &request.server_id,
             "GET",

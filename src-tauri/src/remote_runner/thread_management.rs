@@ -1,6 +1,6 @@
 //! Strict, exact-connection transport for server-owned thread organization.
 use super::{
-    commands::blocking,
+    commands::{blocking, OperationClass},
     project_management::call_lease,
     service::RemoteRunnerState,
     types::{id, uuid},
@@ -195,7 +195,10 @@ pub async fn remote_runner_get_thread_metadata(
 ) -> Result<ThreadMetadata, String> {
     let path = task_path(&request.server_id, &request.task_id)?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || parse_metadata(call_lease(lease, "GET", &path, None)?, &request.task_id)).await
+    blocking(OperationClass::Bulk, move || {
+        parse_metadata(call_lease(lease, "GET", &path, None)?, &request.task_id)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn remote_runner_list_thread_metadata(
@@ -211,7 +214,7 @@ pub async fn remote_runner_list_thread_metadata(
         None => "/v1/thread-metadata".into(),
     };
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         parse_page(
             call_lease(lease, "GET", &path, None)?,
             request.after.as_deref(),
@@ -227,7 +230,7 @@ pub async fn remote_runner_patch_thread_metadata(
     let path = task_path(&request.server_id, &request.task_id)?;
     validate_patch(&request.patch)?;
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         parse_metadata(
             call_lease(lease, "PATCH", &path, Some(request.patch))?,
             &request.task_id,
@@ -246,7 +249,7 @@ pub async fn remote_runner_order_thread(
         return Err("Cannot order a thread against itself".into());
     }
     let lease = state.connection_lease(&request.server_id)?;
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         let result: ThreadOrderResult = serde_json::from_value(call_lease(lease, "POST", &format!("/v1/tasks/{}/thread-order", request.task_id), Some(serde_json::json!({"targetTaskId": request.target_task_id, "placement": request.placement})))?).map_err(|_| INVALID)?;
         validate_items(&result.items, ORDER_LIMIT)?;
         // The runner returns only changed rows; a repeated reorder legitimately has no changes.

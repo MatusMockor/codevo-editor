@@ -102,6 +102,14 @@ const SERVER_CONNECTION_ERRORS: ReadonlySet<string> = new Set([
   "Unable to start SSH tunnel.",
   "SSH tunnel connection failed. Check SSH access and runner authentication.",
   "SSH tunnel authentication failed.",
+  "SSH tunnel host is unreachable.",
+  "SSH tunnel connection timed out.",
+  "SSH tunnel connection was refused.",
+  "SSH tunnel host name could not be resolved.",
+  "SSH tunnel host key is not trusted or has changed.",
+  "SSH tunnel authentication was denied.",
+  "SSH tunnel port forwarding failed.",
+  "SSH tunnel readiness timed out.",
   "Invalid runner authentication.",
 ]);
 const HTTP_STATUS = /^Runner request failed \(HTTP (\d{3})\)\.$/u;

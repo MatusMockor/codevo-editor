@@ -3,28 +3,56 @@ use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(super) const OPERATIONS_BUSY: &str = "Runner is busy; retry shortly";
-static OPERATIONS: AtomicUsize = AtomicUsize::new(0);
-struct OperationPermit;
-impl OperationPermit {
-    fn acquire() -> Result<Self, String> {
-        OPERATIONS
+static OPERATIONS: OperationLimiter = OperationLimiter::new();
+
+#[derive(Clone, Copy)]
+pub(super) enum OperationClass {
+    Control,
+    Bulk,
+}
+
+struct OperationLimiter {
+    control: AtomicUsize,
+    bulk: AtomicUsize,
+}
+
+impl OperationLimiter {
+    const fn new() -> Self {
+        Self {
+            control: AtomicUsize::new(0),
+            bulk: AtomicUsize::new(0),
+        }
+    }
+
+    fn acquire(&self, class: OperationClass) -> Result<OperationPermit<'_>, String> {
+        let counter = match class {
+            OperationClass::Control => &self.control,
+            OperationClass::Bulk => &self.bulk,
+        };
+        counter
             .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                 (count < 8).then_some(count + 1)
             })
             .map_err(|_| OPERATIONS_BUSY)?;
-        Ok(Self)
+        Ok(OperationPermit { counter })
     }
 }
-impl Drop for OperationPermit {
+
+struct OperationPermit<'a> {
+    counter: &'a AtomicUsize,
+}
+
+impl Drop for OperationPermit<'_> {
     fn drop(&mut self) {
-        OPERATIONS.fetch_sub(1, Ordering::AcqRel);
+        self.counter.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
 pub(super) async fn blocking<T: Send + 'static>(
+    class: OperationClass,
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    let permit = OperationPermit::acquire()?;
+    let permit = OPERATIONS.acquire(class)?;
     tauri::async_runtime::spawn_blocking(move || {
         let _permit = permit;
         work()
@@ -38,7 +66,7 @@ pub async fn remote_runner_list_servers(
     state: tauri::State<'_, RemoteRunnerState>,
 ) -> Result<Vec<Server>, String> {
     let state = state.inner().clone();
-    blocking(move || state.list()).await
+    blocking(OperationClass::Control, move || state.list()).await
 }
 
 #[tauri::command]
@@ -47,7 +75,7 @@ pub async fn remote_runner_connect_server(
     request: ConnectRequest,
 ) -> Result<Server, String> {
     let state = state.inner().clone();
-    blocking(move || state.connect(request)).await
+    blocking(OperationClass::Control, move || state.connect(request)).await
 }
 
 #[tauri::command]
@@ -56,7 +84,10 @@ pub async fn remote_runner_disconnect_server(
     request: ServerRequest,
 ) -> Result<(), String> {
     let state = state.inner().clone();
-    blocking(move || state.disconnect(&request.server_id, false)).await
+    blocking(OperationClass::Control, move || {
+        state.disconnect(&request.server_id, false)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -65,7 +96,10 @@ pub async fn remote_runner_remove_server(
     request: ServerRequest,
 ) -> Result<(), String> {
     let state = state.inner().clone();
-    blocking(move || state.disconnect(&request.server_id, true)).await
+    blocking(OperationClass::Control, move || {
+        state.disconnect(&request.server_id, true)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -74,7 +108,10 @@ pub async fn remote_runner_get_runner(
     request: ServerRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || state.call(&request.server_id, "GET", "/v1/runner", None, vec![])).await
+    blocking(OperationClass::Control, move || {
+        state.call(&request.server_id, "GET", "/v1/runner", None, vec![])
+    })
+    .await
 }
 
 #[tauri::command]
@@ -83,7 +120,10 @@ pub async fn remote_runner_list_projects(
     request: ServerRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || state.call(&request.server_id, "GET", "/v1/projects", None, vec![])).await
+    blocking(OperationClass::Bulk, move || {
+        state.call(&request.server_id, "GET", "/v1/projects", None, vec![])
+    })
+    .await
 }
 
 fn cursor_path(path: String, after: Option<u64>) -> Result<String, String> {
@@ -136,7 +176,7 @@ pub async fn remote_runner_list_tasks(
     request: PageRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         state.call(
             &request.server_id,
             "GET",
@@ -154,7 +194,7 @@ pub async fn remote_runner_create_task(
     request: CreateRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || state.create(request)).await
+    blocking(OperationClass::Control, move || state.create(request)).await
 }
 
 #[tauri::command]
@@ -163,7 +203,7 @@ pub async fn remote_runner_start_task(
     request: StartRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         let body = StartBody {
             project_id: request.project_id,
             base: request.base,
@@ -187,7 +227,7 @@ pub async fn remote_runner_get_task(
     request: TaskRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         state.call(
             &request.server_id,
             "GET",
@@ -205,7 +245,7 @@ pub async fn remote_runner_cancel_task(
     request: TaskRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Control, move || {
         state.call(
             &request.server_id,
             "POST",
@@ -225,7 +265,7 @@ pub async fn remote_runner_list_events(
     let direction = EventDirection::parse(request.after, request.before)?;
     let path = direction.path(&request.task_id)?;
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         let page = state.call(&request.server_id, "GET", &path, None, vec![])?;
         super::event_page::validate(page)
     })
@@ -238,7 +278,7 @@ pub async fn remote_runner_get_diff(
     request: TaskRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || {
+    blocking(OperationClass::Bulk, move || {
         state.call(
             &request.server_id,
             "GET",
@@ -256,12 +296,12 @@ pub async fn remote_runner_upload_attachment(
     request: UploadRequest,
 ) -> Result<Value, String> {
     let state = state.inner().clone();
-    blocking(move || state.upload(request)).await
+    blocking(OperationClass::Bulk, move || state.upload(request)).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{EventDirection, EventsRequest, OperationPermit};
+    use super::{EventDirection, EventsRequest, OperationClass, OperationLimiter};
 
     #[test]
     fn event_cursor_paths_preserve_forward_and_support_backward() {
@@ -321,22 +361,60 @@ mod tests {
     }
 
     #[test]
+    fn saturated_lanes_admit_operations_in_the_other_lane() {
+        for (saturated, available) in [
+            (OperationClass::Bulk, OperationClass::Control),
+            (OperationClass::Control, OperationClass::Bulk),
+        ] {
+            let limiter = OperationLimiter::new();
+            let _held: Vec<_> = (0..8)
+                .map(|_| limiter.acquire(saturated).unwrap())
+                .collect();
+            assert!(limiter.acquire(available).is_ok());
+        }
+    }
+
+    #[test]
     fn ninth_operation_is_refused_with_the_fixed_busy_text_until_a_permit_drops() {
-        let mut held: Vec<OperationPermit> = (0..8)
-            .map(|_| OperationPermit::acquire().expect("eight operations are admitted"))
-            .collect();
-        assert_eq!(
-            OperationPermit::acquire().err(),
-            Some("Runner is busy; retry shortly".to_string())
-        );
-        held.pop();
-        let replacement = OperationPermit::acquire().expect("a released permit is reusable");
-        assert_eq!(
-            OperationPermit::acquire().err(),
-            Some("Runner is busy; retry shortly".to_string())
-        );
-        drop(replacement);
-        drop(held);
-        assert!(OperationPermit::acquire().is_ok());
+        for class in [OperationClass::Control, OperationClass::Bulk] {
+            let limiter = OperationLimiter::new();
+            let mut held: Vec<_> = (0..8)
+                .map(|_| {
+                    limiter
+                        .acquire(class)
+                        .expect("eight operations are admitted")
+                })
+                .collect();
+            assert_eq!(
+                limiter.acquire(class).err(),
+                Some("Runner is busy; retry shortly".to_string())
+            );
+            held.pop();
+            let replacement = limiter
+                .acquire(class)
+                .expect("a released permit is reusable");
+            assert_eq!(
+                limiter.acquire(class).err(),
+                Some("Runner is busy; retry shortly".to_string())
+            );
+            drop(replacement);
+            drop(held);
+            let _reacquired: Vec<_> = (0..8).map(|_| limiter.acquire(class).unwrap()).collect();
+        }
+    }
+
+    #[test]
+    fn permits_are_released_when_work_panics() {
+        for class in [OperationClass::Control, OperationClass::Bulk] {
+            let limiter = OperationLimiter::new();
+            let _held: Vec<_> = (0..7).map(|_| limiter.acquire(class).unwrap()).collect();
+            let permit = limiter.acquire(class).unwrap();
+            let result = std::panic::catch_unwind(move || {
+                let _permit = permit;
+                panic!("operation failed");
+            });
+            assert!(result.is_err());
+            assert!(limiter.acquire(class).is_ok());
+        }
     }
 }

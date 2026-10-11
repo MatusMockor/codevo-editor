@@ -664,6 +664,14 @@ it("keeps server rejections final so no retry button can promise a load that nev
     ["Unable to start SSH tunnel.", connection],
     ["SSH tunnel connection failed. Check SSH access and runner authentication.", connection],
     ["SSH tunnel authentication failed.", connection],
+    ["SSH tunnel host is unreachable.", connection],
+    ["SSH tunnel connection timed out.", connection],
+    ["SSH tunnel connection was refused.", connection],
+    ["SSH tunnel host name could not be resolved.", connection],
+    ["SSH tunnel host key is not trusted or has changed.", connection],
+    ["SSH tunnel authentication was denied.", connection],
+    ["SSH tunnel port forwarding failed.", connection],
+    ["SSH tunnel readiness timed out.", connection],
     ["Invalid runner authentication.", connection],
   ]) {
     expect(classifyTurnChangesReadFailure(new Error(error))).toEqual({ kind: "final", reason });
