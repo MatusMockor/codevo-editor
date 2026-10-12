@@ -175,6 +175,11 @@ pub fn run() {
                     app.path().app_data_dir()?,
                 ),
             ));
+            app.manage(Arc::new(
+                remote_agent_replay_store_commands::remote_agent_replay_store::RemoteAgentReplayStore::new(
+                    app.path().app_data_dir()?,
+                ),
+            ));
             app.manage(Arc::new(agent_output_artifact_commands::store::OutputArtifactStore::new(app.path().app_data_dir()?)));
             let agent_attachment_store = Arc::new(
                 agent_attachment_commands::agent_attachment_store::AgentAttachmentStore::new(
@@ -661,6 +666,11 @@ pub fn run() {
             agent_turn_log_commands::read_agent_turn_log_page,
             agent_turn_log_commands::summarize_agent_turn_logs,
             agent_turn_log_commands::delete_agent_thread_log,
+            remote_agent_replay_store_commands::remote_replay_cache_load_thread,
+            remote_agent_replay_store_commands::remote_replay_cache_put_task,
+            remote_agent_replay_store_commands::remote_replay_cache_remove_thread,
+            remote_agent_replay_store_commands::remote_replay_cache_remove_server,
+            remote_agent_replay_store_commands::remote_replay_cache_clear,
             agent_session_history_commands::list_external_agent_sessions,
             agent_session_history_commands::preview_external_agent_session,
             agent_session_history_commands::read_external_agent_session_history,

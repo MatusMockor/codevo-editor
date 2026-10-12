@@ -45,6 +45,8 @@ mod language_runtime_facade;
 mod macos_text_substitution;
 #[path = "pull_request_commands.rs"]
 mod pull_request_commands;
+#[path = "remote_agent_replay_store_commands.rs"]
+mod remote_agent_replay_store_commands;
 #[path = "../repository_lookup/mod.rs"]
 pub(crate) mod repository_lookup;
 #[path = "repository_lookup_commands.rs"]
