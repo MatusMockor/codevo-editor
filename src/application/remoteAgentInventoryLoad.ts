@@ -1,12 +1,25 @@
 import type { RemoteThreadMetadata } from "../domain/remoteThreadMetadata";
 import { loadRemoteThreadMetadata } from "./remoteThreadMetadataInventory";
 import type { AgentSubagentLifecycle } from "@codevo/agent-events";
+import { REMOTE_OUTPUT_DISCARDED_ERROR, type RemoteReplayGap } from "./remoteAgentReplayWindow";
 import {
-  droppedServerEvictedOutput,
-  REMOTE_OUTPUT_DISCARDED_ERROR,
-  retainRemoteReplayWindow,
-  type RemoteReplayGap,
-} from "./remoteAgentReplayWindow";
+  appliedRemoteBackwardPage,
+  forwardRemoteTaskReplay,
+  MAX_REMOTE_TASK_REPLAY_PAGES_PER_PASS,
+  MAX_REMOTE_REPLAY_BACKWARD_PAGES_PER_PASS,
+  type RemoteReplayDirection,
+  priorRemoteTaskReplay,
+  REMOTE_BACKFILL_PAGES_PER_LIVE_POLL,
+  REMOTE_TASK_REPLAY_TAIL_BEFORE,
+  remoteReplayIndex,
+  remoteReplayOutputDiscarded,
+  remoteTaskReplayUnread,
+  retainedRemoteTaskReplay,
+  tailRemoteTaskReplay,
+  type RemoteReplayBackfill,
+  type RemoteTaskReplay,
+} from "./remoteAgentTaskReplay";
+import type { RemoteInventoryProgressUrgency } from "./remoteInventoryProgress";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import type {
   RemoteRunnerDescriptor,
@@ -36,6 +49,7 @@ export interface RemoteAgentInventorySnapshot {
   readonly replays: ReadonlyMap<string, readonly RemoteRunnerEvent[]>;
   readonly resumes: ReadonlyMap<string, RemoteRunnerTaskResume>;
   readonly replayCursors?: ReadonlyMap<string, number>;
+  readonly replayBackfill?: ReadonlyMap<string, RemoteReplayBackfill>;
   readonly subagentLifecycles?: ReadonlyMap<string, AgentSubagentLifecycle>;
   readonly replayGaps?: ReadonlyMap<string, RemoteReplayGap>;
   readonly replayComplete: ReadonlySet<string>;
@@ -66,24 +80,31 @@ export const emptyRemoteInventory = (
 });
 const threadId = (serverId: string, task: RemoteRunnerTask) =>
   remoteAgentThreadKey(serverId, task.runnerId, task.conversationId ?? task.id);
+type ListEventsBefore = NonNullable<RemoteRunnerGateway["listEventsBefore"]>;
 export class RemoteInventoryRevoked extends Error {}
 export async function loadRemoteAgentInventory(
   gateway: RemoteRunnerGateway,
   previous: RemoteAgentInventorySnapshot,
   selectedThreadId: string | null,
   valid: () => boolean,
+  progressed?: (
+    snapshot: RemoteAgentInventorySnapshot,
+    urgency: RemoteInventoryProgressUrgency,
+  ) => void,
 ): Promise<RemoteAgentInventorySnapshot> {
   const check = () => {
     if (!valid()) throw new RemoteInventoryRevoked();
   };
   check();
   const serverId = previous.serverId;
+  check();
   const descriptor = await gateway.getRunner({ serverId });
   check();
   if (!descriptor.capabilities.taskExecution || !descriptor.capabilities.eventReplay)
     throw new Error("This runner does not support durable task execution.");
   if (previous.descriptor && previous.descriptor.runnerId !== descriptor.runnerId)
     throw new Error("The server runner identity changed. Reconnect the server before continuing.");
+  check();
   const projectPage = await gateway.listProjects({ serverId });
   check();
   let tasks = previous.tasks;
@@ -91,6 +112,7 @@ export async function loadRemoteAgentInventory(
   let catchingUp = false;
   let historyWindowed = previous.historyWindowed === true;
   for (let pageNumber = 0; pageNumber < 64; pageNumber++) {
+    check();
     const page = await gateway.listTasks({ serverId, after });
     check();
     let next = after;
@@ -116,6 +138,7 @@ export async function loadRemoteAgentInventory(
   if (activeTasks.length > 64)
     throw new Error("Remote active task inventory exceeds the 64-task polling limit.");
   for (const task of activeTasks) {
+    check();
     const updated = await gateway.getTask({ serverId, taskId: task.id });
     check();
     if (updated.id !== task.id || updated.runnerId !== descriptor.runnerId)
@@ -137,6 +160,7 @@ export async function loadRemoteAgentInventory(
         throw new Error("The runner returned invalid conversation ancestry.");
       continue;
     }
+    check();
     const parent = await gateway.getTask({ serverId, taskId: parentId });
     check();
     if (
@@ -159,6 +183,7 @@ export async function loadRemoteAgentInventory(
   );
   for (const listed of selected) {
     if (detailedTaskIds.has(listed.id)) continue;
+    check();
     const detail = await gateway.getTask({ serverId, taskId: listed.id });
     check();
     if (
@@ -183,97 +208,19 @@ export async function loadRemoteAgentInventory(
     detailedTaskIds.add(detail.id);
   }
   selected = tasks.filter((task) => threadId(serverId, task) === selectedThreadId).slice(0, 64);
-  const replays = new Map<string, readonly RemoteRunnerEvent[]>();
-  const resumes = new Map<string, RemoteRunnerTaskResume>();
-  const replayComplete = new Set<string>();
-  const replayTruncated = new Set<string>();
-  const replayDiscarded = new Set<string>();
-  const replayServerEvictions = new Map<string, number>();
   const latestSelected = selected.reduce<RemoteRunnerTask | undefined>(
     (latest, task) => (!latest || task.sequence > latest.sequence ? task : latest),
     undefined,
   );
-  const replayCursors = new Map<string, number>();
-  const replayGaps = new Map<string, RemoteReplayGap>();
-  const subagentLifecycles = new Map<string, AgentSubagentLifecycle>();
-  const olderTurnBytes = Math.floor(3_000_000 / Math.max(1, selected.length - 1));
-  let error: string | null = catchingUp
-    ? "Loading server history; continuation will be available when the latest tasks are reached."
-    : historyWindowed
-      ? "Showing recent conversations. Older history remains stored on the server."
-      : null;
-  for (const task of selected) {
-    const priorLifecycle = previous.subagentLifecycles?.get(task.id);
-    if (priorLifecycle) subagentLifecycles.set(task.id, priorLifecycle);
-    const perTurnBytes = task === latestSelected ? 3_000_000 : olderTurnBytes;
-    let events = previous.replays.get(task.id) ?? [];
-    let cursor = previous.replayCursors?.get(task.id) ?? events[events.length - 1]?.sequence ?? 0;
-    let gap = previous.replayGaps?.get(task.id);
-    let truncated = previous.replayTruncated.has(task.id);
-    let discarded = previous.replayDiscarded?.has(task.id) === true;
-    let evictedThrough = previous.replayServerEvictions?.get(task.id) ?? 0;
-    let complete = isRemoteTaskTerminal(task) && previous.replayComplete.has(task.id);
-    if (!complete) {
-      for (let pageNumber = 0; pageNumber < 24; pageNumber++) {
-        const page = await gateway.listEvents({ serverId, taskId: task.id, after: cursor });
-        check();
-        if (page.subagentLifecycle) subagentLifecycles.set(task.id, page.subagentLifecycle);
-        let next = cursor;
-        for (const event of page.items) {
-          if (event.taskId !== task.id || event.sequence <= next)
-            throw new Error("The runner returned invalid event ordering; output is incomplete.");
-          next = event.sequence;
-        }
-        if (page.nextCursor !== null && (page.nextCursor !== next || next === cursor))
-          throw new Error("The runner returned an invalid event page cursor.");
-        const removed = page.outputTruncatedBeforeSequence ?? 0;
-        const lost = removed > cursor || (truncated && removed > 0);
-        evictedThrough = Math.max(evictedThrough, removed);
-        if (lost && removed > (gap?.throughSequence ?? 0)) {
-          gap = {
-            throughSequence: removed,
-            startsAtLineBoundary: page.outputStartsAtLineBoundary === true,
-          };
-          truncated = true;
-        }
-        const retained = retainRemoteReplayWindow([...events, ...page.items], perTurnBytes, gap);
-        events = retained.events;
-        gap = retained.gap;
-        truncated ||= retained.truncated;
-        discarded ||=
-          lost ||
-          (truncated && removed > 0) ||
-          droppedServerEvictedOutput(retained, evictedThrough);
-        cursor = next;
-        if (page.nextCursor === null) {
-          complete = isRemoteTaskTerminal(task);
-          break;
-        }
-      }
-    }
-    const retained = retainRemoteReplayWindow(events, perTurnBytes, gap);
-    events = retained.events;
-    gap = retained.gap;
-    truncated ||= retained.truncated;
-    discarded ||= droppedServerEvictedOutput(retained, evictedThrough);
-    replayCursors.set(task.id, cursor);
-    if (evictedThrough > 0) replayServerEvictions.set(task.id, evictedThrough);
-    if (gap) replayGaps.set(task.id, gap);
-    replays.set(task.id, events);
-    if (complete) replayComplete.add(task.id);
-    if (truncated) replayTruncated.add(task.id);
-    if (discarded) replayDiscarded.add(task.id);
-    if (truncated && discarded) error = REMOTE_OUTPUT_DISCARDED_ERROR;
-    // Only the latest turn owns continuation. Older output remains fully replayed;
-    // querying its resume status adds no display information or launch authority.
-    if (!catchingUp && descriptor.capabilities.taskContinuation && task === latestSelected) {
-      const resume = await gateway.getTaskResume({ serverId, taskId: task.id });
-      check();
-      resumes.set(task.id, resume);
-    }
-  }
+  const latestRunningSelected = selected
+    .filter((task) => task.status === "running")
+    .reduce<RemoteRunnerTask | undefined>(
+      (latest, task) => (!latest || task.sequence > latest.sequence ? task : latest),
+      undefined,
+    );
   const pendingMessages = new Map<string, readonly RemoteRunnerPendingMessage[]>();
   if (latestSelected && descriptor.capabilities.pendingMessages && gateway.listPendingMessages) {
+    check();
     const page = await gateway.listPendingMessages({ serverId, taskId: latestSelected.id });
     check();
     if (
@@ -292,7 +239,32 @@ export async function loadRemoteAgentInventory(
       ? await loadRemoteThreadMetadata(gateway, serverId, check)
       : new Map<string, RemoteThreadMetadata>();
   check();
-  return {
+  const continuation = !catchingUp && descriptor.capabilities.taskContinuation === true;
+  const resumes = new Map<string, RemoteRunnerTaskResume>();
+  const priorResume = latestSelected && previous.resumes.get(latestSelected.id);
+  if (continuation && latestSelected && priorResume) resumes.set(latestSelected.id, priorResume);
+  const listEventsBefore =
+    descriptor.capabilities.eventBackwardPaging === true
+      ? gateway.listEventsBefore?.bind(gateway)
+      : undefined;
+  const direction: RemoteReplayDirection = listEventsBefore ? "backward" : "forward";
+  const replayed = new Map<string, RemoteTaskReplay>();
+  for (const task of selected) {
+    if (remoteTaskReplayUnread(previous, task.id)) continue;
+    replayed.set(task.id, priorRemoteTaskReplay(previous, task, direction));
+  }
+  const olderTurnBytes = Math.floor(3_000_000 / Math.max(1, selected.length - 1));
+  const maxBytesOf = (task: RemoteRunnerTask) =>
+    task === latestSelected ? 3_000_000 : olderTurnBytes;
+  const replayOf = (task: RemoteRunnerTask) =>
+    replayed.get(task.id) ?? priorRemoteTaskReplay(previous, task, direction);
+  const notice = catchingUp
+    ? "Loading server history; continuation will be available when the latest tasks are reached."
+    : historyWindowed
+      ? "Showing recent conversations. Older history remains stored on the server."
+      : null;
+  const unloaded = () => selected.filter((task) => !replayed.has(task.id)).map((task) => task.id);
+  const snapshot = (): RemoteAgentInventorySnapshot => ({
     threadMetadata,
     pendingMessages,
     serverId,
@@ -304,17 +276,115 @@ export async function loadRemoteAgentInventory(
     descriptor,
     projects: projectPage.items,
     tasks,
-    replays,
-    resumes,
-    replayComplete,
-    replayCursors,
-    replayGaps,
-    subagentLifecycles,
-    replayTruncated,
-    replayDiscarded,
-    replayServerEvictions,
-    error,
+    resumes: new Map(resumes),
+    ...remoteReplayIndex(replayed, unloaded()),
+    error: remoteReplayOutputDiscarded(replayed) ? REMOTE_OUTPUT_DISCARDED_ERROR : notice,
+  });
+  const report = (urgency: RemoteInventoryProgressUrgency) => {
+    check();
+    progressed?.(snapshot(), urgency);
+    check();
   };
+  const readTail = async (task: RemoteRunnerTask, read: ListEventsBefore) => {
+    check();
+    const page = await read({ serverId, taskId: task.id, before: REMOTE_TASK_REPLAY_TAIL_BEFORE });
+    check();
+    replayed.set(task.id, tailRemoteTaskReplay(task, page, maxBytesOf(task)));
+    if (page.items.length === 0) return;
+    report(task === latestSelected ? "immediate" : "coalesced");
+  };
+  const readForwardPage = async (task: RemoteRunnerTask) => {
+    const replay = replayOf(task);
+    check();
+    const page = await gateway.listEvents({ serverId, taskId: task.id, after: replay.cursor });
+    check();
+    replayed.set(task.id, forwardRemoteTaskReplay(replay, task, page, maxBytesOf(task)));
+    return page;
+  };
+  const readForward = async (task: RemoteRunnerTask) => {
+    const prior = replayOf(task);
+    for (let pageNumber = 0; pageNumber < MAX_REMOTE_TASK_REPLAY_PAGES_PER_PASS; pageNumber++) {
+      if (replayOf(task).complete) break;
+      const page = await readForwardPage(task);
+      check();
+      if (listEventsBefore && page.items.length > 0) report("coalesced");
+      if (page.nextCursor === null) break;
+    }
+    check();
+    replayed.set(task.id, retainedRemoteTaskReplay(replayOf(task), maxBytesOf(task)));
+    const settled = replayOf(task);
+    if (
+      !listEventsBefore &&
+      (settled.cursor !== prior.cursor ||
+        settled.complete !== prior.complete ||
+        settled.events !== prior.events)
+    )
+      report("coalesced");
+  };
+  let backwardPages = 0;
+  const taskPages = new Map<string, number>();
+  const readLive = async () => {
+    if (backwardPages % REMOTE_BACKFILL_PAGES_PER_LIVE_POLL !== 0) return;
+    if (!latestRunningSelected || replayOf(latestRunningSelected).complete) return;
+    check();
+    const page = await readForwardPage(latestRunningSelected);
+    check();
+    if (page.items.length > 0) report("coalesced");
+  };
+  const backfill = async (
+    task: RemoteRunnerTask,
+    read: ListEventsBefore,
+    phase: "pending" | "scanningInputs" | "scanningBoundary",
+  ) => {
+    while (
+      backwardPages < MAX_REMOTE_REPLAY_BACKWARD_PAGES_PER_PASS &&
+      (taskPages.get(task.id) ?? 0) < MAX_REMOTE_TASK_REPLAY_PAGES_PER_PASS
+    ) {
+      const replay = replayOf(task);
+      if (replay.earlier.kind !== phase) return;
+      check();
+      const page = await read({ serverId, taskId: task.id, before: replay.earlier.before });
+      check();
+      const next = appliedRemoteBackwardPage(replay, task, page, maxBytesOf(task));
+      replayed.set(task.id, next);
+      backwardPages += 1;
+      taskPages.set(task.id, (taskPages.get(task.id) ?? 0) + 1);
+      report("coalesced");
+      await readLive();
+      check();
+    }
+  };
+  if (selected.some((task) => remoteTaskReplayUnread(previous, task.id))) report("coalesced");
+  for (const task of selected) {
+    check();
+    if (listEventsBefore && remoteTaskReplayUnread(previous, task.id)) {
+      await readTail(task, listEventsBefore);
+      check();
+    }
+    if (!listEventsBefore || !remoteTaskReplayUnread(previous, task.id)) {
+      await readForward(task);
+      check();
+    }
+    // Only the latest turn owns continuation. Older output remains fully replayed;
+    // querying its resume status adds no display information or launch authority.
+    if (continuation && task === latestSelected) {
+      check();
+      const resume = await gateway.getTaskResume({ serverId, taskId: task.id });
+      check();
+      resumes.set(task.id, resume);
+    }
+  }
+  if (listEventsBefore) {
+    for (const phase of ["pending", "scanningInputs", "scanningBoundary"] as const) {
+      for (const task of selected) {
+        check();
+        await backfill(task, listEventsBefore, phase);
+        check();
+      }
+    }
+  }
+  check();
+  return snapshot();
 }
 
 /** A bounded display cache; server rows remain authoritative and are never deleted. */

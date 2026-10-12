@@ -1,7 +1,7 @@
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
 import { subscribeRemoteInventory } from "./remoteInventorySubscriptions";
 
-export type RemoteInventoryRefreshOutcome = "settled" | "recovering";
+export type RemoteInventoryRefreshOutcome = "settled" | "recovering" | "continuing";
 
 interface Options {
   readonly gateway: RemoteRunnerGateway | null;
@@ -10,10 +10,12 @@ interface Options {
 }
 
 const RECOVERY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000, 16_000, 30_000];
+export const REMOTE_INVENTORY_CONTINUATION_DELAY_MS = 250;
 
 function recoveryAttempts(outcome: RemoteInventoryRefreshOutcome, attempts: number): number {
   switch (outcome) {
     case "settled":
+    case "continuing":
       return 0;
     case "recovering":
       return Math.min(attempts + 1, RECOVERY_DELAYS_MS.length);
@@ -32,11 +34,13 @@ export function startRemoteInventoryRefresh({ gateway, serverIds, refresh }: Opt
   let running = false;
   let dirty = false;
   let attempts = 0;
+  let continuing = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const live = new Set<string>();
   const subscriptions = new Set<() => void>();
   const ids = [...new Set(serverIds)].slice(0, 64);
   const delay = () => {
+    if (continuing) return REMOTE_INVENTORY_CONTINUATION_DELAY_MS;
     if (ids.length === 0 || live.size !== ids.length) return 2_000;
     return RECOVERY_DELAYS_MS[attempts - 1] ?? 60_000;
   };
@@ -56,8 +60,11 @@ export function startRemoteInventoryRefresh({ gateway, serverIds, refresh }: Opt
     }
     running = true;
     dirty = false;
+    continuing = false;
     try {
-      attempts = recoveryAttempts(await refresh(), attempts);
+      const outcome = await refresh();
+      attempts = recoveryAttempts(outcome, attempts);
+      continuing = outcome === "continuing";
     } catch {
       // The inventory owns its error display. A rejected refresh must not end recovery.
       attempts = recoveryAttempts("recovering", attempts);

@@ -2,6 +2,7 @@ import type {
   RemoteRunnerEvent,
   RemoteRunnerEventPage,
   RemoteRunnerEventsBeforeRequest,
+  RemoteRunnerTaskRequest,
 } from "../domain/remoteRunner";
 import { retainRemoteReplayWindow } from "./remoteAgentReplayWindow";
 
@@ -82,20 +83,39 @@ export class FakeRunnerEvents {
       (event) => event.taskId === request.taskId && event.sequence < request.before,
     );
     const items = newestWithinPage(older, this.pageSize);
-    const watermark = this.watermarks.get(request.taskId);
     const page: RemoteRunnerEventPage = {
       items,
       nextCursor: items.length < older.length ? (items[0]?.sequence ?? null) : null,
-      ...(watermark === undefined
-        ? {}
-        : {
-            outputTruncatedBeforeSequence: watermark.through,
-            outputStartsAtLineBoundary: watermark.startsAtLineBoundary,
-          }),
+      ...this.watermarkOf(request.taskId),
     };
     if (this.tamper === null) return page;
     return this.tamper(page, request);
   };
+
+  readonly listEvents = async (
+    request: RemoteRunnerTaskRequest & Readonly<{ after: number }>,
+  ): Promise<RemoteRunnerEventPage> => {
+    const newer = this.events.filter(
+      (event) => event.taskId === request.taskId && event.sequence > request.after,
+    );
+    const items = oldestWithinPage(newer, this.pageSize);
+    return {
+      items,
+      nextCursor: items.length < newer.length ? (items[items.length - 1]?.sequence ?? null) : null,
+      ...this.watermarkOf(request.taskId),
+    };
+  };
+
+  private watermarkOf(
+    taskId: string,
+  ): Pick<RemoteRunnerEventPage, "outputTruncatedBeforeSequence" | "outputStartsAtLineBoundary"> {
+    const watermark = this.watermarks.get(taskId);
+    if (watermark === undefined) return {};
+    return {
+      outputTruncatedBeforeSequence: watermark.through,
+      outputStartsAtLineBoundary: watermark.startsAtLineBoundary,
+    };
+  }
 
   private append(
     event: Pick<RemoteRunnerEvent, "taskId" | "type"> & Partial<RemoteRunnerEvent>,
@@ -104,6 +124,21 @@ export class FakeRunnerEvents {
     this.events.push({ ...event, sequence: this.sequence, createdAt: CREATED_AT });
     return this.sequence;
   }
+}
+
+function oldestWithinPage(
+  newer: readonly RemoteRunnerEvent[],
+  pageSize: number,
+): readonly RemoteRunnerEvent[] {
+  let end = 0;
+  let bytes = 0;
+  while (end < newer.length && end < pageSize) {
+    const size = UTF8.encode(JSON.stringify(newer[end])).byteLength;
+    if (end > 0 && bytes + size > RUNNER_PAGE_BYTE_BUDGET) break;
+    bytes += size;
+    end += 1;
+  }
+  return newer.slice(0, end);
 }
 
 function newestWithinPage(
