@@ -7,6 +7,12 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.112] - 2026-10-12
+
+### Fixed
+
+- The info button on the offer to compact a session is centered.
+
 ## [0.2.0-beta.111] - 2026-10-12
 
 ### Added
