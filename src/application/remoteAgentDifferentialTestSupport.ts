@@ -25,6 +25,13 @@ export function randomFor(seed: number, index: number): () => number {
   };
 }
 
+export function seededDeselectionPasses(seed: number, index: number): readonly number[] {
+  const random = randomFor(seed ^ 0xa71e5ec7, index);
+  return Array.from({ length: Math.floor(random() * 4) }, () => 1 + Math.floor(random() * 6)).sort(
+    (left, right) => left - right,
+  );
+}
+
 export interface ReplayLimits {
   readonly events: number;
   readonly bytes: number;

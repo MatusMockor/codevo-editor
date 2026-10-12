@@ -3,14 +3,19 @@ import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type {
+  RemoteRunnerDescriptor,
   RemoteRunnerEventPage,
+  RemoteRunnerGateway,
   RemoteRunnerEventsBeforeRequest,
   RemoteRunnerInventoryEvent,
   RemoteRunnerServer,
+  RemoteRunnerTask,
 } from "../domain/remoteRunner";
+import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import type { RemoteAgentInventorySnapshot } from "./remoteAgentInventoryLoad";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import {
+  deferred,
   emitStreamTurn,
   fakeRunnerGateway,
   lastOf,
@@ -174,6 +179,7 @@ it("coalesces the publications of a pass by time and always ends with the latest
   await view.render();
   await pages.release();
   expect(view.published).toHaveLength(2);
+  const tasks = view.snapshot?.tasks;
 
   await pages.release();
   await pages.release();
@@ -185,6 +191,7 @@ it("coalesces the publications of a pass by time and always ends with the latest
   expect(view.published).toHaveLength(2);
   await advance(1);
   expect(view.published).toHaveLength(3);
+  expect(view.snapshot?.tasks).toBe(tasks);
   expect(view.snapshot?.replays.get("turn-2")).toHaveLength(150);
   expect(view.snapshot?.replays.get("turn-1")).toHaveLength(50);
 
@@ -193,6 +200,7 @@ it("coalesces the publications of a pass by time and always ends with the latest
   expect(view.published).toHaveLength(3);
   await advance(REMOTE_INVENTORY_PROGRESS_INTERVAL_MS);
   expect(view.published).toHaveLength(4);
+  expect(view.snapshot?.tasks).toBe(tasks);
 
   await advance(REMOTE_INVENTORY_PROGRESS_INTERVAL_MS);
   await pages.release();
@@ -549,6 +557,47 @@ it.each([
   },
 );
 
+it.each([
+  { field: "provider", update: { provider: "codex" } },
+  { field: "status", update: { status: "running" } },
+] satisfies readonly { field: string; update: Partial<RemoteRunnerTask> }[])(
+  "reports loading while a remembered replay invalidated by its $field is reloaded from the tail",
+  async ({ update }) => {
+    const runner = new FakeRunnerEvents();
+    longTurn(runner, "turn-1");
+    const task = remoteTurn(1);
+    const h = fakeRunnerGateway(runner, [task, independentTurn(2)]);
+    const view = mount(h);
+    await view.render();
+    const remembered = view.snapshot?.replays.get("turn-1");
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+    h.replaceTasks([{ ...task, ...update }, independentTurn(2)]);
+    const replacement = new FakeRunnerEvents();
+    replacement.lifecycle("turn-1", "task.created");
+    replacement.output("turn-1", claudeTextLine("replacement history"));
+    if (update.status !== "running") replacement.lifecycle("turn-1", "task.succeeded");
+    const pages = gatedBackwardPages(h, replacement);
+    h.calls.listEvents.mockImplementation(replacement.listEvents);
+    h.calls.listEventsBefore.mockClear();
+
+    await view.render();
+
+    expect(pages.waiting.map((page) => page.request)).toEqual([
+      { serverId: "server", taskId: "turn-1", before: TAIL },
+    ]);
+    expect(view.snapshot?.replays.has("turn-1")).toBe(false);
+    expect(view.snapshot?.replayCursors?.has("turn-1")).toBe(false);
+    expect(view.surface.loading).toBe(true);
+
+    await pages.release();
+
+    expect(view.surface.loading).toBe(false);
+    expect(view.snapshot?.replays.get("turn-1")).not.toBe(remembered);
+    expect(view.snapshot?.replays.get("turn-1")).toEqual(replacement.eventsOf("turn-1"));
+    expect(view.snapshot?.replayTruncated.has("turn-1")).toBe(false);
+  },
+);
+
 it.each(["pending", "scanningInputs"] as const)(
   "restarts unfinished %s history from the tail when the server endpoint changes",
   async (phase) => {
@@ -707,7 +756,7 @@ it.each([
   },
 );
 
-it("restarts a deselected over-limit thread from its newest tail when it is selected again", async () => {
+it("resumes a deselected over-limit thread from its remembered boundary cursor when selected again", async () => {
   const runner = boundaryScanRunner();
   const other = remoteTurn(2, { conversationId: "turn-2", parentTaskId: undefined });
   const h = fakeRunnerGateway(runner, [remoteTurn(1), other]);
@@ -722,13 +771,16 @@ it("restarts a deselected over-limit thread from its newest tail when it is sele
 
   expect(
     boundaryCursors(h)[earlierReads],
-    "A reselected thread must start again from its newest tail",
-  ).toBe(TAIL);
+    "A reselected thread must resume its stored boundary cursor",
+  ).toBe(2);
+  expect(boundaryCursors(h)).toEqual([...expectedBoundaryCursors(), 2]);
   expect(
     lastOf(view.snapshot?.replays.get("turn-1") ?? []),
     "The newest output must be visible as soon as the thread is selected again",
   ).toEqual(lastOf(first.replays.get("turn-1") ?? []));
-  expect(h.forward().filter((request) => request.taskId === "turn-1")).toEqual([]);
+  expect(h.forward().filter((request) => request.taskId === "turn-1")).toEqual([
+    { serverId: "server", taskId: "turn-1", after: first.replayCursors?.get("turn-1") },
+  ]);
   truthfulBoundary(view.snapshot!);
 
   for (let pass = 0; pass < 4; pass += 1) await advance(REMOTE_INVENTORY_CONTINUATION_DELAY_MS);
@@ -740,7 +792,7 @@ it("restarts a deselected over-limit thread from its newest tail when it is sele
   expect(projectedTurns(view.snapshot!)).toEqual(projectedTurns(expected));
 });
 
-it("restarts a deselected over-limit thread through the legacy loader while backward paging is absent", async () => {
+it("suspends a remembered deselected over-limit thread until backward paging returns", async () => {
   const runner = boundaryScanRunner();
   const other = remoteTurn(2, { conversationId: "turn-2", parentTaskId: undefined });
   const h = fakeRunnerGateway(runner, [remoteTurn(1), other]);
@@ -763,12 +815,33 @@ it("restarts a deselected over-limit thread through the legacy loader while back
 
   expect(
     boundaryCursors(h),
-    "A deselected thread must not continue its dropped backward scan",
+    "A remembered thread must suspend its backward scan while capability is absent",
   ).toEqual(expectedBoundaryCursors());
   expect(
-    h.forward().filter((request) => request.taskId === "turn-1").length,
-    "Without backward paging the reselected thread is read by the legacy loader",
-  ).toBeGreaterThan(0);
+    h.forward().filter((request) => request.taskId === "turn-1"),
+    "The suspended remembered history rechecks only its terminal tail",
+  ).toEqual([
+    { serverId: "server", taskId: "turn-1", after: lastOf(runner.eventsOf("turn-1"))?.sequence },
+  ]);
+  expect(view.snapshot?.replayBackfill?.get("turn-1")).toEqual({
+    kind: "scanningBoundary",
+    before: 2,
+  });
+  truthfulBoundary(view.snapshot!);
+  h.calls.getRunner.mockResolvedValue({
+    protocolVersion: 1,
+    runnerId: "runner",
+    name: "Server",
+    capabilities: {
+      taskExecution: true,
+      eventReplay: true,
+      taskContinuation: true,
+      eventBackwardPaging: true,
+    },
+  });
+  await act(async () => view.surface.refresh());
+  expect(boundaryCursors(h)).toEqual([...expectedBoundaryCursors(), 2]);
+  expect(view.snapshot?.replayBackfill?.get("turn-1")).toEqual({ kind: "retained" });
   const legacy = fakeRunnerGateway(runner, [remoteTurn(1), other], {});
   const expected = await loadUntilSettled(legacy.gateway, runner);
   expect(replayState(view.snapshot!)).toEqual(replayState(expected));
@@ -821,3 +894,823 @@ it("backs off a failed scanningBoundary page and retries its exact cursor with t
   expect(replayState(view.snapshot!)).toEqual(replayState(expected));
   expect(projectedTurns(view.snapshot!)).toEqual(projectedTurns(expected));
 });
+
+function independentTurn(index: number) {
+  return remoteTurn(index, { conversationId: `turn-${index}`, parentTaskId: undefined });
+}
+
+it.each(
+  [2, 3, 4].flatMap((failedPage) =>
+    (["running", "succeeded"] as const).map((status) => ({ failedPage, status })),
+  ),
+)(
+  "keeps the restored catch-up budget after failure on forward page $failedPage with current status $status",
+  async ({ failedPage, status }) => {
+    const runner = new FakeRunnerEvents();
+    for (let index = 0; index < 50; index += 1)
+      runner.output("turn-1", claudeTextLine(`original ${index} `));
+    const running = remoteTurn(1, { status: "running" });
+    const other = independentTurn(2);
+    const h = fakeRunnerGateway(runner, [running, other]);
+    const view = mount(h);
+    await view.render();
+    expect(view.snapshot?.replayCursors?.get("turn-1")).toBe(50);
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", other.id) });
+    for (let index = 0; index < 2_000; index += 1)
+      runner.output("turn-1", claudeTextLine(`new ${index} `));
+    if (status === "succeeded") runner.lifecycle("turn-1", "task.succeeded");
+    h.replaceTasks([remoteTurn(1, { status }), other]);
+    h.calls.listEvents.mockClear();
+    h.calls.listEventsBefore.mockClear();
+    h.calls.listEvents.mockImplementation(
+      async (request: Parameters<RemoteRunnerGateway["listEvents"]>[0]) => {
+        if (h.forward().length === failedPage)
+          return Promise.reject(new Error("Request timed out."));
+        return runner.listEvents(request);
+      },
+    );
+
+    await view.render();
+
+    expect(h.forward().map((request) => request.after)).toEqual(
+      Array.from({ length: failedPage }, (_, index) => 50 + index * 50),
+    );
+    expect(view.snapshot?.replayCursors?.get("turn-1")).toBe(failedPage * 50);
+    expect(view.snapshot?.replayCatchUpTaskIds).toEqual(new Set(["turn-1"]));
+    expect(view.snapshot?.replayRestore).toBeUndefined();
+    expect(view.snapshot?.error).toContain("Request timed out.");
+    expect(view.surface.loading).toBe(false);
+    expect(h.backward()).toEqual([]);
+    const publications = view.published.length;
+    h.calls.listEvents.mockClear();
+    h.calls.listEvents.mockImplementation(runner.listEvents);
+
+    await advance(2_000);
+
+    const tailOrder = h.calls.listEventsBefore.mock.invocationCallOrder[0]!;
+    const catchUpRequests = h
+      .forward()
+      .filter((_, index) => h.calls.listEvents.mock.invocationCallOrder[index]! < tailOrder);
+    expect(catchUpRequests.map((request) => request.after)).toEqual(
+      Array.from({ length: 4 }, (_, index) => failedPage * 50 + index * 50),
+    );
+    if (status === "succeeded") expect(h.forward()).toEqual(catchUpRequests);
+    if (status === "running")
+      expect(
+        h
+          .forward()
+          .slice(4)
+          .map((request) => request.after),
+      ).toEqual(Array.from({ length: h.forward().length - 4 }, () => 2_050));
+    expect(h.backward()[0]).toEqual({ serverId: "server", taskId: "turn-1", before: TAIL });
+    const newestTail = runner.eventsOf("turn-1").slice(-50);
+    expect(
+      view.published
+        .slice(publications)
+        .some((snapshot) =>
+          newestTail.every((event) => snapshot.replays.get("turn-1")?.includes(event)),
+        ),
+    ).toBe(true);
+    expect(view.snapshot?.replayCatchUpTaskIds?.size ?? 0).toBe(0);
+    if (status === "succeeded") await finishReplay(view);
+    if (status === "running") {
+      for (let pass = 0; pass < 20; pass += 1) {
+        if (view.snapshot?.replayBackfill?.get("turn-1")?.kind === "retained") break;
+        await advance(REMOTE_INVENTORY_CONTINUATION_DELAY_MS);
+      }
+      expect(view.snapshot?.replayComplete.has("turn-1")).toBe(false);
+      expect(view.snapshot?.replayBackfill?.get("turn-1")?.kind).toBe("retained");
+    }
+    const legacy = fakeRunnerGateway(runner, [remoteTurn(1, { status }), other], {});
+    const expected = await loadUntilSettled(legacy.gateway, runner);
+    expect(view.snapshot?.connected).toBe(true);
+    expect(view.snapshot?.tasks.find((task) => task.id === "turn-1")?.status).toBe(status);
+    expect(replayState(view.snapshot!)).toEqual(replayState(expected));
+    expect(projectedTurns(view.snapshot!)).toEqual(projectedTurns(expected));
+  },
+);
+
+it("clears restored catch-up provenance at the stream end and uses the normal budget later", async () => {
+  const runner = new FakeRunnerEvents();
+  for (let index = 0; index < 50; index += 1) runner.output("turn-1", claudeTextLine("original "));
+  const running = remoteTurn(1, { status: "running" });
+  const h = fakeRunnerGateway(runner, [running, independentTurn(2)]);
+  const view = mount(h);
+  await view.render();
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  for (let index = 0; index < 150; index += 1) runner.output("turn-1", claudeTextLine("catch up "));
+  h.calls.listEvents.mockClear();
+  h.calls.listEventsBefore.mockClear();
+
+  await view.render();
+
+  expect(h.forward().map((request) => request.after)).toEqual([50, 100, 150]);
+  expect(view.snapshot?.replayCatchUpTaskIds?.size ?? 0).toBe(0);
+  expect(view.published.some((snapshot) => snapshot.replayCatchUpTaskIds?.has("turn-1"))).toBe(
+    true,
+  );
+  const caughtUp = view.snapshot!;
+  for (let index = 0; index < 1_300; index += 1) runner.output("turn-1", claudeTextLine("later "));
+  h.calls.listEvents.mockClear();
+
+  await act(async () => view.surface.refresh());
+
+  expect(h.forward().map((request) => request.after)).toEqual(
+    Array.from({ length: MAX_REMOTE_TASK_REPLAY_PAGES_PER_PASS }, (_, index) => 200 + index * 50),
+  );
+  expect(h.backward()).toEqual([]);
+  expect(view.snapshot?.replayCursors?.get("turn-1")).toBe(1_400);
+  expect(view.snapshot?.replayCatchUpTaskIds?.size ?? 0).toBe(0);
+  expect(caughtUp.replayCatchUpTaskIds?.size ?? 0).toBe(0);
+});
+
+it("revokes catch-up provenance and late forward progress when another thread is selected", async () => {
+  const runner = new FakeRunnerEvents();
+  for (let index = 0; index < 50; index += 1) runner.output("turn-1", claudeTextLine("original "));
+  runner.output("turn-2", claudeTextLine("other thread "));
+  const other = independentTurn(2);
+  const h = fakeRunnerGateway(runner, [remoteTurn(1, { status: "running" }), other]);
+  const view = mount(h);
+  await view.render();
+  const otherThread = remoteAgentThreadKey("server", "runner", other.id);
+  await view.render({ selectedThreadId: otherThread });
+  for (let index = 0; index < 2_000; index += 1) runner.output("turn-1", claudeTextLine("new "));
+  const pending = deferred<RemoteRunnerEventPage>();
+  h.calls.listEvents.mockImplementation(
+    (request: Parameters<RemoteRunnerGateway["listEvents"]>[0]) => {
+      if (request.taskId === "turn-1" && request.after === 101) return pending.promise;
+      return runner.listEvents(request);
+    },
+  );
+  await view.render();
+  await advance(REMOTE_INVENTORY_PROGRESS_INTERVAL_MS);
+  expect(view.snapshot?.replayCatchUpTaskIds).toEqual(new Set(["turn-1"]));
+  expect(view.snapshot?.replayCursors?.get("turn-1")).toBe(101);
+
+  await view.render({ selectedThreadId: otherThread });
+
+  const selected = view.snapshot;
+  const publications = view.published.length;
+  expect(selected?.replayCatchUpTaskIds?.size ?? 0).toBe(0);
+  expect(selected?.replays.has("turn-1")).toBe(false);
+  expect(selected?.replays.get(other.id)).toEqual(runner.eventsOf(other.id));
+  await act(async () => {
+    pending.resolve(await runner.listEvents({ serverId: "server", taskId: "turn-1", after: 101 }));
+    await vi.advanceTimersByTimeAsync(REMOTE_INVENTORY_PROGRESS_INTERVAL_MS);
+  });
+  expect(view.snapshot).toBe(selected);
+  expect(view.published).toHaveLength(publications);
+  expect(view.snapshot?.replayCatchUpTaskIds?.size ?? 0).toBe(0);
+});
+
+function runnerDescriptor(): RemoteRunnerDescriptor {
+  return {
+    protocolVersion: 1,
+    runnerId: "runner",
+    name: "Server",
+    capabilities: {
+      taskExecution: true,
+      eventReplay: true,
+      taskContinuation: true,
+      eventBackwardPaging: true,
+    },
+  };
+}
+
+async function finishReplay(view: ReturnType<typeof mount>, taskId = "turn-1"): Promise<void> {
+  for (let pass = 0; pass < 40; pass += 1) {
+    const earlier = view.snapshot?.replayBackfill?.get(taskId);
+    if (
+      view.snapshot?.replayComplete.has(taskId) &&
+      (earlier?.kind === "loaded" || earlier?.kind === "retained")
+    )
+      break;
+    await advance(REMOTE_INVENTORY_CONTINUATION_DELAY_MS);
+  }
+  expect(view.snapshot?.replayComplete.has(taskId)).toBe(true);
+  expect(["loaded", "retained"]).toContain(view.snapshot?.replayBackfill?.get(taskId)?.kind);
+}
+
+it("restores a terminal 2000-event thread before the gateway answers and rechecks its tail once", async () => {
+  const runner = new FakeRunnerEvents();
+  runner.lifecycle("turn-1", "task.created");
+  for (let index = 0; index < 1_998; index += 1)
+    runner.output("turn-1", claudeTextLine(`line ${index} `));
+  runner.lifecycle("turn-1", "task.succeeded");
+  const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)]);
+  const view = mount(h);
+  await view.render();
+  await finishReplay(view);
+  const first = view.snapshot!;
+  const projection = projectedTurns(first);
+  const events = first.replays.get("turn-1");
+  expect(runner.eventsOf("turn-1")).toHaveLength(2_000);
+  expect(events).toHaveLength(1_100);
+  expect(first.replayBackfill?.get("turn-1")).toEqual({ kind: "retained" });
+  expect(h.backward().filter((request) => request.taskId === "turn-1")).toHaveLength(40);
+
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  const descriptor = deferred<RemoteRunnerDescriptor>();
+  h.calls.getRunner.mockReturnValueOnce(descriptor.promise);
+  h.calls.listTasks.mockClear();
+  h.calls.getTask.mockClear();
+  h.calls.listEvents.mockClear();
+  h.calls.listEventsBefore.mockClear();
+  const publications = view.published.length;
+  await view.render();
+
+  expect(view.published[publications]?.replays.get("turn-1")).toBe(events);
+  expect(view.snapshot?.replays.get("turn-1")).toBe(events);
+  expect(replayState(view.snapshot!)).toEqual(replayState(first));
+  expect(projectedTurns(view.snapshot!)).toEqual(projection);
+  expect(view.surface.loading).toBe(true);
+  expect(h.forward()).toEqual([]);
+  expect(h.backward()).toEqual([]);
+
+  await act(async () => {
+    descriptor.resolve(runnerDescriptor());
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(h.calls.listTasks.mock.calls).toEqual([
+    [{ serverId: "server", after: first.listingCursor }],
+  ]);
+  expect(h.calls.getTask.mock.calls).toEqual([[{ serverId: "server", taskId: "turn-1" }]]);
+  expect(h.forward().length + h.backward().length).toBe(1);
+  for (let pass = 0; pass < 3; pass += 1) await act(async () => view.surface.refresh());
+  expect(h.forward()).toEqual([
+    { serverId: "server", taskId: "turn-1", after: first.replayCursors?.get("turn-1") },
+  ]);
+  expect(h.backward()).toEqual([]);
+  expect(view.snapshot?.replays.get("turn-1")).toBe(events);
+  expect(replayState(view.snapshot!)).toEqual(replayState(first));
+  expect(projectedTurns(view.snapshot!)).toEqual(projection);
+});
+
+it("restores a remembered terminal legacy replay and rechecks its tail once", async () => {
+  const runner = new FakeRunnerEvents();
+  longTurn(runner, "turn-1");
+  const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)], {});
+  const view = mount(h);
+  await view.render();
+  const first = view.snapshot!;
+  expect(first.replayBackfill?.get("turn-1")).toEqual({ kind: "loaded" });
+  expect(first.replayComplete.has("turn-1")).toBe(true);
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  const descriptor = deferred<RemoteRunnerDescriptor>();
+  h.calls.getRunner.mockReturnValueOnce(descriptor.promise);
+  h.calls.listEvents.mockClear();
+  h.calls.listEventsBefore.mockClear();
+  await view.render();
+
+  expect(view.snapshot?.replays.get("turn-1")).toBe(first.replays.get("turn-1"));
+  expect(replayState(view.snapshot!)).toEqual(replayState(first));
+  expect(projectedTurns(view.snapshot!)).toEqual(projectedTurns(first));
+  expect(view.surface.loading).toBe(true);
+  await act(async () => {
+    descriptor.resolve({
+      ...runnerDescriptor(),
+      capabilities: { taskExecution: true, eventReplay: true, taskContinuation: true },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  for (let pass = 0; pass < 3; pass += 1) await act(async () => view.surface.refresh());
+  expect(h.forward()).toEqual([
+    { serverId: "server", taskId: "turn-1", after: first.replayCursors?.get("turn-1") },
+  ]);
+  expect(h.backward()).toEqual([]);
+  expect(view.snapshot?.replays.get("turn-1")).toBe(first.replays.get("turn-1"));
+});
+
+it("cold-opens the least recently selected thread after nine deselected threads are remembered", async () => {
+  const runner = new FakeRunnerEvents();
+  const tasks = Array.from({ length: 10 }, (_, index) => independentTurn(index + 1));
+  for (const task of tasks) {
+    runner.lifecycle(task.id, "task.created");
+    runner.output(task.id, claudeTextLine(task.id));
+    runner.lifecycle(task.id, "task.succeeded");
+  }
+  const h = fakeRunnerGateway(runner, tasks);
+  const view = mount(h);
+  await view.render();
+  const events = view.snapshot?.replays.get("turn-1");
+  for (let index = 2; index <= 10; index += 1)
+    await view.render({
+      selectedThreadId: remoteAgentThreadKey("server", "runner", `turn-${index}`),
+    });
+  h.calls.listEventsBefore.mockClear();
+  await view.render();
+
+  expect(h.backward()).toEqual([{ serverId: "server", taskId: "turn-1", before: TAIL }]);
+  expect(view.snapshot?.replays.get("turn-1")).not.toBe(events);
+  expect(view.snapshot?.replays.get("turn-1")).toEqual(runner.eventsOf("turn-1"));
+});
+
+it("updates remembered recency when a thread is selected again", async () => {
+  const runner = new FakeRunnerEvents();
+  const tasks = Array.from({ length: 10 }, (_, index) => independentTurn(index + 1));
+  for (const task of tasks) runner.output(task.id, claudeTextLine(task.id));
+  const h = fakeRunnerGateway(runner, tasks);
+  const view = mount(h);
+  await view.render();
+  const events = view.snapshot?.replays.get("turn-1");
+  for (let index = 2; index <= 9; index += 1)
+    await view.render({
+      selectedThreadId: remoteAgentThreadKey("server", "runner", `turn-${index}`),
+    });
+  h.calls.listEventsBefore.mockClear();
+  await view.render();
+  expect(view.snapshot?.replays.get("turn-1")).toBe(events);
+  expect(h.backward()).toEqual([]);
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-10") });
+  h.calls.listEventsBefore.mockClear();
+  await view.render();
+  expect(view.snapshot?.replays.get("turn-1")).toBe(events);
+  expect(h.backward()).toEqual([]);
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  expect(h.backward()).toEqual([{ serverId: "server", taskId: "turn-2", before: TAIL }]);
+});
+
+it.each([
+  { field: "provider", update: { provider: "codex" } },
+  { field: "createdAt", update: { createdAt: "2026-10-12T00:00:00Z" } },
+  { field: "sequence", update: { sequence: 3 } },
+  { field: "terminal status moves backwards", update: { status: "running" } },
+] satisfies readonly { field: string; update: Partial<RemoteRunnerTask> }[])(
+  "cold-opens remembered history after the task's $field changes",
+  async ({ update }) => {
+    const runner = new FakeRunnerEvents();
+    longTurn(runner, "turn-1");
+    const task = remoteTurn(1);
+    const h = fakeRunnerGateway(runner, [task, independentTurn(2)]);
+    const view = mount(h);
+    await view.render();
+    const events = view.snapshot?.replays.get("turn-1");
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+    h.replaceTasks([{ ...task, ...update }, independentTurn(2)]);
+    h.calls.listEventsBefore.mockClear();
+    h.calls.listEvents.mockClear();
+    await view.render();
+
+    expect(h.backward()[0]).toEqual({ serverId: "server", taskId: "turn-1", before: TAIL });
+    expect(view.snapshot?.replays.get("turn-1")).not.toBe(events);
+    expect(view.snapshot?.replays.get("turn-1")).toEqual(runner.eventsOf("turn-1"));
+    expect(view.snapshot?.tasks.find((item) => item.id === "turn-1")).toMatchObject(update);
+    expect(h.forward().some((request) => request.after === 0)).toBe(false);
+  },
+);
+
+it("drops remembered history when the task moves to a different conversation", async () => {
+  const runner = new FakeRunnerEvents();
+  longTurn(runner, "turn-1");
+  const task = remoteTurn(1);
+  const h = fakeRunnerGateway(runner, [task, independentTurn(2)]);
+  const view = mount(h);
+  await view.render();
+  const events = view.snapshot?.replays.get("turn-1");
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  h.replaceTasks([
+    { ...task, sequence: 3, conversationId: "turn-2", parentTaskId: "turn-2" },
+    independentTurn(2),
+  ]);
+  h.calls.listEventsBefore.mockClear();
+  await view.render();
+
+  expect(view.snapshot?.replays.has("turn-1")).toBe(false);
+  expect(h.backward()).toEqual([]);
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  expect(h.backward()[0]).toEqual({ serverId: "server", taskId: "turn-1", before: TAIL });
+  expect(view.snapshot?.replays.get("turn-1")).not.toBe(events);
+});
+
+it("drops a remembered task when its canonical detail reports authoritative removal", async () => {
+  const runner = new FakeRunnerEvents();
+  longTurn(runner, "turn-1");
+  const other = independentTurn(2);
+  const h = fakeRunnerGateway(runner, [remoteTurn(1), other]);
+  const view = mount(h);
+  await view.render();
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  h.replaceTasks([other]);
+  h.calls.getTask.mockImplementation(async ({ taskId }: { taskId: string }) => {
+    if (taskId === "turn-1")
+      return Promise.reject(
+        new RemoteRunnerRequestRejectedError("Runner request failed (HTTP 404)."),
+      );
+    return other;
+  });
+  h.calls.listEventsBefore.mockClear();
+  h.calls.listEvents.mockClear();
+  await view.render();
+
+  expect(view.snapshot?.replays.has("turn-1")).toBe(false);
+  expect(view.snapshot?.replayCursors?.has("turn-1")).toBe(false);
+  expect(view.snapshot?.tasks.some((task) => task.id === "turn-1")).toBe(false);
+  expect(h.forward()).toEqual([]);
+  expect(h.backward()).toEqual([]);
+  await act(async () => view.surface.refresh());
+  expect(view.snapshot?.replays.has("turn-1")).toBe(false);
+  expect(h.forward()).toEqual([]);
+  expect(h.backward()).toEqual([]);
+});
+
+it.each(["running", "succeeded"] as const)(
+  "catches up a remembered running task from its cursor when its current status is %s",
+  async (status) => {
+    const runner = new FakeRunnerEvents();
+    runner.lifecycle("turn-1", "task.created");
+    runner.output("turn-1", claudeTextLine("original "));
+    const running = remoteTurn(1, { status: "running" });
+    const h = fakeRunnerGateway(runner, [running, independentTurn(2)]);
+    const view = mount(h);
+    await view.render();
+    const first = view.snapshot!;
+    const cursor = first.replayCursors?.get("turn-1");
+    const original = first.replays.get("turn-1")!;
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+    runner.output("turn-1", claudeTextLine("appended while away "));
+    if (status === "succeeded") runner.lifecycle("turn-1", "task.succeeded");
+    h.replaceTasks([{ ...running, status }, independentTurn(2)]);
+    h.calls.listEvents.mockClear();
+    h.calls.listEventsBefore.mockClear();
+
+    await view.render();
+
+    expect(h.forward()).toEqual([{ serverId: "server", taskId: "turn-1", after: cursor }]);
+    expect(h.backward()).toEqual([]);
+    expect(view.snapshot?.replays.get("turn-1")).toEqual(runner.eventsOf("turn-1"));
+    expect(view.snapshot?.replays.get("turn-1")?.slice(0, original.length)).toEqual(original);
+    expect(new Set(view.snapshot?.replays.get("turn-1")?.map((event) => event.sequence)).size).toBe(
+      runner.eventsOf("turn-1").length,
+    );
+    expect(view.snapshot?.replayComplete.has("turn-1")).toBe(status === "succeeded");
+    h.calls.listEvents.mockClear();
+    await act(async () => view.surface.refresh());
+    if (status === "succeeded") expect(h.forward()).toEqual([]);
+    if (status === "running")
+      expect(h.forward()).toEqual([
+        {
+          serverId: "server",
+          taskId: "turn-1",
+          after: lastOf(runner.eventsOf("turn-1"))?.sequence,
+        },
+      ]);
+  },
+);
+
+it.each(["pending", "scanningInputs", "scanningBoundary"] as const)(
+  "restores unfinished %s history and resumes each stored before cursor exactly once",
+  async (phase) => {
+    const runner = phase === "scanningBoundary" ? boundaryScanRunner() : new FakeRunnerEvents(10);
+    if (phase !== "scanningBoundary") {
+      runner.lifecycle("turn-1", "task.created");
+      runner.input("turn-1", "early", "early steer");
+      const count = phase === "pending" ? 800 : 3_400;
+      for (let index = 0; index < count; index += 1)
+        runner.output("turn-1", claudeTextLine(`line ${index} `));
+      runner.lifecycle("turn-1", "task.succeeded");
+    }
+    const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)]);
+    const view = mount(h);
+    await view.render();
+    if (phase === "scanningInputs") {
+      for (
+        let pass = 0;
+        pass < 20 && view.snapshot?.replayBackfill?.get("turn-1")?.kind === "pending";
+        pass += 1
+      )
+        await advance(REMOTE_INVENTORY_CONTINUATION_DELAY_MS);
+    }
+    const first = view.snapshot!;
+    const stored = first.replayBackfill?.get("turn-1");
+    expect(stored?.kind).toBe(phase);
+    const reads = boundaryCursors(h);
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+    const descriptor = deferred<RemoteRunnerDescriptor>();
+    h.calls.getRunner.mockReturnValueOnce(descriptor.promise);
+    await view.render();
+
+    expect(view.snapshot?.replays.get("turn-1")).toBe(first.replays.get("turn-1"));
+    expect(replayState(view.snapshot!)).toEqual(replayState(first));
+    expect(boundaryCursors(h)).toEqual(reads);
+    await act(async () => {
+      descriptor.resolve(runnerDescriptor());
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(boundaryCursors(h)[reads.length]).toBe(
+      stored !== undefined && "before" in stored ? stored.before : undefined,
+    );
+    await finishReplay(view);
+    const cursors = boundaryCursors(h);
+    expect(new Set(cursors).size).toBe(cursors.length);
+    const expectedResumed: number[] = [];
+    let before = stored !== undefined && "before" in stored ? stored.before : null;
+    for (let page = 0; page < 400 && before !== null; page += 1) {
+      expectedResumed.push(before);
+      const older = await runner.listEventsBefore({ serverId: "server", taskId: "turn-1", before });
+      before = older.nextCursor;
+    }
+    expect(cursors.slice(reads.length)).toEqual(expectedResumed);
+    expect(h.forward().filter((request) => request.taskId === "turn-1")).toEqual([
+      { serverId: "server", taskId: "turn-1", after: first.replayCursors?.get("turn-1") },
+    ]);
+    const legacy = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)], {});
+    const expected = await loadUntilSettled(legacy.gateway, runner);
+    expect(replayState(view.snapshot!)).toEqual(replayState(expected));
+    expect(projectedTurns(view.snapshot!)).toEqual(projectedTurns(expected));
+  },
+);
+
+it.each(["owner", "host", "port", "username", "removed"] as const)(
+  "cold-opens a remembered thread after its %s authority changes",
+  async (change) => {
+    const runner = new FakeRunnerEvents();
+    longTurn(runner, "turn-1");
+    const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)]);
+    const view = mount(h);
+    await view.render();
+    await finishReplay(view);
+    const first = view.snapshot!;
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+    const changedServer = {
+      ...SERVER,
+      ...(change === "host" ? { host: "new-host" } : {}),
+      ...(change === "port" ? { port: 2_222 } : {}),
+      ...(change === "username" ? { username: "new-user" } : {}),
+    };
+    if (change === "owner")
+      await view.render({
+        owner: "B",
+        selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2"),
+      });
+    if (change === "removed") await view.render({ servers: [], selectedThreadId: null });
+    h.calls.listEvents.mockClear();
+    h.calls.listEventsBefore.mockClear();
+    await view.render({ servers: [changedServer] });
+
+    expect(h.backward()[0]).toEqual({ serverId: "server", taskId: "turn-1", before: TAIL });
+    expect(h.forward()).toEqual([]);
+    expect(view.snapshot?.replays.get("turn-1")).not.toBe(first.replays.get("turn-1"));
+    expect(view.snapshot?.replays.get("turn-1")).toEqual(runner.eventsOf("turn-1"));
+  },
+);
+
+it("keeps remembered content across a plain disconnect and reconnect of the same runner", async () => {
+  const runner = new FakeRunnerEvents();
+  longTurn(runner, "turn-1");
+  const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)]);
+  const view = mount(h);
+  await view.render();
+  await finishReplay(view);
+  const events = view.snapshot?.replays.get("turn-1");
+  const other = remoteAgentThreadKey("server", "runner", "turn-2");
+  await view.render({ selectedThreadId: other });
+  await view.render({ servers: [{ ...SERVER, connected: false }], selectedThreadId: other });
+  await view.render({ selectedThreadId: other });
+  h.calls.listEvents.mockClear();
+  h.calls.listEventsBefore.mockClear();
+  await view.render();
+
+  expect(view.snapshot?.replays.get("turn-1")).toBe(events);
+  expect(h.forward()).toEqual([
+    { serverId: "server", taskId: "turn-1", after: lastOf(runner.eventsOf("turn-1"))?.sequence },
+  ]);
+  expect(h.backward()).toEqual([]);
+  expect(view.surface.reachability.get("server")).toEqual({ kind: "reachable" });
+});
+
+it.each([224, 3_000])(
+  "returns to a remembered terminal thread with one listing for %i inventory tasks",
+  async (count) => {
+    const runner = new FakeRunnerEvents();
+    const selected = independentTurn(count - 1);
+    const other = independentTurn(count);
+    runner.lifecycle(selected.id, "task.succeeded");
+    const tasks = Array.from({ length: count }, (_, index) => independentTurn(index + 1));
+    const h = fakeRunnerGateway(runner, tasks);
+    const listTasks = vi.fn(async ({ after }: { after: number }) => {
+      const remaining = tasks.filter((task) => task.sequence > after);
+      const items = remaining.slice(0, 50);
+      return {
+        items,
+        nextCursor: remaining.length > items.length ? items[items.length - 1]!.sequence : null,
+      };
+    });
+    Object.assign(h.gateway, { listTasks });
+    const view = mount(h);
+    const selectedThreadId = remoteAgentThreadKey("server", "runner", selected.id);
+    await view.render({ selectedThreadId });
+    const events = view.snapshot?.replays.get(selected.id);
+    expect(view.snapshot?.listingCursor).toBe(count);
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", other.id) });
+    listTasks.mockClear();
+    h.calls.getTask.mockClear();
+    h.calls.listEvents.mockClear();
+    h.calls.listEventsBefore.mockClear();
+    const published = view.published.length;
+
+    await view.render({ selectedThreadId });
+
+    expect(listTasks.mock.calls).toEqual([[{ serverId: "server", after: count }]]);
+    expect(h.calls.getTask.mock.calls).toEqual([[{ serverId: "server", taskId: selected.id }]]);
+    expect(h.forward()).toEqual([
+      { serverId: "server", taskId: selected.id, after: events?.[events.length - 1]?.sequence },
+    ]);
+    expect(h.backward()).toEqual([]);
+    expect(view.snapshot?.replays.get(selected.id)).toBe(events);
+    expect(view.published.slice(published).every((snapshot) => snapshot.connected)).toBe(true);
+    expect(view.surface.reachability.get("server")).toEqual({ kind: "reachable" });
+  },
+);
+
+function expectPinnedRunnerReplacement(
+  view: ReturnType<typeof mount>,
+  pinned: RemoteAgentInventorySnapshot,
+): void {
+  expect(view.surface.reachability.get("server")).toEqual({
+    kind: "disconnected",
+    reason: "runnerReplaced",
+  });
+  expect(view.snapshot?.descriptor).toBe(pinned.descriptor);
+  expect(view.snapshot?.tasks).toEqual(pinned.tasks);
+  expect(view.snapshot?.projects).toBe(pinned.projects);
+  expect(view.snapshot?.threadMetadata).toBe(pinned.threadMetadata);
+  expect(view.snapshot?.connected).toBe(false);
+  expect(view.snapshot?.error).toBe(
+    "The server runner identity changed. Reconnect the server before continuing.",
+  );
+  expect(view.snapshot?.replays).toBe(pinned.replays);
+  expect(view.snapshot?.replayCursors).toBe(pinned.replayCursors);
+  expect(view.snapshot?.replayBackfill).toBe(pinned.replayBackfill);
+  expect(view.snapshot?.replayGaps).toBe(pinned.replayGaps);
+  expect(view.snapshot?.replayTruncated).toBe(pinned.replayTruncated);
+  expect(view.snapshot?.replayComplete).toBe(pinned.replayComplete);
+  expect(view.snapshot?.replayDiscarded).toBe(pinned.replayDiscarded);
+  expect(view.snapshot?.replayServerEvictions).toBe(pinned.replayServerEvictions);
+  expect(view.snapshot?.subagentLifecycles).toBe(pinned.subagentLifecycles);
+  expect(view.snapshot?.resumes).toBe(pinned.resumes);
+  expect(projectedTurns(view.snapshot!)).toEqual(projectedTurns(pinned));
+}
+
+it.each(["selected", "remembered"] as const)(
+  "keeps the %s snapshot pinned on a real runner descriptor mismatch",
+  async (location) => {
+    const runner = new FakeRunnerEvents(10);
+    for (let index = 0; index < 800; index += 1) runner.output("turn-1", "");
+    const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)]);
+    const view = mount(h);
+    await view.render();
+    expect(view.snapshot?.replayBackfill?.get("turn-1")?.kind).toBe("pending");
+    if (location === "remembered")
+      await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+    const pinned = view.snapshot!;
+    h.calls.getRunner.mockResolvedValue({ ...runnerDescriptor(), runnerId: "replacement" });
+    h.calls.listEvents.mockClear();
+    h.calls.listEventsBefore.mockClear();
+
+    await act(async () => view.surface.refresh());
+
+    expectPinnedRunnerReplacement(view, pinned);
+    await act(async () => view.surface.refresh());
+    expectPinnedRunnerReplacement(view, pinned);
+    await view.render({ selectedThreadId: null });
+    await view.render();
+    expect(view.snapshot?.replays.size).toBe(0);
+    expect(view.snapshot?.replayRestore).toBeUndefined();
+    expect(view.snapshot?.descriptor).toBe(pinned.descriptor);
+    expect(view.surface.reachability.get("server")).toEqual({
+      kind: "disconnected",
+      reason: "runnerReplaced",
+    });
+    expect(h.forward()).toEqual([]);
+    expect(h.backward()).toEqual([]);
+  },
+);
+
+it("keeps the original runner snapshot through three polls, an inventory event, and a manual refresh after replacement", async () => {
+  const runner = new FakeRunnerEvents();
+  longTurn(runner, "turn-1");
+  const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)]);
+  let inventoryListener: ((event: RemoteRunnerInventoryEvent) => void) | undefined;
+  Object.assign(h.gateway, {
+    watchInventory: async (
+      _request: { readonly serverId: string },
+      listener: (event: RemoteRunnerInventoryEvent) => void,
+    ) => {
+      inventoryListener = listener;
+      listener({ type: "connected" });
+      return vi.fn();
+    },
+  });
+  const view = mount(h);
+  await view.render();
+  await finishReplay(view);
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  const pinned = view.snapshot!;
+  h.calls.getRunner.mockResolvedValue({ ...runnerDescriptor(), runnerId: "replacement" });
+  h.replaceTasks([
+    { ...remoteTurn(1), runnerId: "replacement" },
+    { ...independentTurn(2), runnerId: "replacement" },
+  ]);
+  h.calls.listEvents.mockClear();
+  h.calls.listEventsBefore.mockClear();
+  await act(async () => view.surface.refresh());
+  expectPinnedRunnerReplacement(view, pinned);
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  expectPinnedRunnerReplacement(view, pinned);
+  const initialReads = h.calls.getRunner.mock.calls.length;
+
+  for (let poll = 1; poll <= 3; poll += 1) {
+    await advance(60_000);
+    expect(h.calls.getRunner).toHaveBeenCalledTimes(initialReads + poll);
+    expectPinnedRunnerReplacement(view, pinned);
+    expect(h.forward()).toEqual([]);
+    expect(h.backward()).toEqual([]);
+  }
+  await act(async () => {
+    inventoryListener?.({ type: "changed" });
+    await vi.advanceTimersByTimeAsync(250);
+  });
+  expect(h.calls.getRunner).toHaveBeenCalledTimes(initialReads + 4);
+  expectPinnedRunnerReplacement(view, pinned);
+  await act(async () => view.surface.refresh());
+  expect(h.calls.getRunner).toHaveBeenCalledTimes(initialReads + 5);
+  expectPinnedRunnerReplacement(view, pinned);
+  expect(h.forward()).toEqual([]);
+  expect(h.backward()).toEqual([]);
+});
+
+it("restores only the published authority-valid tail during rapid A to B to C to A selection", async () => {
+  const runner = new FakeRunnerEvents();
+  for (const taskId of ["turn-1", "turn-2", "turn-3"]) longTurn(runner, taskId);
+  const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2), independentTurn(3)]);
+  const pages = gatedBackwardPages(h, runner);
+  const view = mount(h);
+  await view.render();
+  await pages.release();
+  await pages.release();
+  const first = view.snapshot!;
+  const stale = pages.waiting.shift()!;
+  expect(first.replays.get("turn-1")).toHaveLength(50);
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+  await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-3") });
+  const descriptor = deferred<RemoteRunnerDescriptor>();
+  h.calls.getRunner.mockReturnValueOnce(descriptor.promise);
+  await view.render();
+
+  expect(view.snapshot?.replays.get("turn-1")).toBe(first.replays.get("turn-1"));
+  expect(view.snapshot?.replays.has("turn-2")).toBe(false);
+  expect(view.snapshot?.replays.has("turn-3")).toBe(false);
+  expect(replayState(view.snapshot!)).toEqual(replayState(first));
+  const restored = view.snapshot;
+  const count = view.published.length;
+  await act(async () => {
+    stale.release();
+    await vi.advanceTimersByTimeAsync(REMOTE_INVENTORY_PROGRESS_INTERVAL_MS);
+  });
+  expect(view.snapshot).toBe(restored);
+  expect(view.published).toHaveLength(count);
+  h.calls.listEventsBefore.mockImplementation(runner.listEventsBefore);
+  await act(async () => {
+    descriptor.resolve(runnerDescriptor());
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  await finishReplay(view);
+  expect(view.snapshot?.replays.get("turn-1")).toEqual(runner.eventsOf("turn-1"));
+  expect(view.snapshot?.replays.has("turn-2")).toBe(false);
+  expect(view.snapshot?.replays.has("turn-3")).toBe(false);
+});
+
+it.each(["unmount", "owner"] as const)(
+  "revokes a pending remembered restoration on %s",
+  async (change) => {
+    const runner = new FakeRunnerEvents();
+    longTurn(runner, "turn-1");
+    const h = fakeRunnerGateway(runner, [remoteTurn(1), independentTurn(2)]);
+    const view = mount(h);
+    await view.render();
+    await finishReplay(view);
+    const events = view.snapshot?.replays.get("turn-1");
+    await view.render({ selectedThreadId: remoteAgentThreadKey("server", "runner", "turn-2") });
+    const descriptor = deferred<RemoteRunnerDescriptor>();
+    h.calls.getRunner.mockReturnValueOnce(descriptor.promise);
+    await view.render();
+    expect(view.snapshot?.replays.get("turn-1")).toBe(events);
+    if (change === "unmount") {
+      disposers.splice(0);
+      view.unmount();
+    }
+    if (change === "owner") await view.render({ owner: "B", selectedThreadId: null });
+    const count = view.published.length;
+    h.calls.listEvents.mockClear();
+    h.calls.listEventsBefore.mockClear();
+    await act(async () => {
+      descriptor.resolve(runnerDescriptor());
+      await vi.advanceTimersByTimeAsync(REMOTE_INVENTORY_PROGRESS_INTERVAL_MS);
+    });
+
+    expect(view.published).toHaveLength(count);
+    expect(h.forward()).toEqual([]);
+    expect(h.backward()).toEqual([]);
+    if (change === "owner") expect(view.snapshot?.replays.size).toBe(0);
+  },
+);

@@ -2,9 +2,11 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import type {
   RemoteRunnerEventPage,
   RemoteRunnerEventsBeforeRequest,
+  RemoteRunnerServer,
 } from "../domain/remoteRunner";
 import {
   emptyRemoteInventory,
+  loadRemoteAgentInventory,
   type RemoteAgentInventorySnapshot,
 } from "./remoteAgentInventoryLoad";
 import { RemoteAgentProjection } from "./remoteAgentProjection";
@@ -16,6 +18,7 @@ import {
   loadTailFirst,
   projectedTurns,
   replayState,
+  TAIL_FIRST_THREAD,
 } from "./remoteAgentTailFirstTestSupport";
 import {
   CASES_PER_SEED,
@@ -23,9 +26,11 @@ import {
   EXTRA_CASES,
   generateStream,
   SEEDS,
+  seededDeselectionPasses,
   type GeneratedStream,
   type ReplayLimits,
 } from "./remoteAgentDifferentialTestSupport";
+import { createRemoteReplayMemory, transitionRemoteReplayMemory } from "./remoteAgentReplayMemory";
 
 const CASES: readonly (readonly [number, number])[] =
   EXTRA_CASES.length > 0
@@ -34,6 +39,14 @@ const CASES: readonly (readonly [number, number])[] =
         Array.from({ length: CASES_PER_SEED }, (_, index) => [seed, index] as const),
       );
 const MAX_PASSES = 160;
+const SERVER: RemoteRunnerServer = {
+  id: "server",
+  name: "Server",
+  host: "host",
+  username: "user",
+  port: 22,
+  connected: true,
+};
 let limits: ReplayLimits;
 const mix = {
   cases: 0,
@@ -49,6 +62,8 @@ const mix = {
   scanOutcomes: new Set<string>(),
   completionOrders: new Set<string>(),
   unfinishedPasses: new Set<string>(),
+  deselections: new Map<number, number>(),
+  rememberedPhases: new Set<string>(),
 };
 
 beforeAll(async () => {
@@ -80,6 +95,10 @@ afterAll(() => {
   expect([...mix.unfinishedPasses]).toEqual(
     expect.arrayContaining(["pending", "scanningInputs", "scanningBoundary", "multiTask"]),
   );
+  expect([...mix.deselections.keys()].sort()).toEqual([0, 1, 2, 3]);
+  expect([...mix.rememberedPhases]).toEqual(
+    expect.arrayContaining(["pending", "scanningInputs", "scanningBoundary"]),
+  );
   console.info(
     "Differential mix",
     JSON.stringify({
@@ -90,6 +109,8 @@ afterAll(() => {
       scanOutcomes: [...mix.scanOutcomes],
       completionOrders: [...mix.completionOrders],
       unfinishedPasses: [...mix.unfinishedPasses],
+      deselections: Object.fromEntries(mix.deselections),
+      rememberedPhases: [...mix.rememberedPhases],
     }),
   );
 });
@@ -131,7 +152,11 @@ function scanOutcome(page: RemoteRunnerEventPage): string {
   return "continue";
 }
 
-async function backwardEnd(stream: GeneratedStream, context: string) {
+async function backwardEnd(
+  stream: GeneratedStream,
+  context: string,
+  deselectionPasses: readonly number[],
+) {
   const h = fakeRunnerGateway(stream.runner, stream.tasks);
   const incremental = new RemoteAgentProjection();
   let snapshot = emptyRemoteInventory("server", true);
@@ -142,6 +167,54 @@ async function backwardEnd(stream: GeneratedStream, context: string) {
   let suspensionState: RemoteAgentInventorySnapshot | undefined;
   let progress = snapshot;
   let passes = 0;
+  const lease = {};
+  let memory = transitionRemoteReplayMemory(createRemoteReplayMemory(lease), {
+    lease,
+    servers: [SERVER],
+    snapshots: [snapshot],
+    selectedThreadId: TAIL_FIRST_THREAD,
+  }).memory;
+  let deselections = 0;
+  const reselect = async () => {
+    const remembered = snapshot;
+    for (const state of remembered.replayBackfill?.values() ?? [])
+      mix.rememberedPhases.add(state.kind);
+    const deselected = transitionRemoteReplayMemory(memory, {
+      lease,
+      servers: [SERVER],
+      snapshots: [remembered],
+      selectedThreadId: null,
+    });
+    const requests = h.forward().length + h.backward().length;
+    const away = await loadRemoteAgentInventory(
+      h.gateway,
+      deselected.snapshots[0]!,
+      null,
+      () => true,
+    );
+    expect(h.forward().length + h.backward().length, `${context}; deselected replay is idle`).toBe(
+      requests,
+    );
+    const restored = transitionRemoteReplayMemory(deselected.memory, {
+      lease,
+      servers: [SERVER],
+      snapshots: [away],
+      selectedThreadId: TAIL_FIRST_THREAD,
+    });
+    expect(restored.restored, `${context}; reselect restores remembered replay`).toBe(true);
+    snapshot = restored.snapshots[0]!;
+    memory = restored.memory;
+    expect(replayState(snapshot), `${context}; restored state is unchanged`).toEqual(
+      replayState(remembered),
+    );
+    for (const [taskId, events] of remembered.replays)
+      expect(snapshot.replays.get(taskId), `${context}; ${taskId} reuses remembered events`).toBe(
+        events,
+      );
+    progress = snapshot;
+    incremental.project({ ...snapshot, runnerId: "runner" });
+    deselections += 1;
+  };
   const observe = (next: RemoteAgentInventorySnapshot) => {
     for (const [taskId, state] of next.replayBackfill ?? []) {
       const prior = progress.replayBackfill?.get(taskId);
@@ -196,6 +269,11 @@ async function backwardEnd(stream: GeneratedStream, context: string) {
       if (stream.tasks.length > 1) mix.unfinishedPasses.add("multiTask");
     }
     incremental.project({ ...snapshot, runnerId: "runner" });
+    while (
+      deselections < deselectionPasses.length &&
+      (passes >= deselectionPasses[deselections]! || caughtUp(snapshot, stream))
+    )
+      await reselect();
     if (suspensionRemaining > 0) {
       expect(snapshot.replayBackfill, `${context}; suspended cursors must be preserved`).toEqual(
         suspensionState?.replayBackfill,
@@ -234,6 +312,10 @@ async function backwardEnd(stream: GeneratedStream, context: string) {
     mix.suspensions[stream.suspension.phase] += 1;
   }
   if (failureUsed) mix.failures += 1;
+  expect(deselections, `${context}; all seeded reselections occurred`).toBe(
+    deselectionPasses.length,
+  );
+  mix.deselections.set(deselections, (mix.deselections.get(deselections) ?? 0) + 1);
   const incrementalTurns = incremental.project({ ...snapshot, runnerId: "runner" })[0]?.thread
     .turns;
   expect(incrementalTurns, `${context}; incremental must equal fresh final projection`).toEqual(
@@ -244,7 +326,8 @@ async function backwardEnd(stream: GeneratedStream, context: string) {
 
 it.each(CASES)("matches legacy replay for seed %i case %i", async (seed, index) => {
   const stream = generateStream(seed, index, limits);
-  const context = `seed=${seed};case=${index};mode=${stream.mode};${stream.description}`;
+  const deselectionPasses = seededDeselectionPasses(seed, index);
+  const context = `seed=${seed};case=${index};deselect@${deselectionPasses.join("/")};mode=${stream.mode};${stream.description}`;
   mix.cases += 1;
   mix.modes.set(stream.mode, (mix.modes.get(stream.mode) ?? 0) + 1);
   mix.count[stream.countClass] += 1;
@@ -253,7 +336,7 @@ it.each(CASES)("matches legacy replay for seed %i case %i", async (seed, index) 
   if (stream.serverLoss) mix.serverLoss += 1;
   if (stream.tasks.length > 1) mix.multiTask += 1;
   const expected = await forwardEnd(stream, context);
-  const actual = await backwardEnd(stream, context);
+  const actual = await backwardEnd(stream, context, deselectionPasses);
   for (const task of stream.tasks) {
     expect(
       actual.replays.get(task.id)?.map((event) => event.sequence),

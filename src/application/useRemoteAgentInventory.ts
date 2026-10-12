@@ -10,10 +10,8 @@ import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import {
   remoteRunnerFailedRefreshAwaitsRetry,
   remoteRunnerFailureReason,
-  remoteRunnerReachability,
   remoteRunnerRefreshFailureCause,
   remoteRunnerRefreshReachability,
-  REMOTE_RUNNER_REACHABLE,
   REMOTE_RUNNER_RECONNECTING,
   type RemoteRunnerReachability,
 } from "../domain/remoteRunnerReachability";
@@ -35,6 +33,18 @@ import {
   type RemoteInventoryRefreshOutcome,
 } from "./remoteInventoryRefresh";
 import { probeRemoteRunnerDescriptor } from "./remoteRunnerDescriptorProbe";
+import { remoteReplayEndpoint as endpoint } from "./remoteAgentReplayMemory";
+import { useRemoteReplayMemoryOwner } from "./useRemoteReplayMemoryOwner";
+import {
+  NO_OBSERVATIONS,
+  REACHABLE_REFRESH,
+  observedRefreshes,
+  mergePublishedRemoteTasks,
+  presentRemoteInventory,
+  type LeasedInventory,
+  type ObservedRefresh,
+  type RefreshObservation,
+} from "./remoteAgentInventoryPresentation";
 import {
   mergeLoadedThreadMetadata,
   publishedRemoteThreadMetadata,
@@ -45,44 +55,6 @@ interface Options {
   readonly servers: readonly RemoteRunnerServer[];
   readonly workspaceOwner: string | null;
   readonly selectedThreadId: string | null;
-}
-interface ObservedRefresh {
-  readonly reachability: RemoteRunnerReachability;
-  readonly reason: string | null;
-}
-interface RefreshObservation extends ObservedRefresh {
-  readonly serverId: string;
-}
-interface LeasedInventory {
-  readonly lease: object;
-  readonly snapshots: readonly RemoteAgentInventorySnapshot[];
-  readonly observed: ReadonlyMap<string, ObservedRefresh>;
-}
-const NO_OBSERVATIONS: ReadonlyMap<string, ObservedRefresh> = new Map();
-const REACHABLE_REFRESH: ObservedRefresh = { reachability: REMOTE_RUNNER_REACHABLE, reason: null };
-const endpoint = (server: RemoteRunnerServer) =>
-  JSON.stringify([server.id, server.host, server.username, server.port]);
-function sameObservation(left: ObservedRefresh | undefined, right: ObservedRefresh): boolean {
-  return left?.reachability === right.reachability && left.reason === right.reason;
-}
-function observedRefreshes(
-  previous: ReadonlyMap<string, ObservedRefresh>,
-  configured: ReadonlySet<string>,
-  observation: RefreshObservation | undefined,
-): ReadonlyMap<string, ObservedRefresh> {
-  const stale = [...previous.keys()].some((id) => !configured.has(id));
-  const unchanged =
-    observation === undefined ||
-    !configured.has(observation.serverId) ||
-    sameObservation(previous.get(observation.serverId), observation);
-  if (!stale && unchanged) return previous;
-  const next = new Map([...previous].filter(([id]) => configured.has(id)));
-  if (observation !== undefined && configured.has(observation.serverId))
-    next.set(observation.serverId, {
-      reachability: observation.reachability,
-      reason: observation.reason,
-    });
-  return next;
 }
 export type RemotePendingUpdate =
   | readonly RemoteRunnerPendingMessage[]
@@ -123,6 +95,16 @@ export function useRemoteAgentInventory({
   const cache = useRef<LeasedInventory>({ lease, snapshots: [], observed: NO_OBSERVATIONS });
   if (cache.current.lease !== lease)
     cache.current = { lease, snapshots: [], observed: NO_OBSERVATIONS };
+  const replayMemory = useRemoteReplayMemoryOwner({
+    lease,
+    authority: captured,
+    servers,
+    snapshots: cache.current.snapshots,
+    selectedThreadId,
+  });
+  const restoredSnapshots = replayMemory.restoredFor(captured);
+  if (restoredSnapshots !== undefined && restoredSnapshots !== cache.current.snapshots)
+    cache.current = { ...cache.current, snapshots: restoredSnapshots };
   const unconfirmed = useRef({
     lease,
     configuration,
@@ -153,7 +135,16 @@ export function useRemoteAgentInventory({
         snapshots: snapshots
           .filter((item) => configured.has(item.serverId))
           .map((item) => {
-            const tasks = retainRemoteInventoryTasks(item.tasks, item.serverId, selectedThreadId);
+            const retained = retainRemoteInventoryTasks(
+              item.tasks,
+              item.serverId,
+              selectedThreadId,
+            );
+            const tasks =
+              retained.length === item.tasks.length &&
+              retained.every((task, index) => task === item.tasks[index])
+                ? item.tasks
+                : retained;
             return {
               ...item,
               tasks,
@@ -165,9 +156,17 @@ export function useRemoteAgentInventory({
         if (!configured.has(id)) provenance.current.delete(id);
       for (const id of pendingRevisions.current.keys())
         if (!configured.has(id)) pendingRevisions.current.delete(id);
+      cache.current = {
+        ...cache.current,
+        snapshots: replayMemory.apply({
+          servers: serversRef.current,
+          snapshots: cache.current.snapshots,
+          selectedThreadId,
+        }),
+      };
       setState(cache.current);
     },
-    [valid, lease, selectedThreadId],
+    [valid, lease, selectedThreadId, replayMemory],
   );
   const holdsRemovedServers = useCallback(() => {
     const configured = new Set(serversRef.current.slice(0, 64).map((server) => server.id));
@@ -238,6 +237,7 @@ export function useRemoteAgentInventory({
             shown: RemoteAgentInventorySnapshot,
             observation: ObservedRefresh | undefined,
           ) => {
+            if (!valid()) return;
             const latest =
               provenance.current.get(server.id) === endpoint(server)
                 ? cache.current.snapshots.find((item) => item.serverId === server.id)
@@ -248,7 +248,7 @@ export function useRemoteAgentInventory({
                 ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
                 {
                   ...shown,
-                  tasks: mergeRemoteTasks(shown.tasks, latest?.tasks ?? []),
+                  tasks: mergePublishedRemoteTasks(shown, latest),
                   pendingMessages:
                     pendingRevision === (pendingRevisions.current.get(server.id) ?? 0)
                       ? shown.pendingMessages
@@ -278,6 +278,7 @@ export function useRemoteAgentInventory({
             settleProgress();
             if (!valid()) return outcome;
             result = confirmed(result);
+            replayMemory.refreshSucceeded(captured, server, result);
             if (
               outcome === "settled" &&
               result.descriptor?.capabilities.eventBackwardPaging === true &&
@@ -319,6 +320,9 @@ export function useRemoteAgentInventory({
                 error: remoteRunnerErrorMessage(cause, "Could not refresh remote tasks."),
               };
             }
+            if (observation.kind === "disconnected" && observation.reason === "runnerReplaced") {
+              replayMemory.invalidateServer(captured, server, expectedRunnerId);
+            }
           }
           show(result, observed);
         }
@@ -329,7 +333,7 @@ export function useRemoteAgentInventory({
       if (valid()) setLoadingOwner(null);
     }
     return outcome;
-  }, [valid, gateway, captured, selectedThreadId, publish, holdsRemovedServers]);
+  }, [valid, gateway, captured, selectedThreadId, publish, holdsRemovedServers, replayMemory]);
   const refresh = useCallback(async () => {
     await reload();
   }, [reload]);
@@ -416,45 +420,27 @@ export function useRemoteAgentInventory({
     },
     [valid, publish],
   );
-  const published = useMemo(() => {
-    const reachability = new Map<string, RemoteRunnerReachability>();
-    const reconnectingReasons = new Map<string, string>();
-    if (state.lease !== lease) return { reachability, reconnectingReasons };
-    for (const server of servers.slice(0, 64)) {
-      if (!state.snapshots.some((item) => item.serverId === server.id)) continue;
-      const observed = state.observed.get(server.id);
-      const current = remoteRunnerReachability({
-        serverConnected: server.connected,
-        connectionCurrent: provenance.current.get(server.id) === endpoint(server),
-        lastRefresh: observed?.reachability ?? null,
-      });
-      reachability.set(server.id, current);
-      if (
-        observed !== undefined &&
-        observed.reason !== null &&
-        current === observed.reachability &&
-        current.kind === "reconnecting"
-      )
-        reconnectingReasons.set(server.id, observed.reason);
-    }
-    return { reachability, reconnectingReasons };
-  }, [state, lease, servers]);
+  const displayed = useMemo(
+    () =>
+      restoredSnapshots === undefined || restoredSnapshots === state.snapshots
+        ? state
+        : { ...state, snapshots: restoredSnapshots },
+    [state, restoredSnapshots],
+  );
+  const published = useMemo(
+    () =>
+      presentRemoteInventory({
+        inventory: displayed,
+        lease,
+        servers,
+        provenance: provenance.current,
+      }),
+    [displayed, lease, servers],
+  );
   return {
+    ...published,
     publishPending,
     publishThreadMetadata,
-    reachability: published.reachability,
-    reconnectingReasons: published.reconnectingReasons,
-    snapshots:
-      state.lease === lease
-        ? state.snapshots
-            .filter((item) => servers.some((server) => server.id === item.serverId))
-            .map((item) => {
-              const server = servers.find((server) => server.id === item.serverId)!;
-              return !server.connected || provenance.current.get(server.id) !== endpoint(server)
-                ? { ...item, connected: false, error: "Server disconnected or connection changed." }
-                : item;
-            })
-        : [],
     loading: loadingOwner === captured,
     refresh,
     publishTask,
