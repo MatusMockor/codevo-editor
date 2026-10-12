@@ -52,11 +52,19 @@
 }
 
 .settings-screen button {
-  cursor: default;
+  cursor: pointer;
   font-family: inherit;
 }
 
-.settings-screen button:disabled {
+.settings-screen select,
+.settings-screen summary,
+.settings-screen [role="option"] {
+  cursor: pointer;
+}
+
+.settings-screen button:disabled,
+.settings-screen button[aria-disabled="true"],
+.settings-screen select:disabled {
   cursor: not-allowed;
 }
 
@@ -1217,6 +1225,10 @@ code.settings-readout,
   transition:
     background var(--cv-motion-fast) var(--cv-ease),
     box-shadow var(--cv-motion-fast) var(--cv-ease);
+}
+
+.settings-thread-tile[data-state="available"] {
+  cursor: pointer;
 }
 
 .settings-thread-tile[data-state="available"]:hover {

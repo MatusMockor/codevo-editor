@@ -93,6 +93,21 @@ describe("settings stylesheets", () => {
     expect(declaration(".settings-btn--xsq", "border-radius")).toBe("var(--cv-r-sm)");
   });
 
+  it("shows the pointer cursor on clickable controls and not-allowed on disabled ones", () => {
+    expect(cursorOf(".settings-screen button")).toBe("pointer");
+    expect(
+      cursorOf(
+        '.settings-screen select, .settings-screen summary, .settings-screen [role="option"]',
+      ),
+    ).toBe("pointer");
+    expect(cursorOf('.settings-thread-tile[data-state="available"]')).toBe("pointer");
+    expect(
+      cursorOf(
+        '.settings-screen button:disabled, .settings-screen button[aria-disabled="true"], .settings-screen select:disabled',
+      ),
+    ).toBe("not-allowed");
+  });
+
   it("marks the selected palette card with the selection ring, not the focus ring", () => {
     const selected = paletteCardDeclarations('.settings-palette-card[aria-checked="true"]');
 
@@ -110,6 +125,14 @@ describe("settings stylesheets", () => {
     ).toBe("var(--cv-ring-selected), var(--cv-ring-focus)");
   });
 });
+
+function cursorOf(selector: string): string | undefined {
+  const rule = sheetRules("components/settings/settings.css").find(
+    (candidate) => selectorParts(candidate.selector).join(", ") === selector,
+  );
+
+  return rule?.declarations.find((candidate) => candidate.property === "cursor")?.value;
+}
 
 function paletteCardDeclarations(selector: string): ReadonlyMap<string, string> {
   const rules = sheetRules("components/settings/settings.css").filter((rule) =>
