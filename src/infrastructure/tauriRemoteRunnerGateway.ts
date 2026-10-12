@@ -1,5 +1,10 @@
 import type { RemoteRunnerCollectInstructionsRequest } from "../domain/remoteRunnerInstructions";
 import { invoke, type Channel } from "@tauri-apps/api/core";
+import {
+  parseAgentMcpServerChangeReceipt,
+  parseAgentMcpServerLoginStarted,
+  parseAgentMcpServerLoginStatus,
+} from "../domain/agentMcpServerManagement";
 import { parseAgentMcpServers } from "../domain/agentMcpServers";
 import type * as R from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
@@ -26,6 +31,11 @@ export const REMOTE_RUNNER_COMMANDS = {
   getAccountUsage: "remote_runner_get_account_usage",
   getCommandCatalog: "remote_runner_get_command_catalog",
   getMcpServers: "remote_runner_get_mcp_servers",
+  changeMcpServer: "remote_runner_change_mcp_server",
+  startMcpServerLogin: "remote_runner_start_mcp_server_login",
+  getMcpServerLogin: "remote_runner_get_mcp_server_login",
+  submitMcpServerLoginCallback: "remote_runner_submit_mcp_server_login_callback",
+  cancelMcpServerLogin: "remote_runner_cancel_mcp_server_login",
   transcribeSpeech: "remote_runner_transcribe_speech",
   listProjects: "remote_runner_list_projects",
   listRepositoryHosts: "remote_runner_repository_hosts",
@@ -73,6 +83,13 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
     operation: K,
     request?: Parameters<NonNullable<R.RemoteRunnerGateway[K]>>[0],
   ): Promise<Awaited<ReturnType<NonNullable<R.RemoteRunnerGateway[K]>>>> {
+    const result = await this.exchange(operation, request);
+    return result as Awaited<ReturnType<NonNullable<R.RemoteRunnerGateway[K]>>>;
+  }
+  private async exchange<K extends keyof typeof REMOTE_RUNNER_COMMANDS>(
+    operation: K,
+    request?: Parameters<NonNullable<R.RemoteRunnerGateway[K]>>[0],
+  ): Promise<unknown> {
     try {
       validateRemoteRunnerValue(operation, "request", request);
     } catch (error) {
@@ -97,7 +114,7 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
       throw error;
     }
     validateRemoteRunnerValue(operation, "response", result);
-    return result as Awaited<ReturnType<NonNullable<R.RemoteRunnerGateway[K]>>>;
+    return result;
   }
   collectInstructions(request: RemoteRunnerCollectInstructionsRequest) {
     return this.call("collectInstructions", request);
@@ -143,6 +160,21 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
       throw new TypeError("Invalid remote runner MCP servers provider.");
     }
     return servers;
+  }
+  async changeMcpServer(request: R.RemoteRunnerMcpServerChangeRequest) {
+    parseAgentMcpServerChangeReceipt(await this.exchange("changeMcpServer", request));
+  }
+  async startMcpServerLogin(request: R.RemoteRunnerMcpServerLoginStartRequest) {
+    return parseAgentMcpServerLoginStarted(await this.exchange("startMcpServerLogin", request));
+  }
+  async getMcpServerLogin(request: R.RemoteRunnerMcpServerLoginRequest) {
+    return parseAgentMcpServerLoginStatus(await this.exchange("getMcpServerLogin", request));
+  }
+  async submitMcpServerLoginCallback(request: R.RemoteRunnerMcpServerLoginCallbackRequest) {
+    parseAgentMcpServerChangeReceipt(await this.exchange("submitMcpServerLoginCallback", request));
+  }
+  async cancelMcpServerLogin(request: R.RemoteRunnerMcpServerLoginRequest) {
+    parseAgentMcpServerChangeReceipt(await this.exchange("cancelMcpServerLogin", request));
   }
   transcribeSpeech(request: R.RemoteRunnerTranscribeSpeechRequest) {
     return this.call("transcribeSpeech", request);

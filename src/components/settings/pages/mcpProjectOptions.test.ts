@@ -37,7 +37,15 @@ function ready(
 ): AgentMcpServerHost {
   return {
     server: { id, name },
-    inventory: { kind: "ready", runnerId, supported: true, projects, truncated, stale },
+    inventory: {
+      kind: "ready",
+      runnerId,
+      supported: true,
+      management: false,
+      projects,
+      truncated,
+      stale,
+    },
   };
 }
 
@@ -184,6 +192,7 @@ describe("MCP server project options", () => {
         kind: "ready",
         runnerId: "runner-old",
         supported: false,
+        management: false,
         projects: [{ id: "legacy", name: "legacy" }],
         truncated: false,
         stale: false,

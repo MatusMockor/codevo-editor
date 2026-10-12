@@ -1,5 +1,9 @@
-import { AGENT_MCP_SERVERS_RUNNER_CAPABILITY } from "../domain/agentMcpServersTarget";
+import {
+  AGENT_MCP_SERVERS_RUNNER_CAPABILITY,
+  AGENT_MCP_SERVER_MANAGEMENT_RUNNER_CAPABILITY,
+} from "../domain/agentMcpServersTarget";
 import type { RemoteRunnerGateway, RemoteRunnerProject } from "../domain/remoteRunner";
+import type { AgentMcpServerManagementRunners } from "./agentMcpServerManagementGateway";
 import type { AgentMcpRunnerSupport, AgentMcpServersRunners } from "./agentMcpServersGateway";
 
 export const MAX_AGENT_MCP_SERVER_HOSTS = 16;
@@ -24,6 +28,7 @@ export type AgentMcpServerInventory =
       readonly kind: "ready";
       readonly runnerId: string;
       readonly supported: boolean;
+      readonly management: boolean;
       readonly projects: ReadonlyArray<RemoteRunnerProject>;
       readonly truncated: boolean;
       readonly stale: boolean;
@@ -61,7 +66,9 @@ const IDLE: AgentMcpServerInventory = Object.freeze({ kind: "idle" });
 const LOADING: AgentMcpServerInventory = Object.freeze({ kind: "loading" });
 const FAILED: AgentMcpServerInventory = Object.freeze({ kind: "failed" });
 
-export class AgentMcpServerProjectsStore implements AgentMcpServerProjects, AgentMcpServersRunners {
+export class AgentMcpServerProjectsStore
+  implements AgentMcpServerProjects, AgentMcpServersRunners, AgentMcpServerManagementRunners
+{
   private readonly gateway: AgentMcpServerProjectsGateway | null;
   private readonly listeners = new Set<() => void>();
   private entries = new Map<string, Entry>();
@@ -116,6 +123,13 @@ export class AgentMcpServerProjectsStore implements AgentMcpServerProjects, Agen
     return "supported";
   }
 
+  managementSupport(serverId: string, runnerId: string): AgentMcpRunnerSupport {
+    const inventory = this.entries.get(serverId)?.host.inventory;
+    if (inventory?.kind !== "ready" || inventory.runnerId !== runnerId) return "unavailable";
+    if (!inventory.supported || !inventory.management) return "unsupported";
+    return "supported";
+  }
+
   private entryFor(server: AgentMcpConnectedServer): Entry {
     const known = this.entries.get(server.id);
     if (known?.connection !== server.connection)
@@ -167,6 +181,7 @@ async function readInventory(
       kind: "ready",
       runnerId: runner.runnerId,
       supported: runner.capabilities[AGENT_MCP_SERVERS_RUNNER_CAPABILITY] === true,
+      management: runner.capabilities[AGENT_MCP_SERVER_MANAGEMENT_RUNNER_CAPABILITY] === true,
       projects: Object.freeze(projects.items.slice(0, MAX_AGENT_MCP_SERVER_HOST_PROJECTS)),
       truncated: projects.items.length > MAX_AGENT_MCP_SERVER_HOST_PROJECTS,
       stale: false,

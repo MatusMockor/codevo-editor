@@ -50,6 +50,9 @@ fn response_limit(method: &str, path: &str) -> usize {
     if is_mcp_servers_route(method, path) {
         return MAX_MCP_SERVERS_OUTPUT;
     }
+    if super::mcp_server_manage_wire::Route::of(method, path).is_some() {
+        return super::mcp_server_manage_wire::MAX_OUTPUT;
+    }
     if super::speech::is_route(method, path) {
         return 32 * 1024;
     }
@@ -76,7 +79,9 @@ fn request_timeout(method: &str, path: &str) -> Duration {
     if is_mcp_servers_route(method, path) {
         return MCP_SERVERS_TIMEOUT;
     }
-    TIMEOUT
+    super::mcp_server_manage_wire::Route::of(method, path)
+        .and_then(super::mcp_server_manage_wire::Route::timeout)
+        .unwrap_or(TIMEOUT)
 }
 
 fn validate_destination(host: &str, username: &str) -> Result<(), String> {
@@ -347,6 +352,58 @@ mod tests {
             let catalog = format!("/v1/projects/codevo-editor/command-catalog/{provider}");
             assert_eq!(response_limit("GET", &catalog), MAX_COMMAND_CATALOG_OUTPUT);
             assert_eq!(request_timeout("GET", &catalog), TIMEOUT);
+        }
+    }
+
+    #[test]
+    fn mcp_server_management_calls_receive_their_own_budgets_on_exact_routes_only() {
+        use crate::remote_runner::mcp_server_manage_wire::{
+            CHANGE_TIMEOUT, LOGIN_START_TIMEOUT, MAX_OUTPUT as MAX_MANAGEMENT_OUTPUT,
+        };
+        let login = "login-0123456789";
+        for provider in ["claude", "codex"] {
+            let base = format!("/v1/projects/codevo-editor/mcp-servers/{provider}");
+            for (method, path, timeout) in [
+                ("POST", format!("{base}/changes"), CHANGE_TIMEOUT),
+                ("POST", format!("{base}/logins"), LOGIN_START_TIMEOUT),
+                ("GET", format!("{base}/logins/{login}"), TIMEOUT),
+                ("POST", format!("{base}/logins/{login}/callback"), TIMEOUT),
+                ("DELETE", format!("{base}/logins/{login}"), TIMEOUT),
+            ] {
+                assert_eq!(request_timeout(method, &path), timeout, "{method} {path}");
+                assert_eq!(
+                    response_limit(method, &path),
+                    MAX_MANAGEMENT_OUTPUT,
+                    "{method} {path}"
+                );
+                assert!(!is_mcp_servers_route(method, &path), "{method} {path}");
+            }
+            assert_eq!(response_limit("GET", &base), MAX_MCP_SERVERS_OUTPUT);
+            assert_eq!(request_timeout("GET", &base), MCP_SERVERS_TIMEOUT);
+        }
+        for (method, path) in [
+            (
+                "GET",
+                "/v1/projects/codevo-editor/mcp-servers/codex/changes",
+            ),
+            ("PUT", "/v1/projects/codevo-editor/mcp-servers/codex/logins"),
+            (
+                "POST",
+                "/v1/projects/codevo-editor/mcp-servers/gemini/changes",
+            ),
+            ("POST", "/v1/projects/a/b/mcp-servers/codex/changes"),
+            (
+                "GET",
+                "/v1/projects/codevo-editor/mcp-servers/codex/logins/short",
+            ),
+            (
+                "GET",
+                "/v1/projects/codevo-editor/mcp-servers/codex/logins/login-0123456789?x=1",
+            ),
+            ("POST", "/v1/tasks"),
+        ] {
+            assert_eq!(request_timeout(method, path), TIMEOUT, "{method} {path}");
+            assert_eq!(response_limit(method, path), MAX_OUTPUT, "{method} {path}");
         }
     }
 

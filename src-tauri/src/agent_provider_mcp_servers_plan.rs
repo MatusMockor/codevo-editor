@@ -135,6 +135,23 @@ impl InteractiveProbe for McpServersProbe {
     }
 }
 
+pub(super) struct McpSessionPlan<'a> {
+    pub(super) identity: ExecutableIdentity,
+    pub(super) provider: AgentCliInvocation,
+    pub(super) workspace_root: &'a Path,
+    pub(super) cwd_authority: Arc<fs::File>,
+    pub(super) effective_path: &'a str,
+    pub(super) timeout: Duration,
+    pub(super) output_limit: usize,
+}
+
+pub(super) fn validate_mcp_workspace_root(workspace_root: &Path) -> Result<(), String> {
+    if workspace_root.to_str().is_none() || !workspace_root.is_absolute() {
+        return Err(INVALID_WORKSPACE_ROOT_ERROR.to_string());
+    }
+    Ok(())
+}
+
 impl AgentProviderProcessPlan {
     pub fn mcp_servers_with_effective_path(
         identity: ExecutableIdentity,
@@ -144,35 +161,52 @@ impl AgentProviderProcessPlan {
         effective_path: &str,
         probe: Arc<McpServersProbe>,
     ) -> Result<Self, String> {
-        let effective_path = validate_effective_path(effective_path)?;
-        if workspace_root.to_str().is_none() || !workspace_root.is_absolute() {
-            return Err(INVALID_WORKSPACE_ROOT_ERROR.to_string());
-        }
-        let (args, stdin, output_limit): (&[&str], &str, usize) = match provider {
+        let output_limit = match provider {
+            AgentCliInvocation::ClaudeCode => MAX_CLAUDE_MCP_STATUS_STREAM_BYTES,
+            AgentCliInvocation::CodexExec => MAX_CODEX_MCP_STATUS_STREAM_BYTES,
+        };
+        Self::mcp_session(
+            McpSessionPlan {
+                identity,
+                provider,
+                workspace_root,
+                cwd_authority,
+                effective_path,
+                timeout: AGENT_PROVIDER_MCP_SERVERS_TIMEOUT,
+                output_limit,
+            },
+            probe,
+        )
+    }
+
+    pub(super) fn mcp_session(
+        session: McpSessionPlan<'_>,
+        probe: Arc<dyn InteractiveProbe>,
+    ) -> Result<Self, String> {
+        let effective_path = validate_effective_path(session.effective_path)?;
+        validate_mcp_workspace_root(session.workspace_root)?;
+        let (args, stdin): (&[&str], &str) = match session.provider {
             AgentCliInvocation::ClaudeCode => (
                 CLAUDE_MCP_STATUS_ARGS.as_slice(),
                 CLAUDE_MCP_INITIALIZE_REQUEST,
-                MAX_CLAUDE_MCP_STATUS_STREAM_BYTES,
             ),
-            AgentCliInvocation::CodexExec => (
-                CODEX_APP_SERVER_ARGS.as_slice(),
-                CODEX_APP_SERVER_HANDSHAKE,
-                MAX_CODEX_MCP_STATUS_STREAM_BYTES,
-            ),
+            AgentCliInvocation::CodexExec => {
+                (CODEX_APP_SERVER_ARGS.as_slice(), CODEX_APP_SERVER_HANDSHAKE)
+            }
         };
         let mut plan = Self::new(
-            identity,
+            session.identity,
             args.to_vec(),
             effective_path,
-            AGENT_PROVIDER_MCP_SERVERS_TIMEOUT,
-            output_limit,
+            session.timeout,
+            session.output_limit,
             false,
         );
-        plan.cwd = workspace_root.to_path_buf();
-        plan.cwd_authority = Some(cwd_authority);
+        plan.cwd = session.workspace_root.to_path_buf();
+        plan.cwd_authority = Some(session.cwd_authority);
         plan.stdin_payload = Some(stdin.as_bytes().into());
         plan.interactive_probe = Some(probe);
-        if provider == AgentCliInvocation::ClaudeCode {
+        if session.provider == AgentCliInvocation::ClaudeCode {
             let mut env = std::mem::take(&mut plan.env).into_vec();
             env.extend(
                 CLAUDE_MCP_STATUS_ENVIRONMENT

@@ -202,9 +202,13 @@ function parseServer(value: unknown, path: string): AgentMcpServer {
   });
 }
 
+export function isAgentMcpServerName(value: unknown): value is string {
+  if (!isBoundedText(value, AGENT_MCP_SERVERS_LIMITS.maxNameBytes)) return false;
+  return value === value.trim();
+}
+
 function serverName(value: unknown, path: string): string {
-  if (!isBoundedText(value, AGENT_MCP_SERVERS_LIMITS.maxNameBytes)) invalid(path);
-  if (value !== value.trim()) invalid(path);
+  if (!isAgentMcpServerName(value)) invalid(path);
   return value;
 }
 

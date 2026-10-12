@@ -3,6 +3,7 @@ import { StrictMode, act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import wireContract from "../../../../contracts/agent-mcp-servers-wire.json";
+import { UNSUPPORTED_AGENT_MCP_SERVER_MANAGEMENT } from "../../../application/agentMcpServerManagementStore";
 import { AgentMcpServerProjectsStore } from "../../../application/agentMcpServerProjects";
 import { agentMcpServersSource } from "../../../application/agentMcpServersGateway";
 import { AgentMcpServersProjectChoiceStore } from "../../../application/agentMcpServersProjectChoice";
@@ -69,6 +70,7 @@ describe("McpServersSettingsPage", () => {
       ),
       projectChoice: new AgentMcpServersProjectChoiceStore(),
       serverProjects,
+      management: UNSUPPORTED_AGENT_MCP_SERVER_MANAGEMENT,
     };
   });
 

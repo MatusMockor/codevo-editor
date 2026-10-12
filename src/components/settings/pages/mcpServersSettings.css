@@ -64,3 +64,54 @@
 .settings-mcp-status[data-tone="muted"] {
   color: var(--cv-fg-subtle);
 }
+
+.settings-mcp-server[data-mcp-active] {
+  align-items: start;
+}
+
+.settings-mcp-activity {
+  display: grid;
+  max-width: 576px;
+  margin-top: var(--cv-space-3);
+  gap: var(--cv-space-3);
+}
+
+.settings-mcp-activity .settings-row__description {
+  margin: 0;
+}
+
+.settings-mcp-activity__problem {
+  color: var(--cv-danger);
+}
+
+.settings-mcp-activity__page {
+  font-size: var(--cv-t-xs);
+  overflow-wrap: anywhere;
+}
+
+.settings-mcp-activity__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cv-space-3);
+}
+
+.settings-mcp-callback {
+  display: grid;
+  gap: var(--cv-space-4);
+}
+
+.settings-mcp-add {
+  display: contents;
+}
+
+.settings-mcp-add__note,
+.settings-mcp-add__problem {
+  margin: 0;
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-md);
+}
+
+.settings-mcp-add__problem {
+  color: var(--cv-danger);
+}

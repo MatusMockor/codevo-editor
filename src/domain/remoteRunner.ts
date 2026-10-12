@@ -11,6 +11,12 @@ export type {
 } from "@codevo/agent-events";
 import type { AgentAccountUsageSnapshot } from "./agentAccountUsage";
 import type { AgentCommandCatalog } from "./agentCommandCatalog";
+import type {
+  AgentMcpServerChange,
+  AgentMcpServerLoginMode,
+  AgentMcpServerLoginState,
+  AgentMcpServerLoginStep,
+} from "./agentMcpServerManagement";
 import type { AgentMcpServers } from "./agentMcpServers";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "./agentTurnChanges";
 import type {
@@ -55,6 +61,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     accountUsage?: boolean;
     commandCatalog?: boolean;
     mcpServers?: boolean;
+    mcpServerManagement?: boolean;
     taskExecution: boolean;
     eventReplay: boolean;
     taskDrafts?: boolean;
@@ -247,6 +254,14 @@ export type RemoteRunnerCommandCatalogRequest = RemoteRunnerServerRequest &
   Readonly<{ runnerId: string; projectId: string; provider: RemoteRunnerProvider }>;
 export type RemoteRunnerMcpServersRequest = RemoteRunnerServerRequest &
   Readonly<{ runnerId: string; projectId: string; provider: RemoteRunnerProvider }>;
+export type RemoteRunnerMcpServerChangeRequest = RemoteRunnerMcpServersRequest &
+  Readonly<{ change: AgentMcpServerChange }>;
+export type RemoteRunnerMcpServerLoginStartRequest = RemoteRunnerMcpServersRequest &
+  Readonly<{ name: string; mode: AgentMcpServerLoginMode }>;
+export type RemoteRunnerMcpServerLoginRequest = RemoteRunnerMcpServersRequest &
+  Readonly<{ loginId: string }>;
+export type RemoteRunnerMcpServerLoginCallbackRequest = RemoteRunnerMcpServerLoginRequest &
+  Readonly<{ callbackUrl: string }>;
 export type RemoteRunnerTranscribeSpeechRequest = RemoteRunnerServerRequest &
   Readonly<{ language: SpeechLanguage; base64: string }>;
 export type RemoteRunnerSpeechTranscript = Readonly<{ text: string }>;
@@ -255,6 +270,13 @@ export interface RemoteRunnerGateway {
   getAccountUsage?(request: RemoteRunnerAccountUsageRequest): Promise<AgentAccountUsageSnapshot>;
   getCommandCatalog?(request: RemoteRunnerCommandCatalogRequest): Promise<AgentCommandCatalog>;
   getMcpServers?(request: RemoteRunnerMcpServersRequest): Promise<AgentMcpServers>;
+  changeMcpServer?(request: RemoteRunnerMcpServerChangeRequest): Promise<void>;
+  startMcpServerLogin?(
+    request: RemoteRunnerMcpServerLoginStartRequest,
+  ): Promise<AgentMcpServerLoginStep>;
+  getMcpServerLogin?(request: RemoteRunnerMcpServerLoginRequest): Promise<AgentMcpServerLoginState>;
+  submitMcpServerLoginCallback?(request: RemoteRunnerMcpServerLoginCallbackRequest): Promise<void>;
+  cancelMcpServerLogin?(request: RemoteRunnerMcpServerLoginRequest): Promise<void>;
   transcribeSpeech?(
     request: RemoteRunnerTranscribeSpeechRequest,
   ): Promise<RemoteRunnerSpeechTranscript>;

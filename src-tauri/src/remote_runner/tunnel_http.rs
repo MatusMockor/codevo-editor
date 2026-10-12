@@ -1,5 +1,6 @@
 use super::{is_mcp_servers_route, MAX_INPUT, MCP_SERVERS_TIMEOUT};
 use crate::remote_runner::git_sync_wire;
+use crate::remote_runner::mcp_server_manage_wire;
 use crate::remote_runner::mcp_servers;
 use base64::Engine;
 use serde_json::{json, Value};
@@ -7,7 +8,7 @@ use serde_json::{json, Value};
 const ERROR_BODY_LIMIT: usize = 1024;
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,eventBackwardPaging";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -127,7 +128,7 @@ fn request_timeout(method: &str, path: &str) -> Option<std::time::Duration> {
     if is_mcp_servers_route(method, path) {
         return Some(MCP_SERVERS_TIMEOUT);
     }
-    None
+    mcp_server_manage_wire::Route::of(method, path)?.timeout()
 }
 async fn execute(
     client: &reqwest::Client,
@@ -138,6 +139,8 @@ async fn execute(
 ) -> Result<(Vec<u8>, Option<String>), String> {
     let speech = crate::remote_runner::speech::is_route(prepared.method.as_str(), &prepared.path);
     let mcp_status = is_mcp_servers_route(prepared.method.as_str(), &prepared.path);
+    let mcp_management =
+        mcp_server_manage_wire::Route::of(prepared.method.as_str(), &prepared.path).is_some();
     let timeout = request_timeout(prepared.method.as_str(), &prepared.path);
     let mut request = client
         .request(
@@ -178,6 +181,16 @@ async fn execute(
                 return Err(format!(
                     "Runner speech transcription failed: {error} (HTTP {status})."
                 ));
+            }
+            return Err(format!("Runner request failed (HTTP {status})."));
+        }
+        if mcp_management && status != 401 {
+            if let Some(refusal) = bounded_error_body(&mut response)
+                .await
+                .as_deref()
+                .and_then(mcp_server_manage_wire::RunnerRefusal::from_body)
+            {
+                return Err(refusal.message().into());
             }
             return Err(format!("Runner request failed (HTTP {status})."));
         }
@@ -457,6 +470,34 @@ mod tests {
     }
 
     #[test]
+    fn mcp_server_management_http_timeouts_are_scoped_to_exact_routes() {
+        use mcp_server_manage_wire::{CHANGE_TIMEOUT, LOGIN_START_TIMEOUT};
+        let login = "login-0123456789";
+        for provider in ["claude", "codex"] {
+            let base = format!("/v1/projects/codevo-editor/mcp-servers/{provider}");
+            for (method, path, timeout) in [
+                ("POST", format!("{base}/changes"), Some(CHANGE_TIMEOUT)),
+                ("POST", format!("{base}/logins"), Some(LOGIN_START_TIMEOUT)),
+                ("GET", format!("{base}/logins/{login}"), None),
+                ("POST", format!("{base}/logins/{login}/callback"), None),
+                ("DELETE", format!("{base}/logins/{login}"), None),
+                ("GET", format!("{base}/changes"), None),
+                ("PUT", format!("{base}/logins"), None),
+                ("POST", format!("{base}/changes?x=1"), None),
+            ] {
+                assert_eq!(request_timeout(method, &path), timeout, "{method} {path}");
+            }
+        }
+        assert_eq!(
+            request_timeout(
+                "POST",
+                "/v1/projects/codevo-editor/mcp-servers/gemini/changes"
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn speech_errors_are_closed_strict_and_bounded() {
         for code in [
             "not_found",
@@ -533,6 +574,7 @@ mod tests {
         assert!(tokens.contains(&"commandCatalog"));
         assert!(tokens.contains(&"speechTranscription"));
         assert!(tokens.contains(&"mcpServers"));
+        assert!(tokens.contains(&"mcpServerManagement"));
         assert!(tokens.contains(&"eventBackwardPaging"));
         for token in tokens {
             assert_eq!(token, token.trim());

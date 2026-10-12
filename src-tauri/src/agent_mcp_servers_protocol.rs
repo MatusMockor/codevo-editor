@@ -61,14 +61,14 @@ pub enum McpProbeStep {
 }
 
 #[derive(Debug)]
-struct BoundedLines {
+pub(crate) struct BoundedLines {
     limit: usize,
     pending: Vec<u8>,
     overflowed: bool,
 }
 
 impl BoundedLines {
-    fn new(limit: usize) -> Self {
+    pub(crate) fn new(limit: usize) -> Self {
         Self {
             limit,
             pending: Vec::new(),
@@ -76,7 +76,7 @@ impl BoundedLines {
         }
     }
 
-    fn push(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, String> {
+    pub(crate) fn push(&mut self, bytes: &[u8]) -> Result<Vec<Vec<u8>>, String> {
         if self.overflowed {
             return Err(LINE_LIMIT_ERROR.to_string());
         }
@@ -138,7 +138,7 @@ pub fn codex_mcp_config_request(workspace_root: &str) -> Vec<u8> {
     request.into_bytes()
 }
 
-fn claude_control_response(line: &[u8]) -> Option<Value> {
+pub(crate) fn claude_control_response(line: &[u8]) -> Option<Value> {
     let mut value = serde_json::from_slice::<Value>(line).ok()?;
     if value.get("type").and_then(Value::as_str) != Some("control_response") {
         return None;

@@ -128,6 +128,7 @@ export class DeferredRunnerTunnel {
 export function mcpRunnerFixture(
   runnerId: string,
   mcpServers: boolean | "absent" = true,
+  mcpServerManagement = false,
 ): RemoteRunnerDescriptor {
   return {
     protocolVersion: 1,
@@ -137,6 +138,7 @@ export function mcpRunnerFixture(
       taskExecution: true,
       eventReplay: true,
       ...(mcpServers === "absent" ? {} : { mcpServers }),
+      ...(mcpServerManagement ? { mcpServerManagement } : {}),
     },
   };
 }

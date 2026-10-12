@@ -34,6 +34,9 @@ pub fn run() {
         .enable_macos_default_menu(false)
         .manage(crate::artifact_preview::ArtifactPreviewState::default())
         .manage(crate::local_clone::LocalCloneState::default())
+        .manage(Arc::new(
+            crate::agent_mcp_server_login_registry::AgentMcpLoginRegistry::default(),
+        ))
         .register_uri_scheme_protocol("codevo-artifact-preview", crate::artifact_preview::respond);
     #[cfg(target_os = "macos")]
     let builder = builder
@@ -258,6 +261,10 @@ pub fn run() {
             crate::codex_model_catalog::get_codex_model_catalog,
             crate::agent_command_catalog::get_agent_command_catalog,
             crate::agent_mcp_servers::get_agent_mcp_servers,
+            crate::agent_mcp_server_manage::change_agent_mcp_server,
+            crate::agent_mcp_server_manage::start_agent_mcp_server_login,
+            crate::agent_mcp_server_manage::get_agent_mcp_server_login,
+            crate::agent_mcp_server_manage::cancel_agent_mcp_server_login,
             crate::artifact_preview::artifact_preview_create,
             crate::artifact_preview::workspace_html_preview::workspace_html_preview_create,
             crate::artifact_preview::artifact_preview_revoke,
@@ -272,6 +279,11 @@ pub fn run() {
             crate::remote_runner::remote_runner_get_account_usage,
             crate::remote_runner::remote_runner_get_command_catalog,
             crate::remote_runner::remote_runner_get_mcp_servers,
+            crate::remote_runner::remote_runner_change_mcp_server,
+            crate::remote_runner::remote_runner_start_mcp_server_login,
+            crate::remote_runner::remote_runner_get_mcp_server_login,
+            crate::remote_runner::remote_runner_submit_mcp_server_login_callback,
+            crate::remote_runner::remote_runner_cancel_mcp_server_login,
             crate::remote_runner::remote_runner_transcribe_speech,
             crate::remote_runner::remote_runner_list_projects,
             crate::remote_runner::remote_runner_clone_project,

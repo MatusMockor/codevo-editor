@@ -29,6 +29,9 @@ mod turn_version;
 #[path = "agent_provider_runtime/model_catalog_probe.rs"]
 mod model_catalog_probe;
 
+#[path = "agent_provider_runtime/mcp_manage.rs"]
+mod mcp_manage;
+
 #[path = "agent_provider_runtime/lifecycle.rs"]
 mod lifecycle;
 

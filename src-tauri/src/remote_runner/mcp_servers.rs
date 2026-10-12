@@ -19,9 +19,9 @@ use serde_json::Value;
 const CAPABILITY: &str = "mcpServers";
 const RUNNER_BUSY: &str = "Runner MCP server status check is busy.";
 const RUNNER_PROBE_FAILED: &str = "Runner MCP server status check failed on the server.";
-const REQUEST_TIMED_OUT: &str = "Runner request timed out. Its outcome may be unknown.";
-const OUTPUT_LIMIT_EXCEEDED: &str = "Runner response exceeds output limit.";
-const INVALID_RESPONSE: &str = "Runner returned an invalid response.";
+pub(super) const REQUEST_TIMED_OUT: &str = "Runner request timed out. Its outcome may be unknown.";
+pub(super) const OUTPUT_LIMIT_EXCEEDED: &str = "Runner response exceeds output limit.";
+pub(super) const INVALID_RESPONSE: &str = "Runner returned an invalid response.";
 const HTTP_STATUS_PREFIX: &str = "(HTTP ";
 const HTTP_STATUS_SUFFIX: &str = ").";
 
@@ -36,20 +36,20 @@ pub struct McpServersRequest {
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
-enum Provider {
+pub(super) enum Provider {
     Claude,
     Codex,
 }
 
 impl Provider {
-    fn segment(self) -> &'static str {
+    pub(super) fn segment(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
         }
     }
 
-    fn local(self) -> AgentCliInvocation {
+    pub(super) fn local(self) -> AgentCliInvocation {
         match self {
             Self::Claude => AgentCliInvocation::ClaudeCode,
             Self::Codex => AgentCliInvocation::CodexExec,
@@ -109,11 +109,11 @@ impl RunnerRefusal {
     }
 }
 
-fn text(value: &str, max: usize) -> bool {
+pub(super) fn text(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
 }
 
-fn http_status(failure: &str) -> Option<u16> {
+pub(super) fn http_status(failure: &str) -> Option<u16> {
     let (_, rest) = failure.split_once(HTTP_STATUS_PREFIX)?;
     let (status, _) = rest.split_once(HTTP_STATUS_SUFFIX)?;
     status.parse().ok()
@@ -146,13 +146,21 @@ fn parse_runner_servers(value: Value, provider: Provider) -> Result<AgentMcpServ
 }
 
 fn admit_descriptor(descriptor: Value, expected_runner: &str) -> Result<(), &'static str> {
+    admit_capability(descriptor, expected_runner, CAPABILITY)
+}
+
+pub(super) fn admit_capability(
+    descriptor: Value,
+    expected_runner: &str,
+    capability: &str,
+) -> Result<(), &'static str> {
     let runner = super::descriptor::validate(descriptor.clone()).map_err(|_| SERVER_UNAVAILABLE)?;
     if runner != expected_runner {
         return Err(SERVER_UNAVAILABLE);
     }
     if descriptor
         .get("capabilities")
-        .and_then(|caps| caps.get(CAPABILITY))
+        .and_then(|caps| caps.get(capability))
         .and_then(Value::as_bool)
         != Some(true)
     {
@@ -161,7 +169,10 @@ fn admit_descriptor(descriptor: Value, expected_runner: &str) -> Result<(), &'st
     Ok(())
 }
 
-fn ensure_exact_runner(lease: &ConnectionLease, runner_id: &str) -> Result<(), &'static str> {
+pub(super) fn ensure_exact_runner(
+    lease: &ConnectionLease,
+    runner_id: &str,
+) -> Result<(), &'static str> {
     if !lease.is_current() || lease.runner_id() != runner_id {
         return Err(SERVER_UNAVAILABLE);
     }

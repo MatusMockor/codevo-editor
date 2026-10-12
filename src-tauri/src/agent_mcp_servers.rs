@@ -41,7 +41,7 @@ impl Drop for McpProbePermit {
     }
 }
 
-struct McpServersAuthorityErrors;
+pub(crate) struct McpServersAuthorityErrors;
 
 impl WorkspaceProbeAuthorityErrors for McpServersAuthorityErrors {
     const UNKNOWN_WORKSPACE: &'static str = AGENT_MCP_SERVERS_UNKNOWN_WORKSPACE_ERROR;
@@ -50,7 +50,7 @@ impl WorkspaceProbeAuthorityErrors for McpServersAuthorityErrors {
     const UNAVAILABLE: &'static str = AGENT_MCP_SERVERS_UNAVAILABLE_ERROR;
 }
 
-type WorkspaceMcpServersAuthority = WorkspaceProbeAuthority<McpServersAuthorityErrors>;
+pub(crate) type WorkspaceMcpServersAuthority = WorkspaceProbeAuthority<McpServersAuthorityErrors>;
 
 #[derive(Clone, Debug)]
 struct CheckedMcpServers {
@@ -58,7 +58,7 @@ struct CheckedMcpServers {
     generation: u64,
 }
 
-fn provider_generation(
+pub(crate) fn provider_generation(
     providers: &AgentProviderRuntimeRegistry,
     provider: AgentCliInvocation,
 ) -> Result<u64, String> {
@@ -69,7 +69,7 @@ fn provider_generation(
         .ok_or_else(|| AGENT_MCP_SERVERS_PROVIDER_DISABLED_ERROR.to_string())
 }
 
-fn ensure_provider_generation(
+pub(crate) fn ensure_provider_generation(
     providers: &AgentProviderRuntimeRegistry,
     provider: AgentCliInvocation,
     generation: u64,
@@ -80,7 +80,10 @@ fn ensure_provider_generation(
     Ok(())
 }
 
-fn lease_failure(providers: &AgentProviderRuntimeRegistry, provider: AgentCliInvocation) -> String {
+pub(crate) fn lease_failure(
+    providers: &AgentProviderRuntimeRegistry,
+    provider: AgentCliInvocation,
+) -> String {
     provider_generation(providers, provider)
         .err()
         .unwrap_or_else(|| AGENT_MCP_SERVERS_UNAVAILABLE_ERROR.to_string())

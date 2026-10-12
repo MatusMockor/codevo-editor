@@ -91,6 +91,8 @@ async function bootstrap(): Promise<void> {
     { TauriAgentCommandCatalogGateway },
     { AgentMcpServersProvider },
     { TauriAgentMcpServersGateway },
+    { TauriAgentMcpServerManagementGateway },
+    { TauriAgentMcpSignInPageOpener },
     { ModelNewnessProvider },
     { BrowserModelFirstSeenRepository },
     { TauriRemoteRunnerGateway },
@@ -114,6 +116,8 @@ async function bootstrap(): Promise<void> {
     import("./infrastructure/tauriAgentCommandCatalogGateway"),
     import("./components/agentMode/AgentMcpServersProvider"),
     import("./infrastructure/tauriAgentMcpServersGateway"),
+    import("./infrastructure/tauriAgentMcpServerManagementGateway"),
+    import("./infrastructure/tauriAgentMcpSignInPageOpener"),
     import("./components/agentMode/ModelNewnessProvider"),
     import("./infrastructure/browserModelFirstSeenRepository"),
     import("./infrastructure/tauriRemoteRunnerGateway"),
@@ -123,6 +127,10 @@ async function bootstrap(): Promise<void> {
     import("./infrastructure/speechDictationComposition"),
   ]);
   const remoteRunnerGateway = new TauriRemoteRunnerGateway();
+  const agentMcpServerManagement = {
+    gateway: new TauriAgentMcpServerManagementGateway(),
+    urlOpener: new TauriAgentMcpSignInPageOpener(),
+  };
 
   // Root-level boundary: ANY render/lifecycle crash anywhere in the app
   // (not just inside the git diff view) now renders a recoverable fallback
@@ -145,6 +153,7 @@ async function bootstrap(): Promise<void> {
             children: React.createElement(AgentMcpServersProvider, {
               gateway: new TauriAgentMcpServersGateway(),
               remoteGateway: remoteRunnerGateway,
+              management: agentMcpServerManagement,
               children: React.createElement(ModelNewnessProvider, {
                 repository: new BrowserModelFirstSeenRepository(),
                 children: React.createElement(App),

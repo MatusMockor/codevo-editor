@@ -5,6 +5,7 @@ import { remoteRunnerProviderOf } from "./remoteRunnerProvider";
 import { remoteRunnerChecks } from "./remoteRunnerValidation";
 
 export const AGENT_MCP_SERVERS_RUNNER_CAPABILITY = "mcpServers" as const;
+export const AGENT_MCP_SERVER_MANAGEMENT_RUNNER_CAPABILITY = "mcpServerManagement" as const;
 
 export interface AgentMcpServersServerProject {
   readonly serverId: string;

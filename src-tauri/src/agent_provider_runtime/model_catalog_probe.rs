@@ -17,12 +17,12 @@ use std::{fs, path::Path, sync::Arc};
 const COMMAND_CATALOG_PROBE_FAILED: &str = "Provider command catalog probe failed.";
 
 pub struct ProviderCatalogProbeLease {
-    provider: AgentCliInvocation,
+    pub(super) provider: AgentCliInvocation,
     generation: u64,
     policy: AgentProviderPolicy,
     cli_path: String,
-    cli_identity: ExecutableIdentity,
-    effective_path: String,
+    pub(super) cli_identity: ExecutableIdentity,
+    pub(super) effective_path: String,
     path_fingerprint: String,
     discovery_generation: u64,
 }
@@ -78,14 +78,17 @@ impl AgentProviderRuntimeRegistry {
         })
     }
 
-    fn catalog_probe_cancelled(&self, lease: &ProviderCatalogProbeLease) -> bool {
+    pub(super) fn catalog_probe_cancelled(&self, lease: &ProviderCatalogProbeLease) -> bool {
         self.operations_closed()
             || self
                 .revalidate_operation_state(lease.provider, lease.generation, &lease.policy)
                 .is_err()
     }
 
-    fn revalidate_catalog_probe(&self, lease: &ProviderCatalogProbeLease) -> Result<(), String> {
+    pub(super) fn revalidate_catalog_probe(
+        &self,
+        lease: &ProviderCatalogProbeLease,
+    ) -> Result<(), String> {
         self.revalidate_operation_state(lease.provider, lease.generation, &lease.policy)?;
         self.revalidate_resolution(lease.provider, &lease.policy, lease.resolved())?;
         self.revalidate_operation_state(lease.provider, lease.generation, &lease.policy)

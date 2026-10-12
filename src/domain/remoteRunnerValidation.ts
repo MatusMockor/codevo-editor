@@ -1,6 +1,15 @@
 import { parseAgentAccountUsageSnapshot } from "./agentAccountUsage";
 import { parseAgentCommandCatalog } from "./agentCommandCatalog";
-import { parseAgentMcpServers } from "./agentMcpServers";
+import {
+  AGENT_MCP_SERVER_LOGIN_MODES,
+  agentMcpServerCallbackUrl,
+  isAgentMcpServerLoginId,
+  parseAgentMcpServerChange,
+  parseAgentMcpServerChangeReceipt,
+  parseAgentMcpServerLoginStarted,
+  parseAgentMcpServerLoginStatus,
+} from "./agentMcpServerManagement";
+import { isAgentMcpServerName, parseAgentMcpServers } from "./agentMcpServers";
 import {
   parseAgentTurnChangeSummary,
   parseAgentTurnFileDiff,
@@ -28,6 +37,7 @@ import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
 import { isRemoteStartBase } from "./remoteGitSyncWire";
+import { agentCliKindOfRemoteRunnerProvider } from "./remoteRunnerProvider";
 import { SPEECH_LANGUAGES } from "./speechDictation";
 import { isSpeechPcmBase64 } from "./speechPcm";
 import { isSpeechTranscriptText } from "./speechTranscription";
@@ -318,6 +328,22 @@ const voidResponse: Check = (v) => v === null || v === undefined;
 const runnerIdentity: Check = (value) =>
   text(128)(value) && typeof value === "string" && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
 
+const mcpServersTarget = {
+  ...serverRequest,
+  runnerId: runnerIdentity,
+  projectId: identifier,
+  provider,
+};
+const mcpServerLogin = { ...mcpServersTarget, loginId: isAgentMcpServerLoginId };
+const mcpServerChangeRequest: Check = (value) => {
+  if (!object({ ...mcpServersTarget, change: (change) => change !== undefined })(value))
+    return false;
+  const request = value as R.RemoteRunnerMcpServerChangeRequest;
+  const local = agentCliKindOfRemoteRunnerProvider(request.provider);
+  return accepts((change) => parseAgentMcpServerChange(change, local))(request.change);
+};
+const mcpServerReceipt = accepts(parseAgentMcpServerChangeReceipt);
+
 export const remoteRunnerChecks = {
   getAccountUsage: {
     request: object({
@@ -345,6 +371,27 @@ export const remoteRunnerChecks = {
     }),
     response: accepts(parseAgentMcpServers),
   },
+  changeMcpServer: { request: mcpServerChangeRequest, response: mcpServerReceipt },
+  startMcpServerLogin: {
+    request: object({
+      ...mcpServersTarget,
+      name: isAgentMcpServerName,
+      mode: choice(...AGENT_MCP_SERVER_LOGIN_MODES),
+    }),
+    response: accepts(parseAgentMcpServerLoginStarted),
+  },
+  getMcpServerLogin: {
+    request: object(mcpServerLogin),
+    response: accepts(parseAgentMcpServerLoginStatus),
+  },
+  submitMcpServerLoginCallback: {
+    request: object({
+      ...mcpServerLogin,
+      callbackUrl: (url) => agentMcpServerCallbackUrl(url) === url,
+    }),
+    response: mcpServerReceipt,
+  },
+  cancelMcpServerLogin: { request: object(mcpServerLogin), response: mcpServerReceipt },
   transcribeSpeech: {
     request: object({
       ...serverRequest,
@@ -372,6 +419,7 @@ export const remoteRunnerChecks = {
         accountUsage: optional(boolean),
         commandCatalog: optional(boolean),
         mcpServers: optional(boolean),
+        mcpServerManagement: optional(boolean),
         taskExecution: boolean,
         eventReplay: boolean,
         taskDrafts: optional(boolean),

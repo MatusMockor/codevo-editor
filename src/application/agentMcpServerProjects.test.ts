@@ -84,6 +84,7 @@ describe("AgentMcpServerProjectsStore", () => {
           kind: "ready",
           runnerId: "runner-home",
           supported: true,
+          management: false,
           projects,
           truncated: false,
           stale: false,
@@ -95,6 +96,7 @@ describe("AgentMcpServerProjectsStore", () => {
           kind: "ready",
           runnerId: "runner-old",
           supported: false,
+          management: false,
           projects: [],
           truncated: false,
           stale: false,
@@ -148,6 +150,27 @@ describe("AgentMcpServerProjectsStore", () => {
     expect(inventories(store)).toEqual([["linux", "ready"]]);
   });
 
+  it("reports management only for a runner that advertises it next to status checks", async () => {
+    const { store, tunnel } = setup();
+    store.connect([LINUX, MAC, { id: "old", name: "Old box", connection: {} }]);
+    expect(store.managementSupport("linux", "runner-home")).toBe("unavailable");
+    store.load();
+    tunnel.serve("linux", mcpRunnerFixture("runner-home", true, true), projects);
+    tunnel.serve("mac", mcpRunnerFixture("runner-mac", true), projects);
+    tunnel.serve("old", mcpRunnerFixture("runner-old", "absent", true), projects);
+    await settle();
+
+    expect(store.state().hosts[0]?.inventory).toMatchObject({ supported: true, management: true });
+    expect(store.managementSupport("linux", "runner-home")).toBe("supported");
+    expect(store.managementSupport("linux", "runner-other")).toBe("unavailable");
+    expect(store.managementSupport("mac", "runner-mac")).toBe("unsupported");
+    expect(store.managementSupport("old", "runner-old")).toBe("unsupported");
+    expect(store.support("mac", "runner-mac")).toBe("supported");
+
+    store.connect([{ ...LINUX, connection: {} }]);
+    expect(store.managementSupport("linux", "runner-home")).toBe("unavailable");
+  });
+
   it("keeps a known project list, marked stale, when reading it again fails", async () => {
     const { published, store, tunnel, watch } = setup();
     store.connect([LINUX]);
@@ -166,6 +189,7 @@ describe("AgentMcpServerProjectsStore", () => {
           kind: "ready",
           runnerId: "runner-home",
           supported: true,
+          management: false,
           projects,
           truncated: false,
           stale: true,

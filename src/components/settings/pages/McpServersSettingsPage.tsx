@@ -1,28 +1,13 @@
-import {
-  CircleAlert,
-  CircleCheck,
-  CircleHelp,
-  CircleSlash,
-  Copy,
-  KeyRound,
-  LoaderCircle,
-  RefreshCw,
-  type LucideIcon,
-} from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useEffect, useMemo } from "react";
-import {
-  agentMcpServersSnapshot,
-  type AgentMcpServersStore,
-} from "../../../application/agentMcpServersStore";
+import { agentMcpServersSnapshot } from "../../../application/agentMcpServersStore";
+import type { AgentMcpServersSurface } from "../../../application/agentMcpServersSurface";
+import { useAgentMcpServerManagementSupport } from "../../../application/useAgentMcpServerManagement";
 import {
   useAgentMcpServersState,
   useAgentMcpServersTarget,
 } from "../../../application/useAgentMcpServers";
-import {
-  agentMcpServerSignInCommand,
-  type AgentMcpServer,
-  type AgentMcpServerStatus,
-} from "../../../domain/agentMcpServers";
+import type { AgentMcpServer } from "../../../domain/agentMcpServers";
 import type { AgentCliKind } from "../../../domain/agentTask";
 import { IconButton } from "../../../ui/foundation/IconButton";
 import { useNowMs } from "../../../ui/foundation/useNowMs";
@@ -32,6 +17,8 @@ import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 import { SettingsSelect } from "../primitives/SettingsSelect";
 import type { SettingsEnvironment, SettingsPageProps } from "../settingsPageProps";
 import { useSettingsRowTarget } from "../settingsTargetContext";
+import { McpAddServer } from "./McpAddServer";
+import { McpServerRow } from "./McpServerRow";
 import {
   selectedMcpProjectKey,
   type McpProjectNote,
@@ -46,12 +33,7 @@ import {
   mcpAddServerLead,
   mcpCheckNotice,
   mcpCheckedLabel,
-  mcpCopySignInLabel,
   mcpProviderSummary,
-  mcpServerSecondaryText,
-  mcpServerStatusLabel,
-  mcpServerStatusTone,
-  mcpSignInLead,
   orderedMcpServers,
   type McpProjectPlace,
   type McpProviderSummary,
@@ -105,11 +87,11 @@ export function McpServersPageActions({ env }: { readonly env: SettingsEnvironme
 }
 
 function McpServersContent({ env }: { readonly env: SettingsEnvironment }) {
-  const store = env.agentMcpServers?.store ?? null;
+  const surface = env.agentMcpServers ?? null;
   const project = useMcpServersProject(env);
   const nowMs = useNowMs();
-  useMcpServerProjectsLoad(env.agentMcpServers?.serverProjects ?? null);
-  if (store === null) return <McpNotice notes={NO_NOTES} text={MCP_UNAVAILABLE_NOTICE} />;
+  useMcpServerProjectsLoad(surface?.serverProjects ?? null);
+  if (surface === null) return <McpNotice notes={NO_NOTES} text={MCP_UNAVAILABLE_NOTICE} />;
   const selection = project.selection;
   switch (selection.kind) {
     case "none":
@@ -122,13 +104,13 @@ function McpServersContent({ env }: { readonly env: SettingsEnvironment }) {
           <McpProjectSection project={project} selected={selection.option} />
           {MCP_PROVIDERS.map((provider) => (
             <McpProviderGroup
-              key={provider}
+              key={`${provider}:${selection.option.key}`}
               nowMs={nowMs}
               onCopy={env.onCopyInstallCommand}
               place={selection.option.project.kind}
               projectKey={selection.option.key}
               provider={provider}
-              store={store}
+              surface={surface}
             />
           ))}
         </>
@@ -225,17 +207,20 @@ function McpProviderGroup({
   place,
   projectKey,
   provider,
-  store,
+  surface,
 }: {
   readonly nowMs: number;
   readonly place: McpProjectPlace;
   readonly projectKey: string;
   readonly provider: AgentCliKind;
-  readonly store: AgentMcpServersStore;
+  readonly surface: AgentMcpServersSurface;
   onCopy(command: string): void;
 }) {
+  const store = surface.store;
   const target = useAgentMcpServersTarget(projectKey, provider);
   const state = useAgentMcpServersState(store, target);
+  const support = useAgentMcpServerManagementSupport(surface, target);
+  const management = support === "supported" ? surface.management : null;
   useEffect(() => {
     if (target === null) return;
     if (store.state(target).kind !== "idle") return;
@@ -246,13 +231,25 @@ function McpProviderGroup({
     () => (snapshot === null ? NO_SERVERS : orderedMcpServers(snapshot.result.servers)),
     [snapshot],
   );
+  const names = useMemo(() => servers.map((server) => server.name), [servers]);
+  const summary = mcpProviderSummary(state, provider);
   return (
     <SettingsSectionHeading
       actions={
         snapshot === null ? undefined : (
-          <span className="settings-section__note">
-            {mcpCheckedLabel(snapshot.checkedAtMs, nowMs)}
-          </span>
+          <>
+            <span className="settings-section__note">
+              {mcpCheckedLabel(snapshot.checkedAtMs, nowMs)}
+            </span>
+            {management === null || target === null ? null : (
+              <McpAddServer
+                configuredNames={names}
+                management={management}
+                provider={provider}
+                target={target}
+              />
+            )}
+          </>
         )
       }
       bare
@@ -264,17 +261,20 @@ function McpProviderGroup({
         data-mcp-provider={provider}
       >
         <McpProviderSummaryRow
+          hintCommand={management === null ? summary.hintCommand : null}
           place={place}
           provider={provider}
-          summary={mcpProviderSummary(state, provider)}
+          summary={summary}
         />
         {servers.map((server) => (
           <McpServerRow
             key={server.name}
+            management={management}
             onCopy={onCopy}
             place={place}
             provider={provider}
             server={server}
+            target={target}
           />
         ))}
         {snapshot?.result.truncated === true ? (
@@ -286,10 +286,12 @@ function McpProviderGroup({
 }
 
 function McpProviderSummaryRow({
+  hintCommand,
   place,
   provider,
   summary,
 }: {
+  readonly hintCommand: string | null;
   readonly place: McpProjectPlace;
   readonly provider: AgentCliKind;
   readonly summary: McpProviderSummary;
@@ -300,100 +302,11 @@ function McpProviderSummaryRow({
         <AgentProviderGlyph decorative kind={provider} />
         <span role={summary.tone === "problem" ? "alert" : "status"}>{summary.text}</span>
       </span>
-      {summary.hintCommand === null ? null : (
+      {hintCommand === null ? null : (
         <p className="settings-row__description">
-          {mcpAddServerLead(place)} <code>{summary.hintCommand}</code>, then check again.
+          {mcpAddServerLead(place)} <code>{hintCommand}</code>, then check again.
         </p>
       )}
     </div>
   );
-}
-
-function McpServerRow({
-  onCopy,
-  place,
-  provider,
-  server,
-}: {
-  readonly place: McpProjectPlace;
-  readonly provider: AgentCliKind;
-  readonly server: AgentMcpServer;
-  onCopy(command: string): void;
-}) {
-  const secondary = mcpServerSecondaryText(server);
-  const signInCommand = agentMcpServerSignInCommand(provider, server);
-  const StatusIcon = statusIcon(server.status);
-  return (
-    <div className="settings-row settings-mcp-server" data-mcp-server={server.name}>
-      <div className="settings-row__text">
-        <div className="settings-row__head">
-          <h3 className="settings-row__title">{server.name}</h3>
-        </div>
-        {secondary === null ? null : <p className="settings-row__description">{secondary}</p>}
-        {server.detail === null ? null : (
-          <p className="settings-row__description settings-mcp-server__detail">{server.detail}</p>
-        )}
-        {signInCommand === null ? null : (
-          <McpSignInHint
-            command={signInCommand}
-            lead={mcpSignInLead(place)}
-            name={server.name}
-            onCopy={onCopy}
-          />
-        )}
-      </div>
-      <div className="settings-row__control">
-        <span className="settings-mcp-status" data-tone={mcpServerStatusTone(server.status)}>
-          <StatusIcon aria-hidden="true" size={14} />
-          {mcpServerStatusLabel(server.status)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function McpSignInHint({
-  command,
-  lead,
-  name,
-  onCopy,
-}: {
-  readonly command: string;
-  readonly lead: string;
-  readonly name: string;
-  onCopy(command: string): void;
-}) {
-  return (
-    <p className="settings-row__description settings-mcp-signin">
-      <span>{lead}</span>
-      <code>{command}</code>
-      <IconButton
-        icon={<Copy aria-hidden="true" size={12} />}
-        label={mcpCopySignInLabel(name)}
-        onClick={() => onCopy(command)}
-        size="xs"
-      />
-    </p>
-  );
-}
-
-function statusIcon(status: AgentMcpServerStatus): LucideIcon {
-  switch (status) {
-    case "connected":
-      return CircleCheck;
-    case "connecting":
-      return LoaderCircle;
-    case "needsAuth":
-      return KeyRound;
-    case "failed":
-      return CircleAlert;
-    case "disabled":
-      return CircleSlash;
-    case "unknown":
-      return CircleHelp;
-    default: {
-      const unreachable: never = status;
-      return unreachable;
-    }
-  }
 }

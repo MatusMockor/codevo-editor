@@ -65,6 +65,8 @@ struct Capabilities {
     command_catalog: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     mcp_servers: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    mcp_server_management: Option<bool>,
 }
 
 fn optional_timeout<'de, D: serde::Deserializer<'de>>(
@@ -125,6 +127,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.port_preview,
         caps.command_catalog,
         caps.mcp_servers,
+        caps.mcp_server_management,
     );
     Ok(descriptor.runner_id)
 }
@@ -141,6 +144,7 @@ mod tests {
             "accountUsage",
             "commandCatalog",
             "mcpServers",
+            "mcpServerManagement",
             "speechTranscription",
         ] {
             let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});

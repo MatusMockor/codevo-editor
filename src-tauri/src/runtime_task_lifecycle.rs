@@ -69,6 +69,11 @@ pub(crate) fn shutdown_runtime_processes(
     if let Some(provider_runtime) = app.try_state::<Arc<AgentProviderRuntimeRegistry>>() {
         provider_runtime.close_operation_admission();
     }
+    if let Some(logins) =
+        app.try_state::<Arc<crate::agent_mcp_server_login_registry::AgentMcpLoginRegistry>>()
+    {
+        logins.shutdown();
+    }
     if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
         supervisor.stop_all();
     }
