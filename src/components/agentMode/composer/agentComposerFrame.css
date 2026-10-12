@@ -222,6 +222,31 @@
   font-weight: 500;
 }
 
+.agent-compaction-offer__info {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  background: none;
+  color: var(--cv-fg-muted);
+  cursor: pointer;
+}
+
+.agent-compaction-offer__info:hover,
+.agent-compaction-offer__info[aria-expanded="true"] {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
+}
+
+.agent-compaction-offer__info:focus-visible {
+  outline: 2px solid var(--cv-focus);
+  outline-offset: 2px;
+}
+
 .agent-compaction-offer__explanation {
   flex-basis: 100%;
   margin: var(--cv-space-2) 0 0;
