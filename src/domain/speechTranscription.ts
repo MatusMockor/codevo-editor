@@ -3,7 +3,7 @@ import { REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE } from "./remoteRunnerErrors";
 export const SPEECH_MAX_TRANSCRIPT_CHARACTERS = 4000;
 
 export type SpeechTranscriptionFailureReason =
-  "server-busy" | "server-disconnected" | "transcription-failed";
+  "editor-busy" | "server-busy" | "server-disconnected" | "transcription-failed";
 export type SpeechTranscription =
   | Readonly<{ kind: "transcribed"; text: string }>
   | Readonly<{ kind: "failed"; reason: SpeechTranscriptionFailureReason }>;
@@ -15,6 +15,7 @@ const DISCONNECTED_MESSAGES: ReadonlySet<string> = new Set([
   "Server connection changed during request",
   "Server connection was superseded",
   "Runner connection changed during request.",
+  "Runner connection failed. The request outcome may be unknown.",
   "Runner connection is closed.",
   "Runner connection is closed. Reconnect the server.",
   "Runner connection unavailable.",
@@ -24,6 +25,7 @@ const DISCONNECTED_MESSAGES: ReadonlySet<string> = new Set([
 ]);
 const FAILED: SpeechTranscription = { kind: "failed", reason: "transcription-failed" };
 const FAILURE_REASONS: readonly SpeechTranscriptionFailureReason[] = [
+  "editor-busy",
   "server-busy",
   "server-disconnected",
   "transcription-failed",
@@ -56,9 +58,28 @@ export function speechTranscriptionErrorMessage(error: unknown): string {
 export function classifySpeechTranscriptionError(error: unknown): SpeechTranscriptionFailureReason {
   const message = speechTranscriptionErrorMessage(error);
   if (DISCONNECTED_MESSAGES.has(message)) return "server-disconnected";
-  if (message === REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE) return "server-busy";
+  if (message === REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE) return "editor-busy";
   if (RUNNER_SPEECH_FAILURE.exec(message)?.[1] === "busy") return "server-busy";
   return "transcription-failed";
+}
+
+export function isSpeechTranscriptionBusyRefusal(
+  reason: SpeechTranscriptionFailureReason,
+): boolean {
+  switch (reason) {
+    case "editor-busy":
+    case "server-busy":
+      return true;
+    case "server-disconnected":
+    case "transcription-failed":
+      return false;
+    default:
+      return unsupportedReason(reason);
+  }
+}
+
+function unsupportedReason(reason: never): never {
+  throw new TypeError(`Unsupported speech transcription failure reason: ${String(reason)}.`);
 }
 
 function codePointCount(value: string): number {

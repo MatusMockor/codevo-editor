@@ -10,9 +10,9 @@ import {
 describe("isTransientRunnerBusyError", () => {
   it.each([
     "Runner request failed (HTTP 503).",
-    "Runner is busy; retry shortly",
+    "Too many server requests are still in progress; retry shortly",
     new Error("Runner request failed (HTTP 503)."),
-    new Error("Runner is busy; retry shortly"),
+    new Error("Too many server requests are still in progress; retry shortly"),
   ])("classifies %s as transient", (error) => {
     expect(isTransientRunnerBusyError(error)).toBe(true);
   });
@@ -25,7 +25,7 @@ describe("isTransientRunnerBusyError", () => {
     "",
     null,
     undefined,
-    { message: "Runner is busy; retry shortly" },
+    { message: "Too many server requests are still in progress; retry shortly" },
   ])("does not classify %s as transient", (error) => {
     expect(isTransientRunnerBusyError(error)).toBe(false);
   });
@@ -61,7 +61,7 @@ describe("createAgentAttachmentReadLimiter", () => {
       .mockRejectedValueOnce("again")
       .mockResolvedValue(7);
     const runnerBusy = vi.fn(async (): Promise<number> => {
-      throw "Runner is busy; retry shortly";
+      throw "Too many server requests are still in progress; retry shortly";
     });
     const settled: Attempt<number>[] = [];
     const settle = (result: Attempt<number>) => settled.push(result);
@@ -70,14 +70,16 @@ describe("createAgentAttachmentReadLimiter", () => {
     limiter.schedule({ read: runnerBusy, isCurrent: () => true, settle });
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(settled).toEqual([{ ok: false, error: "Runner is busy; retry shortly" }]);
+    expect(settled).toEqual([
+      { ok: false, error: "Too many server requests are still in progress; retry shortly" },
+    ]);
     expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(AGENT_ATTACHMENT_READ_RETRY_DELAYS_MS[0] ?? 0);
 
     expect(transient).toHaveBeenCalledTimes(2);
     expect(runnerBusy).toHaveBeenCalledTimes(1);
     expect(settled).toEqual([
-      { ok: false, error: "Runner is busy; retry shortly" },
+      { ok: false, error: "Too many server requests are still in progress; retry shortly" },
       { ok: true, value: 7 },
     ]);
     expect(vi.getTimerCount()).toBe(0);
@@ -88,7 +90,7 @@ describe("createAgentAttachmentReadLimiter", () => {
     vi.useFakeTimers();
     const limiter = createAgentAttachmentReadLimiter<number>(4);
     const read = vi.fn(async (): Promise<number> => {
-      throw "Runner is busy; retry shortly";
+      throw "Too many server requests are still in progress; retry shortly";
     });
     const settle = vi.fn();
 

@@ -6,6 +6,9 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 const ERROR_BODY_LIMIT: usize = 1024;
+pub(super) const CONNECTION_FAILED: &str =
+    "Runner connection failed. The request outcome may be unknown.";
+const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
 
 const CLIENT_CAPABILITIES: &str =
     "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging";
@@ -15,6 +18,11 @@ pub(super) struct Prepared {
     path: String,
     body: Vec<u8>,
     headers: reqwest::header::HeaderMap,
+}
+impl Prepared {
+    pub(super) fn body_bytes(&self) -> usize {
+        self.body.len()
+    }
 }
 pub(super) fn prepare(
     method: &str,
@@ -88,9 +96,13 @@ pub(super) fn prepare(
         headers: parsed,
     })
 }
-async fn bounded_error_body(response: &mut reqwest::Response) -> Option<Vec<u8>> {
+async fn bounded_error_body(
+    response: &mut reqwest::Response,
+    inbound: &impl Fn(),
+) -> Option<Vec<u8>> {
     let mut body = Vec::new();
     while let Some(chunk) = response.chunk().await.ok()? {
+        inbound();
         if chunk.len() > ERROR_BODY_LIMIT.saturating_sub(body.len()) {
             return None;
         }
@@ -136,6 +148,7 @@ async fn execute(
     expected: Option<&str>,
     prepared: Prepared,
     limit: usize,
+    inbound: &impl Fn(),
 ) -> Result<(Vec<u8>, Option<String>), String> {
     let speech = crate::remote_runner::speech::is_route(prepared.method.as_str(), &prepared.path);
     let mcp_status = is_mcp_servers_route(prepared.method.as_str(), &prepared.path);
@@ -163,7 +176,8 @@ async fn execute(
     let mut response = request
         .send()
         .await
-        .map_err(|_| "Runner connection failed. The request outcome may be unknown.".to_string())?;
+        .map_err(|_| CONNECTION_FAILED.to_string())?;
+    inbound();
     if response.status().as_u16() == 409 && prepared.path == "/v1/runner" {
         return Err("Runner identity changed. Reconnect the server before continuing.".into());
     }
@@ -173,7 +187,7 @@ async fn execute(
             if status == 401 {
                 return Err("Runner request failed (HTTP 401).".into());
             }
-            let error = bounded_error_body(&mut response)
+            let error = bounded_error_body(&mut response, inbound)
                 .await
                 .as_deref()
                 .and_then(speech_error_code);
@@ -185,7 +199,7 @@ async fn execute(
             return Err(format!("Runner request failed (HTTP {status})."));
         }
         if mcp_management && status != 401 {
-            if let Some(refusal) = bounded_error_body(&mut response)
+            if let Some(refusal) = bounded_error_body(&mut response, inbound)
                 .await
                 .as_deref()
                 .and_then(mcp_server_manage_wire::RunnerRefusal::from_body)
@@ -198,6 +212,7 @@ async fn execute(
             let fallback = "Runner request failed (HTTP 400).";
             let mut body = Vec::new();
             while let Some(chunk) = response.chunk().await.map_err(|_| fallback)? {
+                inbound();
                 if chunk.len() > 1024_usize.saturating_sub(body.len()) {
                     return Err(fallback.into());
                 }
@@ -219,6 +234,7 @@ async fn execute(
                 .await
                 .map_err(|_| "Runner steering delivery was not confirmed.")?
             {
+                inbound();
                 if chunk.len() > 1024_usize.saturating_sub(body.len()) {
                     return Err("Runner steering delivery was not confirmed.".into());
                 }
@@ -230,7 +246,7 @@ async fn execute(
             }
         }
         if status == 409 && git_sync_wire::refusable_route(&prepared.path) {
-            if let Some(refusal) = bounded_error_body(&mut response)
+            if let Some(refusal) = bounded_error_body(&mut response, inbound)
                 .await
                 .as_deref()
                 .and_then(git_sync_wire::refusal_error)
@@ -242,7 +258,7 @@ async fn execute(
             return Err(git_sync_wire::GIT_OPERATION_UNKNOWN.into());
         }
         if mcp_status && status != 401 {
-            if let Some(refusal) = bounded_error_body(&mut response)
+            if let Some(refusal) = bounded_error_body(&mut response, inbound)
                 .await
                 .as_deref()
                 .and_then(mcp_servers::RunnerRefusal::from_body)
@@ -269,12 +285,25 @@ async fn execute(
         .await
         .map_err(|_| "Unable to read runner response.")?
     {
+        inbound();
         if chunk.len() > limit.saturating_sub(output.len()) {
             return Err("Runner response exceeds output limit.".into());
         }
         output.extend_from_slice(&chunk);
     }
     Ok((output, media))
+}
+pub(super) async fn answered(client: &reqwest::Client, patience: std::time::Duration) {
+    loop {
+        let probe = client
+            .get("http://localhost/healthz")
+            .header(reqwest::header::CONNECTION, "close")
+            .timeout(patience);
+        if probe.send().await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(PROBE_RETRY_PAUSE).await;
+    }
 }
 #[cfg(test)]
 pub(super) async fn request(
@@ -284,7 +313,7 @@ pub(super) async fn request(
     prepared: Prepared,
     limit: usize,
 ) -> Result<Value, String> {
-    request_with_authority(client, token, expected, prepared, limit, || Ok(())).await
+    request_with_authority(client, token, expected, prepared, limit, || Ok(()), || {}).await
 }
 
 pub(super) async fn request_with_authority(
@@ -294,6 +323,7 @@ pub(super) async fn request_with_authority(
     prepared: Prepared,
     limit: usize,
     authority: impl Fn() -> Result<(), String>,
+    inbound: impl Fn(),
 ) -> Result<Value, String> {
     authority()?;
     if expected.is_some() && prepared.path != "/v1/runner" {
@@ -303,6 +333,7 @@ pub(super) async fn request_with_authority(
             expected,
             prepare("GET", "/v1/runner", None, vec![])?,
             65536,
+            &inbound,
         )
         .await?;
         let identity: Value =
@@ -322,6 +353,7 @@ pub(super) async fn request_with_authority(
         expected,
         prepared,
         if image { 8 * 1024 * 1024 } else { limit },
+        &inbound,
     )
     .await?;
     authority()?;
@@ -729,6 +761,7 @@ mod tests {
                         Err("Runner connection changed during request.".into())
                     }
                 },
+                || {},
             )
             .await
         });
@@ -740,6 +773,176 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /v1/runner "));
         assert_eq!(checks.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn every_response_head_and_body_read_is_reported_as_inbound_evidence() {
+        let (path, server) = test_server(vec![
+            (200, "{\"protocolVersion\":1,\"runnerId\":\"expected\"}"),
+            (200, "{\"ok\":true}"),
+        ]);
+        let inbound = std::sync::atomic::AtomicUsize::new(0);
+        let result = tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::builder()
+                .unix_socket(path)
+                .no_proxy()
+                .build()
+                .unwrap();
+            request_with_authority(
+                &client,
+                "private-token",
+                Some("expected"),
+                prepare("GET", "/v1/tasks", None, vec![]).unwrap(),
+                4096,
+                || Ok(()),
+                || {
+                    inbound.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                },
+            )
+            .await
+        });
+        assert_eq!(result.unwrap()["ok"], true);
+        assert_eq!(server.join().unwrap().len(), 2);
+        assert!(inbound.load(std::sync::atomic::Ordering::Relaxed) >= 4);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_exchange_reports_the_response_head_but_a_refused_connection_reports_nothing() {
+        let (path, server) = test_server(vec![(503, "{}")]);
+        let missing = path.with_extension("missing");
+        for (socket, expected, evidence) in [
+            (path, "Runner request failed (HTTP 503).", 1),
+            (missing, CONNECTION_FAILED, 0),
+        ] {
+            let inbound = std::sync::atomic::AtomicUsize::new(0);
+            let result = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(socket)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                request_with_authority(
+                    &client,
+                    "private-token",
+                    None,
+                    prepare("GET", "/v1/tasks", None, vec![]).unwrap(),
+                    4096,
+                    || Ok(()),
+                    || {
+                        inbound.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    },
+                )
+                .await
+            });
+            assert_eq!(result.unwrap_err(), expected);
+            assert_eq!(inbound.load(std::sync::atomic::Ordering::Relaxed), evidence);
+        }
+        server.join().unwrap();
+    }
+    #[cfg(unix)]
+    async fn answers(
+        client: &reqwest::Client,
+        patience: std::time::Duration,
+        within: std::time::Duration,
+    ) -> bool {
+        tokio::time::timeout(within, answered(client, patience))
+            .await
+            .is_ok()
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_liveness_probe_is_answered_by_any_status_and_carries_no_credentials() {
+        for status in [200, 401, 404, 503] {
+            let (path, server) = test_server(vec![(status, "{}")]);
+            let answered = tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(path)
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                let patience = std::time::Duration::from_secs(5);
+                answers(&client, patience, patience).await
+            });
+            assert!(answered, "{status}");
+            let requests = server.join().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].starts_with("GET /healthz "));
+            assert!(requests[0].contains("connection: close\r\n"));
+            assert!(!requests[0].to_ascii_lowercase().contains("authorization"));
+            assert!(!requests[0].contains("x-codevo-runner-id"));
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_liveness_probe_retries_past_a_connection_that_closes_without_answering() {
+        use std::os::unix::net::UnixListener;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let path = std::env::temp_dir().join(format!("cv-reprobe-{}.sock", std::process::id()));
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = std::thread::spawn(move || {
+            drop(listener.accept().unwrap());
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            let mut byte = [0];
+            while !bytes.ends_with(b"\r\n\r\n") {
+                socket.read_exact(&mut byte).unwrap();
+                bytes.push(byte[0]);
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+        });
+        let started = std::time::Instant::now();
+        let answered = tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::builder()
+                .unix_socket(path.clone())
+                .no_proxy()
+                .retry(reqwest::retry::never())
+                .build()
+                .unwrap();
+            let patience = std::time::Duration::from_secs(20);
+            answers(&client, patience, patience).await
+        });
+        assert!(answered);
+        assert!(started.elapsed() >= PROBE_RETRY_PAUSE);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        server.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_liveness_probe_keeps_trying_through_silence_and_a_refused_connection() {
+        use std::os::unix::net::UnixListener;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let path = std::env::temp_dir().join(format!("cv-probe-{}.sock", std::process::id()));
+        let listener = UnixListener::bind(&path).unwrap();
+        let (silent, missing) = tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::builder()
+                .unix_socket(path.clone())
+                .no_proxy()
+                .build()
+                .unwrap();
+            let refused = reqwest::Client::builder()
+                .unix_socket(path.with_extension("missing"))
+                .no_proxy()
+                .build()
+                .unwrap();
+            let started = std::time::Instant::now();
+            let patience = std::time::Duration::from_millis(60);
+            let within = PROBE_RETRY_PAUSE + patience * 2;
+            let silent = answers(&client, patience, within).await;
+            let missing = answers(&refused, patience, within).await;
+            assert!(started.elapsed() >= within * 2);
+            assert!(started.elapsed() < std::time::Duration::from_secs(5));
+            (silent, missing)
+        });
+        assert!(!silent);
+        assert!(!missing);
+        drop(listener);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[cfg(unix)]

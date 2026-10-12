@@ -48,7 +48,10 @@ const answered = (
     followUp,
   });
 
-const BUSY_REFUSALS = ["Runner is busy; retry shortly", "Runner request failed (HTTP 503)."];
+const BUSY_REFUSALS = [
+  "Too many server requests are still in progress; retry shortly",
+  "Runner request failed (HTTP 503).",
+];
 
 const rustSource = (name: string): string =>
   readFileSync(`${process.cwd()}/src-tauri/src/remote_runner/${name}`, "utf8");
@@ -226,14 +229,16 @@ describe("a refresh the editor or the runner refused as busy", () => {
   });
 
   it("does not treat an overlong, empty, or merely similar message as busy", () => {
-    expect(unanswered(`Runner is busy; retry shortly${"x".repeat(2_000)}`)).toBe(
-      REMOTE_RUNNER_RECONNECTING,
-    );
+    expect(
+      unanswered(
+        `Too many server requests are still in progress; retry shortly${"x".repeat(2_000)}`,
+      ),
+    ).toBe(REMOTE_RUNNER_RECONNECTING);
     expect(unanswered("")).toBe(REMOTE_RUNNER_RECONNECTING);
     expect(unanswered("Runner request failed (HTTP 500).")).toBe(REMOTE_RUNNER_RECONNECTING);
-    expect(unanswered({ message: "Runner is busy; retry shortly" })).toBe(
-      REMOTE_RUNNER_RECONNECTING,
-    );
+    expect(
+      unanswered({ message: "Too many server requests are still in progress; retry shortly" }),
+    ).toBe(REMOTE_RUNNER_RECONNECTING);
   });
 
   it("describes a failed refresh by its real failure, never by a busy refusal", () => {

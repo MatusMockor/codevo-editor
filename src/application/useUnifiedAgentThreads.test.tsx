@@ -20,7 +20,10 @@ import { useUnifiedAgentThreads, type UnifiedAgentThreadsOptions } from "./useUn
 import type { AgentThreadStartRequest } from "./agentThreadPorts";
 import type { RemoteGitSyncPort } from "../domain/remoteGitSync";
 import { REMOTE_START_BASE_INVALID } from "../domain/remoteDraftGitBase";
-import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
+import {
+  REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE,
+  RemoteRunnerRequestRejectedError,
+} from "../domain/remoteRunnerErrors";
 
 const server: RemoteRunnerServer = {
   id: "server",
@@ -929,6 +932,64 @@ describe("server Git sync routing", () => {
     expect(opener.openExternal).toHaveBeenCalledWith(
       "https://github.com/acme/app/compare/main...codevo/7389088c?expand=1",
     );
+  });
+
+  describe("status read refused by the editor's own request queue", () => {
+    const refused = () => new Error(REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE);
+    const elapse = (milliseconds: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(milliseconds);
+      });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("shows no notice for an opened thread while the read is retried", async () => {
+      const { h, port } = await gitSetup(true);
+      await h.render({ selectedThreadId: remoteId });
+      port.threadStatus.mockRejectedValueOnce(refused());
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let refresh: Promise<void> = Promise.resolve();
+      await act(async () => {
+        refresh = h.current.agents.refreshShipStatus(remoteId);
+      });
+
+      expect(port.threadStatus).toHaveBeenCalledTimes(1);
+      expect(h.current.agents.notice).toBeNull();
+      expect(remoteView(h)?.ship).toMatchObject({ kind: "idle", loadingStatus: true });
+      await elapse(1_000);
+      await act(() => refresh);
+
+      expect(port.threadStatus).toHaveBeenCalledTimes(2);
+      expect(h.current.agents.notice).toBeNull();
+      expect(remoteView(h)?.ship).toMatchObject({
+        kind: "idle",
+        loadingStatus: false,
+        status: { worktree: { branch: "codevo/7389088c" } },
+      });
+    });
+
+    it("names the editor's request queue, not the runner, once retries are spent", async () => {
+      const { h, port } = await gitSetup(true);
+      await h.render({ selectedThreadId: remoteId });
+      port.threadStatus.mockRejectedValue(refused());
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let refresh: Promise<void> = Promise.resolve();
+      await act(async () => {
+        refresh = h.current.agents.refreshShipStatus(remoteId);
+      });
+
+      await elapse(12_999);
+      expect(h.current.agents.notice).toBeNull();
+      await elapse(1);
+      await act(() => refresh);
+
+      expect(port.threadStatus).toHaveBeenCalledTimes(4);
+      expect(h.current.agents.notice?.message).toBe(
+        "Too many server requests are still in progress; retry shortly",
+      );
+    });
   });
 
   it("keeps integrate and worktree removal unavailable for server threads", async () => {

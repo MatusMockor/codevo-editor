@@ -2,7 +2,8 @@ use super::{git_sync_wire::StartBody, service::RemoteRunnerState, types::*};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub(super) const OPERATIONS_BUSY: &str = "Runner is busy; retry shortly";
+pub(super) const OPERATIONS_BUSY: &str =
+    "Too many server requests are still in progress; retry shortly";
 static OPERATIONS: OperationLimiter = OperationLimiter::new();
 
 #[derive(Clone, Copy)]
@@ -387,7 +388,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 limiter.acquire(class).err(),
-                Some("Runner is busy; retry shortly".to_string())
+                Some("Too many server requests are still in progress; retry shortly".to_string())
             );
             held.pop();
             let replacement = limiter
@@ -395,12 +396,147 @@ mod tests {
                 .expect("a released permit is reusable");
             assert_eq!(
                 limiter.acquire(class).err(),
-                Some("Runner is busy; retry shortly".to_string())
+                Some("Too many server requests are still in progress; retry shortly".to_string())
             );
             drop(replacement);
             drop(held);
             let _reacquired: Vec<_> = (0..8).map(|_| limiter.acquire(class).unwrap()).collect();
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_black_hole_tunnel_returns_every_permit_within_the_stall_bound() {
+        use super::super::transport::{Session, StallPolicy};
+        use std::time::{Duration, Instant};
+        let policy = StallPolicy {
+            quiet: Duration::from_millis(150),
+            probe: Duration::from_millis(600),
+            ..StallPolicy::DEFAULT
+        };
+        let server = super::Server {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            host: "localhost".into(),
+            username: "test".into(),
+            port: 22,
+            connected: true,
+            runner_id: None,
+        };
+        for class in [OperationClass::Control, OperationClass::Bulk] {
+            let limiter = OperationLimiter::new();
+            let session = Session::fixture_with_stall_policy(policy);
+            let _unanswering =
+                std::os::unix::net::UnixListener::bind(session.socket_path()).unwrap();
+            let permits: Vec<_> = (0..8).map(|_| limiter.acquire(class).unwrap()).collect();
+            assert_eq!(
+                limiter.acquire(class).err(),
+                Some(super::OPERATIONS_BUSY.to_string())
+            );
+            let gate = std::sync::Barrier::new(9);
+            let elapsed = std::thread::scope(|scope| {
+                let stuck: Vec<_> = permits
+                    .into_iter()
+                    .map(|permit| {
+                        let (session, server, gate) = (&session, &server, &gate);
+                        scope.spawn(move || {
+                            let _permit = permit;
+                            gate.wait();
+                            session.request(server, "GET", "/v1/tasks", None, vec![])
+                        })
+                    })
+                    .collect();
+                let started = Instant::now();
+                gate.wait();
+                for operation in stuck {
+                    assert_eq!(
+                        operation.join().unwrap().unwrap_err(),
+                        "Runner connection failed. The request outcome may be unknown."
+                    );
+                }
+                started.elapsed()
+            });
+            assert!(elapsed >= policy.quiet + policy.probe, "{elapsed:?}");
+            assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+            assert!(!session.is_alive());
+            let _readmitted: Vec<_> = (0..8).map(|_| limiter.acquire(class).unwrap()).collect();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_reconnect_returns_the_permits_of_every_operation_that_waited_for_it() {
+        use super::super::{service::ConnectionLease, transport::Session};
+        use std::sync::{atomic::AtomicUsize, atomic::Ordering, mpsc, Arc, Mutex};
+        use std::time::{Duration, Instant};
+        const TIMED_OUT: &str = "SSH tunnel connection timed out.";
+        let server = super::Server {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            host: "localhost".into(),
+            username: "test".into(),
+            port: 22,
+            connected: true,
+            runner_id: None,
+        };
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let (entered, connecting) = mpsc::channel();
+        let (fail, failing) = mpsc::channel::<()>();
+        let (counted, failing) = (Arc::clone(&attempts), Mutex::new(failing));
+        let lost = Arc::new(Session::fixture());
+        lost.close();
+        let lease = ConnectionLease::with_connect(
+            server,
+            lost,
+            Box::new(move |_, _| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                entered.send(()).unwrap();
+                let _ = failing.lock().unwrap().recv_timeout(Duration::from_secs(5));
+                Err(TIMED_OUT.into())
+            }),
+        );
+        let limiter = OperationLimiter::new();
+        let (waiting, waited) = mpsc::channel();
+        let elapsed = std::thread::scope(|scope| {
+            let operation = |announce: bool| {
+                let permit = limiter.acquire(OperationClass::Bulk).unwrap();
+                let (lease, waiting) = (lease.clone(), waiting.clone());
+                scope.spawn(move || {
+                    let _permit = permit;
+                    let checks = std::cell::Cell::new(0);
+                    lease
+                        .session_with_cancellation(|| {
+                            checks.set(checks.get() + 1);
+                            if announce && checks.get() == 3 {
+                                waiting.send(()).unwrap();
+                            }
+                            false
+                        })
+                        .map(|_| ())
+                })
+            };
+            let mut operations = vec![operation(false)];
+            connecting.recv_timeout(Duration::from_secs(5)).unwrap();
+            operations.extend((0..7).map(|_| operation(true)));
+            for _ in 0..7 {
+                waited.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            assert_eq!(
+                limiter.acquire(OperationClass::Bulk).err(),
+                Some(super::OPERATIONS_BUSY.to_string())
+            );
+            let started = Instant::now();
+            fail.send(()).unwrap();
+            for operation in operations {
+                assert_eq!(operation.join().unwrap(), Err(TIMED_OUT.to_string()));
+            }
+            started.elapsed()
+        });
+        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        let _readmitted: Vec<_> = (0..8)
+            .map(|_| limiter.acquire(OperationClass::Bulk).unwrap())
+            .collect();
     }
 
     #[test]

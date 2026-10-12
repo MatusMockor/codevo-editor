@@ -1129,32 +1129,35 @@ describe("speech dictation failures", () => {
     expect(ipc.calls).toEqual([]);
   });
   it.each([
-    "Runner speech transcription failed: busy (HTTP 429).",
-    "Runner is busy; retry shortly",
-  ])("retries the busy rejection %j in order and then fails as server busy", async (message) => {
-    vi.useFakeTimers();
-    const { audio, ipc, transcripts, record, utter, state } = setup();
-    await record();
-    utter();
-    utter();
-    for (const [attempt, delay] of SPEECH_BUSY_RETRY_DELAYS_MS.entries()) {
-      ipc.calls[attempt]?.reject(message);
+    ["Runner speech transcription failed: busy (HTTP 429).", "server-busy"],
+    ["Too many server requests are still in progress; retry shortly", "editor-busy"],
+  ] as const)(
+    "retries the busy rejection %j in order and then fails as %s",
+    async (message, reason) => {
+      vi.useFakeTimers();
+      const { audio, ipc, transcripts, record, utter, state } = setup();
+      await record();
+      utter();
+      utter();
+      for (const [attempt, delay] of SPEECH_BUSY_RETRY_DELAYS_MS.entries()) {
+        ipc.calls[attempt]?.reject(message);
+        await flushAsync();
+        expect(state()).toEqual({ kind: "recording", input: "selected" });
+        expect(ipc.calls.length).toBe(attempt + 1);
+        vi.advanceTimersByTime(delay);
+        await flushAsync();
+        expect(ipc.calls.length).toBe(attempt + 2);
+        expect(ipc.calls[attempt + 1]?.request.base64).toBe(ipc.calls[0]?.request.base64);
+      }
+      ipc.calls[SPEECH_BUSY_RETRY_DELAYS_MS.length]?.reject(message);
       await flushAsync();
-      expect(state()).toEqual({ kind: "recording", input: "selected" });
-      expect(ipc.calls.length).toBe(attempt + 1);
-      vi.advanceTimersByTime(delay);
-      await flushAsync();
-      expect(ipc.calls.length).toBe(attempt + 2);
-      expect(ipc.calls[attempt + 1]?.request.base64).toBe(ipc.calls[0]?.request.base64);
-    }
-    ipc.calls[SPEECH_BUSY_RETRY_DELAYS_MS.length]?.reject(message);
-    await flushAsync();
-    expect(state()).toEqual({ kind: "failed", reason: "server-busy" });
-    expect(requireAudio(audio).microphoneLive()).toBe(false);
-    expect(ipc.calls.length).toBe(SPEECH_BUSY_RETRY_DELAYS_MS.length + 1);
-    expect(transcripts).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
+      expect(state()).toEqual({ kind: "failed", reason });
+      expect(requireAudio(audio).microphoneLive()).toBe(false);
+      expect(ipc.calls.length).toBe(SPEECH_BUSY_RETRY_DELAYS_MS.length + 1);
+      expect(transcripts).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
   it("keeps the order when a busy retry succeeds", async () => {
     vi.useFakeTimers();
     const { ipc, coordinator, transcripts, record, speak, pause, state } = setup();
@@ -1163,7 +1166,7 @@ describe("speech dictation failures", () => {
     pause();
     speak(3);
     pause();
-    ipc.calls[0]?.reject("Runner is busy; retry shortly");
+    ipc.calls[0]?.reject("Too many server requests are still in progress; retry shortly");
     await flushAsync();
     vi.advanceTimersByTime(SPEECH_BUSY_RETRY_DELAYS_MS[0] ?? 0);
     await flushAsync();
@@ -1182,7 +1185,7 @@ describe("speech dictation failures", () => {
     const { ipc, coordinator, record, utter, state } = setup();
     await record();
     utter();
-    ipc.calls[0]?.reject("Runner is busy; retry shortly");
+    ipc.calls[0]?.reject("Too many server requests are still in progress; retry shortly");
     await flushAsync();
     coordinator.cancel();
     expect(vi.getTimerCount()).toBe(0);

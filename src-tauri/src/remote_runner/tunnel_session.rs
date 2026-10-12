@@ -16,6 +16,10 @@ mod tunnel_dispatch;
 mod tunnel_http;
 #[path = "tunnel_process.rs"]
 mod tunnel_process;
+#[path = "tunnel_stall.rs"]
+mod tunnel_stall;
+#[cfg(all(test, unix))]
+pub(in crate::remote_runner) use tunnel_stall::StallPolicy;
 
 /// An exact connection owner. Secrets and local endpoints never cross IPC.
 pub(in crate::remote_runner) struct Session {
@@ -29,12 +33,18 @@ pub(in crate::remote_runner) struct Session {
 impl Session {
     #[cfg(all(test, unix))]
     pub(in crate::remote_runner) fn fixture() -> Self {
+        Self::fixture_with_stall_policy(tunnel_stall::StallPolicy::DEFAULT)
+    }
+    #[cfg(all(test, unix))]
+    pub(in crate::remote_runner) fn fixture_with_stall_policy(
+        policy: tunnel_stall::StallPolicy,
+    ) -> Self {
         let process = tunnel_process::TunnelProcess::fixture();
         let client = process.client().unwrap();
         Self {
             process: Mutex::new(Some(process)),
             closed: AtomicBool::new(false),
-            dispatch: tunnel_dispatch::Dispatch::new(client, "test-only".into()),
+            dispatch: tunnel_dispatch::Dispatch::new(client, "test-only".into(), policy),
             token: "test-only".into(),
             forwards: ForwardSet::new(ForwardDestination::new("fixture", "localhost", "test", 22)),
         }
@@ -61,7 +71,11 @@ impl Session {
         Ok(Self {
             process: Mutex::new(Some(process)),
             closed: AtomicBool::new(false),
-            dispatch: tunnel_dispatch::Dispatch::new(client, token.clone()),
+            dispatch: tunnel_dispatch::Dispatch::new(
+                client,
+                token.clone(),
+                tunnel_stall::StallPolicy::DEFAULT,
+            ),
             token,
             forwards: ForwardSet::new(ForwardDestination::new(
                 &server.id,
@@ -90,6 +104,9 @@ impl Session {
     }
 
     pub(in crate::remote_runner) fn is_alive(&self) -> bool {
+        if self.dispatch.is_stalled() {
+            self.close();
+        }
         !self.closed.load(Ordering::Acquire)
             && self
                 .process
@@ -219,6 +236,10 @@ impl Session {
             .is_some_and(|e| e == "Runner request failed (HTTP 401).")
         {
             self.close();
+        }
+        if self.dispatch.is_stalled() {
+            self.close();
+            return Err(tunnel_http::CONNECTION_FAILED.into());
         }
         if self.closed.load(Ordering::Acquire) {
             return Err("Runner connection changed during request.".into());

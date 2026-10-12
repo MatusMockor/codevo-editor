@@ -11,6 +11,7 @@ export type SpeechDictationUnavailableReason = "no-speech-server" | "capture-uns
 export type SpeechDictationFailureReason =
   | "permission-denied"
   | "microphone-failed"
+  | "editor-busy"
   | "server-busy"
   | "transcription-failed"
   | "server-disconnected"

@@ -589,8 +589,12 @@ it("offers a safe retry for known transient server read failures", () => {
 it("absorbs the shared IPC operation permit limit in the bounded queue retry", async () => {
   const getSummary = vi
     .fn<() => Promise<AgentTurnChangeSummary>>()
-    .mockRejectedValueOnce(new Error("Runner is busy; retry shortly"))
-    .mockRejectedValueOnce(new Error("Runner is busy; retry shortly"))
+    .mockRejectedValueOnce(
+      new Error("Too many server requests are still in progress; retry shortly"),
+    )
+    .mockRejectedValueOnce(
+      new Error("Too many server requests are still in progress; retry shortly"),
+    )
     .mockResolvedValue(summary());
   const lease = {};
   const reader = readerFor(() => ({
@@ -601,7 +605,9 @@ it("absorbs the shared IPC operation permit limit in the bounded queue retry", a
   }));
   expect((await reader.getTurnChanges("t", "old")).state).toBe("ready");
   expect(getSummary).toHaveBeenCalledTimes(3);
-  getSummary.mockRejectedValue(new Error("Runner is busy; retry shortly"));
+  getSummary.mockRejectedValue(
+    new Error("Too many server requests are still in progress; retry shortly"),
+  );
   const exhausted = await reader.getTurnChanges("t", "new");
   expect(getSummary).toHaveBeenCalledTimes(6);
   expect(exhausted).toEqual({
@@ -615,7 +621,7 @@ it("absorbs the shared IPC operation permit limit in the bounded queue retry", a
 });
 it("auto-retries transport setup and permit failures without exposing their text", () => {
   for (const error of [
-    "Runner is busy; retry shortly",
+    "Too many server requests are still in progress; retry shortly",
     "Runner operation failed",
     "Server registry unavailable",
     "Runner connections are shutting down",

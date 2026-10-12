@@ -278,7 +278,7 @@ describe("remote inventory reachability ownership", () => {
   });
 
   describe("a refresh refused as busy", () => {
-    const BUSY = "Runner is busy; retry shortly";
+    const BUSY = "Too many server requests are still in progress; retry shortly";
     const snapshot = () => surface.snapshots.find((entry) => entry.serverId === "linux");
 
     async function mountLive(): Promise<FakeRunnerHost> {

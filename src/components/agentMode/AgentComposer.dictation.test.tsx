@@ -620,7 +620,16 @@ describe("AgentComposer dictation failures", () => {
     expect(composer.prompt().value).toBe("");
   });
 
-  it("explains a server that stays busy after the bounded retries", async () => {
+  it.each([
+    [
+      "Runner speech transcription failed: busy (HTTP 429).",
+      "The server is busy with another transcription. Audio that was not transcribed yet was discarded. Try again in a moment.",
+    ],
+    [
+      "Too many server requests are still in progress; retry shortly",
+      "Too many server requests are still in progress. Audio that was not transcribed yet was discarded. Try again in a moment.",
+    ],
+  ])("explains the refusal %j that persists after the bounded retries", async (refusal, notice) => {
     vi.useFakeTimers();
     const composer = mountDictationComposer();
     await composer.record();
@@ -630,18 +639,29 @@ describe("AgentComposer dictation failures", () => {
       [0, 400],
       [1, 1200],
     ] as const) {
-      await composer.reject(call, "Runner is busy; retry shortly");
+      await composer.reject(call, refusal);
       expect(composer.state()).toBe("recording");
       await act(async () => {
         await vi.advanceTimersByTimeAsync(delay);
       });
     }
-    await composer.reject(2, "Runner is busy; retry shortly");
+    await composer.reject(2, refusal);
 
     expect(composer.ipc.calls).toHaveLength(3);
     expect(composer.state()).toBe("failed");
+    expect(composer.notice()).toBe(notice);
+  });
+
+  it("reads a connection lost during dictation as the server disconnecting", async () => {
+    const composer = mountDictationComposer();
+    await composer.record();
+    composer.utter();
+
+    await composer.reject(0, "Runner connection failed. The request outcome may be unknown.");
+
+    expect(composer.state()).toBe("failed");
     expect(composer.notice()).toBe(
-      "The server is busy with another transcription. Audio that was not transcribed yet was discarded. Try again in a moment.",
+      "The server disconnected during dictation. Audio that was not transcribed yet was discarded.",
     );
   });
 

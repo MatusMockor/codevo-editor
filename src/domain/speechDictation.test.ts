@@ -165,6 +165,7 @@ describe("speech dictation lifecycle", () => {
   it.each([
     "permission-denied",
     "microphone-failed",
+    "editor-busy",
     "server-busy",
     "transcription-failed",
     "server-disconnected",

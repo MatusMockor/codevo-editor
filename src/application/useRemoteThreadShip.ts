@@ -24,6 +24,7 @@ import {
   warning,
 } from "./agentProjectAuthority";
 import type { AgentTasksNotice } from "./agentThreadPorts";
+import { createRemoteShipStatusPauses, readRemoteShipStatus } from "./remoteShipStatusRead";
 import {
   REMOTE_SHIP_COMMIT_MESSAGE_INVALID,
   REMOTE_SHIP_PUSH_STATUS_UNAVAILABLE,
@@ -91,6 +92,7 @@ export function useRemoteThreadShip(
   const epochRef = useRef(new Map<string, object>());
   const refreshRef = useRef(new Map<string, number>());
   const abortsRef = useRef(new Map<string, AbortController>());
+  const [statusPauses] = useState(createRemoteShipStatusPauses);
 
   useLayoutEffect(() => {
     dependenciesRef.current = dependencies;
@@ -103,8 +105,9 @@ export function useRemoteThreadShip(
       mountedRef.current = false;
       for (const controller of aborts.values()) controller.abort();
       aborts.clear();
+      statusPauses.cancelAll();
     };
-  }, []);
+  }, [statusPauses]);
 
   const currentState = useCallback(
     (threadId: string): AgentShipState =>
@@ -193,9 +196,10 @@ export function useRemoteThreadShip(
       refreshRef.current.delete(threadId);
       abortsRef.current.get(threadId)?.abort();
       abortsRef.current.delete(threadId);
+      statusPauses.cancel(threadId);
       dropEntries([threadId]);
     },
-    [dropEntries],
+    [dropEntries, statusPauses],
   );
 
   const retain = useCallback(
@@ -213,10 +217,11 @@ export function useRemoteThreadShip(
         refreshRef.current.delete(threadId);
         abortsRef.current.get(threadId)?.abort();
         abortsRef.current.delete(threadId);
+        statusPauses.cancel(threadId);
       }
       dropEntries(absent);
     },
-    [dropEntries],
+    [dropEntries, statusPauses],
   );
 
   const refreshShipStatus = useCallback(
@@ -225,11 +230,17 @@ export function useRemoteThreadShip(
       if (captured === null) return;
       const generation = (refreshRef.current.get(threadId) ?? 0) + 1;
       refreshRef.current.set(threadId, generation);
+      statusPauses.cancel(threadId);
+      const current = (): boolean =>
+        refreshRef.current.get(threadId) === generation && owns(captured);
       if (currentState(threadId).kind === "idle") apply(threadId, { kind: "statusRequested" });
-      const loaded = await attempt(() =>
-        captured.port.threadStatus(remoteShipThreadKey(captured.target)),
-      );
-      if (refreshRef.current.get(threadId) !== generation || !owns(captured)) return;
+      const read = await readRemoteShipStatus({
+        read: () => captured.port.threadStatus(remoteShipThreadKey(captured.target)),
+        isCurrent: current,
+        pause: (delayMs) => statusPauses.pause(threadId, delayMs),
+      });
+      if (read.kind === "superseded" || !current()) return;
+      const loaded = read.result;
       if (loaded.ok) {
         const status = rememberGit(captured, loaded.value);
         publish(threadId, remoteShipStatusLoaded(currentState(threadId), status));
@@ -238,12 +249,16 @@ export function useRemoteThreadShip(
       dependenciesRef.current.reportError(AGENT_TASKS_SOURCE, loaded.error);
       apply(threadId, { kind: "statusFailed", message: errorMessageOf(loaded.error) });
     },
-    [apply, currentState, owner, owns, publish, rememberGit],
+    [apply, currentState, owner, owns, publish, rememberGit, statusPauses],
   );
 
-  const invalidateRefresh = useCallback((threadId: string): void => {
-    refreshRef.current.set(threadId, (refreshRef.current.get(threadId) ?? 0) + 1);
-  }, []);
+  const invalidateRefresh = useCallback(
+    (threadId: string): void => {
+      refreshRef.current.set(threadId, (refreshRef.current.get(threadId) ?? 0) + 1);
+      statusPauses.cancel(threadId);
+    },
+    [statusPauses],
+  );
 
   const settledWithoutOwner = useCallback(
     (captured: Owner): AgentShipStepResult => {

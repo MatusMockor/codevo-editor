@@ -435,7 +435,9 @@ describe("automatic retry of transient server read failures", () => {
   it("recovers from the shared IPC permit limit during a thread-open burst without a failure row", async () => {
     const getTurnChanges = vi
       .fn()
-      .mockRejectedValueOnce(new Error("Runner is busy; retry shortly"))
+      .mockRejectedValueOnce(
+        new Error("Too many server requests are still in progress; retry shortly"),
+      )
       .mockResolvedValue(summary("t1"));
     await render({ getTurnChanges });
     expect(host.innerHTML).toBe("");

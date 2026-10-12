@@ -10,6 +10,7 @@ import type {
   RemoteThreadGitStatus,
 } from "../domain/remoteGitSync";
 import { remoteGitErrorMessage } from "../domain/remoteGitSync";
+import { REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE } from "../domain/remoteRunnerErrors";
 import {
   REMOTE_SHIP_PUSH_UNCONFIRMED,
   REMOTE_SHIP_STOP_AGENT_MESSAGE,
@@ -567,5 +568,178 @@ describe("remote thread ship", () => {
       await refresh;
     });
     expect(h.current().gitStatuses.get(THREAD)?.headSha).not.toBe("0".repeat(40));
+  });
+});
+
+describe("remote thread ship status refused by the editor's request queue", () => {
+  const busy = () => new Error(REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE);
+  const loading = (h: Awaited<ReturnType<typeof render>>) => {
+    const state = h.state();
+    return state?.kind === "idle" && state.loadingStatus;
+  };
+  const elapse = (milliseconds: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(milliseconds);
+    });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reads again without reporting anything while the queue is full", async () => {
+    vi.useFakeTimers();
+    const port = fakePort();
+    port.threadStatus.mockRejectedValueOnce(busy()).mockRejectedValueOnce(busy());
+    const h = await render(port);
+    let refresh: Promise<void> = Promise.resolve();
+    await act(async () => {
+      refresh = h.current().refreshShipStatus(THREAD);
+    });
+
+    expect(port.threadStatus).toHaveBeenCalledTimes(1);
+    expect(loading(h)).toBe(true);
+    await elapse(999);
+    expect(port.threadStatus).toHaveBeenCalledTimes(1);
+    await elapse(1);
+    expect(port.threadStatus).toHaveBeenCalledTimes(2);
+    expect(loading(h)).toBe(true);
+    await elapse(3_000);
+    await act(() => refresh);
+
+    expect(port.threadStatus).toHaveBeenCalledTimes(3);
+    expect(h.current().gitStatuses.get(THREAD)).toEqual(status);
+    expect(loading(h)).toBe(false);
+    expect(h.reportError).not.toHaveBeenCalled();
+    expect(h.setNotice).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reports the refusal once, in the editor's own words, after the retry budget", async () => {
+    vi.useFakeTimers();
+    const port = fakePort();
+    port.threadStatus.mockRejectedValue(busy());
+    const h = await render(port);
+    let refresh: Promise<void> = Promise.resolve();
+    await act(async () => {
+      refresh = h.current().refreshShipStatus(THREAD);
+    });
+
+    await elapse(12_999);
+    expect(h.reportError).not.toHaveBeenCalled();
+    await elapse(1);
+    await act(() => refresh);
+
+    expect(port.threadStatus).toHaveBeenCalledTimes(4);
+    expect(h.reportError).toHaveBeenCalledTimes(1);
+    expect(h.reportError).toHaveBeenCalledWith("Agents", busy());
+    expect(REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE).not.toMatch(/runner/i);
+    expect(loading(h)).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reports a lost connection at once instead of waiting", async () => {
+    vi.useFakeTimers();
+    const port = fakePort();
+    const lost = new Error("Runner connection failed. The request outcome may be unknown.");
+    port.threadStatus.mockRejectedValue(lost);
+    const h = await render(port);
+
+    await act(() => h.current().refreshShipStatus(THREAD));
+
+    expect(port.threadStatus).toHaveBeenCalledTimes(1);
+    expect(h.reportError).toHaveBeenCalledWith("Agents", lost);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("lets a newer refresh replace a waiting one without a duplicate read", async () => {
+    vi.useFakeTimers();
+    const port = fakePort();
+    port.threadStatus.mockRejectedValueOnce(busy());
+    const h = await render(port);
+    let waiting: Promise<void> = Promise.resolve();
+    await act(async () => {
+      waiting = h.current().refreshShipStatus(THREAD);
+    });
+    expect(vi.getTimerCount()).toBe(1);
+
+    await act(() => h.current().refreshShipStatus(THREAD));
+    await act(() => waiting);
+    await elapse(20_000);
+
+    expect(port.threadStatus).toHaveBeenCalledTimes(2);
+    expect(h.current().gitStatuses.get(THREAD)).toEqual(status);
+    expect(h.reportError).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops waiting when the thread is cleared or evicted", async () => {
+    vi.useFakeTimers();
+    const leave: ((h: Awaited<ReturnType<typeof render>>) => void)[] = [
+      (h) => act(() => h.current().clear(THREAD)),
+      (h) => act(() => h.current().retain(new Set())),
+    ];
+    for (const depart of leave) {
+      const port = fakePort();
+      port.threadStatus.mockRejectedValueOnce(busy());
+      const h = await render(port);
+      let waiting: Promise<void> = Promise.resolve();
+      await act(async () => {
+        waiting = h.current().refreshShipStatus(THREAD);
+      });
+      expect(vi.getTimerCount()).toBe(1);
+      depart(h);
+      expect(vi.getTimerCount()).toBe(0);
+      await elapse(20_000);
+      await act(() => waiting);
+
+      expect(port.threadStatus).toHaveBeenCalledTimes(1);
+      expect(h.reportError).not.toHaveBeenCalled();
+      expect(h.current().gitStatuses.has(THREAD)).toBe(false);
+    }
+  });
+
+  it("drops a waiting read after the thread moves A -> B -> A", async () => {
+    vi.useFakeTimers();
+    const port = fakePort();
+    const other = { ...status, headSha: "0".repeat(40) };
+    port.threadStatus.mockRejectedValueOnce(busy()).mockResolvedValueOnce(other);
+    const h = await render(port);
+    let waiting: Promise<void> = Promise.resolve();
+    await act(async () => {
+      waiting = h.current().refreshShipStatus(THREAD);
+    });
+    h.retarget({ runnerId: "other-runner" });
+    await act(() => h.current().refreshShipStatus(THREAD));
+    h.retarget({ runnerId: "linux-runner" });
+    await elapse(20_000);
+    await act(() => waiting);
+
+    expect(port.threadStatus).toHaveBeenCalledTimes(2);
+    expect(port.threadStatus.mock.calls.map(([key]) => key.runnerId)).toEqual([
+      "linux-runner",
+      "other-runner",
+    ]);
+    expect(h.reportError).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("drops the pending timer and reads nothing more after unmount", async () => {
+    vi.useFakeTimers();
+    const port = fakePort();
+    port.threadStatus.mockRejectedValue(busy());
+    const h = await render(port);
+    let waiting: Promise<void> = Promise.resolve();
+    await act(async () => {
+      waiting = h.current().refreshShipStatus(THREAD);
+    });
+    expect(vi.getTimerCount()).toBe(1);
+
+    disposers.splice(0).forEach((dispose) => dispose());
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await waiting;
+
+    expect(port.threadStatus).toHaveBeenCalledTimes(1);
+    expect(h.reportError).not.toHaveBeenCalled();
   });
 });

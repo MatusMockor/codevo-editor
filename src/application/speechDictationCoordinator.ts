@@ -33,7 +33,11 @@ import {
   type SpeechSegment,
   type SpeechSegmenterState,
 } from "../domain/speechSegmenter";
-import { parseSpeechTranscription, type SpeechTranscription } from "../domain/speechTranscription";
+import {
+  isSpeechTranscriptionBusyRefusal,
+  parseSpeechTranscription,
+  type SpeechTranscription,
+} from "../domain/speechTranscription";
 import {
   createSpeechDictationMeterStore,
   notifyQuietly,
@@ -385,7 +389,7 @@ export class SpeechDictationCoordinator {
     const result = await this.requestTranscription(session, pcm);
     const retryDelay = SPEECH_BUSY_RETRY_DELAYS_MS[attempt];
     if (retryDelay === undefined || !this.isCurrent(session)) return result;
-    if (result.kind !== "failed" || result.reason !== "server-busy") return result;
+    if (result.kind !== "failed" || !isSpeechTranscriptionBusyRefusal(result.reason)) return result;
     await this.waitForRetry(session, retryDelay);
     if (!this.isCurrent(session)) return result;
     return this.transcribeHead(session, pcm, attempt + 1);

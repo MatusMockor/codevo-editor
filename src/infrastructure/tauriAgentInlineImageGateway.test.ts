@@ -141,7 +141,7 @@ describe("isAgentInlineImageBusyError", () => {
   });
 
   it.each([
-    "Runner is busy; retry shortly",
+    "Too many server requests are still in progress; retry shortly",
     "Runner request failed (HTTP 503).",
     "Another image is being read.",
     "The image could not be read.",

@@ -4,6 +4,7 @@ import { validateRemoteRunnerValue } from "./remoteRunnerValidation";
 import {
   SPEECH_MAX_TRANSCRIPT_CHARACTERS,
   classifySpeechTranscriptionError,
+  isSpeechTranscriptionBusyRefusal,
   isSpeechTranscriptText,
   parseSpeechTranscription,
 } from "./speechTranscription";
@@ -29,17 +30,29 @@ describe("speech transcription error classification", () => {
   it.each([
     "Runner speech transcription failed: busy (HTTP 429).",
     "Runner speech transcription failed: busy (HTTP 503).",
-    "Runner is busy; retry shortly",
-    "  Runner is busy; retry shortly ",
   ])("maps %j to server busy", (message) => {
     expect(classifySpeechTranscriptionError(message)).toBe("server-busy");
     expect(classifySpeechTranscriptionError(new Error(message))).toBe("server-busy");
+  });
+  it.each([
+    "Too many server requests are still in progress; retry shortly",
+    "  Too many server requests are still in progress; retry shortly ",
+  ])("maps the editor's own queue refusal %j to editor busy, not server busy", (message) => {
+    expect(classifySpeechTranscriptionError(message)).toBe("editor-busy");
+    expect(classifySpeechTranscriptionError(new Error(message))).toBe("editor-busy");
+  });
+  it("retries both busy refusals and no other failure", () => {
+    expect(isSpeechTranscriptionBusyRefusal("editor-busy")).toBe(true);
+    expect(isSpeechTranscriptionBusyRefusal("server-busy")).toBe(true);
+    expect(isSpeechTranscriptionBusyRefusal("server-disconnected")).toBe(false);
+    expect(isSpeechTranscriptionBusyRefusal("transcription-failed")).toBe(false);
   });
   it.each([
     "Server is not connected",
     "Server connection changed during request",
     "Server connection was superseded",
     "Runner connection changed during request.",
+    "Runner connection failed. The request outcome may be unknown.",
     "Runner connection is closed.",
     "Runner connection is closed. Reconnect the server.",
     "Runner connection unavailable.",
@@ -65,7 +78,6 @@ describe("speech transcription error classification", () => {
     "Runner request failed (HTTP 500).",
     "Runner request failed (HTTP 503).",
     "Runner request failed (HTTP 409).",
-    "Runner connection failed. The request outcome may be unknown.",
     "Invalid remote runner transcribeSpeech response.",
     "server is not connected",
     "busy",
@@ -98,7 +110,12 @@ describe("speech transcription port result", () => {
       kind: "transcribed",
       text: "",
     });
-    for (const reason of ["server-busy", "server-disconnected", "transcription-failed"]) {
+    for (const reason of [
+      "editor-busy",
+      "server-busy",
+      "server-disconnected",
+      "transcription-failed",
+    ]) {
       expect(parseSpeechTranscription({ kind: "failed", reason })).toEqual({
         kind: "failed",
         reason,

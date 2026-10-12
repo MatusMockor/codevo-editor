@@ -30,6 +30,8 @@ const FAILURES: Readonly<Record<SpeechDictationFailureReason, string>> = {
     "Microphone access was denied. Allow it in the system settings, then try again.",
   "microphone-failed":
     "The microphone is not working. Speech captured earlier was transcribed. Check the input device, then try again.",
+  "editor-busy":
+    "Too many server requests are still in progress. Audio that was not transcribed yet was discarded. Try again in a moment.",
   "server-busy":
     "The server is busy with another transcription. Audio that was not transcribed yet was discarded. Try again in a moment.",
   "transcription-failed": "Transcription failed. Audio that was not transcribed yet was discarded.",
@@ -50,6 +52,7 @@ const SILENT_OUTCOMES: readonly SpeechDictationFailureReason[] = [
   "transcript-empty",
 ];
 const DISCARDING: readonly SpeechDictationFailureReason[] = [
+  "editor-busy",
   "server-busy",
   "transcription-failed",
   "server-disconnected",

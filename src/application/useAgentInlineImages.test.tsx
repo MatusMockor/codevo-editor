@@ -397,22 +397,23 @@ describe("useAgentInlineImages", () => {
     harness.unmount();
   });
 
-  it.each(["Runner is busy; retry shortly", "Runner request failed (HTTP 503).", GONE])(
-    "does not retry the failure %s",
-    async (message) => {
-      vi.useFakeTimers();
-      const read = vi.fn<ReadInlineImage>().mockRejectedValue(message);
-      const harness = renderImages(read);
+  it.each([
+    "Too many server requests are still in progress; retry shortly",
+    "Runner request failed (HTTP 503).",
+    GONE,
+  ])("does not retry the failure %s", async (message) => {
+    vi.useFakeTimers();
+    const read = vi.fn<ReadInlineImage>().mockRejectedValue(message);
+    const harness = renderImages(read);
 
-      await act(async () => harness.hook().ensure(image(1)));
-      await advance(10_000);
+    await act(async () => harness.hook().ensure(image(1)));
+    await advance(10_000);
 
-      expect(read).toHaveBeenCalledTimes(1);
-      expect(harness.state(1)).toEqual({ kind: "unavailable", reason: message });
-      expect(vi.getTimerCount()).toBe(0);
-      harness.unmount();
-    },
-  );
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(harness.state(1)).toEqual({ kind: "unavailable", reason: message });
+    expect(vi.getTimerCount()).toBe(0);
+    harness.unmount();
+  });
 
   it("keeps at most two reads in flight and resolves every queued image", async () => {
     const { pending, read } = deferredReads();

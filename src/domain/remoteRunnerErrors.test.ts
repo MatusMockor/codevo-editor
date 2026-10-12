@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isTransientRunnerBusyError, remoteRunnerErrorMessage } from "./remoteRunnerErrors";
+import {
+  REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE,
+  isTransientRunnerBusyError,
+  remoteRunnerErrorMessage,
+} from "./remoteRunnerErrors";
 
 const FALLBACK = "The server operation failed.";
 
@@ -11,9 +15,12 @@ describe("remoteRunnerErrorMessage", () => {
   });
 
   it("keeps the message of an Error", () => {
-    expect(remoteRunnerErrorMessage(new Error("Runner is busy; retry shortly"), FALLBACK)).toBe(
-      "Runner is busy; retry shortly",
-    );
+    expect(
+      remoteRunnerErrorMessage(
+        new Error("Too many server requests are still in progress; retry shortly"),
+        FALLBACK,
+      ),
+    ).toBe("Too many server requests are still in progress; retry shortly");
   });
 
   it("falls back for empty, oversized, or non-textual rejections", () => {
@@ -24,12 +31,21 @@ describe("remoteRunnerErrorMessage", () => {
   });
 });
 
+describe("REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE", () => {
+  it("is the exact refusal of the editor's own request queue and does not blame the runner", () => {
+    expect(REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE).toBe(
+      "Too many server requests are still in progress; retry shortly",
+    );
+    expect(REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE).not.toMatch(/runner|busy/i);
+  });
+});
+
 describe("isTransientRunnerBusyError", () => {
   it.each([
-    "Runner is busy; retry shortly",
+    "Too many server requests are still in progress; retry shortly",
     "Runner request failed (HTTP 503).",
-    "  Runner is busy; retry shortly ",
-    new Error("Runner is busy; retry shortly"),
+    "  Too many server requests are still in progress; retry shortly ",
+    new Error("Too many server requests are still in progress; retry shortly"),
     new Error("Runner request failed (HTTP 503)."),
   ])("recognises %j", (error) => {
     expect(isTransientRunnerBusyError(error)).toBe(true);
@@ -38,12 +54,12 @@ describe("isTransientRunnerBusyError", () => {
   it.each([
     "Runner request failed (HTTP 500).",
     "Runner request failed (HTTP 5030).",
-    "Runner is busy; retry shortly /private/secret",
-    `Runner is busy; retry shortly${" ".repeat(2_000)}x`,
+    "Too many server requests are still in progress; retry shortly /private/secret",
+    `Too many server requests are still in progress; retry shortly${" ".repeat(2_000)}x`,
     "",
     null,
     undefined,
-    { message: "Runner is busy; retry shortly" },
+    { message: "Too many server requests are still in progress; retry shortly" },
   ])("does not recognise %j", (error) => {
     expect(isTransientRunnerBusyError(error)).toBe(false);
   });

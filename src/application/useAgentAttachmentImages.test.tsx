@@ -314,7 +314,7 @@ describe("useAgentAttachmentImages", () => {
   it("reports a persistent busy runner exactly once after the retry budget", async () => {
     vi.useFakeTimers();
     const read = vi.fn<AgentAttachmentGateway["readAgentAttachment"]>(async () => {
-      throw new Error("Runner is busy; retry shortly");
+      throw new Error("Too many server requests are still in progress; retry shortly");
     });
     const harness = renderImages(read);
 
@@ -326,10 +326,12 @@ describe("useAgentAttachmentImages", () => {
     await advance(10_000);
 
     expect(read).toHaveBeenCalledTimes(AGENT_ATTACHMENT_READ_RETRY_DELAYS_MS.length + 1);
-    expect(harness.errors).toEqual([new Error("Runner is busy; retry shortly")]);
+    expect(harness.errors).toEqual([
+      new Error("Too many server requests are still in progress; retry shortly"),
+    ]);
     expect(imageState(harness, 1)).toEqual({
       kind: "unavailable",
-      reason: "Runner is busy; retry shortly",
+      reason: "Too many server requests are still in progress; retry shortly",
     });
     expect(vi.getTimerCount()).toBe(0);
     harness.unmount();

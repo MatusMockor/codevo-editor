@@ -92,11 +92,11 @@ describe("remote runner speech transcriber", () => {
   );
   it.each([
     ["Runner speech transcription failed: busy (HTTP 429).", "server-busy"],
-    ["Runner is busy; retry shortly", "server-busy"],
+    ["Too many server requests are still in progress; retry shortly", "editor-busy"],
     ["Server is not connected", "server-disconnected"],
     ["Server connection changed during request", "server-disconnected"],
     ["Runner identity changed. Reconnect the server before continuing.", "server-disconnected"],
-    ["Runner connection failed. The request outcome may be unknown.", "transcription-failed"],
+    ["Runner connection failed. The request outcome may be unknown.", "server-disconnected"],
     ["Runner speech transcription failed: speech_unavailable (HTTP 503).", "transcription-failed"],
     ["Runner speech transcription failed: too_large (HTTP 413).", "transcription-failed"],
     [

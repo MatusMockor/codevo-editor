@@ -238,6 +238,8 @@ export function agentDictationFailureMessage(reason: SpeechDictationFailureReaso
       return "Microphone access was denied. Allow it in the system settings, then try again.";
     case "microphone-failed":
       return "The microphone is not working. Speech captured earlier was transcribed. Check the input device, then try again.";
+    case "editor-busy":
+      return "Too many server requests are still in progress. Audio that was not transcribed yet was discarded. Try again in a moment.";
     case "server-busy":
       return "The server is busy with another transcription. Audio that was not transcribed yet was discarded. Try again in a moment.";
     case "transcription-failed":
