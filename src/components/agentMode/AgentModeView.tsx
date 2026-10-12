@@ -1337,9 +1337,7 @@ function LocalAgentModeView({
                         ? null
                         : (pendingInteractions.get(sessionThread.thread.threadId) ?? null)
                     }
-                    history={
-                      sessionThread?.execution?.kind === "remote" ? undefined : agents.history
-                    }
+                    history={agents.history}
                     importedHistory={
                       sessionThread === null
                         ? undefined
