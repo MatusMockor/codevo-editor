@@ -316,6 +316,44 @@ describe("remote runner restart during a running turn", () => {
     runner.emit("connected");
   }
 
+  it("lets a long running server turn load earlier activity through the full workbench", async () => {
+    const runner = new FakeRunner({ outputSteps: 2_000, backwardPaging: true });
+    const gateway = await mount(runner);
+    await waitForReact(() =>
+      expect(threadSection()?.querySelector("button.cv-load-earlier")?.textContent).toBe(
+        "Load earlier activity",
+      ),
+    );
+    expect(threadSection()?.textContent).not.toContain(
+      "Some activity from this turn is still on the server and not shown here.",
+    );
+    const callsBefore = vi.mocked(gateway.listEventsBefore!).mock.calls.length;
+    await act(async () =>
+      threadSection()!.querySelector<HTMLButtonElement>("button.cv-load-earlier")!.click(),
+    );
+    await waitForReact(() =>
+      expect(threadSection()?.querySelector("button.cv-load-earlier")?.textContent).not.toBe(
+        "Loading earlier activity…",
+      ),
+    );
+    expect(vi.mocked(gateway.listEventsBefore!).mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(threadSection()?.querySelector('[role="alert"]')).toBeNull();
+    expect(threadSection()?.textContent).toContain("Show latest activity");
+    const firstPageStep = threadSection()?.textContent?.match(/step (\d{5})/)?.[1];
+    expect(firstPageStep).toBeDefined();
+    await act(async () =>
+      threadSection()!.querySelector<HTMLButtonElement>("button.cv-load-earlier")!.click(),
+    );
+    await waitForReact(() => {
+      const olderStep = threadSection()?.textContent?.match(/step (\d{5})/)?.[1];
+      expect(olderStep).toBeDefined();
+      expect(Number(olderStep)).toBeLessThan(Number(firstPageStep));
+    });
+    expect(threadSection()?.querySelector('[role="alert"]')).toBeNull();
+    expect(fallback()).toBeNull();
+    expect(updateDepthErrors()).toEqual([]);
+  }, 60_000);
+
   it("keeps the agent workspace mounted while a running remote turn cannot refresh its questions", async () => {
     const runner = new FakeRunner({
       outputSteps: 5,

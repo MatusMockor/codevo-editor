@@ -24,6 +24,11 @@ import {
   retainRemoteInventoryTasks,
   type RemoteAgentInventorySnapshot,
 } from "./remoteAgentInventoryLoad";
+import { remoteReplayBackfillPending, remoteReplayBackfillAdvanced } from "./remoteAgentTaskReplay";
+import {
+  remoteInventoryProgressGate,
+  type RemoteInventoryProgressGate,
+} from "./remoteInventoryProgress";
 import { mergeRemoteTasks } from "./remoteRunnerTaskState";
 import {
   startRemoteInventoryRefresh,
@@ -54,6 +59,7 @@ interface LeasedInventory {
   readonly observed: ReadonlyMap<string, ObservedRefresh>;
 }
 const NO_OBSERVATIONS: ReadonlyMap<string, ObservedRefresh> = new Map();
+const REACHABLE_REFRESH: ObservedRefresh = { reachability: REMOTE_RUNNER_REACHABLE, reason: null };
 const endpoint = (server: RemoteRunnerServer) =>
   JSON.stringify([server.id, server.host, server.username, server.port]);
 function sameObservation(left: ObservedRefresh | undefined, right: ObservedRefresh): boolean {
@@ -133,6 +139,9 @@ export function useRemoteAgentInventory({
   } | null>(null);
   const serversRef = useRef(servers);
   serversRef.current = servers;
+  const progressGates = useRef(
+    new Set<RemoteInventoryProgressGate<RemoteAgentInventorySnapshot>>(),
+  );
   const valid = useCallback(() => mounted.current && authority.current === captured, [captured]);
   const publish = useCallback(
     (snapshots: readonly RemoteAgentInventorySnapshot[], observation?: RefreshObservation) => {
@@ -193,8 +202,11 @@ export function useRemoteAgentInventory({
         for (const server of serversRef.current.slice(0, 64)) {
           if (!valid()) return outcome;
           const previous =
-            cache.current.snapshots.find((item) => item.serverId === server.id) ??
-            emptyRemoteInventory(server.id, server.connected);
+            provenance.current.has(server.id) &&
+            provenance.current.get(server.id) !== endpoint(server)
+              ? emptyRemoteInventory(server.id, server.connected)
+              : (cache.current.snapshots.find((item) => item.serverId === server.id) ??
+                emptyRemoteInventory(server.id, server.connected));
           if (!server.connected) {
             publish(
               [
@@ -212,26 +224,71 @@ export function useRemoteAgentInventory({
           }
           const pendingRevision = pendingRevisions.current.get(server.id) ?? 0;
           const probe = probeRemoteRunnerDescriptor(gateway);
-          let observed: ObservedRefresh | undefined = {
-            reachability: REMOTE_RUNNER_REACHABLE,
-            reason: null,
-          };
+          let observed: ObservedRefresh | undefined = REACHABLE_REFRESH;
           let result: RemoteAgentInventorySnapshot;
+          const confirmed = (loaded: RemoteAgentInventorySnapshot) => {
+            const merged = mergeLoadedThreadMetadata(
+              loaded.threadMetadata,
+              unconfirmed.current.servers.get(server.id),
+            );
+            unconfirmed.current.servers.set(server.id, merged.unconfirmed);
+            return { ...loaded, threadMetadata: merged.threadMetadata };
+          };
+          const show = (
+            shown: RemoteAgentInventorySnapshot,
+            observation: ObservedRefresh | undefined,
+          ) => {
+            const latest =
+              provenance.current.get(server.id) === endpoint(server)
+                ? cache.current.snapshots.find((item) => item.serverId === server.id)
+                : undefined;
+            if (observation !== undefined) provenance.current.set(server.id, endpoint(server));
+            publish(
+              [
+                ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
+                {
+                  ...shown,
+                  tasks: mergeRemoteTasks(shown.tasks, latest?.tasks ?? []),
+                  pendingMessages:
+                    pendingRevision === (pendingRevisions.current.get(server.id) ?? 0)
+                      ? shown.pendingMessages
+                      : latest?.pendingMessages,
+                },
+              ],
+              observation && { serverId: server.id, ...observation },
+            );
+          };
+          const progress = remoteInventoryProgressGate((loaded: RemoteAgentInventorySnapshot) => {
+            if (!valid()) return;
+            show(confirmed(loaded), REACHABLE_REFRESH);
+          });
+          progressGates.current.add(progress);
+          const settleProgress = () => {
+            progress.close();
+            progressGates.current.delete(progress);
+          };
           try {
             result = await loadRemoteAgentInventory(
               probe.gateway,
               previous,
               selectedThreadId,
               valid,
+              progress.offer,
             );
+            settleProgress();
             if (!valid()) return outcome;
-            const merged = mergeLoadedThreadMetadata(
-              result.threadMetadata,
-              unconfirmed.current.servers.get(server.id),
-            );
-            unconfirmed.current.servers.set(server.id, merged.unconfirmed);
-            result = { ...result, threadMetadata: merged.threadMetadata };
+            result = confirmed(result);
+            if (
+              outcome === "settled" &&
+              result.descriptor?.capabilities.eventBackwardPaging === true &&
+              gateway.listEventsBefore !== undefined &&
+              remoteReplayBackfillPending(result)
+            )
+              outcome = remoteReplayBackfillAdvanced(previous, result)
+                ? "continuing"
+                : "recovering";
           } catch (error) {
+            settleProgress();
             if (!valid() || error instanceof RemoteInventoryRevoked) return outcome;
             const expectedRunnerId = previous.descriptor?.runnerId ?? null;
             const followUp = await probe.followUp({ serverId: server.id }, expectedRunnerId);
@@ -248,7 +305,7 @@ export function useRemoteAgentInventory({
             const cached = cache.current.snapshots.find((item) => item.serverId === server.id);
             observed = undefined;
             result = {
-              ...previous,
+              ...(progress.latest() ?? previous),
               threadMetadata: (cached ?? previous).threadMetadata,
               connected: cached?.connected ?? false,
               inventoryTruncated: false,
@@ -263,22 +320,7 @@ export function useRemoteAgentInventory({
               };
             }
           }
-          if (observed !== undefined) provenance.current.set(server.id, endpoint(server));
-          const latest = cache.current.snapshots.find((item) => item.serverId === server.id);
-          publish(
-            [
-              ...cache.current.snapshots.filter((item) => item.serverId !== server.id),
-              {
-                ...result,
-                tasks: mergeRemoteTasks(result.tasks, latest?.tasks ?? []),
-                pendingMessages:
-                  pendingRevision === (pendingRevisions.current.get(server.id) ?? 0)
-                    ? result.pendingMessages
-                    : latest?.pendingMessages,
-              },
-            ],
-            observed && { serverId: server.id, ...observed },
-          );
+          show(result, observed);
         }
       } while (operation.dirty && valid());
     } finally {
@@ -298,9 +340,12 @@ export function useRemoteAgentInventory({
       serverIds: serversRef.current.filter((server) => server.connected).map((server) => server.id),
       refresh: reload,
     });
+    const gates = progressGates.current;
     return () => {
       mounted.current = false;
       stop();
+      for (const gate of gates) gate.close();
+      gates.clear();
     };
   }, [reload, gateway]);
   useEffect(() => {

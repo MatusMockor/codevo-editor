@@ -103,6 +103,8 @@ impl TunnelProcess {
                 "-o",
                 "LogLevel=INFO",
                 "-o",
+                "Compression=yes",
+                "-o",
                 "ServerAliveInterval=10",
                 "-o",
                 "ServerAliveCountMax=3",

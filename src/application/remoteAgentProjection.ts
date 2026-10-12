@@ -102,6 +102,7 @@ export class RemoteAgentProjection {
   private owner = "";
   private views: readonly AgentThreadView[] = [];
   private readonly transcripts = new Map<string, RemoteAgentTranscript>();
+  private readonly origins = new Map<string, ReplayOrigin>();
   private readonly identities = new Map<
     string,
     { readonly recipe: string; readonly projectId?: string }
@@ -113,6 +114,7 @@ export class RemoteAgentProjection {
     next.owner = this.owner;
     next.views = this.views;
     for (const [id, transcript] of this.transcripts) next.transcripts.set(id, transcript);
+    for (const [id, origin] of this.origins) next.origins.set(id, origin);
     for (const [id, identity] of this.identities) next.identities.set(id, identity);
     return next;
   }
@@ -123,6 +125,7 @@ export class RemoteAgentProjection {
       this.owner = owner;
       this.views = [];
       this.transcripts.clear();
+      this.origins.clear();
       this.identities.clear();
     }
     const groups = new Map<string, RemoteRunnerTask[]>();
@@ -172,9 +175,16 @@ export class RemoteAgentProjection {
           cached.eventsTruncated !== (input.replayTruncated?.has(task.id) === true))
       )
         this.transcripts.delete(task.id);
+      if (cached && truncationLiftedBeforeReplay(cached, input.replayTruncated?.has(task.id)))
+        this.transcripts.delete(task.id);
+      const replay = input.replays.get(task.id) ?? [];
+      const known = this.origins.get(task.id);
+      const retention = replayRetention(input, task.id);
+      const origin = replayOrigin(replay, input.replayGaps?.get(task.id), retention, known);
+      if (known && replayNeedsRebuild(origin, known)) this.transcripts.delete(task.id);
+      this.origins.set(task.id, origin);
       let transcript =
         this.transcripts.get(task.id) ?? createRemoteAgentTranscript(task.id, task.provider);
-      const replay = input.replays.get(task.id) ?? [];
       let previousSequence = 0;
       for (const event of replay) {
         if (event.taskId !== task.id || event.sequence <= previousSequence)
@@ -182,7 +192,6 @@ export class RemoteAgentProjection {
         previousSequence = event.sequence;
       }
       const incoming = replay.filter((event) => event.sequence > transcript.lastRunnerSequence);
-      const retention = replayRetention(input, task.id);
       if (
         incoming.length > 0 ||
         (!transcript.finished && input.replayComplete?.has(task.id) && isTerminal(task)) ||
@@ -201,6 +210,7 @@ export class RemoteAgentProjection {
     for (const id of this.transcripts.keys())
       if (!retained.has(id)) {
         this.transcripts.delete(id);
+        this.origins.delete(id);
         this.identities.delete(id);
       }
     this.views = stabilizeRemoteAgentViews(
@@ -386,6 +396,41 @@ export function presentRemoteAgentThread(
     attention: agentThreadAttention(thread, unread),
     unread,
   };
+}
+
+interface ReplayOrigin {
+  readonly sequence: number | null;
+  readonly gapThrough: number;
+  readonly gapStartsAtLineBoundary: boolean | undefined;
+  readonly retention: AgentTurnEventsRetention | undefined;
+}
+
+function replayOrigin(
+  replay: readonly RemoteRunnerEvent[],
+  gap: RemoteReplayGap | undefined,
+  retention: AgentTurnEventsRetention | undefined,
+  known: ReplayOrigin | undefined,
+): ReplayOrigin {
+  return {
+    sequence: replay[0]?.sequence ?? known?.sequence ?? null,
+    gapThrough: gap?.throughSequence ?? 0,
+    gapStartsAtLineBoundary: gap?.startsAtLineBoundary,
+    retention,
+  };
+}
+
+function replayNeedsRebuild(origin: ReplayOrigin, known: ReplayOrigin): boolean {
+  if (origin.retention !== known.retention) return true;
+  if (origin.gapThrough !== known.gapThrough) return true;
+  if (origin.gapStartsAtLineBoundary !== known.gapStartsAtLineBoundary) return true;
+  return origin.sequence !== null && known.sequence !== null && origin.sequence < known.sequence;
+}
+
+function truncationLiftedBeforeReplay(
+  transcript: RemoteAgentTranscript,
+  truncated: boolean | undefined,
+): boolean {
+  return transcript.lastRunnerSequence === 0 && transcript.eventsTruncated && truncated !== true;
 }
 
 function replayRetention(

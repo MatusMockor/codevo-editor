@@ -178,6 +178,38 @@ it("retries a recovering inventory with a capped backoff and resets after it set
   h.stop();
 });
 
+it("continues an unfinished inventory promptly without growing a backoff", async () => {
+  const h = setup();
+  await liveAfterFirstRefresh(h);
+  h.refresh.mockResolvedValue("continuing");
+  await expectNextRefreshAfter(h, 60_000);
+  for (let pass = 0; pass < 8; pass++) await expectNextRefreshAfter(h, 250);
+
+  h.refresh.mockResolvedValue("settled");
+  await expectNextRefreshAfter(h, 250);
+  await expectNextRefreshAfter(h, 60_000);
+  h.stop();
+});
+
+it("backs off instead of continuing while the continued inventory keeps failing", async () => {
+  const h = setup();
+  await liveAfterFirstRefresh(h);
+  h.refresh.mockResolvedValueOnce("continuing");
+  await expectNextRefreshAfter(h, 60_000);
+  h.refresh.mockResolvedValue("recovering");
+  await expectNextRefreshAfter(h, 250);
+  for (const delay of [2_000, 4_000, 8_000]) await expectNextRefreshAfter(h, delay);
+
+  h.refresh.mockRejectedValue(new Error("Unavailable"));
+  await expectNextRefreshAfter(h, 16_000);
+  await expectNextRefreshAfter(h, 30_000);
+
+  h.refresh.mockResolvedValue("continuing");
+  await expectNextRefreshAfter(h, 30_000);
+  await expectNextRefreshAfter(h, 250);
+  h.stop();
+});
+
 it("backs off a rejected refresh the same way as a recovering one", async () => {
   const h = setup();
   await liveAfterFirstRefresh(h);
