@@ -7,6 +7,38 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.111] - 2026-10-12
+
+### Added
+
+- MCP servers can be managed from Settings: add an HTTP, SSE, or command server, remove
+  servers from user, project, or local configuration, and sign in or out without a
+  terminal. Server projects need a runner that supports MCP server management.
+- Remote threads open with their newest activity first. Older activity fills in
+  behind it, and a failed request keeps what was already loaded.
+- Returning to a recently viewed remote thread shows it at once instead of reloading
+  its history from the server.
+- A failed SSH connection to a server names its cause, such as an unreachable host, a
+  timeout, a refused connection, an unresolved host name, an untrusted host key, denied
+  authentication, or failed port forwarding.
+
+### Changed
+
+- The SSH tunnel to a remote server is compressed, and it tolerates 30 seconds of
+  silence before it is considered lost instead of 10.
+
+### Fixed
+
+- A busy runner is no longer shown as a reconnecting server.
+- Connecting, sending, steering, and stopping stay responsive while large history
+  reads are slow.
+- After a failed refresh, a server's state recovers within seconds instead of up to a
+  minute.
+- Earlier activity can be loaded in remote threads.
+- The saved conversations shelf no longer shows a heading or paging buttons when it
+  has nothing to list.
+- Clickable settings controls show the pointer cursor.
+
 ## [0.2.0-beta.110] - 2026-10-10
 
 ### Added
