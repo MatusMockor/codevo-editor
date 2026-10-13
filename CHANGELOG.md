@@ -7,6 +7,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.116] - 2026-10-13
+
+### Added
+
+- **Existing folder on server** in Add project lets you browse the server's folders
+  and register an existing Git repository without cloning it. This requires an
+  updated Codevo Runner that supports adding existing folders.
+
+### Changed
+
+- **Open server project** supports filtering, arrow-key navigation, and Enter to open
+  a project. Lists longer than 64 matches show how many are hidden and ask you to
+  refine the filter.
+
+### Fixed
+
+- **Open server project** uses the standard dialog surface and keyboard footer,
+  removes the stray Close link, and restores focus when closed.
+
 ## [0.2.0-beta.115] - 2026-10-13
 
 ### Fixed
