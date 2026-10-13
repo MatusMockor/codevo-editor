@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.118] - 2026-10-13
+
+### Added
+
+- **Existing folder on server** can register a folder without a Git repository.
+  Agent threads run directly in that server folder. This requires an updated
+  Codevo Runner with folder project support.
+
+### Changed
+
+- Folder projects offer **Server folder** execution only. Git-backed controls and
+  panels explain that the folder is not a Git repository instead of sending
+  unsupported Git requests.
+
 ## [0.2.0-beta.117] - 2026-10-13
 
 ### Added
