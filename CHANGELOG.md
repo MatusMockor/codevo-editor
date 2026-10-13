@@ -7,6 +7,26 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.113] - 2026-10-13
+
+### Changed
+
+- A server connection with requests in flight is considered lost after 15 seconds
+  without any response and is reconnected, instead of every request waiting for its own
+  timeout. A slow connection that still answers is kept.
+
+### Fixed
+
+- After a network change, such as switching Wi-Fi or turning on a VPN, requests are no
+  longer refused with "Runner is busy; retry shortly" while the runner is idle. When
+  the editor's own request queue is full, the message now says so.
+- Requests waiting for a failed reconnect fail with it at once instead of each starting
+  its own connection attempt.
+- Opening a remote thread retries its Git status while the request queue is full instead
+  of showing an error at once.
+- Dictation reports a lost server connection as a disconnect and no longer blames the
+  server when the editor's own request queue is full.
+
 ## [0.2.0-beta.112] - 2026-10-12
 
 ### Fixed
