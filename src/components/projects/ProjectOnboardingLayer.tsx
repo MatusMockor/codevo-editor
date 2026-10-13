@@ -172,6 +172,7 @@ export function ProjectOnboardingLayer({
           onClose={creation.closeExisting}
           onSelect={creation.selectExisting}
           projects={creation.existingServerProjects}
+          returnFocusRef={invoker}
         />
       )}
       <AgentRemoteAddProjectDialog

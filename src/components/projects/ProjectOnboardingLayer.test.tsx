@@ -252,10 +252,7 @@ describe("ProjectOnboardingLayer", () => {
       existingServerProjects: [{ key: "srv:/srv/app", label: "app" }],
     });
     await render(creation);
-    const row = Array.from(document.querySelectorAll("button")).find(
-      (button) => button.textContent === "app",
-    );
-    act(() => row?.click());
+    act(() => option("app").click());
     expect(creation.selectExisting).toHaveBeenCalledWith("srv:/srv/app");
   });
 

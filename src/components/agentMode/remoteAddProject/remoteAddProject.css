@@ -385,41 +385,8 @@
   justify-content: flex-end;
 }
 
-.agent-project-source {
-  width: min(520px, calc(100vw - 36px));
-}
-
-.agent-project-source .agent-remote-add-project__crumb {
-  height: auto;
-  padding: 20px 20px 16px;
-  color: var(--cv-fg-strong);
-  font-size: calc(var(--cv-t-sm) * var(--cv-type-scale));
-}
-
-.agent-project-source .quick-open-results {
-  display: grid;
-  gap: 4px;
-  padding: 0 12px 12px;
-}
-
-.agent-project-source .quick-open-result {
-  min-height: 40px;
-  gap: 12px;
-  border-radius: var(--cv-r-control);
-  padding: 8px 12px;
-}
-
-.agent-project-source .quick-open-result svg {
-  color: var(--cv-fg-muted);
-}
-
 .agent-remote-add-project :is(button, select):focus-visible {
   outline: 2px solid var(--cv-fg-muted);
   outline-offset: 2px;
   box-shadow: none;
-}
-
-.agent-project-source:focus {
-  outline: none;
-  box-shadow: var(--cv-shadow-pop);
 }
