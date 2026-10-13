@@ -56,6 +56,16 @@ folder name uses letters, digits, underscores and hyphens, starts with a letter 
 digit, and is at most 64 characters. Omitting the branch uses the repository's
 default branch.
 
+A Git repository that is already on the server's disk is registered without
+cloning. While a server is selected, the **Add project** palette offers **Existing
+folder on server** next to **Open server project** and **Clone repository**. It
+browses the server's folders, uses the repository's top-level folder, asks for a
+project name with the same grammar as the folder name above and adds it. The runner
+refuses a folder that is not the root of a Git repository, a name another project
+already uses, a folder it may not add and any project past its limit; each refusal
+is shown in the dialog. A runner that predates this route reports that it must be
+updated. Registering a folder does not use one of the clone slots.
+
 While a server is the selected execution environment, **Add project** in the rail
 and the button on the empty remote thread open the server add-project dialog. Its
 steps are sources, then one entry field, then confirm:

@@ -384,6 +384,66 @@ describe("AgentAddProjectDialog", () => {
     expect(onAdd).toHaveBeenCalledExactlyOnceWith(HOME);
   });
 
+  it("picks a server folder with its own wording, a parent button and no root", async () => {
+    const onAdd = vi.fn();
+    await render({
+      mode: "selectServerFolder",
+      environment: "remote",
+      initialPath: "/Users",
+      onAdd,
+    });
+
+    expect(host.querySelector("section")?.getAttribute("aria-label")).toBe(
+      "Choose folder on server",
+    );
+    expect(addButton().textContent).toBe("Use this folder");
+    expect(host.querySelector(".agent-add-project__footer")?.textContent).toContain(
+      "use this folder",
+    );
+    expect(pathValue()).toBe("/Users");
+    expect(addButton().disabled).toBe(false);
+
+    await act(async () => query<HTMLButtonElement>('button[aria-label="Parent folder"]').click());
+    await waitForReact(() => expect(pathValue()).toBe("/"));
+    expect(query<HTMLButtonElement>('button[aria-label="Parent folder"]').disabled).toBe(true);
+    expect(addButton().disabled).toBe(true);
+    expect(host.textContent).toContain("Choose a folder below the server root.");
+    await press({ key: "Enter", metaKey: true });
+    expect(onAdd).not.toHaveBeenCalled();
+
+    await act(async () => query<HTMLButtonElement>('button[aria-label="Go back"]').click());
+    await waitForReact(() => expect(pathValue()).toBe("/Users"));
+    await press({ key: "Enter", metaKey: true });
+    expect(onAdd).toHaveBeenCalledExactlyOnceWith("/Users");
+  });
+
+  it("leaves through onBack only once the folder history is empty", async () => {
+    const onBack = vi.fn();
+    await render({ mode: "selectServerFolder", environment: "remote", onBack });
+    await act(async () => query<HTMLButtonElement>('button[aria-label="Go back"]').click());
+    expect(onBack).toHaveBeenCalledTimes(1);
+
+    const row = [...host.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (candidate) => candidate.textContent === "Developer",
+    );
+    await act(async () => row?.click());
+    await waitForReact(() => expect(pathValue()).toBe(DEVELOPER));
+    await act(async () => query<HTMLButtonElement>('button[aria-label="Go back"]').click());
+    await waitForReact(() => expect(pathValue()).toBe(HOME));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the parent button and the outer Back out of the other modes", async () => {
+    await render();
+    expect(host.querySelector('button[aria-label="Parent folder"]')).toBeNull();
+    expect(query<HTMLButtonElement>('button[aria-label="Go back"]').disabled).toBe(true);
+    await render({ mode: "selectDirectory" });
+    expect(host.querySelector('button[aria-label="Parent folder"]')).toBeNull();
+    expect(host.querySelector("section")?.getAttribute("aria-label")).toBe(
+      "Choose destination folder",
+    );
+  });
+
   it("shows a bounded note when the listing is truncated", async () => {
     await render({ gateway: truncatedGateway() });
 

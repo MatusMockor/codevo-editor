@@ -33,6 +33,11 @@ import {
   isRemoteProjectDirectories,
   isRemoteProjectDirectoryPath,
 } from "./remoteProjectManagement";
+import {
+  isRemoteProjectName,
+  isRemoteProjectRegistration,
+  isRemoteProjectRegistrationPath,
+} from "./remoteProjectRegistration";
 import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
@@ -472,6 +477,14 @@ export const remoteRunnerChecks = {
   listProjectDirectories: {
     request: object({ ...serverRequest, path: optional(isRemoteProjectDirectoryPath) }),
     response: isRemoteProjectDirectories,
+  },
+  registerProject: {
+    request: object({
+      ...serverRequest,
+      path: isRemoteProjectRegistrationPath,
+      name: isRemoteProjectName,
+    }),
+    response: isRemoteProjectRegistration,
   },
   getThreadMetadata: { request: object(taskRequest), response: isRemoteThreadMetadata },
   listThreadMetadata: {

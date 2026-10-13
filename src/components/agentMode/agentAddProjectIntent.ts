@@ -8,12 +8,14 @@ import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 export const ADD_PROJECT_LOADING_REASON = "Reading this directory…";
 export const ADD_PROJECT_UNREADABLE_REASON = "This directory could not be read.";
 export const ADD_PROJECT_ALREADY_PROJECT_REASON = "This directory is already a project.";
+export const ADD_PROJECT_SERVER_ROOT_REASON = "Choose a folder below the server root.";
 
 export type AgentAddProjectListingStatus = "loading" | "loaded" | "error";
 
 export type AgentAddProjectRootPolicy =
   | { readonly kind: "projectRoot"; readonly home: WorkspaceHomeReference }
-  | { readonly kind: "anyDirectory" };
+  | { readonly kind: "anyDirectory" }
+  | { readonly kind: "belowRoot" };
 
 export type AgentAddProjectIntent =
   | { readonly kind: "add"; readonly rootPath: string }
@@ -86,6 +88,9 @@ export function agentAddProjectActionLabel(intent: AgentAddProjectIntent): strin
 function rootPolicyRefusal(policy: AgentAddProjectRootPolicy, currentPath: string): string | null {
   switch (policy.kind) {
     case "anyDirectory":
+      return null;
+    case "belowRoot":
+      if (currentPath === "/") return ADD_PROJECT_SERVER_ROOT_REASON;
       return null;
     case "projectRoot": {
       const eligibility = workspaceRootEligibility(currentPath, policy.home);

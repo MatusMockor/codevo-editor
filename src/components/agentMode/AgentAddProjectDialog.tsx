@@ -1,4 +1,12 @@
-import { ArrowLeft, ExternalLink, Folder, FolderOpen, Link, Search } from "lucide-react";
+import {
+  ArrowLeft,
+  CornerLeftUp,
+  ExternalLink,
+  Folder,
+  FolderOpen,
+  Link,
+  Search,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useDirectoryBrowser } from "../../application/useDirectoryBrowser";
 import {
@@ -7,12 +15,16 @@ import {
   type DirectoryEntry,
   type DirectoryListingGateway,
 } from "../../domain/directoryListing";
-import type { WorkspacePathCase } from "../../domain/workspaceRootEligibility";
+import type {
+  WorkspaceHomeReference,
+  WorkspacePathCase,
+} from "../../domain/workspaceRootEligibility";
 import { detectHostWorkspacePathCase } from "../../infrastructure/hostWorkspacePathCase";
 import {
   agentAddProjectActionLabel,
   agentAddProjectIntent,
   agentAddProjectIntentReason,
+  type AgentAddProjectRootPolicy,
 } from "./agentAddProjectIntent";
 
 const LISTBOX_ID = "agent-add-project-listbox";
@@ -21,9 +33,30 @@ const REASON_ID = "agent-add-project-reason";
 const MAX_NOTICE_CHARS = 200;
 export const MAX_RENDERED_DIRECTORY_ROWS = 200;
 
+export type AgentAddProjectDialogMode = "addProject" | "selectDirectory" | "selectServerFolder";
+
+const NO_PROJECT_ROOTS: ReadonlyArray<string> = Object.freeze([]);
+const SELECT_COPY = {
+  selectDirectory: {
+    label: "Choose destination folder",
+    action: "Choose folder",
+    hint: "choose folder",
+  },
+  selectServerFolder: {
+    label: "Choose folder on server",
+    action: "Use this folder",
+    hint: "use this folder",
+  },
+} as const satisfies Readonly<
+  Record<
+    Exclude<AgentAddProjectDialogMode, "addProject">,
+    Readonly<{ label: string; action: string; hint: string }>
+  >
+>;
+
 export interface AgentAddProjectDialogProps {
   readonly gateway: DirectoryListingGateway;
-  readonly mode?: "addProject" | "selectDirectory";
+  readonly mode?: AgentAddProjectDialogMode;
   readonly environment?: "local" | "remote";
   readonly environmentLabel?: string;
   readonly pathCase?: WorkspacePathCase;
@@ -33,6 +66,7 @@ export interface AgentAddProjectDialogProps {
   onAdd(path: string): void;
   onOpenExisting(rootPath: string): void;
   onNotice?(message: string): void;
+  onBack?(): void;
 }
 
 export function AgentAddProjectDialog({
@@ -43,6 +77,7 @@ export function AgentAddProjectDialog({
   initialPath,
   pathCase,
   onAdd,
+  onBack,
   onClose,
   onNotice,
   onOpenExisting,
@@ -71,19 +106,16 @@ export function AgentAddProjectDialog({
   const intent = agentAddProjectIntent({
     currentPath,
     hasListing: listing !== null,
-    projectRootPaths: mode === "selectDirectory" ? [] : projectRootPaths,
-    rootPolicy:
-      mode === "selectDirectory"
-        ? { kind: "anyDirectory" }
-        : {
-            kind: "projectRoot",
-            home: { path: browser.homePath, pathCase: pathCase ?? defaultPathCase(environment) },
-          },
+    projectRootPaths: mode === "addProject" ? projectRootPaths : NO_PROJECT_ROOTS,
+    rootPolicy: rootPolicyFor(mode, {
+      path: browser.homePath,
+      pathCase: pathCase ?? defaultPathCase(environment),
+    }),
     status,
   });
   const intentReason = agentAddProjectIntentReason(intent);
-  const actionLabel =
-    mode === "selectDirectory" ? "Choose folder" : agentAddProjectActionLabel(intent);
+  const select = mode === "addProject" ? null : SELECT_COPY[mode];
+  const actionLabel = select?.action ?? agentAddProjectActionLabel(intent);
 
   const openInFinder = useCallback(() => {
     if (currentPath === null) return;
@@ -149,7 +181,7 @@ export function AgentAddProjectDialog({
       role="presentation"
     >
       <section
-        aria-label={mode === "selectDirectory" ? "Choose destination folder" : "Add project"}
+        aria-label={select?.label ?? "Add project"}
         className="quick-open agent-add-project"
         onKeyDown={(event) => {
           event.stopPropagation();
@@ -181,13 +213,25 @@ export function AgentAddProjectDialog({
           <button
             aria-label="Go back"
             className="agent-iconbutton agent-add-project__back"
-            disabled={!browser.canGoBack}
-            onClick={goBack}
+            disabled={!browser.canGoBack && onBack === undefined}
+            onClick={browser.canGoBack ? goBack : onBack}
             title="Go back"
             type="button"
           >
             <ArrowLeft aria-hidden="true" size={15} />
           </button>
+          {mode === "selectServerFolder" && (
+            <button
+              aria-label="Parent folder"
+              className="agent-iconbutton agent-add-project__back"
+              disabled={status === "loading" || listing === null || listing.parent === null}
+              onClick={ascend}
+              title="Parent folder"
+              type="button"
+            >
+              <CornerLeftUp aria-hidden="true" size={15} />
+            </button>
+          )}
           <FolderOpen aria-hidden="true" size={15} />
           <span className="agent-add-project__path-value" title={currentPath ?? undefined}>
             {directoryDisplayPath(
@@ -294,11 +338,7 @@ export function AgentAddProjectDialog({
           </span>
           <span>
             <kbd>⌘↵</kbd>{" "}
-            {mode === "selectDirectory"
-              ? "choose folder"
-              : intent.kind === "openExisting"
-                ? "open project"
-                : "add"}
+            {select?.hint ?? (intent.kind === "openExisting" ? "open project" : "add")}
           </span>
           <span>
             <kbd>esc</kbd> close
@@ -328,6 +368,26 @@ export function AgentAddProjectDialog({
       </section>
     </div>
   );
+}
+
+function rootPolicyFor(
+  mode: AgentAddProjectDialogMode,
+  home: WorkspaceHomeReference,
+): AgentAddProjectRootPolicy {
+  switch (mode) {
+    case "addProject":
+      return { kind: "projectRoot", home };
+    case "selectDirectory":
+      return { kind: "anyDirectory" };
+    case "selectServerFolder":
+      return { kind: "belowRoot" };
+    default:
+      return unsupportedMode(mode);
+  }
+}
+
+function unsupportedMode(mode: never): never {
+  throw new TypeError(`Unsupported add-project dialog mode: ${String(mode)}.`);
 }
 
 function defaultPathCase(environment: "local" | "remote"): WorkspacePathCase {

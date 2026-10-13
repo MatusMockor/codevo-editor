@@ -390,3 +390,10 @@
   outline-offset: 2px;
   box-shadow: none;
 }
+
+.agent-remote-add-project__path {
+  overflow: hidden;
+  font-family: var(--cv-font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

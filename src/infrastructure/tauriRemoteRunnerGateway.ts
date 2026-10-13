@@ -42,6 +42,7 @@ export const REMOTE_RUNNER_COMMANDS = {
   lookupRepository: "remote_runner_lookup_repository",
   searchRepositories: "remote_runner_search_repositories",
   listProjectDirectories: "remote_runner_project_directories",
+  registerProject: "remote_runner_register_project",
   getThreadMetadata: "remote_runner_get_thread_metadata",
   listThreadMetadata: "remote_runner_list_thread_metadata",
   updateThreadMetadata: "remote_runner_patch_thread_metadata",
@@ -199,6 +200,9 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
     request: Parameters<NonNullable<R.RemoteRunnerGateway["listProjectDirectories"]>>[0],
   ) {
     return this.call("listProjectDirectories", request);
+  }
+  registerProject(request: R.RemoteRunnerRegisterProjectRequest) {
+    return this.call("registerProject", request);
   }
   getThreadMetadata(
     request: Parameters<NonNullable<R.RemoteRunnerGateway["getThreadMetadata"]>>[0],

@@ -7,6 +7,7 @@ import {
 import {
   ADD_PROJECT_ALREADY_PROJECT_REASON,
   ADD_PROJECT_LOADING_REASON,
+  ADD_PROJECT_SERVER_ROOT_REASON,
   ADD_PROJECT_UNREADABLE_REASON,
   agentAddProjectActionLabel,
   agentAddProjectIntent,
@@ -141,6 +142,24 @@ describe("agentAddProjectIntent", () => {
     });
 
     expect(intent).toEqual({ kind: "blocked", reason: WORKSPACE_ROOT_FILESYSTEM_ROOT_REFUSAL });
+  });
+
+  it("refuses only the filesystem root for a server folder", () => {
+    const input = {
+      hasListing: true,
+      projectRootPaths: ["/srv/repos"],
+      rootPolicy: { kind: "belowRoot" },
+      status: "loaded",
+    } as const;
+
+    expect(agentAddProjectIntent({ ...input, currentPath: "/" })).toEqual({
+      kind: "blocked",
+      reason: ADD_PROJECT_SERVER_ROOT_REASON,
+    });
+    expect(agentAddProjectIntent({ ...input, currentPath: "/srv", projectRootPaths: [] })).toEqual({
+      kind: "add",
+      rootPath: "/srv",
+    });
   });
 
   it("allows home as a plain directory choice outside the project root policy", () => {

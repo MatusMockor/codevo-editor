@@ -69,6 +69,17 @@ function creationFixture(
     remoteAdd: fakeRemoteAddProjectController({
       open: false,
     }) as unknown as ProjectOnboardingCreation["remoteAdd"],
+    remoteFolder: {
+      open: false,
+      directoryGateway: null,
+      folder: { phase: "browsing", path: null },
+      chooseFolder: vi.fn(),
+      setName: vi.fn(),
+      back: vi.fn(),
+      submit: vi.fn(),
+      close: vi.fn(),
+      openFor: vi.fn(),
+    },
     addProject: {
       open: false,
       projectRootPaths: [],

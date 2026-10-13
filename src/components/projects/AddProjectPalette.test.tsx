@@ -173,6 +173,16 @@ describe("AddProjectPalette", () => {
     expect(props.onServerAction).toHaveBeenCalledWith("srv", "clone");
     act(() => option("Open server project").click());
     expect(props.onServerAction).toHaveBeenCalledWith("srv", "existing");
+    expect(option("Open server project").textContent).toContain(
+      "Pick a project this server already knows",
+    );
+    expect(option("Existing folder on server").textContent).toContain(
+      "Use a Git repository that is already on this server",
+    );
+    expect(option("Existing folder on server").querySelector("svg")).not.toBeNull();
+    act(() => option("Existing folder on server").click());
+    expect(props.onServerAction).toHaveBeenLastCalledWith("srv", "folder");
+    expect(props.onServerAction).toHaveBeenCalledTimes(3);
     expect(document.body.textContent).not.toContain("billing-worker");
     press(input(), "o", { metaKey: true });
     expect(props.onOpenFolder).not.toHaveBeenCalled();

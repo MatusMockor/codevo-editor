@@ -12,7 +12,7 @@ import {
 } from "../../domain/workspaceRootEligibility";
 
 export type AddProjectSourceId =
-  "folder" | "gitUrl" | "github" | "gitlab" | "serverProject" | "serverClone";
+  "folder" | "gitUrl" | "github" | "gitlab" | "serverProject" | "serverFolder" | "serverClone";
 export type AddProjectEnvironment = "local" | "remote";
 export type AddProjectChip = Readonly<{ tone: "ok" | "warn"; label: string }>;
 export type AddProjectSourceItem = Readonly<{
@@ -182,7 +182,15 @@ function serverSources(): AddProjectPaletteItem[] {
     source({
       id: "serverProject",
       title: "Open server project",
-      description: "Pick a folder on this server",
+      description: "Pick a project this server already knows",
+      shortcut: null,
+      chip: null,
+      disabledReason: null,
+    }),
+    source({
+      id: "serverFolder",
+      title: "Existing folder on server",
+      description: "Use a Git repository that is already on this server",
       shortcut: null,
       chip: null,
       disabledReason: null,

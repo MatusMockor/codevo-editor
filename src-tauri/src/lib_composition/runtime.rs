@@ -296,6 +296,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_lookup_repository,
             crate::remote_runner::remote_runner_search_repositories,
             crate::remote_runner::remote_runner_project_directories,
+            crate::remote_runner::remote_runner_register_project,
             crate::remote_runner::remote_runner_get_thread_metadata,
             crate::remote_runner::remote_runner_list_thread_metadata,
             crate::remote_runner::remote_runner_patch_thread_metadata,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addProjectPaletteGroups } from "./addProjectPaletteModel";
+import { addProjectPaletteGroups, type AddProjectPaletteItem } from "./addProjectPaletteModel";
 
 const base = {
   query: "",
@@ -199,7 +199,27 @@ describe("addProjectPaletteGroups", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].items.map((item) => item.key)).toEqual([
       "source:serverProject",
+      "source:serverFolder",
       "source:serverClone",
+    ]);
+    expect(
+      groups[0].items.map((item) => [item.title, item.description, itemDisabledReason(item)]),
+    ).toEqual([
+      ["Open server project", "Pick a project this server already knows", null],
+      ["Existing folder on server", "Use a Git repository that is already on this server", null],
+      ["Clone repository", "Clone on this server", null],
+    ]);
+  });
+
+  it("finds the existing folder source by its wording", () => {
+    const groups = addProjectPaletteGroups({ ...base, environment: "remote", query: "git repos" });
+    expect(groups.flatMap((group) => group.items.map((item) => item.key))).toEqual([
+      "source:serverFolder",
     ]);
   });
 });
+
+function itemDisabledReason(item: AddProjectPaletteItem): string | null {
+  if (item.kind !== "source") return null;
+  return item.disabledReason;
+}

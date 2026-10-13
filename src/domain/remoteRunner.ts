@@ -33,6 +33,10 @@ import type {
 } from "./remoteThreadMetadata";
 import type { RemoteProjectDirectories } from "./remoteProjectManagement";
 import type {
+  RemoteProjectRegistration,
+  RemoteProjectRegistrationInput,
+} from "./remoteProjectRegistration";
+import type {
   RemoteRunnerCollectInstructionsRequest,
   RemoteRunnerInstructionSnapshot,
 } from "./remoteRunnerInstructions";
@@ -98,6 +102,8 @@ export type RemoteRunnerCloneRequest = RemoteRunnerServerRequest &
     parentPath?: string;
   }>;
 export type RemoteRunnerCloneJobRequest = RemoteRunnerServerRequest & Readonly<{ cloneId: string }>;
+export type RemoteRunnerRegisterProjectRequest = RemoteRunnerServerRequest &
+  RemoteProjectRegistrationInput;
 export type RemoteRunnerCloneJob = Readonly<{
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
@@ -291,6 +297,7 @@ export interface RemoteRunnerGateway {
   listProjectDirectories?(
     request: RemoteRunnerServerRequest & Readonly<{ path?: string }>,
   ): Promise<RemoteProjectDirectories>;
+  registerProject?(request: RemoteRunnerRegisterProjectRequest): Promise<RemoteProjectRegistration>;
   getThreadMetadata?(request: RemoteRunnerTaskRequest): Promise<RemoteThreadMetadata>;
   listThreadMetadata?(
     request: RemoteRunnerServerRequest & Readonly<{ after?: string }>,

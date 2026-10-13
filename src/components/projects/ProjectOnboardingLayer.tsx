@@ -15,6 +15,7 @@ import type { AgentWorkbenchAddProjectChrome } from "../agentMode/agentWorkbench
 import { ProjectRepositoryPicker } from "../agentMode/ProjectRepositoryPicker";
 import { useRememberCloneParentOnCompletion } from "../agentMode/useAgentCloneDestinationPreference";
 import { AgentRemoteAddProjectDialog } from "../agentMode/remoteAddProject/AgentRemoteAddProjectDialog";
+import { AgentRemoteFolderProjectDialog } from "../agentMode/remoteAddProject/AgentRemoteFolderProjectDialog";
 import type { useAgentProjectCreation } from "../agentMode/useAgentProjectCreation";
 import "../agentMode/remoteAddProject/remoteAddProject.css";
 import { AddProjectPalette } from "./AddProjectPalette";
@@ -36,6 +37,7 @@ export type ProjectOnboardingCreation = Pick<
   | "closeExisting"
   | "selectExisting"
   | "remoteAdd"
+  | "remoteFolder"
   | "addProject"
 >;
 
@@ -178,6 +180,10 @@ export function ProjectOnboardingLayer({
       <AgentRemoteAddProjectDialog
         controller={creation.remoteAdd}
         onClose={creation.remoteAdd.close}
+      />
+      <AgentRemoteFolderProjectDialog
+        controller={creation.remoteFolder}
+        onBackToEntry={creation.open}
       />
       {creation.addProject.open && chrome !== null && (
         <AgentAddProjectDialog

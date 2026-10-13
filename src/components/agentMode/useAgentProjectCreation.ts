@@ -9,6 +9,7 @@ import {
   MAX_PENDING_PROJECT_CLONES,
 } from "./agentProjectCreationSession";
 import type { AgentAddProjectTrustMode } from "./agentWorkbenchChrome";
+import { useAgentRemoteFolderProject } from "./useAgentRemoteFolderProject";
 
 function newSession(): AgentProjectCloneLaneSession {
   return { creation: { current: null }, local: { current: null }, remote: { current: null } };
@@ -64,6 +65,7 @@ export function useAgentProjectCreation(options: AgentProjectCreationOptions) {
   const third = useAgentProjectCreationLane(laneOptions(2));
   const fourth = useAgentProjectCreationLane(laneOptions(3));
   const lanes = [first, second, third, fourth];
+  const remoteFolder = useAgentRemoteFolderProject(options);
   const active = lanes[selected];
   const projectedClones = lanes.flatMap((lane, index) =>
     lane.pendingClone === null
@@ -118,6 +120,7 @@ export function useAgentProjectCreation(options: AgentProjectCreationOptions) {
   const laneFor = (id?: string) => lanes[laneIndexFor(id)];
   return {
     ...active,
+    remoteFolder,
     cancel(id?: string) {
       laneFor(id)?.cancel();
     },
@@ -141,7 +144,14 @@ export function useAgentProjectCreation(options: AgentProjectCreationOptions) {
       setCapacityError(null);
       active.open();
     },
-    choose(environment: string | null, action: "existing" | "clone") {
+    choose(environment: string | null, action: "existing" | "clone" | "folder") {
+      if (action === "folder") {
+        if (environment === null) return;
+        active.closeEntry();
+        setCapacityError(null);
+        remoteFolder.openFor(environment);
+        return;
+      }
       if (action === "existing") {
         active.choose(environment, action);
         return;

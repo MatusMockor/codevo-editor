@@ -55,6 +55,8 @@ pub use steering::*;
 
 mod project_management;
 pub use project_management::*;
+mod project_registration;
+pub use project_registration::*;
 mod thread_management;
 pub use thread_management::*;
 

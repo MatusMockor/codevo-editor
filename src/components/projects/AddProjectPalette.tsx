@@ -1,4 +1,4 @@
-import { FolderOpen, FolderPlus, History, Link2 } from "lucide-react";
+import { FolderGit2, FolderOpen, FolderPlus, History, Link2 } from "lucide-react";
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { RepositoryHostStatuses } from "../../application/useRepositoryHostStatus";
 import type { RecentFolderEntry } from "../../domain/recentFolders";
@@ -40,7 +40,7 @@ export interface AddProjectPaletteProps {
   onOpenPath(path: string): void;
   onCloneForm(url: string): void;
   onRepositoryPicker(provider: "github" | "gitlab"): void;
-  onServerAction(serverId: string, action: "existing" | "clone"): void;
+  onServerAction(serverId: string, action: "existing" | "clone" | "folder"): void;
 }
 
 const PLACEHOLDER = "Search sources, or paste a path or Git URL";
@@ -231,6 +231,9 @@ function runSource(id: AddProjectSourceId, props: AddProjectPaletteProps): void 
     case "serverProject":
       if (props.serverId !== null) props.onServerAction(props.serverId, "existing");
       return;
+    case "serverFolder":
+      if (props.serverId !== null) props.onServerAction(props.serverId, "folder");
+      return;
     case "serverClone":
       if (props.serverId !== null) props.onServerAction(props.serverId, "clone");
       return;
@@ -248,6 +251,7 @@ function ItemIcon({ item }: { readonly item: AddProjectPaletteItem }) {
     return <RemoteAddProjectSourceGlyph kind={item.id} />;
   if (item.id === "gitUrl" || item.id === "serverClone")
     return <RemoteAddProjectSourceGlyph kind="gitUrl" />;
+  if (item.id === "serverFolder") return <FolderGit2 aria-hidden="true" size={16} />;
   return <FolderOpen aria-hidden="true" size={16} />;
 }
 
