@@ -309,7 +309,9 @@ describe("agent workbench draft across the Run on picker", () => {
 
     runOn("This computer", "Linux server");
     await waitForReact(() =>
-      expect(host.querySelector('[aria-label="Choose server project"] select')).not.toBeNull(),
+      expect(
+        host.querySelector('[aria-label="Choose server project"] button[data-project-root-key]'),
+      ).not.toBeNull(),
     );
     await act(async () => finishRead(new ArrayBuffer(16)));
     await waitForReact(() =>
@@ -317,13 +319,13 @@ describe("agent workbench draft across the Run on picker", () => {
     );
     expect(local.gateway.stageAgentAttachmentBytes).toHaveBeenCalledOnce();
 
-    const select = host.querySelector<HTMLSelectElement>(
-      '[aria-label="Choose server project"] select',
+    const project = host.querySelector<HTMLButtonElement>(
+      `[aria-label="Choose server project"] button[data-project-root-key="${SERVER_PROJECT}"]`,
     );
+    expect(project).not.toBeNull();
     act(() => {
-      if (select === null) return;
-      select.value = SERVER_PROJECT;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
+      if (project === null) return;
+      project.click();
     });
     await waitForReact(() => expect(textarea().disabled).toBe(false));
     await readyImage();
@@ -337,20 +339,22 @@ describe("agent workbench draft across the Run on picker", () => {
 
     runOn("This computer", "Linux server");
     await waitForReact(() =>
-      expect(host.querySelector('[aria-label="Choose server project"] select')).not.toBeNull(),
+      expect(
+        host.querySelector('[aria-label="Choose server project"] button[data-project-root-key]'),
+      ).not.toBeNull(),
     );
 
     expect(textarea().value).toBe(PROMPT);
     expect(host.querySelectorAll('[data-agent-attachment-state="ready"]')).toHaveLength(1);
     expect(local.released).toEqual([]);
 
-    const select = host.querySelector<HTMLSelectElement>(
-      '[aria-label="Choose server project"] select',
+    const project = host.querySelector<HTMLButtonElement>(
+      `[aria-label="Choose server project"] button[data-project-root-key="${SERVER_PROJECT}"]`,
     );
+    expect(project).not.toBeNull();
     act(() => {
-      if (select === null) return;
-      select.value = SERVER_PROJECT;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
+      if (project === null) return;
+      project.click();
     });
     await waitForReact(() => expect(textarea().disabled).toBe(false));
 

@@ -1,83 +1,209 @@
 import "./agentRemoteDraftProjectChooser.css";
 import "../projects/projectBanners.css";
-import { Plus } from "lucide-react";
-import { useId } from "react";
+import { ChevronRight, Folder, Plus, Search, Server } from "lucide-react";
+import { useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import { Button } from "../../ui/foundation/Button";
+import { Spinner } from "../../ui/foundation/Spinner";
+import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
+
+const FILTER_PROJECT_THRESHOLD = 6;
+const MAX_FILTER_CHARS = 120;
+const MAX_PROJECT_ROWS = 64;
+
+type Projects = ReadonlyArray<AgentProjectDescriptor>;
 
 export function AgentRemoteDraftProjectChooser({
   projects,
   onSelect,
-  onOpenSettings,
   onAddProject,
   cloneRunning = false,
 }: {
-  readonly projects: ReadonlyArray<AgentProjectDescriptor>;
+  readonly projects: Projects;
   readonly onSelect: (project: AgentProjectDescriptor) => void;
-  readonly onOpenSettings?: () => void;
   readonly onAddProject?: () => void;
   readonly cloneRunning?: boolean;
 }) {
-  const id = useId();
-  const available = projects.filter(
-    (project) => project.trust === "trusted" && project.origin !== "closed-tab-live-tasks",
-  );
+  const serverName = useSelectedServerName();
+  const [filter, setFilter] = useState("");
+  const available = projects.filter(isAvailable);
+  const filterable = available.length > FILTER_PROJECT_THRESHOLD;
+  if (!filterable && filter !== "") setFilter("");
+  const shared = sharedLabels(available);
+  const matching = matchingProjects(available, filter, shared);
   return (
     <section
       className="agent-session__body agent-session__body--empty cv-no-projects agent-remote-project-choice"
       aria-label="Choose server project"
     >
-      <h2 className="cv-no-projects__title">Choose a project on this server</h2>
-      <p className="cv-no-projects__text">
-        Choose where this thread should run. Then add your images and send your message.
-      </p>
-      {available.length > 0 ? (
-        <>
-          <label htmlFor={id}>Server project</label>
-          <select
-            id={id}
-            value=""
-            onChange={(event) => {
-              const project = available.find((entry) => entry.rootKey === event.target.value);
-              if (project !== undefined) onSelect(project);
-            }}
-          >
-            <option value="" disabled>
-              Choose a project…
-            </option>
-            {available.map((project) => (
-              <option key={project.rootKey} value={project.rootKey}>
-                {project.label}
-                {available.filter((candidate) => candidate.label === project.label).length > 1
-                  ? ` · ${project.rootPath}`
-                  : ""}
-              </option>
-            ))}
-          </select>
-        </>
-      ) : (
-        <p className="cv-no-projects__text">No available projects were found on this server.</p>
-      )}
-      {onAddProject !== undefined && (
-        <Button
-          className="agent-remote-project-choice__add"
-          icon={<Plus size={14} />}
-          onClick={onAddProject}
-          variant="primary"
-        >
-          Add project or clone repository
-        </Button>
-      )}
-      {cloneRunning && (
-        <p className="cv-no-projects__text" role="status">
-          Clone running. Thread unlocks when ready.
+      <div className="agent-remote-project-choice__stack">
+        {serverName !== null && (
+          <p className="agent-remote-project-choice__server">
+            <Server aria-hidden="true" size={12} />
+            <span>{serverName}</span>
+          </p>
+        )}
+        <h2 className="cv-no-projects__title">Choose a project</h2>
+        <p className="cv-no-projects__text">
+          This thread will run on this server. Pick a project to start.
         </p>
-      )}
-      {onOpenSettings !== undefined && (
-        <Button onClick={onOpenSettings} size="sm" variant="ghost">
-          Manage server projects
-        </Button>
-      )}
+        <div className="agent-remote-project-choice__card">
+          {filterable && <ProjectFilter value={filter} onChange={setFilter} />}
+          <ProjectList
+            emptyText={
+              available.length === 0
+                ? "No projects on this server yet."
+                : "No matching project on this server."
+            }
+            onSelect={onSelect}
+            projects={matching}
+            sharedLabels={shared}
+          />
+          {onAddProject !== undefined && (
+            <div className="agent-remote-project-choice__footer">
+              <button
+                className="agent-remote-project-choice__add"
+                onClick={onAddProject}
+                type="button"
+              >
+                <Plus aria-hidden="true" size={15} />
+                <span>Add project or clone repository</span>
+              </button>
+            </div>
+          )}
+        </div>
+        {cloneRunning && (
+          <p className="agent-remote-project-choice__status" role="status">
+            <Spinner />
+            Clone running. Thread unlocks when ready.
+          </p>
+        )}
+      </div>
     </section>
   );
+}
+
+function ProjectFilter({
+  value,
+  onChange,
+}: {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <label className="agent-remote-project-choice__filter">
+      <Search aria-hidden="true" size={14} />
+      <input
+        aria-label="Filter server projects"
+        autoComplete="off"
+        maxLength={MAX_FILTER_CHARS}
+        onChange={(event) => onChange(event.currentTarget.value.slice(0, MAX_FILTER_CHARS))}
+        placeholder="Filter projects"
+        spellCheck={false}
+        type="text"
+        value={value}
+      />
+    </label>
+  );
+}
+
+function ProjectList({
+  projects,
+  sharedLabels,
+  emptyText,
+  onSelect,
+}: {
+  readonly projects: Projects;
+  readonly sharedLabels: ReadonlySet<string>;
+  readonly emptyText: string;
+  readonly onSelect: (project: AgentProjectDescriptor) => void;
+}) {
+  if (projects.length === 0) {
+    return <p className="agent-remote-project-choice__empty">{emptyText}</p>;
+  }
+  const hiddenCount = Math.max(0, projects.length - MAX_PROJECT_ROWS);
+  return (
+    <>
+      <ul aria-label="Server projects" className="agent-remote-project-choice__list">
+        {projects.slice(0, MAX_PROJECT_ROWS).map((project) => (
+          <li key={project.rootKey}>
+            <ProjectRow
+              onSelect={onSelect}
+              project={project}
+              showRootPath={sharedLabels.has(project.label)}
+            />
+          </li>
+        ))}
+      </ul>
+      {hiddenCount > 0 && (
+        <p className="agent-remote-project-choice__more">
+          {hiddenCount} more not shown, refine the filter
+        </p>
+      )}
+    </>
+  );
+}
+
+function ProjectRow({
+  project,
+  showRootPath,
+  onSelect,
+}: {
+  readonly project: AgentProjectDescriptor;
+  readonly showRootPath: boolean;
+  readonly onSelect: (project: AgentProjectDescriptor) => void;
+}) {
+  return (
+    <button
+      className="agent-remote-project-choice__row"
+      data-project-root-key={project.rootKey}
+      onClick={() => onSelect(project)}
+      type="button"
+    >
+      <Folder aria-hidden="true" size={15} />
+      <span className="agent-remote-project-choice__name">
+        <strong>{project.label}</strong>
+        {showRootPath && (
+          <small title={project.rootPath}>
+            <bdi>{project.rootPath}</bdi>
+          </small>
+        )}
+      </span>
+      <ChevronRight aria-hidden="true" className="agent-remote-project-choice__go" size={14} />
+    </button>
+  );
+}
+
+function useSelectedServerName(): string | null {
+  const remote = useRemoteRunnerContext();
+  if (remote === null) return null;
+  return remote.servers.find((server) => server.id === remote.selectedServerId)?.name ?? null;
+}
+
+function isAvailable(project: AgentProjectDescriptor): boolean {
+  return project.trust === "trusted" && project.origin !== "closed-tab-live-tasks";
+}
+
+function matchingProjects(
+  projects: Projects,
+  filter: string,
+  shared: ReadonlySet<string>,
+): Projects {
+  const needle = filter.trim().toLowerCase();
+  if (needle === "") return projects;
+  return projects.filter((project) => searchText(project, shared).toLowerCase().includes(needle));
+}
+
+function searchText(project: AgentProjectDescriptor, shared: ReadonlySet<string>): string {
+  if (!shared.has(project.label)) return project.label;
+  return `${project.label} ${project.rootPath}`;
+}
+
+function sharedLabels(projects: Projects): ReadonlySet<string> {
+  const seen = new Set<string>();
+  const shared = new Set<string>();
+  for (const { label } of projects) {
+    if (seen.has(label)) shared.add(label);
+    seen.add(label);
+  }
+  return shared;
 }

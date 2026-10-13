@@ -1298,10 +1298,10 @@ function LocalAgentModeView({
                   selectedServerId !== null &&
                   composer.target === null ? (
                   <AgentRemoteDraftProjectChooser
+                    key={selectedServerId}
                     projects={composerProjects}
                     cloneRunning={remoteAddCloneRunning}
                     onAddProject={openRemoteAddProject}
-                    onOpenSettings={onOpenEnvironmentSettings}
                     onSelect={(project) => {
                       const live = projects.find(
                         (candidate) =>
