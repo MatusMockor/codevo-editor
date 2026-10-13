@@ -565,6 +565,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const agents: AgentThreadsSurface = {
     ...local,
     ...(remoteMode ? remoteAccountUsage : {}),
+    accountUsageSource: remoteMode ? "remote" : "local",
     remoteGit: remoteShip.access,
     remoteCommandCatalog,
     historySearch,

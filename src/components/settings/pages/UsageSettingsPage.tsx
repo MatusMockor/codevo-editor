@@ -1,5 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentAccountUsageRefreshOutcome } from "../../../application/agentAccountUsageRefresh";
 import { useAgentTurnLogThreadEvidence } from "../../../application/agentTurnLogStatusStore";
 import type { AgentAccountUsageLoadState } from "../../../domain/agentAccountUsage";
@@ -11,6 +11,7 @@ import type { AgentProjectDescriptor } from "../../../domain/agentProject";
 import { AgentProviderGlyph } from "../../agentMode/AgentProviderGlyph";
 import { UsageBreakdownTable } from "../../usage/UsageBreakdownTable";
 import { UsageLimitBars } from "../../usage/UsageLimitBars";
+import { CodexRateLimitResets } from "../../usage/CodexRateLimitResets";
 import {
   localActivityNote,
   localSpendSummary,
@@ -94,7 +95,11 @@ export function UsageSettingsPage({ env }: SettingsPageProps) {
             nowEpochMs={nowEpochMs}
             provider={provider}
             state={activity.accountUsage[provider]}
-          />
+          >
+            {provider === "codex" && activity.accountUsageSource !== "remote" ? (
+              <CodexRateLimitResets env={env} />
+            ) : null}
+          </ProviderLimits>
         ))}
       </div>
       <div
@@ -190,10 +195,12 @@ function refreshProblemKind(outcome: AgentAccountUsageRefreshOutcome): RefreshPr
 }
 
 function ProviderLimits({
+  children,
   nowEpochMs,
   provider,
   state,
 }: {
+  readonly children?: ReactNode;
   readonly nowEpochMs: number;
   readonly provider: SettingsUsageProvider;
   readonly state: AgentAccountUsageLoadState;
@@ -215,6 +222,7 @@ function ProviderLimits({
           <p className="settings-row__description">{notice}</p>
         )}
       </div>
+      {children}
     </SettingsSectionHeading>
   );
 }

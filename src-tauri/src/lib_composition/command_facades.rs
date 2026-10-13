@@ -28,6 +28,8 @@ mod agent_thread_store_commands;
 mod agent_turn_log_commands;
 #[path = "app_update_check_commands.rs"]
 mod app_update_check_commands;
+#[path = "codex_limit_reset_commands.rs"]
+mod codex_limit_reset_commands;
 #[path = "directory_listing_commands.rs"]
 mod directory_listing_commands;
 #[path = "git_integration_commands.rs"]

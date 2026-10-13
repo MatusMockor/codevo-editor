@@ -45,7 +45,7 @@ pub(super) fn stable_identity(before: Option<String>, after: Option<String>) -> 
     before.filter(|identity| Some(identity) == after.as_ref())
 }
 
-pub(super) fn codex_identity(stdout: &[u8]) -> Option<String> {
+pub(crate) fn codex_identity(stdout: &[u8]) -> Option<String> {
     let before = response(stdout, 2)?;
     let after = response(stdout, 3)?;
     let before_email = codex_email(&before)?;
@@ -53,11 +53,38 @@ pub(super) fn codex_identity(stdout: &[u8]) -> Option<String> {
         return None;
     }
     let rates = response(stdout, 1)?;
-    let account = public_text(rates.get("accountId"), MAX_ACCOUNT_BYTES)?;
+    let account = public_text(rates.get("accountId"), MAX_ACCOUNT_BYTES).or_else(|| {
+        stable_identity(
+            public_text(
+                before.get("workspaceRouting")?.get("chatgptAccountId"),
+                MAX_ACCOUNT_BYTES,
+            ),
+            public_text(
+                after.get("workspaceRouting")?.get("chatgptAccountId"),
+                MAX_ACCOUNT_BYTES,
+            ),
+        )
+    })?;
     if !routing_matches(&before, &account) || !routing_matches(&after, &account) {
         return None;
     }
     fingerprint("codex", "chatgpt", &before_email, &account)
+}
+
+pub(crate) fn codex_reset_identity(stdout: &[u8]) -> Option<String> {
+    let before = response(stdout, 2)?;
+    let after = response(stdout, 3)?;
+    stable_identity(
+        public_text(
+            before.get("workspaceRouting")?.get("chatgptAccountId"),
+            MAX_ACCOUNT_BYTES,
+        ),
+        public_text(
+            after.get("workspaceRouting")?.get("chatgptAccountId"),
+            MAX_ACCOUNT_BYTES,
+        ),
+    )?;
+    codex_identity(stdout)
 }
 
 fn codex_email(response: &Value) -> Option<String> {
@@ -100,6 +127,34 @@ fn response(stdout: &[u8], id: u64) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reset_requires_explicit_stable_workspace_account_not_only_email() {
+        assert!(
+            codex_reset_identity(&codex_probe("a@b.c", "a@b.c", Some("account"), None)).is_none()
+        );
+        assert!(codex_reset_identity(&codex_probe(
+            "a@b.c",
+            "a@b.c",
+            Some("account"),
+            Some("account")
+        ))
+        .is_some());
+        let mut output = codex_probe("a@b.c", "a@b.c", Some("account"), Some("account"));
+        let value = String::from_utf8(output).unwrap();
+        let mut lines: Vec<Value> = value
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        lines[2]["result"]["workspaceRouting"]["chatgptAccountId"] =
+            Value::from("different-account");
+        output = lines
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes();
+        assert!(codex_reset_identity(&output).is_none());
+    }
     fn codex_probe(
         before_email: &str,
         after_email: &str,
@@ -157,6 +212,10 @@ mod tests {
         ] {
             assert!(codex_identity(&output).is_none());
         }
+    }
+    #[test]
+    fn accepts_stable_explicit_routing_when_rates_omit_account_id() {
+        assert!(codex_identity(&codex_probe("a@b.c", "a@b.c", None, Some("account-1"))).is_some());
     }
     #[test]
     fn claude_requires_public_oauth_account_and_equal_authority() {

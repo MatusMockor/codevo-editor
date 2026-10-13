@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tauri::State;
 
 #[path = "agent_usage_account_identity.rs"]
-mod account_identity;
+pub(super) mod account_identity;
 
 const MAX_USAGE_WINDOWS: usize = 12;
 

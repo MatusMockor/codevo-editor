@@ -405,6 +405,7 @@ export interface RemoteAgentCommandCatalogAccess {
 }
 
 export interface AgentThreadsSurface {
+  readonly accountUsageSource?: "local" | "remote";
   readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
   readonly accountUsageSources?: AgentAccountUsageSourcesPort;
   readonly refreshAccountUsage?: (

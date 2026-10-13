@@ -221,6 +221,7 @@ describe("unified original agent surface", () => {
     };
     const local = { ...h.local, accountUsage };
     await h.render({ local, selectedThreadId: remoteId, selectedServerId: null });
+    expect(h.current.agents.accountUsageSource).toBe("remote");
     expect(h.current.agents.accountUsage?.codex).toMatchObject({
       kind: "ready",
       snapshot: { windows: [{ usedPercent: 45 }] },
@@ -232,6 +233,7 @@ describe("unified original agent surface", () => {
     });
     await h.render({ selectedThreadId: null, selectedServerId: null });
     expect(h.current.agents.accountUsage).toBe(accountUsage);
+    expect(h.current.agents.accountUsageSource).toBe("local");
   });
   it("resolves command catalog projects only for the connected runner that announces them", async () => {
     const older = await setup();

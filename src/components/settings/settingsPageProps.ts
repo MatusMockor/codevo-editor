@@ -1,4 +1,5 @@
 import type { AgentAccountUsageRefreshOutcome } from "../../application/agentAccountUsageRefresh";
+import type { CodexRateLimitResetGateway } from "../../application/codexRateLimitResetGateway";
 import type { AgentMcpServersSurface } from "../../application/agentMcpServersSurface";
 import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import type { AgentTurnLogFactsSource } from "../../application/agentTurnLogStatusStore";
@@ -34,6 +35,7 @@ export interface SettingsDraftActions {
 export type SettingsUsageProvider = "claudeCode" | "codex";
 
 export interface SettingsAgentActivity {
+  readonly accountUsageSource?: "local" | "remote";
   readonly threads: ReadonlyArray<AgentThreadView>;
   readonly accountUsage: Readonly<Record<SettingsUsageProvider, AgentAccountUsageLoadState>>;
   readonly turnLog: AgentTurnLogFactsSource | null;
@@ -43,6 +45,7 @@ export interface SettingsAgentActivity {
 }
 
 export interface SettingsEnvironment {
+  readonly codexRateLimitResetGateway?: CodexRateLimitResetGateway | null;
   readonly agentActivity?: SettingsAgentActivity | null;
   readonly agentMcpServers?: AgentMcpServersSurface | null;
   readonly agentProjects?: readonly AgentProjectDescriptor[];

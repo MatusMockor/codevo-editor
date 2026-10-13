@@ -4,6 +4,7 @@ import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAppUpdater } from "../application/useAppUpdater";
+import type { CodexRateLimitResetGateway } from "../application/codexRateLimitResetGateway";
 import type { AppUpdaterGateway } from "../domain/appUpdater";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import {
@@ -144,6 +145,41 @@ describe("WorkbenchSettingsHost", () => {
 });
 
 describe("settingsEnvironment", () => {
+  it("keeps an injected reset gateway local and suppresses it for remote account usage", () => {
+    const codexRateLimitResetGateway: CodexRateLimitResetGateway = {
+      read: vi.fn(),
+      prepare: vi.fn(),
+      consume: vi.fn(),
+    };
+    const base = {
+      appUpdater: null,
+      providerManagement: null,
+      systemFontGateway: { listMonospaceFontFamilies: async () => [] },
+      codexRateLimitResetGateway,
+    };
+    const local = settingsEnvironment({ ...base, workbench: settingsModel() });
+    const remote = settingsEnvironment({
+      ...base,
+      workbench: {
+        ...settingsModel(),
+        agents: {
+          accountUsageSource: "remote",
+          providerSignIn: {
+            states: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
+            terminalIntents: { claudeCode: null, codex: null },
+            blockedReason: () => null,
+            isActive: () => false,
+            request: () => false,
+            cancelStart: () => undefined,
+            start: async () => null,
+            settle: async () => undefined,
+          },
+        },
+      },
+    });
+    expect(local.codexRateLimitResetGateway).toBe(codexRateLimitResetGateway);
+    expect(remote.codexRateLimitResetGateway).toBeNull();
+  });
   it("maps the workbench model onto the closed settings page environment", () => {
     const workbench = settingsModel();
     const gateway = { listMonospaceFontFamilies: async () => [] };
