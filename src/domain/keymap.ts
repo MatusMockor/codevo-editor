@@ -2,6 +2,7 @@ import {
   findKeymapSequenceConflicts as findScopedSequenceConflicts,
   normalizeShortcutSequenceInput,
   parseShortcutSequence,
+  representableShortcutKey,
   shortcutKeyFromKeyboardEvent,
   shortcutSequenceForPlatform,
 } from "./shortcutSequence";
@@ -443,17 +444,18 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
-    // Cmd+Shift+- collapses every folding region. Distinct from font zoom out
-    // (Cmd+-) by the Shift modifier, so the two never collide.
-    defaultShortcut: "Cmd+Shift+-",
+    // Cmd+Alt+- collapses every folding region. Distinct from font zoom out
+    // (Cmd+-) by the Alt modifier, so the two never collide.
+    defaultShortcut: "Cmd+Alt+-",
     id: "editor.foldAll",
     label: "Fold All",
   },
   {
     category: "Editor",
-    // Cmd+Shift+= expands every folding region. Distinct from font zoom in
-    // (Cmd+=) by the Shift modifier.
-    defaultShortcut: "Cmd+Shift+=",
+    // Cmd+Alt+= expands every folding region. Distinct from font zoom in
+    // (Cmd+=) by the Alt modifier; Cmd+Shift+= is reserved for the font zoom
+    // in alias because Cmd+"+" is typed with Shift on a US layout.
+    defaultShortcut: "Cmd+Alt+=",
     id: "editor.unfoldAll",
     label: "Unfold All",
   },
@@ -1216,10 +1218,11 @@ const CAPTURE_MODIFIER_ONLY_KEYS = new Set(["Alt", "AltGraph", "Control", "Meta"
  * - a Shift-only chord on a printable key or Tab - Shift is also how text is
  *   typed ("+", capital letters, "!") and how focus walks backwards
  *   (Shift+Tab), so Shift alone only captures non-printable keys such as
- *   Shift+F12;
- * - a chord whose key is "+" itself: it is the persisted format's delimiter
- *   and cannot be represented (normalization would degrade it to a
- *   modifier-only string).
+ *   Shift+F12.
+ *
+ * A chord whose key is "+" itself is captured as its "=" equivalent with the
+ * event's real modifiers (Cmd+Shift+"+" becomes "Cmd+Shift+="): "+" is the
+ * persisted format's delimiter and cannot be stored literally.
  */
 export function shortcutFromKeyboardEvent(event: KeymapCaptureEvent): string | null {
   const hasStrongModifier = event.ctrlKey || event.altKey || event.metaKey;
@@ -1230,10 +1233,6 @@ export function shortcutFromKeyboardEvent(event: KeymapCaptureEvent): string | n
   }
 
   if (CAPTURE_MODIFIER_ONLY_KEYS.has(key)) {
-    return null;
-  }
-
-  if (key === "+") {
     return null;
   }
 
@@ -1345,7 +1344,7 @@ export function eventCanMatchKeymapShortcut(
     return true;
   }
 
-  return bareKeyShortcutKeys.has(normalizeKeyboardEventKey(event.key));
+  return bareKeyShortcutKeys.has(normalizeKeyboardEventKey(representableShortcutKey(event.key)));
 }
 
 export function parseShortcut(shortcut: string): ParsedShortcut | null {

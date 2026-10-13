@@ -22,7 +22,34 @@ export interface ShortcutEvent {
   readonly shiftKey: boolean;
 }
 
+const PUNCTUATION_KEYS_BY_CODE: ReadonlyMap<string, string> = new Map([
+  ["Backquote", "`"],
+  ["Backslash", "\\"],
+  ["BracketLeft", "["],
+  ["BracketRight", "]"],
+  ["Comma", ","],
+  ["Equal", "="],
+  ["Minus", "-"],
+  ["Period", "."],
+  ["Quote", "'"],
+  ["Semicolon", ";"],
+  ["Slash", "/"],
+]);
+const SHORTCUT_DELIMITER = "+";
+const SHORTCUT_DELIMITER_KEY_EQUIVALENT = "=";
+
+export function representableShortcutKey(key: string): string {
+  if (key === SHORTCUT_DELIMITER) return SHORTCUT_DELIMITER_KEY_EQUIVALENT;
+  return key;
+}
+
 export function shortcutKeyFromKeyboardEvent(
+  event: Pick<ShortcutEvent, "altKey" | "code" | "getModifierState" | "key">,
+): string {
+  return representableShortcutKey(layoutKeyFromKeyboardEvent(event));
+}
+
+function layoutKeyFromKeyboardEvent(
   event: Pick<ShortcutEvent, "altKey" | "code" | "getModifierState" | "key">,
 ): string {
   if (!event.altKey) return event.key === " " ? "Space" : event.key;
@@ -31,8 +58,9 @@ export function shortcutKeyFromKeyboardEvent(
     return event.key === " " ? "Space" : event.key;
   }
   const codeMatch = /^Key([A-Z])$/u.exec(event.code ?? "");
-  if (!codeMatch) return event.key === " " ? "Space" : event.key;
-  return codeMatch[1] ?? event.key;
+  if (codeMatch) return codeMatch[1] ?? event.key;
+  if (/^[\u0020-\u007E]$/u.test(event.key)) return event.key === " " ? "Space" : event.key;
+  return PUNCTUATION_KEYS_BY_CODE.get(event.code ?? "") ?? event.key;
 }
 
 export interface ShortcutSequenceLookup<CommandId extends string = string> {
@@ -169,7 +197,7 @@ export function shortcutSequenceForPlatform(value: string, platform: ShortcutPla
 
 export function shortcutStrokeFromKeyboardEvent(event: ShortcutEvent): ShortcutStroke | null {
   const key = shortcutKeyFromKeyboardEvent(event);
-  if (isModifier(key) || key === "+") {
+  if (isModifier(key)) {
     return null;
   }
 

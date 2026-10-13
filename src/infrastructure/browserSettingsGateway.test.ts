@@ -4,7 +4,12 @@ import {
   defaultAgentNewThreadDefaults,
   type AgentNewThreadDefaults,
 } from "../domain/agentNewThreadDefaults";
-import { defaultKeymapSettings } from "../domain/keymap";
+import {
+  defaultKeymapSettings,
+  detectKeymapPlatform,
+  shortcutSequenceForPlatform,
+} from "../domain/keymap";
+import { KEYMAP_DEFAULTS_REVISION } from "../domain/keymapDefaultsMigration";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
   LARGE_SMART_DOCUMENT_LINE_LIMIT,
@@ -173,6 +178,43 @@ describe("BrowserSettingsGateway", () => {
       agentModelFavoriteKeys: ["claudeCode/opus", "codex/gpt-5.5"],
       agentModelFavoritesRevision: 19,
     });
+  });
+
+  it("migrates retired fold defaults on load and keeps a later deliberate re-bind", async () => {
+    const storage = memoryStorage();
+    const gateway = new BrowserSettingsGateway(storage);
+    const platform = detectKeymapPlatform();
+    const retiredFoldAll = shortcutSequenceForPlatform("Cmd+Shift+-", platform);
+    const retiredUnfoldAll = shortcutSequenceForPlatform("Cmd+Shift+=", platform);
+    storage.setItem(
+      "editor.settings.app",
+      JSON.stringify({
+        keymap: {
+          ...defaultKeymapSettings(),
+          "editor.foldAll": retiredFoldAll,
+          "editor.save": "Cmd+Alt+S",
+          "editor.unfoldAll": retiredUnfoldAll,
+        },
+      }),
+    );
+
+    const migrated = await gateway.loadAppSettings();
+
+    expect(migrated.keymap).toEqual({ ...defaultKeymapSettings(), "editor.save": "Cmd+Alt+S" });
+    expect(migrated.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+
+    await gateway.saveAppSettings({
+      ...migrated,
+      keymap: { ...migrated.keymap, "editor.unfoldAll": retiredUnfoldAll },
+    });
+    const rebound = await new BrowserSettingsGateway(storage).loadAppSettings();
+
+    expect(rebound.keymap).toEqual({
+      ...defaultKeymapSettings(),
+      "editor.save": "Cmd+Alt+S",
+      "editor.unfoldAll": retiredUnfoldAll,
+    });
+    expect(rebound.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
   });
 
   it("recovers a corrupt favorite snapshot on reload", async () => {
@@ -595,6 +637,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
@@ -694,6 +737,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       agentCliKind: "claudeCode",
@@ -802,6 +846,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
@@ -959,6 +1004,7 @@ describe("BrowserSettingsGateway", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,

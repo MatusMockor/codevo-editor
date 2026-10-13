@@ -22,6 +22,7 @@ import { editorTextFocusOwner } from "./editorTextFocus";
 import { commandActiveForEditorFocus, keymapCommandIdsForEditorFocus } from "./shortcutFocusScope";
 import {
   dispatchResolvedWorkbenchShortcutCommands,
+  dispatchWorkbenchDefaultAliasCommand,
   dispatchWorkbenchShortcutCommand,
 } from "./workbenchShortcutCommandDispatcher";
 
@@ -270,11 +271,24 @@ export function useWorkbenchKeyboardShortcuts({
         return;
       }
 
-      dispatchDefaultGoToDefinitionAlias({
+      if (
+        dispatchDefaultGoToDefinitionAlias({
+          commandContext,
+          commandRegistry,
+          event,
+          keymap,
+          runCommand,
+        })
+      ) {
+        return;
+      }
+
+      dispatchWorkbenchDefaultAliasCommand({
         commandContext,
         commandRegistry,
         event,
         keymap,
+        platform: keymapPlatform,
         runCommand,
       });
     }

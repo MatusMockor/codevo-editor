@@ -10,6 +10,7 @@ import {
 } from "./commandRegistry";
 import {
   dispatchResolvedWorkbenchShortcutCommands,
+  dispatchWorkbenchDefaultAliasCommand,
   dispatchWorkbenchShortcutCommand,
   type ShortcutScopedCommand,
 } from "./workbenchShortcutCommandDispatcher";
@@ -406,6 +407,121 @@ describe("dispatchWorkbenchShortcutCommand", () => {
       expect(run).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe("dispatchWorkbenchDefaultAliasCommand", () => {
+  it.each([
+    ["mac", { key: "+", metaKey: true, shiftKey: true }],
+    ["linux", { ctrlKey: true, key: "+", shiftKey: true }],
+    ["windows", { ctrlKey: true, key: "+", shiftKey: true }],
+  ] as const)("runs Increase Editor Font Size for the shifted + chord on %s", (platform, init) => {
+    const zoomIn = vi.fn();
+    const event = keyboardEvent(init);
+    const commandRegistry = registry({
+      "editor.fontZoomIn": command({ id: "editor.fontZoomIn", run: zoomIn }),
+    });
+
+    const handled = dispatchWorkbenchDefaultAliasCommand({
+      commandContext,
+      commandRegistry,
+      event,
+      keymap: defaultKeymapSettings(platform),
+      platform,
+      runCommand: registryRunner(commandRegistry),
+    });
+
+    expect(handled).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(zoomIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("consumes the alias chord without running a disabled command", () => {
+    const zoomIn = vi.fn();
+    const event = keyboardEvent({ key: "+", metaKey: true, shiftKey: true });
+    const commandRegistry = registry({
+      "editor.fontZoomIn": command({ enabled: false, id: "editor.fontZoomIn", run: zoomIn }),
+    });
+
+    const handled = dispatchWorkbenchDefaultAliasCommand({
+      commandContext,
+      commandRegistry,
+      event,
+      keymap: defaultKeymapSettings("mac"),
+      platform: "mac",
+      runCommand: registryRunner(commandRegistry),
+    });
+
+    expect(handled).toBe(true);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(zoomIn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the command is rebound", { "editor.fontZoomIn": "Cmd+Alt+I" }],
+    ["another command owns the chord", { "editor.unfoldAll": "Cmd+Shift+=" }],
+  ] as const)("leaves the shifted + chord untouched when %s", (_reason, overrides) => {
+    const zoomIn = vi.fn();
+    const event = keyboardEvent({ key: "+", metaKey: true, shiftKey: true });
+    const commandRegistry = registry({
+      "editor.fontZoomIn": command({ id: "editor.fontZoomIn", run: zoomIn }),
+    });
+
+    const handled = dispatchWorkbenchDefaultAliasCommand({
+      commandContext,
+      commandRegistry,
+      event,
+      keymap: { ...defaultKeymapSettings("mac"), ...overrides },
+      platform: "mac",
+      runCommand: registryRunner(commandRegistry),
+    });
+
+    expect(handled).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(zoomIn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["an unrelated chord", { key: "x", metaKey: true, shiftKey: true }],
+    ["the unshifted + chord", { key: "+", metaKey: true }],
+    ["the other platform's primary modifier", { ctrlKey: true, key: "+", shiftKey: true }],
+  ] as const)("does not consume %s", (_label, init) => {
+    const zoomIn = vi.fn();
+    const event = keyboardEvent(init);
+    const commandRegistry = registry({
+      "editor.fontZoomIn": command({ id: "editor.fontZoomIn", run: zoomIn }),
+    });
+
+    const handled = dispatchWorkbenchDefaultAliasCommand({
+      commandContext,
+      commandRegistry,
+      event,
+      keymap: defaultKeymapSettings("mac"),
+      platform: "mac",
+      runCommand: registryRunner(commandRegistry),
+    });
+
+    expect(handled).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(zoomIn).not.toHaveBeenCalled();
+  });
+
+  it("leaves the alias chord untouched when the command is not registered", () => {
+    const event = keyboardEvent({ key: "+", metaKey: true, shiftKey: true });
+    const runCommand = vi.fn();
+
+    const handled = dispatchWorkbenchDefaultAliasCommand({
+      commandContext,
+      commandRegistry: registry({}),
+      event,
+      keymap: defaultKeymapSettings("mac"),
+      platform: "mac",
+      runCommand,
+    });
+
+    expect(handled).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
 });
 
 function command({

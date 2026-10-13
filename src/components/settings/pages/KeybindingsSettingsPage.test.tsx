@@ -387,6 +387,70 @@ describe("KeybindingsSettingsPage", () => {
     window.removeEventListener("keydown", onWindowKeyDown);
   });
 
+  it("records Cmd with the + key as its = equivalent and persists it on save", async () => {
+    const onSave = vi.fn();
+    const keymap = defaultKeymapSettings("mac");
+
+    await render({ keymap }, "mac", onSave);
+
+    await click(editButton("editor.save"));
+    await press("editor.save", { key: "+", metaKey: true, shiftKey: true });
+
+    expect(recordingInput("editor.save").value).toBe("Cmd+Shift+=");
+
+    await click(saveButton("editor.save"));
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "editor.save": "Cmd+Shift+=" } },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+  });
+
+  it("records an unshifted + key and a + second stroke without bubbling", async () => {
+    const onWindowKeyDown = vi.fn();
+    window.addEventListener("keydown", onWindowKeyDown);
+
+    await render({ keymap: defaultKeymapSettings("mac") }, "mac");
+
+    await click(editButton("editor.save"));
+    await press("editor.save", { key: "+", metaKey: true });
+    expect(recordingInput("editor.save").value).toBe("Cmd+=");
+
+    await press("editor.save", { key: "+", metaKey: true, shiftKey: true });
+    expect(recordingInput("editor.save").value).toBe("Cmd+= Cmd+Shift+=");
+
+    expect(onWindowKeyDown).not.toHaveBeenCalled();
+    window.removeEventListener("keydown", onWindowKeyDown);
+  });
+
+  it("records the macOS Option-transformed fold chords as their physical punctuation keys", async () => {
+    const onSave = vi.fn();
+    const keymap = {
+      ...defaultKeymapSettings("mac"),
+      "editor.unfoldAll": "",
+      "editor.foldAll": "",
+    };
+
+    await render({ keymap }, "mac", onSave);
+
+    await click(editButton("editor.unfoldAll"));
+    await press("editor.unfoldAll", { altKey: true, code: "Equal", key: "≠", metaKey: true });
+    expect(recordingInput("editor.unfoldAll").value).toBe("Cmd+Alt+=");
+    await click(saveButton("editor.unfoldAll"));
+
+    await click(editButton("editor.foldAll"));
+    await press("editor.foldAll", { altKey: true, code: "Minus", key: "–", metaKey: true });
+    expect(recordingInput("editor.foldAll").value).toBe("Cmd+Alt+-");
+    await click(saveButton("editor.foldAll"));
+
+    expect(onSave).toHaveBeenLastCalledWith({
+      appSettings: { ...defaultAppSettings(), keymap: defaultKeymapSettings("mac") },
+      trusted: true,
+      workspaceSettings: defaultWorkspaceSettings(),
+    });
+  });
+
   it("captures a safe bare function key as the first stroke", async () => {
     const onSave = vi.fn();
     const keymap = defaultKeymapSettings("mac");

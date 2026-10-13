@@ -28,7 +28,9 @@ import {
 } from "./agentSettings";
 import { defaultAgentNewThreadDefaults } from "./agentNewThreadDefaults";
 import { defaultAgentProviderPreferences } from "./agentProviderSettings";
-import { defaultKeymapSettings } from "./keymap";
+import { defaultKeymapSettings, detectKeymapPlatform, shortcutSequenceForPlatform } from "./keymap";
+import { keymapDefaultAliasIsActive, keymapDefaultAliases } from "./keymapDefaultAliases";
+import { KEYMAP_DEFAULTS_REVISION } from "./keymapDefaultsMigration";
 import {
   LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
   LARGE_SMART_DOCUMENT_LINE_LIMIT,
@@ -48,6 +50,7 @@ describe("settings defaults", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
@@ -383,6 +386,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
@@ -424,6 +428,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
@@ -460,6 +465,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
@@ -542,6 +548,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
@@ -604,6 +611,7 @@ describe("normalizeAppSettings", () => {
       agentThreadNotifications: true,
       agentModelFavoriteKeys: [],
       agentModelFavoritesRevision: 0,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       agentNewThreadDefaults: defaultAgentNewThreadDefaults(),
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
@@ -710,6 +718,83 @@ describe("normalizeAppSettings", () => {
     expect(normalizeAppSettings({}).userSnippets).toEqual([]);
     expect(normalizeAppSettings({ userSnippets: "nope" }).userSnippets).toEqual([]);
   });
+});
+
+describe("keymap defaults revision", () => {
+  const retiredFoldAll = shortcutSequenceForPlatform("Cmd+Shift+-", detectKeymapPlatform());
+  const retiredUnfoldAll = shortcutSequenceForPlatform("Cmd+Shift+=", detectKeymapPlatform());
+  const persistedBeforeRevision = {
+    editorFontSize: 16,
+    keymap: {
+      ...defaultKeymapSettings(),
+      "editor.foldAll": retiredFoldAll,
+      "editor.unfoldAll": retiredUnfoldAll,
+    },
+  };
+
+  function reloaded(settings: unknown): ReturnType<typeof normalizeAppSettings> {
+    return normalizeAppSettings(JSON.parse(JSON.stringify(settings)));
+  }
+
+  function fontZoomInAliasActive(settings: ReturnType<typeof normalizeAppSettings>): boolean {
+    return keymapDefaultAliases().every((alias) =>
+      keymapDefaultAliasIsActive(settings.keymap, alias),
+    );
+  }
+
+  it("stamps fresh and unreadable settings with the current revision", () => {
+    expect(defaultAppSettings().keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+    expect(normalizeAppSettings(null).keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+    expect(normalizeAppSettings({}).keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+  });
+
+  it("migrates fold shortcuts persisted as the retired defaults and frees the zoom alias", () => {
+    const migrated = normalizeAppSettings(persistedBeforeRevision);
+
+    expect(migrated.keymap).toEqual(defaultKeymapSettings());
+    expect(migrated.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+    expect(migrated.editorFontSize).toBe(16);
+    expect(fontZoomInAliasActive(migrated)).toBe(true);
+    expect(reloaded(migrated)).toEqual(migrated);
+  });
+
+  it("leaves customised fold shortcuts untouched while settling the revision", () => {
+    const customised = normalizeAppSettings({
+      keymap: {
+        ...defaultKeymapSettings(),
+        "editor.foldAll": "Shift+Alt+F9",
+        "editor.unfoldAll": "",
+      },
+    });
+
+    expect(customised.keymap["editor.foldAll"]).toBe("Shift+Alt+F9");
+    expect(customised.keymap["editor.unfoldAll"]).toBe("");
+    expect(customised.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+  });
+
+  it("keeps a deliberate re-bind to the retired default across reloads", () => {
+    const migrated = normalizeAppSettings(persistedBeforeRevision);
+    const rebound = reloaded({
+      ...migrated,
+      keymap: { ...migrated.keymap, "editor.unfoldAll": retiredUnfoldAll },
+    });
+
+    expect(rebound.keymap["editor.unfoldAll"]).toBe(retiredUnfoldAll);
+    expect(rebound.keymap["editor.foldAll"]).toBe(defaultKeymapSettings()["editor.foldAll"]);
+    expect(rebound.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+    expect(fontZoomInAliasActive(rebound)).toBe(false);
+    expect(reloaded(rebound)).toEqual(rebound);
+  });
+
+  it.each(["1", -1, 1.5, null, {}])(
+    "treats the malformed persisted revision %j as never migrated",
+    (keymapDefaultsRevision) => {
+      const migrated = normalizeAppSettings({ ...persistedBeforeRevision, keymapDefaultsRevision });
+
+      expect(migrated.keymap).toEqual(defaultKeymapSettings());
+      expect(migrated.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+    },
+  );
 });
 
 describe("monacoFontLigaturesForEditorSetting", () => {

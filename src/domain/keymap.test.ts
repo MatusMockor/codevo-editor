@@ -730,13 +730,26 @@ describe("keymap", () => {
     }
   });
 
-  it("defaults fold all / unfold all to Cmd+Shift+- / Cmd+Shift+= on mac", () => {
-    expect(defaultShortcutForCommand("editor.foldAll", "mac")).toBe("Cmd+Shift+-");
-    expect(defaultShortcutForCommand("editor.foldAll", "linux")).toBe("Ctrl+Shift+-");
-    expect(defaultShortcutForCommand("editor.unfoldAll", "mac")).toBe("Cmd+Shift+=");
-    expect(defaultShortcutForCommand("editor.unfoldAll", "linux")).toBe("Ctrl+Shift+=");
-    expect(defaultKeymapSettings("mac")["editor.foldAll"]).toBe("Cmd+Shift+-");
-    expect(defaultKeymapSettings("mac")["editor.unfoldAll"]).toBe("Cmd+Shift+=");
+  it("defaults fold all / unfold all to Cmd+Alt+- / Cmd+Alt+= on mac", () => {
+    expect(defaultShortcutForCommand("editor.foldAll", "mac")).toBe("Cmd+Alt+-");
+    expect(defaultShortcutForCommand("editor.foldAll", "linux")).toBe("Ctrl+Alt+-");
+    expect(defaultShortcutForCommand("editor.foldAll", "windows")).toBe("Ctrl+Alt+-");
+    expect(defaultShortcutForCommand("editor.unfoldAll", "mac")).toBe("Cmd+Alt+=");
+    expect(defaultShortcutForCommand("editor.unfoldAll", "linux")).toBe("Ctrl+Alt+=");
+    expect(defaultShortcutForCommand("editor.unfoldAll", "windows")).toBe("Ctrl+Alt+=");
+    expect(defaultKeymapSettings("mac")["editor.foldAll"]).toBe("Cmd+Alt+-");
+    expect(defaultKeymapSettings("mac")["editor.unfoldAll"]).toBe("Cmd+Alt+=");
+  });
+
+  it("leaves the shifted zoom chords free of any default binding", () => {
+    for (const platform of ["mac", "linux", "windows"] as const) {
+      const defaults = defaultKeymapSettings(platform);
+
+      expect(keymapCommandIdsForShortcut(defaults, "Cmd+Shift+=", platform)).toEqual([]);
+      expect(keymapCommandIdsForShortcut(defaults, "Ctrl+Shift+=", platform)).toEqual([]);
+      expect(keymapCommandIdsForShortcut(defaults, "Cmd+Shift+-", platform)).toEqual([]);
+      expect(keymapCommandIdsForShortcut(defaults, "Ctrl+Shift+-", platform)).toEqual([]);
+    }
   });
 
   it("registers the fold commands in the Editor category", () => {
@@ -746,12 +759,12 @@ describe("keymap", () => {
     expect(foldAll).toMatchObject({
       category: "Editor",
       label: "Fold All",
-      defaultShortcut: "Cmd+Shift+-",
+      defaultShortcut: "Cmd+Alt+-",
     });
     expect(unfoldAll).toMatchObject({
       category: "Editor",
       label: "Unfold All",
-      defaultShortcut: "Cmd+Shift+=",
+      defaultShortcut: "Cmd+Alt+=",
     });
   });
 
@@ -796,19 +809,21 @@ describe("keymap", () => {
   });
 
   it("matches the fold all / unfold all shortcuts distinctly from font zoom", () => {
+    const foldAll = defaultShortcutForCommand("editor.foldAll", "mac");
+    const unfoldAll = defaultShortcutForCommand("editor.unfoldAll", "mac");
+
     expect(
-      matchesShortcut(keyEvent({ key: "-", metaKey: true, shiftKey: true }), "Cmd+Shift+-", "mac"),
+      matchesShortcut(keyEvent({ altKey: true, key: "-", metaKey: true }), foldAll, "mac"),
     ).toBe(true);
-    // Font zoom out (Cmd+-) must NOT trigger fold all (Cmd+Shift+-).
-    expect(matchesShortcut(keyEvent({ key: "-", metaKey: true }), "Cmd+Shift+-", "mac")).toBe(
-      false,
-    );
+    // Font zoom out (Cmd+-) must NOT trigger fold all (Cmd+Alt+-).
+    expect(matchesShortcut(keyEvent({ key: "-", metaKey: true }), foldAll, "mac")).toBe(false);
     expect(
-      matchesShortcut(keyEvent({ key: "=", metaKey: true, shiftKey: true }), "Cmd+Shift+=", "mac"),
+      matchesShortcut(keyEvent({ altKey: true, key: "=", metaKey: true }), unfoldAll, "mac"),
     ).toBe(true);
-    expect(matchesShortcut(keyEvent({ key: "=", metaKey: true }), "Cmd+Shift+=", "mac")).toBe(
-      false,
-    );
+    expect(matchesShortcut(keyEvent({ key: "=", metaKey: true }), unfoldAll, "mac")).toBe(false);
+    expect(
+      matchesShortcut(keyEvent({ key: "+", metaKey: true, shiftKey: true }), unfoldAll, "mac"),
+    ).toBe(false);
   });
 
   it("moves the fresh toggle-bookmark default to Alt+F11 on every platform", () => {
@@ -994,6 +1009,20 @@ describe("keymap", () => {
     expect(matchesShortcut(keyEvent({ key: "0", metaKey: true }), "Cmd+0", "linux")).toBe(false);
   });
 
+  it("matches a + key event against the = shortcut with the same modifiers", () => {
+    const shifted = keyEvent({ key: "+", metaKey: true, shiftKey: true });
+    const unshifted = keyEvent({ key: "+", metaKey: true });
+    const linuxShifted = keyEvent({ ctrlKey: true, key: "+", shiftKey: true });
+
+    expect(matchesShortcut(shifted, "Cmd+Shift+=", "mac")).toBe(true);
+    expect(matchesShortcut(shifted, "Cmd+=", "mac")).toBe(false);
+    expect(matchesShortcut(unshifted, "Cmd+=", "mac")).toBe(true);
+    expect(matchesShortcut(unshifted, "Cmd+Shift+=", "mac")).toBe(false);
+    expect(matchesShortcut(linuxShifted, "Cmd+Shift+=", "linux")).toBe(true);
+    expect(matchesShortcut(linuxShifted, "Ctrl+Shift+=", "windows")).toBe(true);
+    expect(matchesShortcut(linuxShifted, "Cmd+Shift+=", "mac")).toBe(false);
+  });
+
   it("normalizes persisted keymaps and keeps unknown values out", () => {
     expect(
       normalizeKeymapSettings(
@@ -1173,6 +1202,22 @@ describe("keymap", () => {
       );
     });
 
+    it("lets a bare + key reach matching when its = equivalent is a bare-key command", () => {
+      const bareKeys = collectBareKeyShortcutKeys({
+        ...defaultKeymapSettings("mac"),
+        "editor.fontZoomIn": "=",
+      });
+
+      expect(eventCanMatchKeymapShortcut(keyEvent({ key: "+" }), bareKeys)).toBe(true);
+      expect(eventCanMatchKeymapShortcut(keyEvent({ key: "=" }), bareKeys)).toBe(true);
+      expect(
+        eventCanMatchKeymapShortcut(
+          keyEvent({ key: "+" }),
+          collectBareKeyShortcutKeys(defaultKeymapSettings("mac")),
+        ),
+      ).toBe(false);
+    });
+
     it("does not early-exit a bare Shift tap (double-shift safety)", () => {
       const bareKeys = collectBareKeyShortcutKeys(defaultKeymapSettings("mac"));
 
@@ -1299,12 +1344,17 @@ describe("keymap", () => {
       expect(shortcutFromKeyboardEvent(keyEvent({ key: "!", shiftKey: true }))).toBeNull();
     });
 
-    it("returns null for a chord whose key is the '+' delimiter itself", () => {
+    it("captures a chord on the '+' delimiter key as its '=' equivalent", () => {
       // "+" cannot be represented in the "Cmd+Shift+X" string format (it IS the
-      // delimiter); capturing it would degenerate to a modifier-only string.
-      expect(
-        shortcutFromKeyboardEvent(keyEvent({ key: "+", metaKey: true, shiftKey: true })),
-      ).toBeNull();
+      // delimiter), so it is captured as "=" with the event's real modifiers.
+      expect(shortcutFromKeyboardEvent(keyEvent({ key: "+", metaKey: true, shiftKey: true }))).toBe(
+        "Cmd+Shift+=",
+      );
+      expect(shortcutFromKeyboardEvent(keyEvent({ key: "+", metaKey: true }))).toBe("Cmd+=");
+      expect(shortcutFromKeyboardEvent(keyEvent({ ctrlKey: true, key: "+", shiftKey: true }))).toBe(
+        "Ctrl+Shift+=",
+      );
+      expect(shortcutFromKeyboardEvent(keyEvent({ key: "+" }))).toBeNull();
     });
 
     it("still captures strong-modifier chords with a printable key", () => {
@@ -1319,6 +1369,35 @@ describe("keymap", () => {
 
       expect(shortcutFromKeyboardEvent(event)).toBe(shortcut);
       expect(matchesShortcut(event, shortcut, "mac")).toBe(true);
+    });
+
+    it.each([
+      ["≠", "Equal", "Cmd+Alt+="],
+      ["–", "Minus", "Cmd+Alt+-"],
+      ["÷", "Slash", "Cmd+Alt+/"],
+      ["Dead", "Backquote", "Cmd+Alt+`"],
+    ])("captures an Alt-modified %s key through its %s punctuation code", (key, code, shortcut) => {
+      const event = keyEvent({ altKey: true, code, key, metaKey: true });
+
+      expect(shortcutFromKeyboardEvent(event)).toBe(shortcut);
+      expect(matchesShortcut(event, shortcut, "mac")).toBe(true);
+    });
+
+    it("matches the fold defaults from the macOS Option-transformed keys", () => {
+      const unfoldAll = keyEvent({ altKey: true, code: "Equal", key: "≠", metaKey: true });
+      const foldAll = keyEvent({ altKey: true, code: "Minus", key: "–", metaKey: true });
+
+      expect(shortcutFromKeyboardEvent(unfoldAll)).toBe(
+        defaultShortcutForCommand("editor.unfoldAll", "mac"),
+      );
+      expect(shortcutFromKeyboardEvent(foldAll)).toBe(
+        defaultShortcutForCommand("editor.foldAll", "mac"),
+      );
+      expect(
+        shortcutFromKeyboardEvent(
+          keyEvent({ altKey: true, code: "Equal", key: "±", metaKey: true, shiftKey: true }),
+        ),
+      ).toBe("Cmd+Shift+Alt+=");
     });
 
     it("preserves AltGr text and captures a representable transformed delimiter", () => {

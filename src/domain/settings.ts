@@ -4,6 +4,7 @@ import {
 } from "./agentFollowUpBehavior";
 import type { IntelligenceMode } from "./workspace";
 import { defaultKeymapSettings, normalizeKeymapSettings, type KeymapSettings } from "./keymap";
+import { KEYMAP_DEFAULTS_REVISION, migrateRetiredKeymapDefaults } from "./keymapDefaultsMigration";
 import { normalizeUserSnippets, type UserSnippet } from "./snippets";
 import { normalizedWorkspaceRootKey } from "./workspaceRootKey";
 import { gitDirectoryMappingPaths, normalizeGitDirectoryMappings } from "./gitRepositoryMapping";
@@ -157,6 +158,7 @@ export interface AppSettings {
   editorFontSize: number;
   minimapEnabled?: boolean;
   keymap: KeymapSettings;
+  keymapDefaultsRevision: number;
   recentWorkspacePath: string | null;
   recentWorkspacePaths?: string[];
   recentWorkspaceOpenedAt?: Readonly<Record<string, number>>;
@@ -306,6 +308,7 @@ export function defaultAppSettings(): AppSettings {
     editorFontSize: defaultEditorFontSize,
     minimapEnabled: false,
     keymap: defaultKeymapSettings(),
+    keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
     recentWorkspacePath: null,
     recentWorkspacePaths: [],
     recentWorkspaceOpenedAt: {},
@@ -460,7 +463,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     value.editorFontLigatures,
     defaults.editorFontLigatures,
   );
-  const keymap = normalizeKeymapSettings(value.keymap);
+  const keymapDefaults = migrateRetiredKeymapDefaults(value.keymap, value.keymapDefaultsRevision);
+  const keymap = normalizeKeymapSettings(keymapDefaults.keymap);
   const minimapEnabled = normalizeBoolean(value.minimapEnabled, false);
   const runtimePolicy = isBackgroundRuntimePolicy(value.runtimePolicy)
     ? value.runtimePolicy
@@ -504,6 +508,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     editorFontLigatures,
     editorFontSize,
     keymap,
+    keymapDefaultsRevision: keymapDefaults.revision,
     minimapEnabled,
     recentWorkspacePath,
     recentWorkspacePaths,

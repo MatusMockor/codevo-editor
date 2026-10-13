@@ -26,6 +26,9 @@ describe("shortcutSequence", () => {
     "",
     "Cmd",
     "Cmd+",
+    "+",
+    "Cmd++",
+    "Cmd+Shift++",
     "+K",
     "Cmd++K",
     "Cmd+Cmd+K",
@@ -94,6 +97,92 @@ describe("shortcutSequence", () => {
     expect(shortcutStrokeFromKeyboardEvent(altGraphEvent)?.value).toBe("Ctrl+Alt+€");
     expect(command && matchesShortcutStroke(altGraphEvent, command, "windows")).toBe(false);
     expect(shortcutStrokeFromKeyboardEvent(delimiterEvent)?.value).toBe("Cmd+Alt+D");
+  });
+
+  it.each([
+    [{ key: "+", metaKey: true, shiftKey: true }, "Cmd+Shift+="],
+    [{ key: "+", metaKey: true }, "Cmd+="],
+    [{ ctrlKey: true, key: "+", shiftKey: true }, "Ctrl+Shift+="],
+    [{ key: "+" }, "="],
+  ])("captures the delimiter key event %j as %s", (init, value) => {
+    expect(shortcutStrokeFromKeyboardEvent(keyboardEvent(init))?.value).toBe(value);
+  });
+
+  it("matches a delimiter key event against its = stroke only with the same modifiers", () => {
+    const zoomIn = parseShortcutSequence("Cmd+=")?.[0];
+    const shiftedZoomIn = parseShortcutSequence("Cmd+Shift+=")?.[0];
+    const shifted = keyboardEvent({ key: "+", metaKey: true, shiftKey: true });
+    const unshifted = keyboardEvent({ key: "+", metaKey: true });
+    const linuxShifted = keyboardEvent({ ctrlKey: true, key: "+", shiftKey: true });
+
+    expect(shiftedZoomIn && matchesShortcutStroke(shifted, shiftedZoomIn, "mac")).toBe(true);
+    expect(zoomIn && matchesShortcutStroke(shifted, zoomIn, "mac")).toBe(false);
+    expect(zoomIn && matchesShortcutStroke(unshifted, zoomIn, "mac")).toBe(true);
+    expect(shiftedZoomIn && matchesShortcutStroke(unshifted, shiftedZoomIn, "mac")).toBe(false);
+    expect(shiftedZoomIn && matchesShortcutStroke(linuxShifted, shiftedZoomIn, "linux")).toBe(true);
+    expect(shiftedZoomIn && matchesShortcutStroke(linuxShifted, shiftedZoomIn, "mac")).toBe(false);
+  });
+
+  it.each([
+    ["≠", "Equal", "Cmd+Alt+="],
+    ["–", "Minus", "Cmd+Alt+-"],
+    ["÷", "Slash", "Cmd+Alt+/"],
+    ["≤", "Comma", "Cmd+Alt+,"],
+    ["≥", "Period", "Cmd+Alt+."],
+    ["…", "Semicolon", "Cmd+Alt+;"],
+    ["æ", "Quote", "Cmd+Alt+'"],
+    ["«", "Backslash", "Cmd+Alt+\\"],
+    ["Dead", "Backquote", "Cmd+Alt+`"],
+    ["“", "BracketLeft", "Cmd+Alt+["],
+    ["‘", "BracketRight", "Cmd+Alt+]"],
+  ])("recovers the Alt-transformed %s key through its %s punctuation code", (key, code, value) => {
+    const event = keyboardEvent({ altKey: true, code, key, metaKey: true });
+    const stroke = shortcutStrokeFromKeyboardEvent(event);
+
+    expect(stroke?.value).toBe(value);
+    expect(stroke && matchesShortcutStroke(event, stroke, "mac")).toBe(true);
+  });
+
+  it("recovers a Shift+Alt transformed punctuation key with its real modifiers", () => {
+    const event = keyboardEvent({
+      altKey: true,
+      code: "Equal",
+      key: "±",
+      metaKey: true,
+      shiftKey: true,
+    });
+    const stroke = shortcutStrokeFromKeyboardEvent(event);
+
+    expect(stroke?.value).toBe("Cmd+Shift+Alt+=");
+    expect(stroke && matchesShortcutStroke(event, stroke, "mac")).toBe(true);
+  });
+
+  it.each([
+    [{ altKey: true, code: "Slash", key: "-", metaKey: true }, "Cmd+Alt+-"],
+    [{ altKey: true, code: "Equal", key: "=", ctrlKey: true }, "Ctrl+Alt+="],
+    [{ altKey: true, code: "Minus", key: "+", metaKey: true }, "Cmd+Alt+="],
+    [{ altKey: true, code: "IntlBackslash", key: "≠", metaKey: true }, "Cmd+Alt+≠"],
+    [{ altKey: true, code: "", key: "≠", metaKey: true }, "Cmd+Alt+≠"],
+    [{ altKey: true, key: "≠", metaKey: true }, "Cmd+Alt+≠"],
+    [{ code: "Equal", key: "≠", metaKey: true }, "Cmd+≠"],
+    [{ altKey: true, code: "Enter", key: "Enter", metaKey: true }, "Cmd+Alt+Enter"],
+    [{ altKey: true, code: "Space", key: " ", metaKey: true }, "Cmd+Alt+Space"],
+    [{ altKey: true, code: "KeyD", key: "+", metaKey: true }, "Cmd+Alt+D"],
+    [{ altKey: true, code: "Semicolon", key: "a", metaKey: true }, "Cmd+Alt+A"],
+  ])("keeps punctuation code recovery out of the event %j", (init, value) => {
+    expect(shortcutStrokeFromKeyboardEvent(keyboardEvent(init))?.value).toBe(value);
+  });
+
+  it("keeps AltGr text on a punctuation code untouched", () => {
+    const event = keyboardEvent({
+      altKey: true,
+      code: "Equal",
+      ctrlKey: true,
+      getModifierState: (keyArg) => keyArg === "AltGraph",
+      key: "¸",
+    });
+
+    expect(shortcutStrokeFromKeyboardEvent(event)?.value).toBe("Ctrl+Alt+¸");
   });
 
   it("normalizes a macOS Control+Option transformed key", () => {

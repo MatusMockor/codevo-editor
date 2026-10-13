@@ -10035,13 +10035,13 @@ class Foo
 
     expect(foldAll).toEqual(
       expect.objectContaining({
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Minus],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.Minus],
         label: "Fold All",
       }),
     );
     expect(unfoldAll).toEqual(
       expect.objectContaining({
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Equal],
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.Equal],
         label: "Unfold All",
       }),
     );

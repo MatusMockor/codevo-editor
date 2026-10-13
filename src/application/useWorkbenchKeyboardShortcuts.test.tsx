@@ -3,6 +3,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import { __resetKeymapPlatformCacheForTests } from "../domain/keymap";
 import { defaultAppSettings } from "../domain/settings";
 import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import {
@@ -21,6 +22,16 @@ const commandContext: CommandContext = {
   hasWorkspace: true,
 };
 const TEST_EDITOR_SURFACE_IDENTITY = {};
+const NAVIGATOR_BY_KEYMAP_PLATFORM = {
+  linux: { platform: "Linux x86_64", userAgent: "Mozilla/5.0 (X11; Linux x86_64)" },
+  mac: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
+  windows: { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+} as const;
+const SHIFTED_PLUS_BY_KEYMAP_PLATFORM = {
+  linux: { ctrlKey: true, key: "+", shiftKey: true },
+  mac: { key: "+", metaKey: true, shiftKey: true },
+  windows: { ctrlKey: true, key: "+", shiftKey: true },
+} as const;
 
 describe("useWorkbenchKeyboardShortcuts", () => {
   it("dispatches Refactor exactly once only from Monaco text focus", () => {
@@ -1105,6 +1116,193 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     harness.unmount();
   });
 
+  it.each(["mac", "linux", "windows"] as const)(
+    "increases the editor font size from the shifted + chord on %s with and without editor text focus",
+    (platform) => {
+      withKeymapPlatform(platform, () => {
+        const zoomIn = vi.fn();
+        const harness = renderHook({ commandRegistry: fontZoomInRegistry(zoomIn) });
+        const monaco = createMonacoTextInput();
+        const outside = document.createElement("input");
+        document.body.append(outside);
+        const shiftedPlus = SHIFTED_PLUS_BY_KEYMAP_PLATFORM[platform];
+
+        expect(dispatchKeyboardEventFrom(outside, shiftedPlus).defaultPrevented).toBe(true);
+        expect(zoomIn).toHaveBeenCalledTimes(1);
+        expect(dispatchKeyboardEventFrom(monaco.input, shiftedPlus).defaultPrevented).toBe(true);
+        expect(zoomIn).toHaveBeenCalledTimes(2);
+        expect(
+          dispatchKeyboardEventFrom(monaco.input, { ...shiftedPlus, key: "=" }).defaultPrevented,
+        ).toBe(true);
+        expect(zoomIn).toHaveBeenCalledTimes(3);
+
+        outside.remove();
+        monaco.editor.remove();
+        harness.unmount();
+      });
+    },
+  );
+
+  it("keeps increasing the editor font size from Cmd+= and an unshifted + key", () => {
+    withKeymapPlatform("mac", () => {
+      const zoomIn = vi.fn();
+      const harness = renderHook({ commandRegistry: fontZoomInRegistry(zoomIn) });
+
+      expect(dispatchKeyboardEvent({ key: "=", metaKey: true }).defaultPrevented).toBe(true);
+      expect(zoomIn).toHaveBeenCalledTimes(1);
+      expect(dispatchKeyboardEvent({ key: "+", metaKey: true }).defaultPrevented).toBe(true);
+      expect(zoomIn).toHaveBeenCalledTimes(2);
+
+      harness.unmount();
+    });
+  });
+
+  it("consumes the shifted + chord without running a disabled font zoom in command", () => {
+    withKeymapPlatform("mac", () => {
+      const zoomIn = vi.fn();
+      const harness = renderHook({ commandRegistry: fontZoomInRegistry(zoomIn, false) });
+
+      const event = dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(zoomIn).not.toHaveBeenCalled();
+
+      harness.unmount();
+    });
+  });
+
+  it("drops the shifted + alias once font zoom in is rebound", () => {
+    withKeymapPlatform("mac", () => {
+      const zoomIn = vi.fn();
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, "editor.fontZoomIn": "Cmd+Alt+I" },
+        },
+        commandRegistry: fontZoomInRegistry(zoomIn),
+      });
+      const monaco = createMonacoTextInput();
+
+      expect(dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented).toBe(
+        false,
+      );
+      expect(
+        dispatchKeyboardEventFrom(monaco.input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac)
+          .defaultPrevented,
+      ).toBe(false);
+      expect(dispatchKeyboardEvent({ key: "=", metaKey: true }).defaultPrevented).toBe(false);
+      expect(zoomIn).not.toHaveBeenCalled();
+      expect(
+        dispatchKeyboardEvent({ altKey: true, code: "KeyI", key: "i", metaKey: true })
+          .defaultPrevented,
+      ).toBe(true);
+      expect(zoomIn).toHaveBeenCalledTimes(1);
+
+      monaco.editor.remove();
+      harness.unmount();
+    });
+  });
+
+  it("lets a command explicitly bound to the shifted + chord win over the alias", () => {
+    withKeymapPlatform("mac", () => {
+      const zoomIn = vi.fn();
+      const save = vi.fn();
+      const registry = fontZoomInRegistry(zoomIn);
+      registry.register({
+        category: "Editor",
+        id: "editor.save",
+        isEnabled: () => true,
+        run: save,
+        title: "Save File",
+      });
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, "editor.save": "Cmd+Shift+=" },
+        },
+        commandRegistry: registry,
+      });
+
+      const event = dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(zoomIn).not.toHaveBeenCalled();
+
+      harness.unmount();
+    });
+  });
+
+  it("leaves the shifted + chord to an editor-owned command explicitly bound to it", () => {
+    withKeymapPlatform("mac", () => {
+      const zoomIn = vi.fn();
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, "editor.unfoldAll": "Cmd+Shift+=" },
+        },
+        commandRegistry: fontZoomInRegistry(zoomIn),
+      });
+      const monaco = createMonacoTextInput();
+
+      expect(
+        dispatchKeyboardEventFrom(monaco.input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac)
+          .defaultPrevented,
+      ).toBe(false);
+      expect(dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented).toBe(
+        false,
+      );
+      expect(zoomIn).not.toHaveBeenCalled();
+
+      monaco.editor.remove();
+      harness.unmount();
+    });
+  });
+
+  it("does not fire the shifted + alias while a chord awaits its second stroke", () => {
+    withKeymapPlatform("mac", () => {
+      const zoomIn = vi.fn();
+      const runAtCursor = vi.fn();
+      const registry = fontZoomInRegistry(zoomIn);
+      registry.register({
+        category: "Test",
+        id: "testing.runAtCursor",
+        isEnabled: () => true,
+        run: runAtCursor,
+        title: "Run Test at Cursor",
+      });
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
+        },
+        commandRegistry: registry,
+      });
+      const { editor, input } = createMonacoTextInput();
+
+      expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
+        true,
+      );
+      expect(
+        dispatchKeyboardEventFrom(input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented,
+      ).toBe(true);
+      expect(zoomIn).not.toHaveBeenCalled();
+      expect(runAtCursor).not.toHaveBeenCalled();
+
+      expect(
+        dispatchKeyboardEventFrom(input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented,
+      ).toBe(true);
+      expect(zoomIn).toHaveBeenCalledTimes(1);
+
+      editor.remove();
+      harness.unmount();
+    });
+  });
+
   it("handles Escape through the floating surface action", () => {
     const actions = createActions({
       closeFloatingSurface: vi.fn(() => true),
@@ -1247,6 +1445,43 @@ function commandShortcutCase(
     run: vi.fn(),
     title,
   };
+}
+
+function fontZoomInRegistry(run: () => void, enabled = true): CommandRegistry {
+  const registry = new CommandRegistry();
+  registry.register({
+    category: "Editor",
+    id: "editor.fontZoomIn",
+    isEnabled: () => enabled,
+    run,
+    title: "Increase Editor Font Size",
+  });
+  return registry;
+}
+
+function withKeymapPlatform(
+  platform: keyof typeof NAVIGATOR_BY_KEYMAP_PLATFORM,
+  run: () => void,
+): void {
+  const patch = NAVIGATOR_BY_KEYMAP_PLATFORM[platform];
+  const keys = ["platform", "userAgent"] as const;
+  const saved = keys.map((key) => ({
+    descriptor: Object.getOwnPropertyDescriptor(navigator, key),
+    key,
+  }));
+  for (const key of keys) {
+    Object.defineProperty(navigator, key, { configurable: true, value: patch[key] });
+  }
+  __resetKeymapPlatformCacheForTests();
+  try {
+    run();
+  } finally {
+    for (const { descriptor, key } of saved) {
+      Reflect.deleteProperty(navigator, key);
+      if (descriptor !== undefined) Object.defineProperty(navigator, key, descriptor);
+    }
+    __resetKeymapPlatformCacheForTests();
+  }
 }
 
 function createDoubleShiftDetectorStub(handleKeyDownResult = false): DoubleShiftDetector {

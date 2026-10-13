@@ -3,8 +3,10 @@ import {
   matchesShortcut,
   shortcutForCommand,
   type KeymapCommandId,
+  type KeymapPlatform,
   type KeymapSettings,
 } from "../domain/keymap";
+import { keymapDefaultAliasCommandIdsForEvent } from "../domain/keymapDefaultAliases";
 import type { CommandContext, CommandExecutionRunner, CommandLookup } from "./commandRegistry";
 import type { Command } from "./commandRegistry";
 
@@ -18,6 +20,15 @@ interface DispatchWorkbenchShortcutCommandOptions {
   commandRegistry: CommandLookup;
   event: KeyboardEvent;
   keymap: KeymapSettings;
+  runCommand: CommandExecutionRunner;
+}
+
+interface DispatchWorkbenchDefaultAliasCommandOptions {
+  commandContext: CommandContext;
+  commandRegistry: CommandLookup;
+  event: KeyboardEvent;
+  keymap: KeymapSettings;
+  platform?: KeymapPlatform;
   runCommand: CommandExecutionRunner;
 }
 
@@ -87,6 +98,26 @@ export function dispatchWorkbenchShortcutCommand({
   return dispatchResolvedWorkbenchShortcutCommands({
     commandContext,
     commandIds: matchingCommandIds,
+    commandRegistry,
+    event,
+    runCommand,
+  });
+}
+
+export function dispatchWorkbenchDefaultAliasCommand({
+  commandContext,
+  commandRegistry,
+  event,
+  keymap,
+  platform,
+  runCommand,
+}: DispatchWorkbenchDefaultAliasCommandOptions): boolean {
+  const commandIds = keymapDefaultAliasCommandIdsForEvent(keymap, event, platform);
+  if (commandIds.length === 0) return false;
+
+  return dispatchResolvedWorkbenchShortcutCommands({
+    commandContext,
+    commandIds,
     commandRegistry,
     event,
     runCommand,
