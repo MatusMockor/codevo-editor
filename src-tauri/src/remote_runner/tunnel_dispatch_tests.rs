@@ -246,18 +246,62 @@ fn settles(condition: impl Fn() -> bool) -> bool {
     true
 }
 
-fn reaches_end_of_stream(socket: &mut std::os::unix::net::UnixStream) -> bool {
-    socket
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
+pub(super) fn reaches_end_of_stream(socket: &mut std::os::unix::net::UnixStream) -> bool {
+    reaches_end_of_stream_within(socket, Duration::from_secs(5))
+}
+
+fn reaches_end_of_stream_within(
+    socket: &mut std::os::unix::net::UnixStream,
+    timeout: Duration,
+) -> bool {
+    // Darwin rejects SO_RCVTIMEO after peer shutdown. Nonblocking reads also
+    // bound the entire drain, even when buffered bytes keep arriving.
+    socket.set_nonblocking(true).unwrap();
+    let deadline = Instant::now() + timeout;
     let mut buffer = [0; 4096];
     loop {
+        if Instant::now() >= deadline {
+            return false;
+        }
         match socket.read(&mut buffer) {
             Ok(0) => return true,
             Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(2));
+            }
             Err(_) => return false,
         }
     }
+}
+
+#[test]
+fn end_of_stream_fixture_drains_buffered_bytes_after_peer_shutdown() {
+    let (mut socket, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    peer.write_all(b"pending request bytes").unwrap();
+    drop(peer);
+    assert!(reaches_end_of_stream(&mut socket));
+}
+
+#[test]
+fn end_of_stream_fixture_waits_for_peer_shutdown() {
+    let (mut socket, peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let closer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        drop(peer);
+    });
+    assert!(reaches_end_of_stream(&mut socket));
+    closer.join().unwrap();
+}
+
+#[test]
+fn end_of_stream_fixture_rejects_a_peer_that_stays_open_within_the_bound() {
+    let (mut socket, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let timeout = Duration::from_millis(20);
+    let started = Instant::now();
+    assert!(!reaches_end_of_stream_within(&mut socket, timeout));
+    assert!(started.elapsed() >= timeout);
+    assert!(started.elapsed() < Duration::from_secs(1));
 }
 
 const ATTACHMENT: &str = "/v1/attachments/7389088c-29b8-4cec-9a15-e825e1fb2f66";

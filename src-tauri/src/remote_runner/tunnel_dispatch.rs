@@ -346,7 +346,6 @@ mod tests {
 
     #[test]
     fn dropping_the_dispatch_aborts_a_running_probe_and_its_pending_request() {
-        use std::io::Read;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let path = std::env::temp_dir().join(format!("cv-dropped-{}.sock", std::process::id()));
         let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
@@ -388,12 +387,9 @@ mod tests {
             assert!(started.elapsed() < Duration::from_secs(5));
             std::thread::sleep(Duration::from_millis(2));
         }
-        for socket in &mut held {
-            socket
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            socket.read_to_end(&mut Vec::new()).unwrap();
-        }
+        assert!(held
+            .iter_mut()
+            .all(super::super::dispatch_tests::reaches_end_of_stream));
         assert!(started.elapsed() < policy.probe / 2);
         std::fs::remove_file(path).unwrap();
     }
