@@ -75,6 +75,7 @@
 }
 
 .cv-work-status {
+  position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;

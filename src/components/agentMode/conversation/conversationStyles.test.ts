@@ -6,6 +6,7 @@ import {
   varReferences,
 } from "../../cssContractTestSupport";
 
+const AGENT_MODE = "components/agentMode/agentMode.css";
 const CONVERSATION = "components/agentMode/conversation/conversation.css";
 const WORK_ROWS = "components/agentMode/conversation/agentWorkRows.css";
 const COMPOSER = "components/agentMode/composer/agentComposerFrame.css";
@@ -231,6 +232,11 @@ describe("P3 conversation sheets", () => {
     );
     expect(declaredValue(WORK_ROWS, ".cv-work-row__meta", "opacity")).toBe("0");
     expect(declaredValue(WORK_ROWS, ".cv-live-row", "min-height")).toBe("28px");
+  });
+
+  it("keeps the work-status tag's hidden punctuation inside the tag instead of the session", () => {
+    expect(declaredValue(AGENT_MODE, ".agent-visually-hidden", "position")).toBe("absolute");
+    expect(declaredValue(WORK_ROWS, ".cv-work-status", "position")).toBe("relative");
   });
 
   it("stops the live pulse under reduced motion", () => {

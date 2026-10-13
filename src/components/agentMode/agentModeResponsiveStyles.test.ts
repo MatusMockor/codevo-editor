@@ -174,12 +174,12 @@ describe("agent mode responsive layout contract", () => {
 
   it("keeps the frame bounded and gives the thread column a real minimum track", () => {
     const frame = rule('.workbench-frame[data-layout="agent"] {', shellCss);
-    expect(frame).toContain("overflow: hidden");
+    expect(frame).toContain("overflow: clip");
     expect(frame.replace(/\s+/g, " ")).toContain(
       "grid-template-columns: var(--agent-rail-track) minmax(var(--agent-center-min-width), 1fr) var(--agent-right-panel-width)",
     );
     expect(rule('.workbench-frame[data-layout="agent"] > [data-slot="agent"]', shellCss)).toContain(
-      "overflow: hidden",
+      "overflow: clip",
     );
   });
 
@@ -402,7 +402,7 @@ describe("agent mode responsive layout contract", () => {
       shellCss,
     );
     expect(maximizedAgent).toContain("grid-column: 1");
-    expect(maximizedAgent).toContain("overflow: hidden");
+    expect(maximizedAgent).toContain("overflow: clip");
     expect(
       rule(
         '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="bottom"]',
