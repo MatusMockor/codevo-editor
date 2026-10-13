@@ -55,6 +55,7 @@ export function McpServerActionsMenu({
       <IconButton
         aria-expanded={open}
         aria-haspopup="menu"
+        className="settings-mcp-server__menu"
         icon={<Ellipsis aria-hidden="true" size={14} />}
         label={label}
         onClick={() => setOpen((shown) => !shown)}

@@ -18,7 +18,7 @@ import { SettingsSelect } from "../primitives/SettingsSelect";
 import type { SettingsEnvironment, SettingsPageProps } from "../settingsPageProps";
 import { useSettingsRowTarget } from "../settingsTargetContext";
 import { McpAddServer } from "./McpAddServer";
-import { McpServerRow } from "./McpServerRow";
+import { McpServerList } from "./McpServerList";
 import {
   selectedMcpProjectKey,
   type McpProjectNote,
@@ -34,7 +34,6 @@ import {
   mcpCheckNotice,
   mcpCheckedLabel,
   mcpProviderSummary,
-  orderedMcpServers,
   type McpProjectPlace,
   type McpProviderSummary,
 } from "./mcpServersPresentation";
@@ -227,10 +226,7 @@ function McpProviderGroup({
     store.refresh(target);
   }, [store, target]);
   const snapshot = agentMcpServersSnapshot(state);
-  const servers = useMemo(
-    () => (snapshot === null ? NO_SERVERS : orderedMcpServers(snapshot.result.servers)),
-    [snapshot],
-  );
+  const servers = snapshot?.result.servers ?? NO_SERVERS;
   const names = useMemo(() => servers.map((server) => server.name), [servers]);
   const summary = mcpProviderSummary(state, provider);
   return (
@@ -266,17 +262,14 @@ function McpProviderGroup({
           provider={provider}
           summary={summary}
         />
-        {servers.map((server) => (
-          <McpServerRow
-            key={server.name}
-            management={management}
-            onCopy={onCopy}
-            place={place}
-            provider={provider}
-            server={server}
-            target={target}
-          />
-        ))}
+        <McpServerList
+          management={management}
+          onCopy={onCopy}
+          place={place}
+          provider={provider}
+          servers={servers}
+          target={target}
+        />
         {snapshot?.result.truncated === true ? (
           <p className="settings-empty">{MCP_TRUNCATED_NOTICE}</p>
         ) : null}

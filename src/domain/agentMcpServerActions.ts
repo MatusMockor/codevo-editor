@@ -1,4 +1,8 @@
-import type { AgentMcpServer, AgentMcpServerScope } from "./agentMcpServers";
+import type {
+  AgentMcpServer,
+  AgentMcpServerScope,
+  AgentMcpServerTransport,
+} from "./agentMcpServers";
 import {
   agentMcpServerConfigNameIssue,
   type AgentMcpServerConfigScope,
@@ -25,13 +29,12 @@ export function agentMcpServerActions(
   provider: AgentCliKind,
   server: ActionServer,
 ): AgentMcpServerActions {
-  if (!isChangeableScope(server.scope)) return NO_AGENT_MCP_SERVER_ACTIONS;
-  const remote = signsInRemotely(server);
+  const session = signInSession(server);
   const settled = server.status === "connected" || server.status === "failed";
   return Object.freeze({
-    signIn: remote && server.status === "needsAuth",
-    signInAgain: remote && settled,
-    signOut: remote && settled && server.scope !== "account",
+    signIn: session !== "none" && server.status === "needsAuth",
+    signInAgain: session !== "none" && settled,
+    signOut: session === "revocable" && settled,
     removeFrom: removalScope(provider, server),
   });
 }
@@ -40,27 +43,40 @@ export function agentMcpServerOffersMenu(actions: AgentMcpServerActions): boolea
   return actions.signInAgain || actions.signOut || actions.removeFrom !== null;
 }
 
-function isChangeableScope(scope: AgentMcpServerScope): boolean {
-  switch (scope) {
+type SignInSession = "none" | "kept" | "revocable";
+
+function signInSession(server: ActionServer): SignInSession {
+  switch (server.scope) {
+    case "account":
+      return "kept";
     case "user":
     case "project":
     case "local":
-    case "account":
-      return true;
     case "plugin":
-    case "managed":
     case "unknown":
-      return false;
+      return signsInRemotely(server.transport) ? "revocable" : "none";
+    case "managed":
+      return "none";
     default: {
-      const unreachable: never = scope;
+      const unreachable: never = server.scope;
       return unreachable;
     }
   }
 }
 
-function signsInRemotely(server: ActionServer): boolean {
-  if (server.scope === "account") return true;
-  return server.transport === "http" || server.transport === "sse";
+function signsInRemotely(transport: AgentMcpServerTransport): boolean {
+  switch (transport) {
+    case "http":
+    case "sse":
+      return true;
+    case "stdio":
+    case "unknown":
+      return false;
+    default: {
+      const unreachable: never = transport;
+      return unreachable;
+    }
+  }
 }
 
 function removalScope(
@@ -68,19 +84,49 @@ function removalScope(
   server: ActionServer,
 ): AgentMcpServerConfigScope | null {
   if (agentMcpServerConfigNameIssue(server.name) !== null) return null;
-  switch (server.scope) {
+  switch (provider) {
+    case "claudeCode":
+      return claudeRemovalScope(server.scope);
+    case "codex":
+      return codexRemovalScope(server.scope);
+    default: {
+      const unreachable: never = provider;
+      return unreachable;
+    }
+  }
+}
+
+function claudeRemovalScope(scope: AgentMcpServerScope): AgentMcpServerConfigScope | null {
+  switch (scope) {
     case "user":
-      return "user";
     case "project":
     case "local":
-      return provider === "codex" ? null : server.scope;
+      return scope;
     case "account":
     case "plugin":
     case "managed":
     case "unknown":
       return null;
     default: {
-      const unreachable: never = server.scope;
+      const unreachable: never = scope;
+      return unreachable;
+    }
+  }
+}
+
+function codexRemovalScope(scope: AgentMcpServerScope): AgentMcpServerConfigScope | null {
+  switch (scope) {
+    case "user":
+    case "unknown":
+      return "user";
+    case "project":
+    case "local":
+    case "account":
+    case "plugin":
+    case "managed":
+      return null;
+    default: {
+      const unreachable: never = scope;
       return unreachable;
     }
   }

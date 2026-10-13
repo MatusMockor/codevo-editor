@@ -84,7 +84,8 @@ export function orderedMcpServers(
 ): ReadonlyArray<AgentMcpServer> {
   return [...servers].sort(
     (left, right) =>
-      STATUS_RANK[left.status] - STATUS_RANK[right.status] || compareNames(left.name, right.name),
+      STATUS_RANK[left.status] - STATUS_RANK[right.status] ||
+      compareMcpNames(left.name, right.name),
   );
 }
 
@@ -134,14 +135,11 @@ export function mcpServerStatusTone(status: AgentMcpServerStatus): McpServerStat
 }
 
 export function mcpServerSecondaryText(server: AgentMcpServer): string | null {
-  const parts = [
-    scopeLabel(server.scope),
-    transportLabel(server.transport),
-    server.endpointOrigin,
-    toolCountLabel(server.toolCount),
-  ].filter((part): part is string => part !== null);
-  if (parts.length === 0) return null;
-  return parts.join(" · ");
+  return joinedParts([scopeLabel(server.scope), ...connectionParts(server)]);
+}
+
+export function mcpPluginServerSecondaryText(server: AgentMcpServer): string | null {
+  return joinedParts(connectionParts(server));
 }
 
 export function mcpErrorMessage(error: AgentMcpServersErrorKind, provider: AgentCliKind): string {
@@ -198,10 +196,24 @@ export function mcpCopySignInLabel(serverName: string): string {
   return `Copy sign-in command for ${serverName}`;
 }
 
-function compareNames(left: string, right: string): number {
+export function compareMcpNames(left: string, right: string): number {
   const folded = compareText(left.toLowerCase(), right.toLowerCase());
   if (folded !== 0) return folded;
   return compareText(left, right);
+}
+
+function connectionParts(server: AgentMcpServer): ReadonlyArray<string | null> {
+  return [
+    transportLabel(server.transport),
+    server.endpointOrigin,
+    toolCountLabel(server.toolCount),
+  ];
+}
+
+function joinedParts(parts: ReadonlyArray<string | null>): string | null {
+  const shown = parts.filter((part): part is string => part !== null);
+  if (shown.length === 0) return null;
+  return shown.join(" · ");
 }
 
 function compareText(left: string, right: string): number {

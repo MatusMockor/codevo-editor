@@ -7,11 +7,13 @@ import {
 } from "../../../domain/agentMcpServers";
 import { agentMcpServersFixture } from "../../../test/agentMcpServersTestSupport";
 import {
+  compareMcpNames,
   mcpAddServerLead,
   mcpCheckNotice,
   mcpCheckedLabel,
   mcpCopySignInLabel,
   mcpErrorMessage,
+  mcpPluginServerSecondaryText,
   mcpProviderSummary,
   mcpServerNeedsAttention,
   mcpServerSecondaryText,
@@ -117,6 +119,33 @@ describe("MCP server ordering and labels", () => {
         server({ name: "none", scope: "unknown", transport: "sse", toolCount: 0 }),
       ),
     ).toBe("SSE · 0 tools");
+  });
+
+  it("leaves the scope out of a plugin server's secondary text", () => {
+    expect(
+      mcpPluginServerSecondaryText(
+        server({
+          name: "plugin:cloudflare:cloudflare-docs",
+          scope: "plugin",
+          transport: "http",
+          endpointOrigin: "https://docs.mcp.cloudflare.com",
+          toolCount: 2,
+        }),
+      ),
+    ).toBe("HTTP · https://docs.mcp.cloudflare.com · 2 tools");
+    expect(
+      mcpPluginServerSecondaryText(server({ name: "bare", scope: "plugin", transport: "unknown" })),
+    ).toBeNull();
+  });
+
+  it("compares names without regard to case, then by case", () => {
+    expect(["miro", "Cloudflare", "cloudflare", "atlas"].sort(compareMcpNames)).toEqual([
+      "atlas",
+      "Cloudflare",
+      "cloudflare",
+      "miro",
+    ]);
+    expect(compareMcpNames("same", "same")).toBe(0);
   });
 
   it("prints nothing rather than the word unknown when nothing is known", () => {

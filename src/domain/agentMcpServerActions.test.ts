@@ -5,6 +5,7 @@ import {
   agentMcpServerOffersMenu,
 } from "./agentMcpServerActions";
 import {
+  AGENT_MCP_SERVER_SCOPES,
   AGENT_MCP_SERVER_STATUSES,
   AGENT_MCP_SERVER_TRANSPORTS,
   type AgentMcpServerScope,
@@ -20,6 +21,9 @@ function server(
 ) {
   return { name, status, scope, transport };
 }
+
+const PROVIDERS = ["claudeCode", "codex"] as const;
+const NOTHING = { signIn: false, signInAgain: false, signOut: false, removeFrom: null };
 
 describe("agentMcpServerActions", () => {
   it("offers sign-in for a remote server that needs it", () => {
@@ -102,21 +106,140 @@ describe("agentMcpServerActions", () => {
     }
   });
 
-  it("offers nothing for plugin, managed, or unknown scope", () => {
-    for (const scope of ["plugin", "managed", "unknown"] as const)
+  it("signs in to a Claude server of unknown scope without offering to remove it", () => {
+    const name = "plugin:cloudflare:cloudflare-api";
+    expect(
+      agentMcpServerActions("claudeCode", server("needsAuth", "unknown", "http", name)),
+    ).toEqual({ signIn: true, signInAgain: false, signOut: false, removeFrom: null });
+    expect(agentMcpServerActions("claudeCode", server("needsAuth", "unknown", "http"))).toEqual({
+      signIn: true,
+      signInAgain: false,
+      signOut: false,
+      removeFrom: null,
+    });
+    for (const status of ["connected", "failed"] as const)
+      for (const transport of ["http", "sse"] as const)
+        expect(agentMcpServerActions("claudeCode", server(status, "unknown", transport))).toEqual({
+          signIn: false,
+          signInAgain: true,
+          signOut: true,
+          removeFrom: null,
+        });
+    for (const status of AGENT_MCP_SERVER_STATUSES)
+      expect(agentMcpServerActions("claudeCode", server(status, "unknown", "stdio"))).toEqual(
+        NOTHING,
+      );
+  });
+
+  it("removes a Codex server of unknown scope from the user configuration", () => {
+    for (const status of AGENT_MCP_SERVER_STATUSES)
+      expect(agentMcpServerActions("codex", server(status, "unknown", "stdio"))).toEqual({
+        signIn: false,
+        signInAgain: false,
+        signOut: false,
+        removeFrom: "user",
+      });
+    expect(agentMcpServerActions("codex", server("needsAuth", "unknown", "http"))).toEqual({
+      signIn: true,
+      signInAgain: false,
+      signOut: false,
+      removeFrom: "user",
+    });
+    expect(agentMcpServerActions("codex", server("connected", "unknown", "http"))).toEqual({
+      signIn: false,
+      signInAgain: true,
+      signOut: true,
+      removeFrom: "user",
+    });
+  });
+
+  it("signs in to and out of plugin servers without removing them", () => {
+    for (const provider of PROVIDERS) {
+      expect(agentMcpServerActions(provider, server("needsAuth", "plugin", "http"))).toEqual({
+        signIn: true,
+        signInAgain: false,
+        signOut: false,
+        removeFrom: null,
+      });
+      expect(agentMcpServerActions(provider, server("connected", "plugin", "sse"))).toEqual({
+        signIn: false,
+        signInAgain: true,
+        signOut: true,
+        removeFrom: null,
+      });
       for (const status of AGENT_MCP_SERVER_STATUSES)
+        expect(agentMcpServerActions(provider, server(status, "plugin", "stdio"))).toEqual(NOTHING);
+    }
+  });
+
+  it("offers nothing for a managed server", () => {
+    for (const status of AGENT_MCP_SERVER_STATUSES)
+      for (const transport of AGENT_MCP_SERVER_TRANSPORTS)
+        for (const provider of PROVIDERS) {
+          const actions = agentMcpServerActions(provider, server(status, "managed", transport));
+          expect(actions).toEqual(NO_AGENT_MCP_SERVER_ACTIONS);
+          expect(agentMcpServerOffersMenu(actions)).toBe(false);
+        }
+  });
+
+  it("offers sign-in actions only to servers that sign in remotely", () => {
+    for (const provider of PROVIDERS)
+      for (const scope of AGENT_MCP_SERVER_SCOPES)
         for (const transport of AGENT_MCP_SERVER_TRANSPORTS)
-          for (const provider of ["claudeCode", "codex"] as const)
-            expect(agentMcpServerActions(provider, server(status, scope, transport))).toBe(
-              NO_AGENT_MCP_SERVER_ACTIONS,
-            );
+          for (const status of AGENT_MCP_SERVER_STATUSES) {
+            const actions = agentMcpServerActions(provider, server(status, scope, transport));
+            const remote = scope === "account" || transport === "http" || transport === "sse";
+            const reachable = remote && scope !== "managed";
+            const settled = status === "connected" || status === "failed";
+            const where = `${provider} ${scope} ${transport} ${status}`;
+            expect(actions.signIn, where).toBe(reachable && status === "needsAuth");
+            expect(actions.signInAgain, where).toBe(reachable && settled);
+            expect(actions.signOut, where).toBe(reachable && settled && scope !== "account");
+          }
+  });
+
+  it("removes only from a configuration the provider lets Codevo change", () => {
+    const removable: Readonly<
+      Record<(typeof PROVIDERS)[number], Readonly<Record<AgentMcpServerScope, string | null>>>
+    > = {
+      claudeCode: {
+        user: "user",
+        project: "project",
+        local: "local",
+        account: null,
+        plugin: null,
+        managed: null,
+        unknown: null,
+      },
+      codex: {
+        user: "user",
+        project: null,
+        local: null,
+        account: null,
+        plugin: null,
+        managed: null,
+        unknown: "user",
+      },
+    };
+    for (const provider of PROVIDERS)
+      for (const scope of AGENT_MCP_SERVER_SCOPES)
+        for (const transport of AGENT_MCP_SERVER_TRANSPORTS)
+          for (const status of AGENT_MCP_SERVER_STATUSES)
+            expect(
+              agentMcpServerActions(provider, server(status, scope, transport)).removeFrom,
+              `${provider} ${scope} ${transport} ${status}`,
+            ).toBe(removable[provider][scope]);
   });
 
   it("does not offer removal for a name the configuration commands cannot take", () => {
-    for (const name of ["-rf", "two words", "plugin:linear", "a".repeat(65)])
+    for (const name of ["-rf", "two words", "plugin:linear", "a".repeat(65)]) {
       expect(
         agentMcpServerActions("claudeCode", server("connected", "user", "http", name)),
       ).toEqual({ signIn: false, signInAgain: true, signOut: true, removeFrom: null });
+      expect(agentMcpServerActions("codex", server("disabled", "unknown", "stdio", name))).toEqual(
+        NOTHING,
+      );
+    }
   });
 
   it("offers a menu only when it would contain something", () => {
@@ -134,6 +257,21 @@ describe("agentMcpServerActions", () => {
     expect(
       agentMcpServerOffersMenu(
         agentMcpServerActions("codex", server("connected", "project", "http")),
+      ),
+    ).toBe(true);
+    expect(
+      agentMcpServerOffersMenu(
+        agentMcpServerActions("claudeCode", server("needsAuth", "unknown", "http")),
+      ),
+    ).toBe(false);
+    expect(
+      agentMcpServerOffersMenu(
+        agentMcpServerActions("claudeCode", server("connected", "unknown", "http")),
+      ),
+    ).toBe(true);
+    expect(
+      agentMcpServerOffersMenu(
+        agentMcpServerActions("codex", server("disabled", "unknown", "stdio")),
       ),
     ).toBe(true);
   });

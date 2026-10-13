@@ -165,6 +165,19 @@ describe("McpServersSettingsPage", () => {
     return row ?? document.createElement("div");
   }
 
+  function headings(provider: AgentCliKind): ReadonlyArray<string> {
+    return [...group(provider).querySelectorAll("h3, h4, h5")].map(
+      (heading) => `${heading.tagName}:${heading.textContent}`,
+    );
+  }
+
+  function labelledGroups(provider: AgentCliKind): ReadonlyArray<readonly [string, number]> {
+    return [...group(provider).querySelectorAll('[role="group"]')].map((region) => {
+      const label = document.getElementById(region.getAttribute("aria-labelledby") ?? "");
+      return [label?.textContent ?? "", region.querySelectorAll("[data-mcp-server]").length];
+    });
+  }
+
   function refreshButton(): HTMLButtonElement | null {
     return host.querySelector<HTMLButtonElement>('button[aria-label="Check MCP servers"]');
   }
@@ -262,9 +275,106 @@ describe("McpServersSettingsPage", () => {
       "Project · stdio · 14 tools",
     );
 
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
     expect(serverRow("codex", "docs").textContent).toBe("docs0 toolsStatus unknown");
     expect(host.textContent).not.toMatch(/\bunknown ·|· unknown\b/);
+  });
+
+  it("lists the user's own servers first, then plugin servers under their plugin", async () => {
+    const env = show();
+    await answer(
+      request(APP, "claudeCode"),
+      agentMcpServersFixture("claudeCode", [
+        { name: "plugin:miro:miro", status: "needsAuth", scope: "unknown", transport: "http" },
+        {
+          name: "plugin:cloudflare:cloudflare-docs",
+          scope: "unknown",
+          transport: "http",
+          toolCount: 2,
+        },
+        { name: "sentry", scope: "user", transport: "stdio" },
+        {
+          name: "plugin:cloudflare:cloudflare-api",
+          status: "needsAuth",
+          scope: "unknown",
+          transport: "http",
+        },
+        { name: "atlassian", scope: "user", transport: "http", toolCount: 25 },
+      ]),
+    );
+    await answer(request(APP, "codex"), codexPair);
+
+    expect(summary("claudeCode")).toBe("5 servers, 2 need attention");
+    expect(serverNames("claudeCode")).toEqual([
+      "atlassian",
+      "sentry",
+      "plugin:cloudflare:cloudflare-api",
+      "plugin:cloudflare:cloudflare-docs",
+      "plugin:miro:miro",
+    ]);
+    expect(headings("claudeCode")).toEqual([
+      "H3:atlassian",
+      "H3:sentry",
+      "H3:From plugins",
+      "H4:cloudflare",
+      "H5:cloudflare-api",
+      "H5:cloudflare-docs",
+      "H4:miro",
+      "H5:miro",
+    ]);
+    expect(labelledGroups("claudeCode")).toEqual([
+      ["From plugins", 3],
+      ["cloudflare", 2],
+      ["miro", 1],
+    ]);
+    expect(serverRow("claudeCode", "atlassian").textContent).toBe(
+      "atlassianUser · HTTP · 25 toolsConnected",
+    );
+    expect(serverRow("claudeCode", "plugin:cloudflare:cloudflare-docs").textContent).toBe(
+      "cloudflare-docsHTTP · 2 toolsConnected",
+    );
+    expect(group("claudeCode").querySelector(".settings-mcp-plugins")?.textContent).toContain(
+      "These servers are installed by plugins. To remove one, remove its plugin.",
+    );
+    expect(group("claudeCode").querySelectorAll(".settings-mcp-plugins button")).toHaveLength(2);
+
+    const api = serverRow("claudeCode", "plugin:cloudflare:cloudflare-api");
+    expect(api.querySelector("code")?.textContent).toBe(
+      "claude mcp login -- 'plugin:cloudflare:cloudflare-api'",
+    );
+    act(() =>
+      api
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Copy sign-in command for plugin:cloudflare:cloudflare-api"]',
+        )
+        ?.click(),
+    );
+    expect(env.onCopyInstallCommand).toHaveBeenCalledExactlyOnceWith(
+      "claude mcp login -- 'plugin:cloudflare:cloudflare-api'",
+    );
+
+    expect(headings("codex")).toEqual([
+      "H3:docs",
+      "H3:From plugins",
+      "H4:Unknown plugin",
+      "H5:codex_apps",
+    ]);
+    expect(labelledGroups("codex")).toEqual([
+      ["From plugins", 1],
+      ["Unknown plugin", 1],
+    ]);
+    expect(serverRow("codex", "codex_apps").textContent).toBe(
+      "codex_appsHTTP · https://chatgpt.com · 37 toolsConnected",
+    );
+  });
+
+  it("shows no plugin heading when no server comes from a plugin", async () => {
+    show();
+    await answer(request(APP, "claudeCode"), claudeMixed);
+    expect(serverNames("claudeCode")).toHaveLength(5);
+    expect(group("claudeCode").querySelector(".settings-mcp-plugins")).toBeNull();
+    expect(group("claudeCode").querySelector('[role="group"]')).toBeNull();
+    expect(headings("claudeCode").every((heading) => heading.startsWith("H3:"))).toBe(true);
   });
 
   it("shows how to sign in and copies the exact command", async () => {
@@ -353,7 +463,7 @@ describe("McpServersSettingsPage", () => {
     expect(group("claudeCode").getAttribute("aria-busy")).toBe("true");
     expect(summary("claudeCode")).toBe("Checking MCP servers…");
     expect(serverNames("claudeCode")).toHaveLength(5);
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
 
     await answer(
       request(APP, "claudeCode"),
@@ -406,7 +516,7 @@ describe("McpServersSettingsPage", () => {
       expect(group("codex").querySelector('[role="alert"]')).toBeNull();
 
       await answer(request(APP, "codex"), codexPair);
-      expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+      expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
       expect(alert?.textContent).toBe(mcpErrorMessage(kind, "claudeCode"));
       expect(refreshButton()?.disabled).toBe(false);
     },
@@ -454,7 +564,7 @@ describe("McpServersSettingsPage", () => {
     expect(group("claudeCode").querySelector('[role="alert"]')?.textContent).toBe(
       "A check is already running for this project. Try again in a moment.",
     );
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
 
     act(() => refreshButton()?.click());
     expect(gateway.requests()).toHaveLength(4);
@@ -498,7 +608,7 @@ describe("McpServersSettingsPage", () => {
     chooseProject(APP);
     expect(gateway.requests()).toHaveLength(4);
     expect(serverNames("claudeCode")).toHaveLength(5);
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
 
     act(() => refreshButton()?.click());
     expect(gateway.requests().slice(4)).toEqual([

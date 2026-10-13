@@ -43,19 +43,23 @@ import {
 } from "./mcpServerManagementPresentation";
 import {
   mcpCopySignInLabel,
-  mcpServerSecondaryText,
   mcpServerStatusLabel,
   mcpServerStatusTone,
   mcpSignInLead,
   type McpProjectPlace,
 } from "./mcpServersPresentation";
 
+export type McpServerTitleTag = "h3" | "h5";
+
 export interface McpServerRowProps {
   readonly management: AgentMcpServerManagementStore | null;
   readonly place: McpProjectPlace;
   readonly provider: AgentCliKind;
+  readonly secondary: string | null;
   readonly server: AgentMcpServer;
   readonly target: AgentMcpServersTarget | null;
+  readonly title: string;
+  readonly titleTag: McpServerTitleTag;
   onCopy(command: string): void;
 }
 
@@ -66,8 +70,11 @@ export function McpServerRow({
   onCopy,
   place,
   provider,
+  secondary,
   server,
   target,
+  title,
+  titleTag: Title,
 }: McpServerRowProps) {
   const controls = useMemo(
     () => (management === null || target === null ? null : rowControls(management, target, server)),
@@ -81,7 +88,6 @@ export function McpServerRow({
   const activity = useAgentMcpServerActivity(management, target, server.name);
   const rowRef = useRef<HTMLDivElement | null>(null);
   useRowFocusRecovery(rowRef, activity.kind);
-  const secondary = mcpServerSecondaryText(server);
   const signInCommand = actions.signIn ? null : agentMcpServerSignInCommand(provider, server);
   const StatusIcon = statusIcon(server.status);
   const idle = activity.kind === "idle";
@@ -96,7 +102,7 @@ export function McpServerRow({
     >
       <div className="settings-row__text">
         <div className="settings-row__head">
-          <h3 className="settings-row__title">{server.name}</h3>
+          <Title className="settings-row__title">{title}</Title>
         </div>
         {secondary === null ? null : <p className="settings-row__description">{secondary}</p>}
         {server.detail === null ? null : (
@@ -135,8 +141,10 @@ export function McpServerRow({
         {controls !== null && idle && actions.signIn ? (
           <Button
             aria-label={mcpSignInToLabel(server.name)}
+            className="settings-mcp-server__signin"
             onClick={() => attempt(controls.signIn("signIn"))}
             size="sm"
+            variant="primary"
           >
             {MCP_SIGN_IN_LABEL}
           </Button>
@@ -150,7 +158,9 @@ export function McpServerRow({
             onSignOut={() => attempt(controls.signOut())}
             provider={provider}
           />
-        ) : null}
+        ) : (
+          <span aria-hidden="true" className="settings-mcp-server__menu" data-mcp-menu-slot="" />
+        )}
       </div>
     </div>
   );

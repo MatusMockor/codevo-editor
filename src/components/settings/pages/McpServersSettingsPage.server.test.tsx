@@ -366,7 +366,7 @@ describe("McpServersSettingsPage with server projects", () => {
     expect(refreshButton()?.disabled).toBe(true);
 
     await answer("codex", codexPair);
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
     expect(refreshButton()?.disabled).toBe(false);
     expect(group("claudeCode").closest("section")?.textContent).toContain("Checked just now");
 
@@ -454,7 +454,7 @@ describe("McpServersSettingsPage with server projects", () => {
     ]);
     await answerBoth();
     expect(alerts("codex")).toEqual([]);
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
   });
 
   it("reports the runner's own refusal the same way", async () => {
@@ -560,7 +560,7 @@ describe("McpServersSettingsPage with server projects", () => {
     await show([LINUX]);
     await serve();
     expect(selectedLabel()).toBe("api — Linux box");
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
     expect(tunnel.checks()).toHaveLength(2);
   });
 
@@ -607,7 +607,7 @@ describe("McpServersSettingsPage with server projects", () => {
     expect(selectedLabel()).toBe("api — Linux box");
     expect(optionLabels()).toEqual(["app", "Codevo Editor — Linux box", "api — Linux box"]);
     expect(serverNames("claudeCode")).toHaveLength(5);
-    expect(serverNames("codex")).toEqual(["codex_apps", "docs"]);
+    expect(serverNames("codex")).toEqual(["docs", "codex_apps"]);
     expect(projectNotes()).toEqual([
       "Could not refresh projects on Linux box. Check again to retry.",
     ]);

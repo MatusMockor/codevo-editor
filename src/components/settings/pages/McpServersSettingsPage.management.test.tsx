@@ -299,10 +299,105 @@ describe("McpServersSettingsPage management", () => {
     expect(button(row("linear"), "Sign in to linear")?.textContent).toBe("Sign in");
     expect(row("linear").textContent).not.toContain(HINT);
     expect(row("linear").textContent).toContain("Needs sign-in");
+    expect(button(row("linear"), "Sign in to linear")?.classList).toContain("cv-button--primary");
     expect(button(row("sentry"), "Sign in to sentry")).toBeNull();
-    expect(button(row("plugin:docs"), "Sign in to plugin:docs")).toBeNull();
+    expect(button(row("plugin:docs"), "Sign in to plugin:docs")?.textContent).toBe("Sign in");
     expect(button(row("plugin:docs"), "More actions for plugin:docs")).toBeNull();
-    expect(row("plugin:docs").textContent).toContain(HINT);
+    expect(row("plugin:docs").textContent).not.toContain(HINT);
+  });
+
+  it("keeps the hint where a server that needs sign-in has no sign-in action", async () => {
+    await showServers([
+      { name: "local-tool", status: "needsAuth", scope: "user", transport: "stdio" },
+      { name: "policy", status: "needsAuth", scope: "managed", transport: "http" },
+    ]);
+    for (const name of ["local-tool", "policy"]) {
+      expect(button(row(name), `Sign in to ${name}`), name).toBeNull();
+      expect(row(name).textContent, name).toContain(`${HINT}claude mcp login -- '${name}'`);
+      expect(button(row(name), `Copy sign-in command for ${name}`), name).not.toBeNull();
+    }
+    expect(button(row("policy"), "More actions for policy")).toBeNull();
+  });
+
+  it("signs in to and out of servers that plugins provide without offering to remove them", async () => {
+    const api = "plugin:cloudflare:cloudflare-api";
+    const docs = "plugin:cloudflare:cloudflare-docs";
+    await showServers([
+      { name: api, status: "needsAuth", scope: "unknown", transport: "http" },
+      { name: docs, status: "connected", scope: "unknown", transport: "http" },
+      sentry,
+    ]);
+    expect(row(api).textContent).not.toContain(HINT);
+    expect(button(row(api), `More actions for ${api}`)).toBeNull();
+    pressButton(row(docs), `More actions for ${docs}`);
+    expect(menuItems()).toEqual(["Sign in again", "Sign out"]);
+    chooseMenuItem("Sign out");
+    await settle();
+    expect(management.changes.requests().map((request) => request.change)).toEqual([
+      { kind: "signOut", name: docs },
+    ]);
+
+    pressButton(row(api), `Sign in to ${api}`);
+    await settle();
+    expect(management.starts.requests().map(({ name, mode }) => [name, mode])).toEqual([
+      [api, "signIn"],
+    ]);
+    management.starts.latest()?.reject(AGENT_MCP_SERVER_MANAGEMENT_ERRORS.loginUnsupported);
+    await settle();
+    expect(texts(row(api), "alert")).toEqual(["This server does not support sign-in."]);
+  });
+
+  it("removes a Codex server of unknown scope from the user configuration", async () => {
+    await showServers(
+      [sentry],
+      [{ name: "computer-use", status: "disabled", scope: "unknown", transport: "stdio" }],
+    );
+    const computerUse = row("computer-use", "codex");
+    pressButton(computerUse, "More actions for computer-use");
+    expect(menuItems()).toEqual(["Remove…"]);
+    chooseMenuItem("Remove…");
+    expect(dialog()?.textContent).toContain("Remove computer-use?");
+    expect(dialog()?.textContent).toContain(
+      "It will be removed from your Codex configuration for all projects.",
+    );
+    pressButton(document.body, "Remove");
+    await settle();
+    expect(
+      management.changes.requests().map(({ change, target }) => [target.provider, change]),
+    ).toEqual([["codex", { kind: "remove", name: "computer-use", scope: "user" }]]);
+  });
+
+  it("keeps one menu slot in every row so the statuses line up", async () => {
+    await showServers(
+      [linear, sentry, files, pluginServer, { name: "policy", scope: "managed" }],
+      [{ name: "computer-use", status: "disabled", scope: "unknown", transport: "stdio" }],
+    );
+    const slots = (name: string, provider: AgentCliKind = "claudeCode") =>
+      [...row(name, provider).querySelectorAll(".settings-mcp-server__menu")].map(
+        (slot) => `${slot.tagName}:${slot.getAttribute("aria-hidden") ?? "shown"}`,
+      );
+    for (const name of ["linear", "sentry", "files"])
+      expect(slots(name), name).toEqual(["BUTTON:shown"]);
+    for (const name of ["plugin:docs", "policy"]) {
+      expect(slots(name), name).toEqual(["SPAN:true"]);
+      expect(row(name).querySelector("[data-mcp-menu-slot]")?.textContent, name).toBe("");
+      expect(row(name).querySelector("[data-mcp-menu-slot]")?.hasAttribute("tabindex")).toBe(false);
+    }
+    expect(slots("computer-use", "codex")).toEqual(["BUTTON:shown"]);
+
+    pressButton(row("linear"), "Sign in to linear");
+    await settle();
+    expect(button(row("linear"), "Sign in to linear")).toBeNull();
+    expect(slots("linear")).toEqual(["SPAN:true"]);
+  });
+
+  it("says that plugin servers are signed in to here and removed with their plugin", async () => {
+    await showServers();
+    const plugins = section("claudeCode").querySelector(".settings-mcp-plugins");
+    expect(plugins?.textContent).toContain(
+      "These servers are installed by plugins. Sign in to them here; to remove one, remove its plugin.",
+    );
+    expect(section("codex").querySelector(".settings-mcp-plugins")).toBeNull();
   });
 
   it("signs in through the browser and refreshes the server status", async () => {

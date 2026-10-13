@@ -19,6 +19,35 @@
   color: var(--cv-danger);
 }
 
+.settings-mcp-plugins > * + *,
+.settings-mcp-plugin > * + * {
+  box-shadow: var(--cv-edge-top-hair);
+}
+
+.settings-mcp-plugins__head {
+  padding: var(--cv-space-5) var(--cv-space-6);
+}
+
+.settings-mcp-plugins__title {
+  margin: 0;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-md);
+  font-weight: 500;
+}
+
+.settings-mcp-plugin__name {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: var(--cv-space-3) var(--cv-space-6);
+  background: var(--cv-tint-1);
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  font-weight: 500;
+  gap: var(--cv-space-3);
+  overflow-wrap: anywhere;
+}
+
 .settings-mcp-server .settings-row__title,
 .settings-mcp-server .settings-row__description {
   overflow-wrap: anywhere;
@@ -40,9 +69,34 @@
   overflow-wrap: anywhere;
 }
 
+.settings-mcp-server > .settings-row__control {
+  display: grid;
+  font-size: var(--cv-t-xs);
+  grid-template-columns:
+    minmax(17ch, max-content)
+    minmax(calc(7ch + var(--cv-space-6)), max-content)
+    auto;
+}
+
+.settings-mcp-server__signin {
+  grid-column: 2;
+  justify-content: center;
+}
+
+.settings-mcp-server__menu {
+  grid-column: 3;
+}
+
+.settings-mcp-server__menu[data-mcp-menu-slot] {
+  width: 28px;
+  height: 28px;
+}
+
 .settings-mcp-status {
   display: inline-flex;
   align-items: center;
+  grid-column: 1;
+  justify-self: start;
   color: var(--cv-fg-muted);
   font-size: var(--cv-t-xs);
   gap: var(--cv-space-3);
@@ -114,4 +168,15 @@
 
 .settings-mcp-add__problem {
   color: var(--cv-danger);
+}
+
+@media (max-width: 720px) {
+  .settings-row.settings-mcp-server {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--cv-space-4);
+  }
+
+  .settings-row.settings-mcp-server > .settings-row__control {
+    justify-content: start;
+  }
 }
