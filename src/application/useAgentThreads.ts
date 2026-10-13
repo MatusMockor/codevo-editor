@@ -51,6 +51,7 @@ import {
   projectByRootKey,
   warning,
 } from "./agentProjectAuthority";
+import { refuseLocalAttachmentDownload } from "./remoteAttachmentDownload";
 import {
   countRunningTurns,
   countRunningTurnsInRepository,
@@ -941,6 +942,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     attachmentImages,
     inlineImages,
     revealAttachment,
+    downloadAttachment: refuseLocalAttachmentDownload,
     repositories,
     orphanedWorktrees: worktrees.orphanedWorktrees,
     notice,

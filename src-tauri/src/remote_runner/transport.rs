@@ -15,6 +15,9 @@ use std::time::Instant;
 pub(super) use tunnel_session::Session;
 #[cfg(all(test, unix))]
 pub(super) use tunnel_session::StallPolicy;
+pub(super) use tunnel_session::{
+    DownloadFeed, Failure, Reply, Revocation, Transfer, TransferPolicy, UploadFeed, UploadHead,
+};
 
 const MAX_INPUT: usize = 16 * 1024 * 1024;
 const MAX_OUTPUT: usize = 4 * 1024 * 1024;

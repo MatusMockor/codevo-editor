@@ -28,6 +28,7 @@ export function useRemoteAgentStableSurface(surface: AgentThreadsSurface): Agent
   const methods = useMemo<Methods>(
     () => ({
       revealAttachment: (...args) => current.current.revealAttachment(...args),
+      downloadAttachment: (...args) => current.current.downloadAttachment(...args),
       pendingTurnCount: (...args) => current.current.pendingTurnCount(...args),
       markThreadViewed: (...args) => current.current.markThreadViewed(...args),
       markThreadUnread: (...args) => current.current.markThreadUnread(...args),

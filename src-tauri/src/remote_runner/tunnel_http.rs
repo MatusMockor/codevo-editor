@@ -10,8 +10,8 @@ pub(super) const CONNECTION_FAILED: &str =
     "Runner connection failed. The request outcome may be unknown.";
 const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
 
-const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging";
+pub(super) const CLIENT_CAPABILITIES: &str =
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging,fileAttachments";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -305,6 +305,46 @@ pub(super) async fn answered(client: &reqwest::Client, patience: std::time::Dura
         tokio::time::sleep(PROBE_RETRY_PAUSE).await;
     }
 }
+pub(super) async fn descriptor(
+    client: &reqwest::Client,
+    token: &str,
+    expected: Option<&str>,
+    inbound: &impl Fn(),
+) -> Result<Value, String> {
+    let identity = execute(
+        client,
+        token,
+        expected,
+        prepare("GET", "/v1/runner", None, vec![])?,
+        65536,
+        inbound,
+    )
+    .await?;
+    let identity: Value =
+        serde_json::from_slice(&identity.0).map_err(|_| "Invalid runner identity.")?;
+    let runner = identity.get("runnerId").and_then(Value::as_str);
+    if identity.get("protocolVersion").and_then(Value::as_u64) != Some(1)
+        || expected.is_some_and(|expected| runner != Some(expected))
+    {
+        return Err("Runner identity changed. Reconnect the server before continuing.".into());
+    }
+    Ok(identity)
+}
+
+pub(super) async fn pinned_identity(
+    client: &reqwest::Client,
+    token: &str,
+    expected: Option<&str>,
+    inbound: &impl Fn(),
+) -> Result<(), String> {
+    if expected.is_none() {
+        return Ok(());
+    }
+    descriptor(client, token, expected, inbound)
+        .await
+        .map(|_| ())
+}
+
 #[cfg(test)]
 pub(super) async fn request(
     client: &reqwest::Client,
@@ -326,23 +366,8 @@ pub(super) async fn request_with_authority(
     inbound: impl Fn(),
 ) -> Result<Value, String> {
     authority()?;
-    if expected.is_some() && prepared.path != "/v1/runner" {
-        let identity = execute(
-            client,
-            token,
-            expected,
-            prepare("GET", "/v1/runner", None, vec![])?,
-            65536,
-            &inbound,
-        )
-        .await?;
-        let identity: Value =
-            serde_json::from_slice(&identity.0).map_err(|_| "Invalid runner identity.")?;
-        if identity.get("protocolVersion").and_then(Value::as_u64) != Some(1)
-            || identity.get("runnerId").and_then(Value::as_str) != expected
-        {
-            return Err("Runner identity changed. Reconnect the server before continuing.".into());
-        }
+    if prepared.path != "/v1/runner" {
+        pinned_identity(client, token, expected, &inbound).await?;
     }
     authority()?;
     let artifact = super::super::super::artifacts::is_content_path(&prepared.path);
@@ -608,6 +633,7 @@ mod tests {
         assert!(tokens.contains(&"mcpServers"));
         assert!(tokens.contains(&"mcpServerManagement"));
         assert!(tokens.contains(&"eventBackwardPaging"));
+        assert!(tokens.contains(&"fileAttachments"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);

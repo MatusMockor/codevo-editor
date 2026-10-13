@@ -36,6 +36,8 @@ struct Capabilities {
     #[serde(default, deserialize_with = "optional_bool")]
     text_attachments: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
+    file_attachments: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     project_cloning: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     task_continuation: Option<bool>,
@@ -112,6 +114,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.task_drafts,
         caps.image_attachments,
         caps.text_attachments,
+        caps.file_attachments,
         caps.project_cloning,
         caps.task_continuation,
         caps.task_launch_options,
@@ -247,6 +250,26 @@ mod tests {
             serde_json::json!([]),
         ] {
             value["capabilities"]["eventBackwardPaging"] = invalid;
+            assert!(validate(value.clone()).is_err());
+        }
+    }
+
+    #[test]
+    fn file_attachments_capability_is_optional_and_strict() {
+        let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});
+        assert!(validate(value.clone()).is_ok());
+        for supported in [true, false] {
+            value["capabilities"]["fileAttachments"] = supported.into();
+            assert!(validate(value.clone()).is_ok());
+        }
+        for invalid in [
+            Value::Null,
+            "true".into(),
+            1.into(),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            value["capabilities"]["fileAttachments"] = invalid;
             assert!(validate(value.clone()).is_err());
         }
     }

@@ -99,6 +99,7 @@ export function threadsSurfaceFixture(
     attachments: composerAttachmentsSurfaceFixture(),
     attachmentImages: attachmentImagesSurfaceFixture(),
     revealAttachment: async () => undefined,
+    downloadAttachment: async () => "cancelled",
     threads: [],
     repositories: [
       fixtureRepository(SURFACE_FIXTURE_ROOT, ""),

@@ -107,6 +107,8 @@ pub fn run() {
         })
         .manage(Mutex::new(SmartModeService::new()))
         .manage(crate::remote_runner::InventoryStreamState::default())
+        .manage(crate::remote_runner::AttachmentTransferState::default())
+        .manage(Arc::new(crate::agent_file_source::FileSources::default()))
         .manage(startup_metrics)
         .manage(startup_window_reveal::StartupWindowReveal::default())
         .manage(NativeCloseListenerState::default())
@@ -321,6 +323,9 @@ pub fn run() {
             crate::remote_runner::remote_runner_list_events,
             crate::remote_runner::remote_runner_get_diff,
             crate::remote_runner::remote_runner_upload_attachment,
+            crate::remote_runner::remote_runner_upload_attachment_file,
+            crate::remote_runner::remote_runner_cancel_attachment_upload,
+            crate::remote_runner::remote_runner_download_attachment,
             crate::remote_runner::remote_runner_get_attachment,
             crate::remote_runner::remote_runner_read_attachment,
             crate::remote_runner::resolve_remote_agent_artifact,
@@ -626,6 +631,8 @@ pub fn run() {
             agent_attachment_commands::inspect_agent_attachment_candidate,
             agent_attachment_commands::read_agent_attachment_candidate,
             agent_image_source_commands::read_agent_attachment_image_source,
+            agent_file_source_commands::stage_agent_attachment_file_source,
+            agent_file_source_commands::release_agent_attachment_file_source,
             agent_attachment_commands::claim_agent_attachments,
             agent_attachment_commands::release_agent_attachment,
             agent_output_artifact_commands::resolve_agent_output_artifact,

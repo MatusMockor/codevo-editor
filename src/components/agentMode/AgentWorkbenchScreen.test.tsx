@@ -2113,6 +2113,7 @@ function threadsSurface(root: string, worktreePath: string | null): AgentThreads
     attachments: composerAttachmentsSurfaceFixture(),
     attachmentImages: attachmentImagesSurfaceFixture(),
     revealAttachment: async () => undefined,
+    downloadAttachment: async () => "cancelled",
     threads: [threadView(root, worktreePath)],
     repositories: [
       { mapping: { rootRelativePath: "" }, repositoryRoot: root, repositoryRelativePath: "" },

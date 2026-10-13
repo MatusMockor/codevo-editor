@@ -63,18 +63,19 @@ export function redeemAgentAttachmentCarry(
 
 export function agentAttachmentCarrySourceName(source: AgentAttachmentSource): string {
   return sanitizeAgentAttachmentName(
-    source.kind === "path" ? source.path.replace(/\/+$/u, "") : source.name,
+    source.kind === "bytes" ? source.name : source.path.replace(/\/+$/u, ""),
   );
 }
 
 export function agentAttachmentCarrySourceBytes(source: AgentAttachmentCarrySource): number {
-  if (source.kind === "path") return 0;
+  if (source.kind === "path" || source.kind === "fileSource") return 0;
   if (source.kind === "blob") return source.blob.size;
   return source.bytes.byteLength;
 }
 
 export function agentAttachmentCarryKind(source: AgentAttachmentCarrySource): AgentAttachmentKind {
   if (source.kind === "path") return "reference";
+  if (source.kind === "fileSource") return "file";
   const classified = classifyAgentAttachmentCandidate({
     name: source.name,
     mime: source.mime,
@@ -87,6 +88,7 @@ export function agentAttachmentCarryKind(source: AgentAttachmentCarrySource): Ag
 export async function agentAttachmentCarryIntakeSource(
   source: AgentAttachmentCarrySource,
 ): Promise<AgentAttachmentSource> {
+  if (source.kind === "fileSource") return { kind: "path", path: source.path };
   if (source.kind !== "blob") return source;
   return {
     kind: "bytes",

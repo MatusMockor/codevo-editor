@@ -10,6 +10,10 @@ import {
 import type { AgentImageOutputPolicy, AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentAttachmentGateway, StoredAgentAttachmentRequest } from "./agentAttachmentPorts";
+import {
+  downloadRemoteAttachment,
+  type AgentAttachmentDownloadOutcome,
+} from "./remoteAttachmentDownload";
 import { RemoteAttachmentStore } from "./remoteAttachmentStore";
 import type { AgentAttachmentEncoderPort } from "./agentAttachmentEncoderPort";
 import { useAgentAttachmentImages } from "./useAgentAttachmentImages";
@@ -184,6 +188,11 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
     },
     [readAuthority],
   );
+  const download = useCallback(
+    (request: StoredAgentAttachmentRequest): Promise<AgentAttachmentDownloadOutcome> =>
+      downloadRemoteAttachment(registry.current, request, readAuthority()),
+    [readAuthority],
+  );
   const imagesGateway = useMemo<AgentAttachmentGateway>(
     () => ({
       stageAgentAttachmentBytes: (request) => store.stageAgentAttachmentBytes(request),
@@ -239,6 +248,7 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
       attachments.clearAll?.();
       store.clear();
     }
+    store.cancelStaleUploads();
     const recovered = recoverRemoteAttachmentRetries(retries.current, (request) =>
       remoteAttachmentBlocker(registry.current, request, readAuthority()),
     );
@@ -294,6 +304,7 @@ export function useRemoteAgentAttachments(dependencies: RemoteAgentAttachmentsDe
     epoch,
     resolve: store.resolve.bind(store),
     loadTaskAttachments,
+    download,
     reveal: (_threadId: string, _attachmentId: string): void => {
       current.current.reportError(
         "Agent tasks",

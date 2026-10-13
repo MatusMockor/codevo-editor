@@ -128,6 +128,37 @@ describe("AgentPendingUserMessage", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toBe("Sending");
   });
 
+  it("shows a path-backed file as a sized chip without a download control while it sends", () => {
+    const send: AgentPendingSend = {
+      ...pending("sending"),
+      attachments: [
+        {
+          view: { kind: "chip", key: "d3", name: "report.pdf", glyph: "file", bytes: 5_000_000 },
+          previewUrl: null,
+        },
+      ],
+    };
+    act(() =>
+      root.render(
+        <AgentPendingUserMessage
+          openExternalLink={null}
+          onDismiss={() => undefined}
+          send={send}
+          textClipboard={null}
+        />,
+      ),
+    );
+
+    const chip = host.querySelector<HTMLElement>(".agent-attachments__chip");
+    expect(chip?.getAttribute("data-agent-attachment")).toBe("file");
+    expect(chip?.title).toBe("report.pdf");
+    expect(chip?.querySelector(".agent-attachments__name")?.textContent).toBe("report.pdf");
+    expect(chip?.querySelector(".agent-attachments__size")?.textContent).toBe("4.8 MiB");
+    expect(host.querySelector(".agent-attachments__download")).toBeNull();
+    expect(host.querySelector(".agent-attachments__image")).toBeNull();
+    expect(host.querySelector('[role="status"]')?.textContent).toBe("Sending");
+  });
+
   it("says truthfully that a failed message was not sent and can be dismissed", () => {
     const dismiss = vi.fn();
     act(() =>

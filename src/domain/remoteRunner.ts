@@ -90,6 +90,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     portPreview?: boolean;
     speechTranscription?: boolean;
     eventBackwardPaging?: boolean;
+    fileAttachments?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
@@ -181,15 +182,21 @@ export type RemoteRunnerAttachment = Readonly<{
   id: string;
   runnerId: string;
   name: string;
-  mediaType: "image/png" | "image/jpeg" | "text/plain";
   bytes: number;
   sha256: string;
   createdAt: string;
 }> &
   (
-    | Readonly<{ mediaType: "image/png" | "image/jpeg"; width: number; height: number }>
-    | Readonly<{ mediaType: "text/plain"; width?: never; height?: never }>
+    | Readonly<{
+        kind?: never;
+        mediaType: "image/png" | "image/jpeg";
+        width: number;
+        height: number;
+      }>
+    | Readonly<{ kind?: never; mediaType: "text/plain"; width?: never; height?: never }>
+    | Readonly<{ kind: "file"; mediaType: string; width?: never; height?: never }>
   );
+export type RemoteRunnerFileAttachment = Extract<RemoteRunnerAttachment, { kind: "file" }>;
 export type RemoteRunnerCreateTaskRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;
@@ -209,6 +216,11 @@ export type RemoteRunnerUploadRequest = RemoteRunnerServerRequest &
 
 export type RemoteRunnerAttachmentRequest = RemoteRunnerServerRequest &
   Readonly<{ attachmentId: string }>;
+export type RemoteRunnerUploadFileRequest = RemoteRunnerAttachmentRequest &
+  Readonly<{ sourceId: string; name: string }>;
+export type RemoteRunnerDownloadAttachmentRequest = RemoteRunnerAttachmentRequest &
+  Readonly<{ name: string; bytes: number; sha256: string }>;
+export type RemoteRunnerAttachmentDownload = Readonly<{ status: "saved" | "cancelled" }>;
 export type RemoteRunnerAttachmentContent = Readonly<{
   base64: string;
   mediaType: "image/png" | "image/jpeg" | "text/plain";
@@ -337,6 +349,13 @@ export interface RemoteRunnerGateway {
   getTaskFileDiff?(request: RemoteRunnerTaskFileDiffRequest): Promise<RemoteRunnerTaskFileDiff>;
   getAttachment?(request: RemoteRunnerAttachmentRequest): Promise<RemoteRunnerAttachment>;
   readAttachment?(request: RemoteRunnerAttachmentRequest): Promise<RemoteRunnerAttachmentContent>;
+  uploadAttachmentFile?(
+    request: RemoteRunnerUploadFileRequest,
+  ): Promise<Readonly<{ attachment: RemoteRunnerAttachment; created: boolean }>>;
+  cancelAttachmentUpload?(request: RemoteRunnerAttachmentRequest): Promise<void>;
+  downloadAttachment?(
+    request: RemoteRunnerDownloadAttachmentRequest,
+  ): Promise<RemoteRunnerAttachmentDownload>;
   listServers(): Promise<readonly RemoteRunnerServer[]>;
   connectServer(request: RemoteRunnerServerInput): Promise<RemoteRunnerServer>;
   disconnectServer(request: RemoteRunnerServerRequest): Promise<void>;

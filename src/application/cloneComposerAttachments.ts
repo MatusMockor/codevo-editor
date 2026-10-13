@@ -30,6 +30,8 @@ interface Store {
   transferring: boolean;
   cleanupTarget: (() => void) | null;
 }
+export const CLONE_REMOTE_PASTE_REFUSAL =
+  "Only images can be pasted while the project is cloning. Use the file picker or drag and drop for other files.";
 const MAX_BYTES = 40 * 1024 * 1024;
 const MAX_ENTRIES = 32;
 const MAX_CLONES = 32;
@@ -93,8 +95,12 @@ export function createCloneComposerAttachments() {
           refuse("Path is not attachable.");
           continue;
         }
+        if (mode !== "remote" && source.kind === "fileSource") {
+          refuse("Path is not attachable.");
+          continue;
+        }
         const name = sanitizeAgentAttachmentName(
-          source.kind === "path" ? source.path : source.name,
+          source.kind === "bytes" ? source.name : source.path,
         );
         const bytes = source.kind === "bytes" ? source.bytes.byteLength : 0;
         const candidate = {
@@ -105,8 +111,12 @@ export function createCloneComposerAttachments() {
         };
         const classified = classifyAgentAttachmentCandidate(candidate);
         const plan = planAgentAttachmentIntake(candidate);
-        if (mode === "remote" && (source.kind !== "bytes" || classified.kind !== "image")) {
-          refuse("Only images can be attached to a server conversation.");
+        if (
+          mode === "remote" &&
+          source.kind !== "fileSource" &&
+          (source.kind !== "bytes" || classified.kind !== "image")
+        ) {
+          refuse(CLONE_REMOTE_PASTE_REFUSAL);
           continue;
         }
         if (plan.kind === "refused") {
@@ -118,8 +128,11 @@ export function createCloneComposerAttachments() {
           continue;
         }
         const draftId = `clone-attachment-${++sequence}`;
+        const nativeFile = source.kind === "fileSource";
         const mime =
-          classified.kind === "image" && isAgentImageMime(classified.mime) ? classified.mime : null;
+          !nativeFile && classified.kind === "image" && isAgentImageMime(classified.mime)
+            ? classified.mime
+            : null;
         // Copy byte buffers: callers cannot mutate a retained source after admission.
         const owned =
           source.kind === "bytes" ? { ...source, bytes: source.bytes.slice(0) } : source;
@@ -127,8 +140,13 @@ export function createCloneComposerAttachments() {
           source: owned,
           draft: {
             draftId,
-            kind:
-              classified.kind === "image" ? "image" : source.kind === "path" ? "reference" : "file",
+            kind: nativeFile
+              ? "file"
+              : classified.kind === "image"
+                ? "image"
+                : source.kind === "path"
+                  ? "reference"
+                  : "file",
             entry: "file",
             state: "ready",
             name,
@@ -143,6 +161,7 @@ export function createCloneComposerAttachments() {
             notice: "Will attach when cloning finishes",
             missing: false,
             promptLineBytesMax: 0,
+            ...(nativeFile ? { backing: "nativeFile" as const } : {}),
           },
         });
       }

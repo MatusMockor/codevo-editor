@@ -27,6 +27,7 @@ import { useRemoteAgentSteer } from "./useRemoteAgentSteer";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
 import { agentDraftDispatchKey, agentThreadDispatchKey } from "./agentDispatchKeys";
+import { refuseUnknownAttachmentDownload } from "./remoteAttachmentDownload";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
 import { useRemoteAttachmentHistory } from "./useRemoteAttachmentHistory";
 import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
@@ -614,6 +615,12 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     revealAttachment: async (threadId, attachmentId) => {
       if (isRemoteAgentIdentity(threadId)) await remoteAttachments.reveal(threadId, attachmentId);
       else await local.revealAttachment(threadId, attachmentId);
+    },
+    downloadAttachment: (threadId, attachmentId) => {
+      if (!isRemoteAgentIdentity(threadId)) return local.downloadAttachment(threadId, attachmentId);
+      const workspaceId = remoteById.get(threadId)?.thread.owner.rootKey;
+      if (workspaceId === undefined) return refuseUnknownAttachmentDownload();
+      return remoteAttachments.download({ workspaceId, threadId, attachmentId });
     },
     history:
       selectedThreadId !== null && isRemoteAgentIdentity(selectedThreadId)

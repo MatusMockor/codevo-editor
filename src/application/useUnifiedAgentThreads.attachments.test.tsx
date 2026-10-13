@@ -23,6 +23,10 @@ import {
 import { useAgentTurnAttachmentImagePort } from "../components/agentMode/useAgentTurnAttachmentImages";
 import type { AgentThreadsSurface } from "./agentThreadPorts";
 import { remoteAgentProjectKey, remoteAgentThreadKey } from "./remoteAgentProjection";
+import {
+  AgentAttachmentDownloadError,
+  REMOTE_ATTACHMENT_DOWNLOAD_UNKNOWN_THREAD,
+} from "./remoteAttachmentDownload";
 import { remoteAttachmentUnavailableMessage } from "./remoteAttachmentHistory";
 import { AGENT_ATTACHMENTS_DISCARDED_NOTICE } from "./agentTurnAttachments";
 import { REMOTE_ATTACHMENTS_TRUNCATED_NOTICE } from "./useRemoteAttachmentHistory";
@@ -153,6 +157,7 @@ function gateway() {
     uploadAttachment: vi.fn(),
     getAttachment: vi.fn().mockResolvedValue(metadata),
     readAttachment: vi.fn().mockResolvedValue({ mediaType: "image/png", base64: "iVBORw==" }),
+    downloadAttachment: vi.fn().mockResolvedValue({ status: "saved" }),
   } satisfies RemoteRunnerGateway;
 }
 
@@ -834,5 +839,102 @@ describe("server thread images across inventory connectivity", () => {
     expect(roomy.resets).toBe(0);
     expect(saturated.resets).toBe(0);
     expect(saturated.renders - roomy.renders).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("server thread file attachments", () => {
+  const fileMetadata: RemoteRunnerAttachment = {
+    id: attachmentId,
+    runnerId: "runner",
+    name: "report.png",
+    kind: "file",
+    mediaType: "image/png",
+    bytes: 45 * 1024 * 1024,
+    sha256: "b".repeat(64),
+    createdAt: turn.createdAt,
+  };
+  const fileAttachments = (h: Awaited<ReturnType<typeof setup>>) =>
+    h.current.agents.threads
+      .find((view) => view.thread.threadId === remoteId)
+      ?.thread.turns.flatMap((item) => item.attachments ?? []) ?? [];
+
+  it("lists a file that declares an image type as a downloadable file and never previews it", async () => {
+    const h = await setup(remoteId, (gw) => gw.getAttachment.mockResolvedValue(fileMetadata));
+    await h.settle(() => expect(h.listed()).toEqual(["report.png"]));
+
+    expect(fileAttachments(h)).toEqual([
+      {
+        kind: "file",
+        attachmentId: displayId,
+        name: "report.png",
+        bytes: 45 * 1024 * 1024,
+        remote: { serverId: server.id, attachmentId },
+      },
+    ]);
+    expect(h.shown()).toEqual([]);
+    expect(h.gw.readAttachment).not.toHaveBeenCalled();
+    expect(h.current.agents.attachmentImages.images.has(imageKey)).toBe(false);
+  });
+
+  it("downloads the exact attachment of the open server conversation", async () => {
+    const h = await setup(remoteId, (gw) => gw.getAttachment.mockResolvedValue(fileMetadata));
+    await h.settle(() => expect(h.listed()).toEqual(["report.png"]));
+
+    await expect(h.current.agents.downloadAttachment(remoteId, displayId)).resolves.toBe("saved");
+    expect(h.gw.downloadAttachment.mock.calls).toEqual([
+      [
+        {
+          serverId: server.id,
+          attachmentId,
+          name: "report.png",
+          bytes: 45 * 1024 * 1024,
+          sha256: "b".repeat(64),
+        },
+      ],
+    ]);
+    h.gw.downloadAttachment.mockResolvedValue({ status: "cancelled" });
+    await expect(h.current.agents.downloadAttachment(remoteId, displayId)).resolves.toBe(
+      "cancelled",
+    );
+  });
+
+  it("refuses a download for a server conversation it does not list", async () => {
+    const h = await setup(remoteId, (gw) => gw.getAttachment.mockResolvedValue(fileMetadata));
+    await h.settle(() => expect(h.listed()).toEqual(["report.png"]));
+    const unknown = remoteAgentThreadKey(server.id, "runner", "elsewhere");
+
+    const refused = h.current.agents.downloadAttachment(unknown, displayId);
+    await expect(refused).rejects.toBeInstanceOf(AgentAttachmentDownloadError);
+    await expect(refused).rejects.toThrow(REMOTE_ATTACHMENT_DOWNLOAD_UNKNOWN_THREAD);
+    expect(h.gw.downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it("never downloads through a replaced gateway or one that no longer stores the file", async () => {
+    const h = await setup(remoteId, (gw) => gw.getAttachment.mockResolvedValue(fileMetadata));
+    await h.settle(() => expect(h.listed()).toEqual(["report.png"]));
+    const download = h.current.agents.downloadAttachment;
+    const replacement = gateway();
+    replacement.getAttachment.mockRejectedValue(notFound());
+    await h.render({ gateway: replacement });
+
+    await expect(download(remoteId, displayId)).rejects.toBeInstanceOf(
+      AgentAttachmentDownloadError,
+    );
+    expect(h.gw.downloadAttachment).not.toHaveBeenCalled();
+    expect(replacement.downloadAttachment).not.toHaveBeenCalled();
+  });
+
+  it("hands a local thread download to the local surface and never to the server", async () => {
+    const downloadAttachment = vi.fn(async (): Promise<"saved" | "cancelled"> => "cancelled");
+    const h = await setup(remoteId);
+    await h.render({
+      local: threadsSurfaceFixture({ threads: [surfaceThreadView()], downloadAttachment }),
+    });
+
+    await expect(h.current.agents.downloadAttachment("local-thread", "stored")).resolves.toBe(
+      "cancelled",
+    );
+    expect(downloadAttachment).toHaveBeenCalledWith("local-thread", "stored");
+    expect(h.gw.downloadAttachment).not.toHaveBeenCalled();
   });
 });

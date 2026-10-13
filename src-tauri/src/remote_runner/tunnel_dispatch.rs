@@ -7,7 +7,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 const CLOSED: &str = "Runner connection changed during request.";
-const TIMED_OUT: &str = "Runner request timed out. Its outcome may be unknown.";
+pub(super) const TIMED_OUT: &str = "Runner request timed out. Its outcome may be unknown.";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lifecycle {
@@ -42,11 +42,12 @@ fn unanswered(result: &Result<Value, String>) -> bool {
         .is_err_and(|error| error == TIMED_OUT || error == tunnel_http::CONNECTION_FAILED)
 }
 
-fn load(waiting: bool, suspended: Option<Instant>) -> Load {
-    match (waiting, suspended) {
-        (false, _) => Load::Idle,
-        (true, Some(until)) => Load::Suspended(until),
-        (true, None) => Load::Waiting,
+fn load(waiting: bool, held: Option<Instant>, suspended: Option<Instant>) -> Load {
+    match (waiting, held, suspended) {
+        (_, Some(until), _) => Load::Held(until),
+        (false, None, _) => Load::Idle,
+        (true, None, Some(until)) => Load::Suspended(until),
+        (true, None, None) => Load::Waiting,
     }
 }
 
@@ -77,8 +78,28 @@ struct Job {
 pub(super) struct Dispatch {
     sender: Mutex<Option<mpsc::UnboundedSender<Job>>>,
     lifecycle: Arc<watch::Sender<Lifecycle>>,
-    #[cfg(test)]
     evidence: Arc<Evidence>,
+}
+
+#[derive(Clone)]
+pub(super) struct Authority {
+    lifecycle: watch::Receiver<Lifecycle>,
+    evidence: Arc<Evidence>,
+}
+
+impl Authority {
+    pub(super) fn ended(&self) -> Result<(), String> {
+        self.lifecycle.borrow().ended()
+    }
+
+    pub(super) async fn revoked(&mut self) -> String {
+        let _ = self.lifecycle.changed().await;
+        self.ended().err().unwrap_or_else(|| CLOSED.into())
+    }
+
+    pub(super) fn evidence(&self) -> Arc<Evidence> {
+        Arc::clone(&self.evidence)
+    }
 }
 
 impl Dispatch {
@@ -95,7 +116,11 @@ impl Dispatch {
             let mut detector = StallDetector::new(policy);
             loop {
                 let now = Instant::now();
-                let load = load(!active.is_empty(), observed.suspended(now));
+                let load = load(
+                    !active.is_empty(),
+                    observed.held(now),
+                    observed.suspended(now),
+                );
                 let probing = probe.as_ref().is_some_and(|task| !task.is_finished());
                 detector.suspect(observed.suspected());
                 let wake = match detector.step(now, load, observed.inbound(), probing) {
@@ -125,6 +150,7 @@ impl Dispatch {
                 tokio::select! {
                     biased;
                     _ = cancellation.changed() => break,
+                    _ = observed.revised() => {},
                     Some(_) = active.join_next(), if !active.is_empty() => {},
                     _ = settled(&mut probe), if probed => {},
                     job = receiver.recv() => {
@@ -177,8 +203,14 @@ impl Dispatch {
         Self {
             sender: Mutex::new(Some(sender)),
             lifecycle,
-            #[cfg(test)]
             evidence,
+        }
+    }
+
+    pub(super) fn authority(&self) -> Authority {
+        Authority {
+            lifecycle: self.lifecycle.subscribe(),
+            evidence: Arc::clone(&self.evidence),
         }
     }
 

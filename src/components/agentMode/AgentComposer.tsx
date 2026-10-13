@@ -16,6 +16,7 @@ import {
   type ReactNode,
 } from "react";
 import { AlertTriangle, Paperclip } from "lucide-react";
+import type { AgentAttachmentFileSourcePort } from "../../application/agentAttachmentFileSourcePort";
 import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
@@ -51,7 +52,6 @@ import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
   agentClipboardFiles,
   openAgentAttachmentPicker,
-  openAgentImageAttachmentPicker,
   subscribeAgentAttachmentDragDrop,
   type AgentComposerDragDropSubscribe,
   type AgentComposerFilePicker,
@@ -141,6 +141,7 @@ export interface AgentComposerProps {
   readonly attachmentTargetKey?: string | null;
   readonly attachmentPicker?: AgentComposerFilePicker;
   readonly attachmentImageReader?: (path: string) => Promise<ArrayBuffer>;
+  readonly attachmentFileSource?: AgentAttachmentFileSourcePort;
   readonly attachmentDragDrop?: AgentComposerDragDropSubscribe;
   readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
@@ -202,10 +203,9 @@ export function AgentComposer({
   attachments = null,
   queuedEdit = null,
   attachmentTargetKey = null,
-  attachmentPicker = executionServerId === null
-    ? openAgentAttachmentPicker
-    : openAgentImageAttachmentPicker,
+  attachmentPicker = openAgentAttachmentPicker,
   attachmentImageReader,
+  attachmentFileSource,
   attachmentDragDrop = subscribeAgentAttachmentDragDrop,
   compactionOffer = null,
   dispatching,
@@ -378,6 +378,7 @@ export function AgentComposer({
     dispatching,
     picker: attachmentPicker,
     readImagePath: attachmentImageReader,
+    fileSource: attachmentFileSource,
   });
   const attachmentsEnabled = attachments !== null && attachmentTargetKey !== null;
   const dropPaths = (paths: ReadonlyArray<string>): void => {

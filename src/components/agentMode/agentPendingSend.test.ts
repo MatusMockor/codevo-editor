@@ -143,6 +143,30 @@ describe("agent pending sends", () => {
     ]);
   });
 
+  it("carries the size of a held path-backed file and nothing private about it", () => {
+    const file = { kind: "file", mime: null, previewUrl: null, attachmentId: null } as const;
+    const held = agentPendingSendAttachments([
+      draft({
+        ...file,
+        draftId: "d7",
+        name: "report.pdf",
+        bytes: 5_000_000,
+        backing: "nativeFile",
+      }),
+      draft({ ...file, draftId: "d8", name: "empty.bin", bytes: 0, backing: "nativeFile" }),
+      draft({ ...file, draftId: "d9", name: "pasted.txt", bytes: 12 }),
+    ]);
+
+    expect(held).toEqual([
+      {
+        view: { kind: "chip", key: "d7", name: "report.pdf", glyph: "file", bytes: 5_000_000 },
+        previewUrl: null,
+      },
+      { view: { kind: "chip", key: "d8", name: "empty.bin", glyph: "file" }, previewUrl: null },
+      { view: { kind: "chip", key: "d9", name: "pasted.txt", glyph: "file" }, previewUrl: null },
+    ]);
+  });
+
   it("renders held image previews as thumbnails and everything else as chips", () => {
     expect(
       agentPendingSendAttachments([

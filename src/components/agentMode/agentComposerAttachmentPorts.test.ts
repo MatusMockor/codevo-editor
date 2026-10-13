@@ -11,7 +11,7 @@ import {
   MAX_AGENT_COMPOSER_PASTED_FILES,
   agentAttachmentPasteFailureMessage,
   agentAttachmentSourcesFromFiles,
-  openAgentImageAttachmentPicker,
+  openAgentAttachmentPicker,
 } from "./agentComposerAttachmentPorts";
 
 function clipboardFile(name: string, type: string, size: number) {
@@ -78,19 +78,18 @@ describe("clipboard attachment metadata admission", () => {
 const nativePicker = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: nativePicker }));
 
-describe("server image picker", () => {
-  it("uses an explicit supported image filter and accepts native selections", async () => {
-    nativePicker.mockResolvedValue(["/tmp/shot.png"]);
-    expect(await openAgentImageAttachmentPicker()).toEqual(["/tmp/shot.png"]);
-    expect(nativePicker).toHaveBeenCalledWith({
-      multiple: true,
-      directory: false,
-      title: "Attach images",
-      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
-    });
+describe("attachment picker", () => {
+  it("offers every file type to local and server threads alike", async () => {
+    nativePicker.mockResolvedValue(["/tmp/shot.png", "/tmp/report.pdf"]);
+    expect(await openAgentAttachmentPicker()).toEqual(["/tmp/shot.png", "/tmp/report.pdf"]);
+    expect(nativePicker).toHaveBeenCalledWith({ multiple: true, title: "Attach files" });
+  });
+  it("accepts a single native selection", async () => {
+    nativePicker.mockResolvedValue("/tmp/report.pdf");
+    expect(await openAgentAttachmentPicker()).toEqual(["/tmp/report.pdf"]);
   });
   it("keeps cancellation empty", async () => {
     nativePicker.mockResolvedValue(null);
-    expect(await openAgentImageAttachmentPicker()).toEqual([]);
+    expect(await openAgentAttachmentPicker()).toEqual([]);
   });
 });

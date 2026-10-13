@@ -18,6 +18,7 @@ import {
   reviseRemoteAttachments,
   remoteAttachmentUnavailableMessage,
   RemoteAttachmentUnavailableError,
+  type RemoteAttachmentLoadFailure,
   type RemoteAttachmentRegistry,
   type RemoteAttachmentUnavailableReason,
 } from "./remoteAttachmentHistory";
@@ -363,6 +364,12 @@ const reasons: readonly RemoteAttachmentUnavailableReason[] = [
   "unsupported",
   "limit",
 ];
+const REMOTE_LOAD_FAILURES: readonly RemoteAttachmentLoadFailure[] = [
+  "notStored",
+  "loadFailed",
+  "unsupported",
+  "limit",
+];
 const retention = (connected: boolean) => ({
   ownerIsRetained: () => true,
   ownerIsCurrent: () => connected,
@@ -379,6 +386,35 @@ async function reasonOf(
 }
 
 describe("remote attachment availability reasons", () => {
+  it("never calls an attachment an image when it is a file or its kind is still unknown", () => {
+    expect(remoteAttachmentUnavailableMessage("notStored")).toBe(
+      "The server no longer stores this attachment.",
+    );
+    expect(remoteAttachmentUnavailableMessage("loadFailed")).toBe(
+      "The server could not provide this attachment's details. Reconnect the server to try again.",
+    );
+    expect(remoteAttachmentUnavailableMessage("unsupported")).toBe(
+      "This server cannot provide this attachment.",
+    );
+    expect(remoteAttachmentUnavailableMessage("limit")).toBe(
+      "Too many server attachments are open. Reconnect the server to view more.",
+    );
+    expect(remoteAttachmentUnavailableMessage("notImage")).toBe(
+      "This attachment has no preview. Download it to open it.",
+    );
+    const fileReachable = [...REMOTE_LOAD_FAILURES, "busy", "notImage"] as const;
+    for (const reason of fileReachable) {
+      expect(remoteAttachmentUnavailableMessage(reason)).not.toMatch(/image/i);
+      expect(remoteAttachmentUnavailableMessage(reason)).not.toMatch(/[\u2013\u2014]/);
+    }
+    expect(
+      new Set([...reasons, "notImage" as const].map(remoteAttachmentUnavailableMessage)).size,
+    ).toBe(reasons.length + 1);
+  });
+  it("keeps image wording where only an image preview can be the subject", () => {
+    for (const reason of ["notConnected", "notLoaded", "foreign", "readFailed"] as const)
+      expect(remoteAttachmentUnavailableMessage(reason)).toMatch(/image/);
+  });
   it("gives every closed reason short plain copy without backend detail", () => {
     const messages = reasons.map(remoteAttachmentUnavailableMessage);
     expect(new Set(messages).size).toBe(reasons.length);
@@ -607,7 +643,9 @@ describe("remote attachment availability reasons", () => {
     expect(remoteAttachmentLoadRetriesQuietly(new RemoteAttachmentUnavailableError("limit"))).toBe(
       false,
     );
-    expect(remoteAttachmentLoadRetriesQuietly(new Error("Too many server images."))).toBe(false);
+    expect(remoteAttachmentLoadRetriesQuietly(new Error("Too many server attachments."))).toBe(
+      false,
+    );
     expect(f.registry.size).toBe(0);
     expect(await f.load()).toHaveLength(1);
   });

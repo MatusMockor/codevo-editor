@@ -21,6 +21,7 @@ export async function describeAgentAttachmentSource(
   reportError: (error: unknown) => void,
 ): Promise<DescribedAgentAttachmentSource | null> {
   if (!isCurrent()) return null;
+  if (source.kind === "fileSource") return null;
   if (source.kind === "bytes") {
     return {
       source,

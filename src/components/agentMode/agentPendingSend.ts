@@ -133,7 +133,13 @@ function pendingSendAttachment(draft: AgentComposerAttachmentDraft): AgentPendin
     };
   }
   return {
-    view: { kind: "chip", key: draft.draftId, name: draft.name, glyph: draft.kind },
+    view: {
+      kind: "chip",
+      key: draft.draftId,
+      name: draft.name,
+      glyph: draft.kind,
+      ...(draft.backing === "nativeFile" && draft.bytes > 0 ? { bytes: draft.bytes } : {}),
+    },
     previewUrl: null,
   };
 }

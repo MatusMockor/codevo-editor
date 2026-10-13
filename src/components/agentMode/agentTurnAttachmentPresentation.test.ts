@@ -3,6 +3,7 @@ import type { AgentAttachment } from "../../domain/agentAttachment";
 import { parseExternalSessionExchange } from "../../domain/externalAgentSession";
 import {
   AGENT_IMPORTED_IMAGE_LABEL,
+  agentAttachmentDownloadLabel,
   agentAttachmentImageIsResolvable,
   agentAttachmentLightboxFit,
   agentLightboxNeighborIndex,
@@ -70,6 +71,35 @@ describe("agentTurnAttachmentViews", () => {
         glyph: "reference",
       },
     ]);
+  });
+
+  it("offers a server-stored file for download and never treats it as an image", () => {
+    const remote = { serverId: "server-1", attachmentId: "3f0c1e0a-0d3b-4d5e-9a51-6c2b7d8e9f00" };
+    const views = agentTurnAttachmentViews(
+      [
+        { kind: "file", attachmentId: "c".repeat(32), name: "photo.png", bytes: 4_096, remote },
+        FILE,
+      ],
+      "look",
+    );
+
+    expect(views).toEqual([
+      {
+        kind: "remoteFile",
+        key: "c".repeat(32),
+        name: "photo.png",
+        attachmentId: "c".repeat(32),
+        bytes: 4_096,
+      },
+      { kind: "chip", key: "b".repeat(32), name: "notes.txt", glyph: "file" },
+    ]);
+    expect(views.some(agentAttachmentImageIsResolvable)).toBe(false);
+    expect(JSON.stringify(views)).not.toContain("server-1");
+    expect(JSON.stringify(views)).not.toContain(remote.attachmentId);
+  });
+
+  it("names the download control after the file", () => {
+    expect(agentAttachmentDownloadLabel("report.pdf")).toBe("Download report.pdf");
   });
 
   it("shows a reference as a folder only when its exact folder line sits in the prompt", () => {

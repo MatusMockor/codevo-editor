@@ -1,4 +1,5 @@
 import type { AgentImageMime } from "../domain/agentAttachment";
+import type { AgentAttachmentFileSourcePort } from "./agentAttachmentFileSourcePort";
 
 export interface AgentAttachmentWorkspaceRequest {
   readonly workspaceId: string;
@@ -11,6 +12,18 @@ export interface StageAgentAttachmentBytesRequest extends AgentAttachmentWorkspa
   readonly width: number | null;
   readonly height: number | null;
   readonly bytes: ArrayBuffer;
+}
+
+export interface StageAgentAttachmentFileRequest extends AgentAttachmentWorkspaceRequest {
+  readonly path: string;
+  readonly fileSource: AgentAttachmentFileSourcePort;
+}
+
+export class AgentAttachmentRefusalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentAttachmentRefusalError";
+  }
 }
 
 export interface AgentAttachmentCandidateRequest extends AgentAttachmentWorkspaceRequest {
@@ -57,6 +70,9 @@ export interface StoredAgentAttachmentRequest extends AgentAttachmentWorkspaceRe
 export interface AgentAttachmentGateway {
   stageAgentAttachmentBytes(
     request: StageAgentAttachmentBytesRequest,
+  ): Promise<StagedAgentAttachment>;
+  stageAgentAttachmentFile?(
+    request: StageAgentAttachmentFileRequest,
   ): Promise<StagedAgentAttachment>;
   inspectAgentAttachmentCandidate(
     request: AgentAttachmentCandidateRequest,

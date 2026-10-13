@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import type { AgentAttachmentFileSourcePort } from "../../application/agentAttachmentFileSourcePort";
 import {
   closeAgentAttachmentIntakeTicket,
   type AgentAttachmentIntakeTicket,
@@ -11,7 +12,9 @@ import {
   AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL,
   AgentAttachmentFolderSourceError,
   agentAttachmentIntakeFailureSummary,
+  isAgentImageSourcePath,
 } from "../../domain/agentAttachmentIntake";
+import { tauriAgentFileSource } from "../../infrastructure/tauriAgentFileSource";
 import { readAgentAttachmentImagePath } from "../../infrastructure/tauriAgentImageSource";
 import {
   agentAttachmentPasteFailureMessage,
@@ -30,6 +33,7 @@ interface Options {
   readonly dispatching: boolean;
   readonly picker: AgentComposerFilePicker;
   readonly readImagePath?: (path: string) => Promise<ArrayBuffer>;
+  readonly fileSource?: AgentAttachmentFileSourcePort;
 }
 
 interface Captured {
@@ -137,6 +141,18 @@ export function useAgentAttachmentIntake(options: Options) {
       return attachmentIntakeFailureMessage(error);
     }
   };
+  const stageServerFile = async (
+    path: string,
+    captured: Captured,
+    fileSource: AgentAttachmentFileSourcePort,
+  ): Promise<string | null> => {
+    try {
+      await captured.intake([{ kind: "fileSource", path, fileSource }]);
+      return null;
+    } catch (error: unknown) {
+      return attachmentIntakeFailureMessage(error);
+    }
+  };
   const refuseTogether = (captured: Captured, failures: ReadonlyArray<string>) => {
     const refusal = agentAttachmentIntakeFailureSummary(failures);
     if (refusal !== null && captured.isCurrent()) captured.refuse(refusal);
@@ -144,6 +160,7 @@ export function useAgentAttachmentIntake(options: Options) {
   const readPaths = async (paths: ReadonlyArray<string>, captured: Captured) => {
     const pending = paths.slice(0, MAX_AGENT_COMPOSER_PASTED_FILES);
     const read = options.readImagePath ?? readAgentAttachmentImagePath;
+    const fileSource = options.fileSource ?? tauriAgentFileSource;
     const failures: string[] = [];
     for (let index = 0; index < pending.length; index += 1) {
       if (!captured.isCurrent()) return;
@@ -152,7 +169,10 @@ export function useAgentAttachmentIntake(options: Options) {
         await captured.intake(agentAttachmentSourcesFromPaths(pending.slice(index)));
         return;
       }
-      const failure = await readServerPath(pending[index], captured, read);
+      const path = pending[index];
+      const failure = isAgentImageSourcePath(path)
+        ? await readServerPath(path, captured, read)
+        : await stageServerFile(path, captured, fileSource);
       if (failure !== null) failures.push(failure);
     }
     refuseTogether(captured, failures);

@@ -342,19 +342,33 @@
   white-space: nowrap;
 }
 
+.agent-composer-attachment--chip > svg {
+  flex: none;
+}
+
 .agent-composer-attachment__size,
 .agent-composer-attachment__notice {
+  overflow: hidden;
   color: var(--cv-fg-subtle);
   font-size: var(--cv-t-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agent-composer-attachment__failure {
   color: var(--cv-danger);
   font-size: var(--cv-t-2xs);
+  overflow-wrap: anywhere;
 }
 
 .agent-composer-attachment[data-agent-attachment-state="failed"] {
   color: var(--cv-danger);
+}
+
+.agent-composer-attachment--chip[data-agent-attachment-state="failed"] {
+  height: auto;
+  min-height: 32px;
+  padding-block: var(--cv-space-2);
 }
 
 .agent-composer-attachment[data-agent-attachment-missing="true"] .agent-composer-attachment__name {

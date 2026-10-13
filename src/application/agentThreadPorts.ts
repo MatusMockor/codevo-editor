@@ -422,6 +422,7 @@ export interface AgentThreadsSurface {
   readonly attachmentImages: AgentAttachmentImagesSurface;
   readonly inlineImages?: AgentInlineImagesSurface;
   revealAttachment(threadId: string, attachmentId: string): Promise<void>;
+  downloadAttachment(threadId: string, attachmentId: string): Promise<"saved" | "cancelled">;
   readonly externalHistory?: {
     readonly states: ReadonlyMap<string, "loading" | "failed" | "unavailable" | "ready">;
     load(threadId: string): Promise<void>;
