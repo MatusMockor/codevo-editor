@@ -7,6 +7,31 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.117] - 2026-10-13
+
+### Added
+
+- Attach any regular file up to 50 MiB to a server conversation, with file-size
+  chips and downloads under the original filename. This requires an updated Codevo
+  Runner with file attachment support; folders are not supported.
+- Codex usage shows available limit-reset credits and offers account-confirmed
+  resets with local reset history. Reset actions are disabled for remote usage.
+- Claude Haiku 5.5 is available in the bundled model catalog when offline.
+
+### Changed
+
+- Notices above the agent composer use a tone card with consistent action and
+  dismiss buttons.
+- The new server thread screen lists server projects inline, shows the server name,
+  filters lists with more than six projects, and keeps Add or Clone inside the card.
+  The misleading Manage server projects link has been removed.
+
+### Fixed
+
+- Cmd+Plus increases the editor font size and can be recorded in Keybindings.
+  Fold All and Unfold All now default to Cmd+Alt+- and Cmd+Alt+=; customized
+  bindings are preserved when old defaults are migrated.
+
 ## [0.2.0-beta.116] - 2026-10-13
 
 ### Added
