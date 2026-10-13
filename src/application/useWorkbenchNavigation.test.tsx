@@ -435,6 +435,86 @@ describe("useWorkbenchNavigation PHP read-only boundary", () => {
     harness.root.unmount();
   });
 
+  it("opens a problem target from a read-only snapshot and reveals its position", async () => {
+    const setEditorRevealTarget = vi.fn();
+    const harness = renderNavigation({ setEditorRevealTarget });
+    const path = "/Users/me/handoffs/02-cms-slideshow.md";
+    const start = { column: 5, lineNumber: 12 };
+    const readOnlySnapshot = vi.fn(async () => "# Handoff");
+    const shouldCommit = vi.fn(() => true);
+
+    await act(async () => {
+      await harness.api().openProblemNotice(
+        {
+          id: "agent-link",
+          message: path,
+          navigationTarget: { path, range: { end: start, start } },
+          severity: "info",
+          source: "Agent",
+        },
+        { readOnlySnapshot, shouldCommit },
+      );
+    });
+
+    expect(harness.openFile).toHaveBeenCalledWith(
+      { kind: "file", name: "02-cms-slideshow.md", path },
+      { readOnly: undefined, readOnlySnapshot, recordNavigation: false, shouldCommit },
+    );
+    expect(setEditorRevealTarget).toHaveBeenCalledWith({ path, position: start });
+
+    harness.root.unmount();
+  });
+
+  it("does not open or reveal a problem target whose commit guard already fails", async () => {
+    const setEditorRevealTarget = vi.fn();
+    const harness = renderNavigation({ setEditorRevealTarget });
+    const path = "/Users/me/handoffs/02-cms-slideshow.md";
+    const start = { column: 1, lineNumber: 1 };
+    let opened = true;
+
+    await act(async () => {
+      opened = await harness.api().openProblemNotice(
+        {
+          id: "agent-link",
+          message: path,
+          navigationTarget: { path, range: { end: start, start } },
+          severity: "info",
+          source: "Agent",
+        },
+        { shouldCommit: () => false },
+      );
+    });
+
+    expect(opened).toBe(false);
+    expect(harness.openFile).not.toHaveBeenCalled();
+    expect(setEditorRevealTarget).not.toHaveBeenCalled();
+
+    harness.root.unmount();
+  });
+
+  it("opens a problem target without options exactly as before", async () => {
+    const harness = renderNavigation();
+    const path = `${ROOT}/app/Services/Service.ts`;
+    const start = { column: 1, lineNumber: 1 };
+
+    await act(async () => {
+      await harness.api().openProblemNotice({
+        id: "problem",
+        message: path,
+        navigationTarget: { path, range: { end: start, start } },
+        severity: "error",
+        source: "TypeScript",
+      });
+    });
+
+    expect(harness.openFile).toHaveBeenCalledWith(
+      { kind: "file", name: "Service.ts", path },
+      { readOnly: undefined, recordNavigation: false },
+    );
+
+    harness.root.unmount();
+  });
+
   it("passes navigation transaction validity to the file commit guard", async () => {
     const harness = renderNavigation();
     const path = `${ROOT}/app/Services/Service.php`;

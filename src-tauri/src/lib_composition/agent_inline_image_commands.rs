@@ -179,7 +179,7 @@ fn read_canonical_image(path: &str) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn ensure_stored_locally(canonical: &Path, before: &fs::Metadata) -> Result<(), String> {
+pub(super) fn ensure_stored_locally(canonical: &Path, before: &fs::Metadata) -> Result<(), String> {
     use std::os::macos::fs::MetadataExt;
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(canonical.as_os_str().as_bytes())
@@ -196,7 +196,7 @@ fn ensure_stored_locally(canonical: &Path, before: &fs::Metadata) -> Result<(), 
 }
 
 #[cfg(not(target_os = "macos"))]
-fn ensure_stored_locally(_: &Path, _: &fs::Metadata) -> Result<(), String> {
+pub(super) fn ensure_stored_locally(_: &Path, _: &fs::Metadata) -> Result<(), String> {
     Ok(())
 }
 

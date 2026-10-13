@@ -1,4 +1,7 @@
-import type { AgentLocalFileOpenOutcome } from "../domain/agentMarkdown/agentLocalFileLinkFailure";
+import type {
+  AgentLocalFileOpenOutcome,
+  AgentOutsideFileRefusal,
+} from "../domain/agentMarkdown/agentLocalFileLinkFailure";
 import type { FileEntry, WorkspaceFileGateway } from "../domain/workspace";
 
 export const MAX_LINKED_FILE_PROBE_ENTRIES = 5_000;
@@ -8,7 +11,10 @@ export type LinkedFileDirectoryReader = Partial<
   Pick<WorkspaceFileGateway, "readDirectory" | "readDirectoryBounded">
 >;
 
-export type UnopenedLinkedFileOutcome = Exclude<AgentLocalFileOpenOutcome, "opened">;
+export type UnopenedLinkedFileOutcome = Exclude<
+  AgentLocalFileOpenOutcome,
+  "opened" | "superseded" | AgentOutsideFileRefusal
+>;
 
 interface Listing {
   readonly entries: ReadonlyArray<FileEntry>;

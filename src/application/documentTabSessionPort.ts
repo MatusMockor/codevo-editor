@@ -296,7 +296,11 @@ export function refreshCleanDocumentInSession(
 } {
   const current = snapshot.documents[path];
 
-  if (!current || current.content !== "" || current.savedContent !== "") {
+  if (!current || current.readOnlySnapshot === true) {
+    return { document: null, snapshot };
+  }
+
+  if (current.content !== "" || current.savedContent !== "") {
     return { document: null, snapshot };
   }
 

@@ -20,6 +20,7 @@ import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 import { NO_SCOPE_STATE, type AgentNavigationSession } from "./useAgentThreadNavigation";
 
 const TURN_ID = "turn-links-1";
+const OUTSIDE_FILE = "/Users/me/handoffs/oktober/02-cms-slideshow.md";
 const NO_SNAPSHOT = "No snapshot is available for this turn.";
 
 function answerTurn(text: string): AgentTurn {
@@ -111,20 +112,73 @@ describe("local file links in agent messages", () => {
     expect(link.hasAttribute("data-agent-link-state")).toBe(false);
   });
 
-  it("refuses a path outside the project with a truthful message", async () => {
+  it("opens a linked file outside the project at its line without a notice", async () => {
     const openFileLocation = vi.fn<AgentFileLocationOpener>(async () => "opened");
-    await renderAnswer("Compare with [the hosts file](/etc/hosts).", openFileLocation);
-    const link = await markdownLink("the hosts file");
+    await renderAnswer(`The handoff is [here](${OUTSIDE_FILE}:4).`, openFileLocation);
+    const link = await markdownLink("here");
+
+    await act(async () => link.click());
+
+    await waitForReact(() =>
+      expect(openFileLocation).toHaveBeenCalledExactlyOnceWith({
+        location: { path: OUTSIDE_FILE, line: 4, column: null },
+        root: null,
+      }),
+    );
+    expect(notice()).toBeNull();
+    expect(link.hasAttribute("data-agent-link-state")).toBe(false);
+  });
+
+  it("explains a missing outside file without calling it a project file, then opens it once it exists", async () => {
+    const openFileLocation = vi.fn<AgentFileLocationOpener>(async () => "doesNotExist");
+    await renderAnswer(`The handoff is [here](${OUTSIDE_FILE}).`, openFileLocation);
+    const link = await markdownLink("here");
+
+    await act(async () => link.click());
+
+    const message = `${OUTSIDE_FILE} doesn't exist.`;
+    await waitForReact(() => expect(notice()?.textContent).toContain(message));
+    expect(notice()?.className).toContain("agent-notice--info");
+    expect(notice()?.textContent).not.toContain("project");
+    const marked = await markdownLink("here");
+    expect(marked.getAttribute("data-agent-link-state")).toBe("unavailable");
+    expect(marked.getAttribute("title")).toBe(message);
+
+    openFileLocation.mockResolvedValueOnce("opened");
+    await act(async () => dismissButton()?.click());
+    await act(async () => marked.click());
+
+    await waitForReact(async () =>
+      expect((await markdownLink("here")).hasAttribute("data-agent-link-state")).toBe(false),
+    );
+    expect(openFileLocation).toHaveBeenCalledTimes(2);
+    expect(notice()).toBeNull();
+  });
+
+  it("says a linked outside folder is a folder", async () => {
+    const openFileLocation = vi.fn<AgentFileLocationOpener>(async () => "folder");
+    await renderAnswer("See [the folder](/Users/me/handoffs/oktober).", openFileLocation);
+    const link = await markdownLink("the folder");
 
     await act(async () => link.click());
 
     await waitForReact(() =>
       expect(notice()?.textContent).toContain(
-        "/etc/hosts is outside this project (app), so it wasn't opened.",
+        "/Users/me/handoffs/oktober is a folder, not a file.",
       ),
     );
-    expect(notice()?.className).toContain("agent-notice--info");
-    expect(openFileLocation).not.toHaveBeenCalled();
+  });
+
+  it("leaves a bare absolute path as plain text, as it does inside the project", async () => {
+    const openFileLocation = vi.fn<AgentFileLocationOpener>(async () => "opened");
+    await renderAnswer(
+      `See ${OUTSIDE_FILE} and ${SURFACE_FIXTURE_ROOT}/src/app.ts and src/app.ts.`,
+      openFileLocation,
+    );
+
+    await pathLink("src/app.ts");
+    const links = [...host.querySelectorAll<HTMLAnchorElement>("a.agent-md__path-link")];
+    expect(links.map((link) => link.textContent)).toEqual(["src/app.ts"]);
   });
 
   async function renderAnswer(text: string, openFileLocation: AgentFileLocationOpener) {

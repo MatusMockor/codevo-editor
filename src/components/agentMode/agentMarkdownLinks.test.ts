@@ -16,6 +16,8 @@ import {
   type AgentLocalFileLinkPort,
   type AgentMarkdownLinkPorts,
 } from "./agentMarkdownLinks";
+import { MAX_AGENT_LINKED_FILE_PATH_BYTES } from "../../infrastructure/tauriAgentLinkedFileGateway";
+import { MAX_AGENT_REVEAL_PATH_BYTES } from "./agentThreadHeaderPresentation";
 import {
   agentRemoteFileLinkScope,
   type AgentRemoteFileLinkPort,
@@ -180,36 +182,154 @@ describe("activateAgentMarkdownLink", () => {
     });
   });
 
-  it("refuses visibly and never opens a local file outside every thread root", async () => {
+  it("hands a local file outside every thread root to the opener without a root", async () => {
     const openExternal = vi.fn().mockResolvedValue(undefined);
     const local = localPort();
-    const preventDefault = activate("/etc/passwd", ports(local.port, openExternal));
+    const path = "/Users/me/handoffs/oktober/02-cms-slideshow.md";
+    const preventDefault = activate(`${path}:7:2`, ports(local.port, openExternal));
     await settle();
     expect(preventDefault).toHaveBeenCalledOnce();
-    expect(local.open).not.toHaveBeenCalled();
+    expect(local.open).toHaveBeenCalledExactlyOnceWith({
+      location: { path, line: 7, column: 2 },
+      root: null,
+    });
+    expect(local.report).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("treats a sibling-prefix path and a traversal out of the root as outside files", async () => {
+    const local = localPort();
+    activate("/workspace/app-docs/readme.md", ports(local.port));
+    activate(`${ROOT}/src/../../secret.txt`, ports(local.port));
+    activate(`file://${ROOT}/../notes/handoff.md#L4`, ports(local.port));
+    await settle();
+    expect(local.open.mock.calls.map(([request]) => request)).toEqual([
+      { location: { path: "/workspace/app-docs/readme.md", line: null, column: null }, root: null },
+      { location: { path: "/workspace/secret.txt", line: null, column: null }, root: null },
+      { location: { path: "/workspace/notes/handoff.md", line: 4, column: null }, root: null },
+    ]);
+    expect(local.report).not.toHaveBeenCalled();
+  });
+
+  it.each<[AgentLocalFileOpenOutcome, string]>([
+    ["doesNotExist", "/etc/passwd doesn't exist."],
+    ["folder", "/etc/passwd is a folder, not a file."],
+    ["specialFile", "/etc/passwd isn't a regular file, so it wasn't opened."],
+    ["tooLarge", "/etc/passwd is larger than 10 MB, so it wasn't opened."],
+    ["notText", "/etc/passwd isn't a text file, so it wasn't opened."],
+    ["notLocal", "/etc/passwd is on a network or offloaded volume, so it wasn't opened."],
+    ["otherProject", "/etc/passwd belongs to another open project, so it wasn't opened here."],
+    ["busy", "Another linked file is still being read, so /etc/passwd wasn't opened. Try again."],
+    ["unreadable", "/etc/passwd exists but couldn't be read."],
+    ["failed", "/etc/passwd couldn't be opened."],
+  ])("reports a %s open of an outside file by its absolute path", async (outcome, message) => {
+    const local = localPort(outcome);
+    activate("/etc/passwd", ports(local.port));
+    await settle();
     expect(local.report).toHaveBeenCalledExactlyOnceWith({
-      kind: "outsideProject",
+      kind: outcome,
       path: "/etc/passwd",
       place: { kind: "project", label: "app" },
     });
     expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0])).toEqual({
       kind: "info",
-      message: "/etc/passwd is outside this project (app), so it wasn't opened.",
+      message,
       action: null,
     });
-    expect(openExternal).not.toHaveBeenCalled();
   });
 
-  it("refuses a sibling-prefix path and a normalized traversal out of the root", async () => {
-    const local = localPort();
-    activate("/workspace/app-docs/readme.md", ports(local.port));
+  it("says nothing and remembers nothing when the open was superseded", async () => {
+    const local = localPort("superseded");
+    const remembered = memory();
+    activate("/tmp/handoff.md", { ...ports(local.port), memory: remembered });
+    await settle();
+    expect(local.open).toHaveBeenCalledOnce();
+    expect(local.report).not.toHaveBeenCalled();
+    expect(remembered.failures.size).toBe(0);
+  });
+
+  it("reports a busy read every time without marking the link unavailable", async () => {
+    const local = localPort("busy");
+    const remembered = memory();
+    const linkPorts = { ...ports(local.port), memory: remembered };
+    activate("/tmp/handoff.md", linkPorts);
+    activate("/tmp/handoff.md", linkPorts);
+    await settle();
+    expect(local.report).toHaveBeenCalledTimes(2);
+    expect(remembered.failures.size).toBe(0);
+  });
+
+  it("names the resolved absolute path when a traversal left the root", async () => {
+    const local = localPort("doesNotExist");
     activate(`${ROOT}/src/../../secret.txt`, ports(local.port));
     await settle();
+    expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0]).message).toBe(
+      "/workspace/secret.txt doesn't exist.",
+    );
+  });
+
+  it("treats a rejected opener as a failed open of an outside file", async () => {
+    const local = localPort();
+    local.open.mockRejectedValueOnce(new Error("busy"));
+    activate("/etc/passwd", ports(local.port));
+    await settle();
+    expect(local.report).toHaveBeenCalledExactlyOnceWith({
+      kind: "failed",
+      path: "/etc/passwd",
+      place: { kind: "project", label: "app" },
+    });
+  });
+
+  it("still refuses a path longer than the path limit before any open", async () => {
+    const local = localPort();
+    const long = `/${"ž".repeat(MAX_AGENT_REVEAL_PATH_BYTES / 2)}/a.md`;
+    expect(long.length).toBeLessThan(MAX_AGENT_REVEAL_PATH_BYTES);
+    activate(long, ports(local.port));
+    await settle();
     expect(local.open).not.toHaveBeenCalled();
-    expect(local.report.mock.calls.map(([failure]) => failure.kind)).toEqual([
-      "outsideProject",
-      "outsideProject",
-    ]);
+    expect(local.report.mock.calls.map(([failure]) => failure.kind)).toEqual(["failed"]);
+    expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0]).message).toMatch(
+      /^\/ž+…ž+\/a\.md couldn't be opened\.$/,
+    );
+  });
+
+  it("applies the same path limit as the outside file probe", () => {
+    expect(MAX_AGENT_LINKED_FILE_PATH_BYTES).toBe(MAX_AGENT_REVEAL_PATH_BYTES);
+  });
+
+  it("remembers a missing outside file and opens it once it exists", async () => {
+    const local = localPort("doesNotExist");
+    const remembered = memory();
+    const linkPorts = { ...ports(local.port), memory: remembered };
+    activate("/tmp/handoff.md", linkPorts);
+    await settle();
+    expect(remembered.failures.get("/tmp/handoff.md")?.kind).toBe("doesNotExist");
+    activate("/tmp/handoff.md", linkPorts);
+    await settle();
+    expect(local.open).toHaveBeenCalledTimes(2);
+    expect(local.report).toHaveBeenCalledOnce();
+
+    local.open.mockResolvedValueOnce("opened");
+    activate("/tmp/handoff.md", linkPorts);
+    await settle();
+    expect(local.open).toHaveBeenCalledTimes(3);
+    expect(remembered.failures.has("/tmp/handoff.md")).toBe(false);
+    expect(local.report).toHaveBeenCalledOnce();
+  });
+
+  it("keeps refusing a relative link when the thread has no checkout to resolve it", async () => {
+    const local = localPort();
+    const scope = agentLocalFileLinkScope(local.port, { repositoryRoot: "", worktreePath: null });
+    const { event } = click(turn("src/a.ts", null));
+    activateAgentMarkdownLink(event, parseAgentMarkdownLink("src/a.ts"), {
+      openExternal: vi.fn(),
+      localFiles: scope,
+    });
+    await settle();
+    expect(local.open).not.toHaveBeenCalled();
+    expect(agentLocalFileLinkNotice(local.report.mock.calls[0]![0]).message).toBe(
+      "src/a.ts couldn't be opened.",
+    );
   });
 
   it.each<[AgentLocalFileOpenOutcome, string]>([

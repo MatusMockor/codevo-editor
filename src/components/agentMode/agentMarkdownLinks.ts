@@ -18,7 +18,7 @@ import {
   type AgentMarkdownLink,
 } from "../../domain/agentMarkdown/agentMarkdownLink";
 import { mayPointToServerLoopback } from "../../domain/remoteLoopbackLink";
-import { agentRevealRootForPath } from "./agentThreadHeaderPresentation";
+import { agentRevealRootForPath, isAgentRevealPathBounded } from "./agentThreadHeaderPresentation";
 import { attemptRemoteFileLink, type AgentRemoteFileLinkScope } from "./agentRemoteFileLinks";
 
 export type AgentMarkdownLinkEvent =
@@ -72,7 +72,7 @@ export function agentServerLinkOpener(
 
 export interface AgentLocalFileOpenRequest {
   readonly location: AgentLocalFileLocation;
-  readonly root: string;
+  readonly root: string | null;
 }
 
 export interface AgentLocalFileLinkPort {
@@ -188,16 +188,17 @@ async function attemptLocalFileLink(
   scope: AgentLocalFileLinkLocalScope,
 ): Promise<AgentLocalFileLinkFailure | null> {
   const written = link.location.path;
+  const project = agentLocalFileLinkPlace("project", scope.repositoryRoot);
   const path = resolveAgentLocalFilePath(link, scope.base);
-  const root = path === null ? null : agentRevealRootForPath(path, scope.roots);
-  if (path === null || root === null) {
-    const project = agentLocalFileLinkPlace("project", scope.repositoryRoot);
-    return agentLocalFileLinkFailure("outsideProject", written, project);
+  if (path === null || !isAgentRevealPathBounded(path)) {
+    return agentLocalFileLinkFailure("failed", written, project);
   }
+  const root = agentRevealRootForPath(path, scope.roots);
   const outcome = await scope.port
     .open({ location: { ...link.location, path }, root })
     .catch((): AgentLocalFileOpenOutcome => "failed");
-  if (outcome === "opened") return null;
+  if (outcome === "opened" || outcome === "superseded") return null;
+  if (root === null) return agentLocalFileLinkFailure(outcome, path, project);
   const display = agentLocalFileLinkDisplayPath(written, path, root);
   return agentLocalFileLinkFailure(outcome, display, placeOfRoot(root, scope.repositoryRoot));
 }

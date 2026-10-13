@@ -104,9 +104,12 @@ function releaseOpeningFileOwner(
   replaceOpeningFileOwner(ownerRef, setIsOpeningFile, null);
 }
 
+export type ReadOnlySnapshotReader = () => Promise<string | null>;
+
 export interface OpenFileOptions {
   pin?: boolean;
   readOnly?: boolean;
+  readOnlySnapshot?: ReadOnlySnapshotReader;
   recordNavigation?: boolean;
   shouldCommit?: () => boolean;
 }
@@ -221,6 +224,10 @@ export function useWorkbenchDocumentTabs(
       recordCurrentNavigationLocation();
       leaveGitDiff();
       documentTabSession.activate(path);
+      if (documentTabSession.getDocument(path)?.readOnlySnapshot === true) {
+        return;
+      }
+
       recordRecentFile({
         name: documentTabSession.getTabDisplayName(path) ?? getFileName(path),
         path,
@@ -255,6 +262,7 @@ export function useWorkbenchDocumentTabs(
         requestedOwner?.ownerKey === resolveCurrentWorkspaceRuntimeOwner()?.ownerKey;
       const shouldRecordNavigation = options.recordNavigation !== false;
       const shouldPin = options.pin === true;
+      const readOnlySnapshot = options.readOnlySnapshot;
       const readTextFileForEmptyDocumentRefresh = async (
         targetPath: string,
       ): Promise<string | null> => {
@@ -283,7 +291,7 @@ export function useWorkbenchDocumentTabs(
 
       leaveGitDiff();
 
-      if (isImagePath(entry.path)) {
+      if (isImagePath(entry.path) && !readOnlySnapshot) {
         try {
           if (!workspaceFiles.readImageFile) {
             throw new Error("Image viewing is unavailable for this workspace.");
@@ -342,6 +350,7 @@ export function useWorkbenchDocumentTabs(
 
             if (
               !currentDocument ||
+              currentDocument.readOnlySnapshot === true ||
               currentDocument.content !== "" ||
               currentDocument.savedContent !== ""
             ) {
@@ -389,12 +398,14 @@ export function useWorkbenchDocumentTabs(
         }
 
         const openedDocument = existingDocument;
+        const keepsSnapshot = Boolean(readOnlySnapshot) || openedDocument.readOnlySnapshot === true;
         const hasEmptySavedContentWithoutUnsavedEdits =
           openedDocument.savedContent === "" && openedDocument.content === "";
 
-        const refreshedContent = hasEmptySavedContentWithoutUnsavedEdits
-          ? await readTextFileForEmptyDocumentRefresh(entry.path)
-          : null;
+        const refreshedContent =
+          hasEmptySavedContentWithoutUnsavedEdits && !keepsSnapshot
+            ? await readTextFileForEmptyDocumentRefresh(entry.path)
+            : null;
 
         if (refreshedContent !== null) {
           const requestStillActive =
@@ -435,7 +446,7 @@ export function useWorkbenchDocumentTabs(
         const opened = documentTabSession.openExistingDocument({
           path: entry.path,
           pin: shouldPin,
-          readOnly: options.readOnly === true,
+          readOnly: options.readOnly === true && !readOnlySnapshot,
         });
 
         if (!opened) {
@@ -453,7 +464,9 @@ export function useWorkbenchDocumentTabs(
           activatedDocument.content,
           activatedDocument.language,
         );
-        recordRecentFile({ name: entry.name, path: entry.path });
+        if (!keepsSnapshot) {
+          recordRecentFile({ name: entry.name, path: entry.path });
+        }
         return true;
       }
 
@@ -469,10 +482,19 @@ export function useWorkbenchDocumentTabs(
           replaceOpeningFileOwner(openingFileFlagOwnerTokenRef, setIsOpeningFile, requestToken);
         }
 
+        const snapshotContent = readOnlySnapshot ? await readOnlySnapshot() : undefined;
+
+        if (snapshotContent === null) {
+          clearOpeningFileForRequest();
+          return false;
+        }
+
         const snapshot =
-          hasUsablePrefetchedContent && !workspaceFiles.readTextFileSnapshot
-            ? { content: prefetchedContent, revision: null }
-            : await readWorkspaceTextFileSnapshot(workspaceFiles, entry.path);
+          snapshotContent !== undefined
+            ? { content: snapshotContent, revision: null }
+            : hasUsablePrefetchedContent && !workspaceFiles.readTextFileSnapshot
+              ? { content: prefetchedContent, revision: null }
+              : await readWorkspaceTextFileSnapshot(workspaceFiles, entry.path);
         const content =
           hasUsablePrefetchedContent && prefetchedContent === snapshot.content
             ? prefetchedContent
@@ -496,7 +518,8 @@ export function useWorkbenchDocumentTabs(
           savedContent: content,
           language: detectLanguage(entry.path),
           revision: snapshot.revision,
-          readOnly: options.readOnly === true ? true : undefined,
+          readOnly: options.readOnly === true || readOnlySnapshot ? true : undefined,
+          readOnlySnapshot: readOnlySnapshot ? true : undefined,
         };
 
         if (shouldRecordNavigation) {
@@ -515,9 +538,11 @@ export function useWorkbenchDocumentTabs(
 
         refreshLocalPhpDiagnosticsForContent(document.path, document.content, document.language);
 
-        recordRecentFile({ name: entry.name, path: entry.path });
+        if (!readOnlySnapshot) {
+          recordRecentFile({ name: entry.name, path: entry.path });
+        }
         filePrefetchCacheRef.current.invalidate(entry.path);
-        if (content === "") {
+        if (content === "" && !readOnlySnapshot) {
           scheduleEmptyDocumentRefresh(entry.path);
         }
         clearOpeningFileForRequest();

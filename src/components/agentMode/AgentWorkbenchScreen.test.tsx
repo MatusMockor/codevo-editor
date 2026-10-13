@@ -75,6 +75,8 @@ import {
   externalSessionsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
 import { agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
+import type { AgentOutsideTextFile } from "../../application/agentOutsideLinkedFile";
+import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { PREVIEW_REVEAL_DELAY_MS } from "./useDeferredPreviewReveal";
 import {
   ADD_PROJECT_REFUSED_REASON,
@@ -98,6 +100,7 @@ vi.mock("../../infrastructure/webviewAgentImageSurface", () => ({
 }));
 
 const ROOT_A = "/workspace/app";
+const OUTSIDE_FILE = "/Users/dev/handoffs/oktober/02-cms-slideshow.md";
 const ORDERS_ENTRY = { name: "orders.ts", path: `${ROOT_A}/orders.ts`, kind: "file" as const };
 const ROOT_B = "/workspace/api";
 
@@ -704,6 +707,83 @@ describe("AgentWorkbenchScreen", () => {
     expect(reveals).toEqual([]);
     expect(host.textContent).toContain("Unable to reveal that path in the file manager.");
   });
+
+  it("opens a linked file outside the project from the backend's bounded text as a read-only snapshot", async () => {
+    const { workbench, readOutsideTextFile, snapshots, link } = await renderOutsideLink({
+      kind: "file",
+      canonicalPath: OUTSIDE_FILE,
+      content: "# Handoff\n",
+    });
+
+    await act(async () => link.click());
+
+    const position = { column: 1, lineNumber: 4 };
+    await waitForReact(() => expect(snapshots).toEqual(["# Handoff\n"]));
+    expect(workbench.openProblemNotice).toHaveBeenCalledExactlyOnceWith(
+      {
+        id: `agent-link:${OUTSIDE_FILE}:4:1`,
+        message: OUTSIDE_FILE,
+        navigationTarget: { path: OUTSIDE_FILE, range: { end: position, start: position } },
+        severity: "info",
+        source: "Agent",
+      },
+      { readOnlySnapshot: expect.any(Function), shouldCommit: expect.any(Function) },
+    );
+    expect(readOutsideTextFile).toHaveBeenCalledExactlyOnceWith(OUTSIDE_FILE);
+    expect(host.querySelector(".agent-notice")).toBeNull();
+  });
+
+  it("says a linked outside file is missing instead of refusing it as outside the project", async () => {
+    const { snapshots, link } = await renderOutsideLink({ kind: "doesNotExist" });
+
+    await act(async () => link.click());
+
+    await waitForReact(() =>
+      expect(host.querySelector(".agent-notice")?.textContent).toContain(
+        `${OUTSIDE_FILE} doesn't exist.`,
+      ),
+    );
+    expect(snapshots).toEqual([null]);
+  });
+
+  async function renderOutsideLink(file: AgentOutsideTextFile) {
+    await loadAgentMarkdownRenderer();
+    const agents = surface(ROOT_A);
+    const view = agents.threads[0]!;
+    const turn = view.thread.turns[0]!;
+    const answer = { kind: "assistantText" as const, text: `[handoff](${OUTSIDE_FILE}:4)` };
+    const linked = {
+      ...view,
+      thread: { ...view.thread, turns: [{ ...turn, events: [answer] }] },
+    };
+    const snapshots: Array<string | null> = [];
+    const openProblemNotice: AgentWorkbenchScreenWorkbench["openProblemNotice"] = async (
+      _notice,
+      options,
+    ) => {
+      const snapshot = (await options?.readOnlySnapshot?.()) ?? null;
+      snapshots.push(snapshot);
+      return snapshot !== null && options?.shouldCommit?.() !== false;
+    };
+    const workbench = createWorkbench(ROOT_A, {
+      agents: { ...agents, threads: [linked] },
+      openProblemNotice: vi.fn(openProblemNotice),
+    });
+    const readOutsideTextFile = vi.fn(async (_path: string) => file);
+    act(() =>
+      root.render(
+        <AgentWorkbenchScreen
+          {...defaultProps(workbench)}
+          outsideLinkedFiles={{ readOutsideTextFile }}
+        />,
+      ),
+    );
+    click('[data-thread-id="agt-1"]');
+    const selector = "a.agent-md__link";
+    await waitForReact(() => expect(host.querySelector(selector)).not.toBeNull());
+    const link = host.querySelector<HTMLAnchorElement>(selector)!;
+    return { workbench, readOutsideTextFile, snapshots, link };
+  }
 
   describe("project switcher with background workspace tabs", () => {
     const EDITOR = "/Users/dev/Developer/editor";

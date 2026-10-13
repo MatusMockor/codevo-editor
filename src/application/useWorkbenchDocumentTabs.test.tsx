@@ -29,6 +29,12 @@ import {
   type WorkbenchDocumentTabsDependencies,
 } from "./useWorkbenchDocumentTabs";
 import { useEditorSessionState, type EditorSessionState } from "./useEditorSessionState";
+import type { AgentLocalFileOpenOutcome } from "../domain/agentMarkdown/agentLocalFileLinkFailure";
+import {
+  openOutsideLinkedFile,
+  type AgentOutsideLinkedFileOpening,
+  type AgentOutsideTextFile,
+} from "./agentOutsideLinkedFile";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -405,6 +411,471 @@ describe("useWorkbenchDocumentTabs", () => {
       readOnly: true,
     });
     harness.unmount();
+  });
+
+  describe("read-only snapshot opens", () => {
+    const OUTSIDE = "/Users/me/handoffs/02-cms-slideshow.md";
+    const snapshotOptions = (read: () => Promise<string | null>) => ({
+      readOnlySnapshot: read,
+      recordNavigation: false,
+    });
+
+    it("opens the supplied text read-only without reading the path or recording a recent file", async () => {
+      const readText = vi.fn(async () => "read by path");
+      const read = vi.fn(async () => "# Handoff");
+      const harness = renderHarness({ readText });
+
+      let opened = false;
+      await act(async () => {
+        opened = await harness.api().openFile(entry(OUTSIDE), snapshotOptions(read));
+      });
+
+      expect(opened).toBe(true);
+      expect(read).toHaveBeenCalledOnce();
+      expect(readText).not.toHaveBeenCalled();
+      expect(harness.state().documents[OUTSIDE]).toMatchObject({
+        content: "# Handoff",
+        savedContent: "# Handoff",
+        readOnly: true,
+        revision: null,
+      });
+      expect(harness.state().activePath).toBe(OUTSIDE);
+      expect(harness.recordRecentFile).not.toHaveBeenCalled();
+      expect(harness.state().isOpeningFile).toBe(false);
+      harness.unmount();
+    });
+
+    it("never re-reads an empty snapshot by path, on open or on a later activation", async () => {
+      vi.useFakeTimers();
+      const readText = vi.fn(async () => "grown after the bounded read");
+      const reopen = vi.fn(async () => "second read");
+      const harness = renderHarness({ readText });
+
+      await act(async () => {
+        await harness.api().openFile(
+          entry(OUTSIDE),
+          snapshotOptions(async () => ""),
+        );
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      await act(async () => {
+        await harness.api().openFile(entry(OUTSIDE), snapshotOptions(reopen));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      vi.useRealTimers();
+
+      expect(readText).not.toHaveBeenCalled();
+      expect(reopen).not.toHaveBeenCalled();
+      expect(harness.state().documents[OUTSIDE]).toMatchObject({ content: "", readOnly: true });
+      expect(harness.recordRecentFile).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("keeps an empty snapshot from a later plain open of the same path that would re-read it", async () => {
+      vi.useFakeTimers();
+      const readText = vi.fn(async () => "changed on disk after the bounded read");
+      const harness = renderHarness({ readText });
+
+      await act(async () => {
+        await harness.api().openFile(entry(OUTSIDE), {
+          ...snapshotOptions(async () => ""),
+          pin: true,
+        });
+      });
+      let reopened = false;
+      await act(async () => {
+        reopened = await harness.api().openFile(entry(OUTSIDE));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      vi.useRealTimers();
+
+      expect(reopened).toBe(true);
+      expect(readText).not.toHaveBeenCalled();
+      expect(harness.state().documents[OUTSIDE]).toMatchObject({
+        content: "",
+        savedContent: "",
+        readOnly: true,
+        readOnlySnapshot: true,
+      });
+      expect(harness.recordRecentFile).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("does not let a refresh scheduled for an earlier empty document rewrite a snapshot", async () => {
+      vi.useFakeTimers();
+      const readText = vi.fn(async () => "");
+      const harness = renderHarness({ readText });
+
+      await act(async () => {
+        await harness.api().openFile(entry(OUTSIDE));
+      });
+      harness.mutateDocuments((documents) => ({
+        ...documents,
+        [OUTSIDE]: { ...document(OUTSIDE, ""), readOnly: true, readOnlySnapshot: true },
+      }));
+      readText.mockResolvedValue("grown on disk");
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      vi.useRealTimers();
+
+      expect(harness.state().documents[OUTSIDE]).toMatchObject({ content: "", savedContent: "" });
+      harness.unmount();
+    });
+
+    it("keeps a snapshot out of recent files when its tab is activated again", async () => {
+      const other = `${ROOT_A}/other.ts`;
+      const harness = renderHarness({ readText: async () => "other" });
+
+      await act(async () => {
+        await harness.api().openFile(entry(OUTSIDE), {
+          ...snapshotOptions(async () => "# Handoff"),
+          pin: true,
+        });
+      });
+      await act(async () => {
+        await harness.api().openPinnedFile(entry(other));
+      });
+      act(() => harness.api().activateDocument(OUTSIDE));
+
+      expect(harness.state().activePath).toBe(OUTSIDE);
+      expect(harness.recordRecentFile.mock.calls.map(([recent]) => recent.path)).toEqual([other]);
+
+      act(() => harness.api().activateDocument(other));
+
+      expect(harness.recordRecentFile.mock.calls.map(([recent]) => recent.path)).toEqual([
+        other,
+        other,
+      ]);
+      harness.unmount();
+    });
+
+    it("activates an already-open dirty document as it is instead of replacing or locking it", async () => {
+      const path = `${ROOT_A}/packages/web/App.tsx`;
+      const other = `${ROOT_A}/other.ts`;
+      const read = vi.fn(async () => "content from disk");
+      const harness = renderHarness({
+        activePath: other,
+        documents: {
+          [other]: document(other, "other"),
+          [path]: document(path, "unsaved edit", "saved"),
+        },
+        openPaths: [other, path],
+      });
+
+      let opened = false;
+      await act(async () => {
+        opened = await harness
+          .api()
+          .openFile(entry(path), { ...snapshotOptions(read), readOnly: true });
+      });
+
+      expect(opened).toBe(true);
+      expect(read).not.toHaveBeenCalled();
+      expect(harness.state().activePath).toBe(path);
+      expect(harness.state().documents[path]).toMatchObject({
+        content: "unsaved edit",
+        savedContent: "saved",
+      });
+      expect(harness.state().documents[path]?.readOnly).toBeUndefined();
+      expect(harness.recordRecentFile).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("opens nothing and reports nothing when the reader declines", async () => {
+      const harness = renderHarness();
+
+      let opened = true;
+      await act(async () => {
+        opened = await harness.api().openFile(
+          entry(OUTSIDE),
+          snapshotOptions(async () => null),
+        );
+      });
+
+      expect(opened).toBe(false);
+      expect(harness.state().documents).toEqual({});
+      expect(harness.state().isOpeningFile).toBe(false);
+      expect(harness.reportError).not.toHaveBeenCalled();
+      expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("opens text whose name looks like an image without the image reader", async () => {
+      const readImage = vi.fn(async () => ({ base64: "AAAA", byteLength: 4 }));
+      const harness = renderHarness({ readImage });
+      const path = "/Users/me/notes.png";
+
+      await act(async () => {
+        await harness.api().openFile(
+          entry(path),
+          snapshotOptions(async () => "plain text"),
+        );
+      });
+
+      expect(readImage).not.toHaveBeenCalled();
+      expect(harness.state().documents[path]).toMatchObject({ content: "plain text" });
+      expect(harness.state().imageTabs).toEqual({});
+      harness.unmount();
+    });
+
+    it("refuses a path owned by an inactive workspace tab before reading", async () => {
+      const read = vi.fn(async () => "foreign");
+      const harness = renderHarness();
+
+      let opened = true;
+      await act(async () => {
+        opened = await harness.api().openFile(entry(`${ROOT_B}/src/a.ts`), snapshotOptions(read));
+      });
+
+      expect(opened).toBe(false);
+      expect(read).not.toHaveBeenCalled();
+      expect(harness.state().documents).toEqual({});
+      harness.unmount();
+    });
+
+    it("drops the text after a workspace switch, an owner replacement or a newer open", async () => {
+      const switched = deferred<string | null>();
+      const switchHarness = renderHarness();
+      const switchOpen = switchHarness.api().openFile(
+        entry(OUTSIDE),
+        snapshotOptions(() => switched.promise),
+      );
+      switchHarness.currentWorkspaceRootRef().current = ROOT_B;
+      await act(async () => switched.resolve("stale"));
+      await expect(switchOpen).resolves.toBe(false);
+      expect(switchHarness.state().documents).toEqual({});
+      switchHarness.unmount();
+
+      const replaced = deferred<string | null>();
+      const ownerHarness = renderHarness();
+      const ownerOpen = ownerHarness.api().openFile(
+        entry(OUTSIDE),
+        snapshotOptions(() => replaced.promise),
+      );
+      ownerHarness.replaceWorkspaceRuntimeOwner(
+        createWorkspaceRuntimeOwner("workspace-a-replacement", ROOT_A),
+      );
+      await act(async () => replaced.resolve("stale"));
+      await expect(ownerOpen).resolves.toBe(false);
+      expect(ownerHarness.state().documents).toEqual({});
+      ownerHarness.unmount();
+
+      const superseded = deferred<string | null>();
+      const newerHarness = renderHarness({ readText: async () => "newer" });
+      const olderOpen = newerHarness.api().openFile(
+        entry(OUTSIDE),
+        snapshotOptions(() => superseded.promise),
+      );
+      await act(async () => {
+        await newerHarness.api().openFile(entry(`${ROOT_A}/newer.ts`));
+      });
+      await act(async () => superseded.resolve("stale"));
+      await expect(olderOpen).resolves.toBe(false);
+      expect(Object.keys(newerHarness.state().documents)).toEqual([`${ROOT_A}/newer.ts`]);
+      newerHarness.unmount();
+    });
+
+    it("lets an exact commit guard reject same-id A1 to B to A2 before the snapshot commits", async () => {
+      const read = deferred<string | null>();
+      const harness = renderHarness();
+      const ownerA1 = harness.currentWorkspaceRuntimeOwnerRef().current;
+      const opening = harness.api().openFile(entry(OUTSIDE), {
+        ...snapshotOptions(() => read.promise),
+        shouldCommit: () => harness.currentWorkspaceRuntimeOwnerRef().current === ownerA1,
+      });
+
+      harness.replaceWorkspaceRuntimeOwner(createWorkspaceRuntimeOwner("workspace-b", ROOT_A));
+      harness.replaceWorkspaceRuntimeOwner(createWorkspaceRuntimeOwner("workspace-a", ROOT_A));
+      await act(async () => read.resolve("stale reopen"));
+
+      await expect(opening).resolves.toBe(false);
+      expect(harness.state().documents).toEqual({});
+      harness.unmount();
+    });
+  });
+
+  describe("agent links to files outside the thread checkout", () => {
+    const OUTSIDE = "/Users/me/handoffs/02-cms-slideshow.md";
+
+    function linkOpening(
+      harness: ReturnType<typeof renderHarness>,
+      file: AgentOutsideTextFile,
+      isCurrent: () => boolean = () => true,
+    ) {
+      const readOutsideTextFile = vi.fn(async (_path: string) => file);
+      const opening: AgentOutsideLinkedFileOpening = {
+        outsideFiles: { readOutsideTextFile },
+        directories: {},
+        workspace: () => ({ root: ROOT_A, tabs: [ROOT_A, ROOT_B] }),
+        isCurrent,
+        open: (path) =>
+          harness.api().openFile(entry(path), { recordNavigation: false, shouldCommit: isCurrent }),
+        openSnapshot: (path, read) =>
+          harness.api().openFile(entry(path), {
+            readOnlySnapshot: read,
+            recordNavigation: false,
+            shouldCommit: isCurrent,
+          }),
+      };
+      return { opening, readOutsideTextFile };
+    }
+
+    it("opens an outside file read-only from the bounded read and keeps it out of recent files", async () => {
+      const readText = vi.fn(async () => "read by path");
+      const harness = renderHarness({ readText });
+      const link = linkOpening(harness, {
+        kind: "file",
+        canonicalPath: OUTSIDE,
+        content: "# Handoff",
+      });
+
+      let outcome: AgentLocalFileOpenOutcome = "failed";
+      await act(async () => {
+        outcome = await openOutsideLinkedFile(OUTSIDE, link.opening);
+      });
+
+      expect(outcome).toBe("opened");
+      expect(harness.state().documents[OUTSIDE]).toMatchObject({
+        content: "# Handoff",
+        readOnly: true,
+      });
+      expect(readText).not.toHaveBeenCalled();
+      expect(harness.recordRecentFile).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("keeps an open dirty workspace file editable and dirty when a link outside the thread root targets it", async () => {
+      const path = `${ROOT_A}/packages/web/App.tsx`;
+      const harness = renderHarness({
+        activePath: path,
+        documents: { [path]: document(path, "unsaved edit", "saved") },
+        openPaths: [path],
+      });
+      const link = linkOpening(harness, { kind: "file", canonicalPath: path, content: "saved" });
+
+      let outcome: AgentLocalFileOpenOutcome = "failed";
+      await act(async () => {
+        outcome = await openOutsideLinkedFile(path, link.opening);
+      });
+
+      expect(outcome).toBe("opened");
+      expect(link.readOutsideTextFile).not.toHaveBeenCalled();
+      expect(harness.state().documents[path]).toMatchObject({
+        content: "unsaved edit",
+        savedContent: "saved",
+      });
+      expect(harness.state().documents[path]?.readOnly).toBeUndefined();
+      harness.unmount();
+    });
+
+    it("opens a not-yet-open workspace file editable through the workspace read", async () => {
+      const path = `${ROOT_A}/packages/web/App.tsx`;
+      const readText = vi.fn(async () => "from the workspace");
+      const harness = renderHarness({ readText });
+      const link = linkOpening(harness, { kind: "file", canonicalPath: path, content: "bounded" });
+
+      await act(async () => {
+        await openOutsideLinkedFile(path, link.opening);
+      });
+
+      expect(link.readOutsideTextFile).not.toHaveBeenCalled();
+      expect(harness.state().documents[path]).toMatchObject({ content: "from the workspace" });
+      expect(harness.state().documents[path]?.readOnly).toBeUndefined();
+      harness.unmount();
+    });
+
+    it("keeps an outside document that is already open editable as it is", async () => {
+      const harness = renderHarness({ readText: async () => "saved" });
+      await act(async () => {
+        await harness.api().openFile(entry(OUTSIDE));
+      });
+      harness.mutateDocuments((documents) => ({
+        ...documents,
+        [OUTSIDE]: document(OUTSIDE, "typed", "saved"),
+      }));
+      const link = linkOpening(harness, { kind: "doesNotExist" });
+
+      let outcome: AgentLocalFileOpenOutcome = "failed";
+      await act(async () => {
+        outcome = await openOutsideLinkedFile(OUTSIDE, link.opening);
+      });
+
+      expect(outcome).toBe("opened");
+      expect(link.readOutsideTextFile).not.toHaveBeenCalled();
+      expect(harness.state().documents[OUTSIDE]).toMatchObject({ content: "typed" });
+      expect(harness.state().documents[OUTSIDE]?.readOnly).toBeUndefined();
+      harness.unmount();
+    });
+
+    it("opens nothing for a missing outside file and reports no workbench error", async () => {
+      const harness = renderHarness();
+      const link = linkOpening(harness, { kind: "doesNotExist" });
+
+      let outcome: AgentLocalFileOpenOutcome = "opened";
+      await act(async () => {
+        outcome = await openOutsideLinkedFile(OUTSIDE, link.opening);
+      });
+
+      expect(outcome).toBe("doesNotExist");
+      expect(harness.state().documents).toEqual({});
+      expect(harness.reportError).not.toHaveBeenCalled();
+      expect(harness.reportErrorForActiveWorkspaceRoot).not.toHaveBeenCalled();
+      harness.unmount();
+    });
+
+    it("supersedes the open when the live workspace root flipped before the screen rerendered", async () => {
+      const harness = renderHarness();
+      const link = linkOpening(harness, {
+        kind: "file",
+        canonicalPath: OUTSIDE,
+        content: "# Handoff",
+      });
+      link.readOutsideTextFile.mockImplementationOnce(async () => {
+        harness.currentWorkspaceRootRef().current = ROOT_B;
+        return { kind: "file", canonicalPath: OUTSIDE, content: "# Handoff" };
+      });
+
+      let outcome: AgentLocalFileOpenOutcome = "opened";
+      await act(async () => {
+        outcome = await openOutsideLinkedFile(OUTSIDE, link.opening);
+      });
+
+      expect(outcome).toBe("superseded");
+      expect(harness.state().documents).toEqual({});
+      harness.unmount();
+    });
+
+    it("supersedes the open after A to B to A when the click's authority no longer holds", async () => {
+      const harness = renderHarness();
+      const authority = { current: true };
+      const link = linkOpening(
+        harness,
+        { kind: "file", canonicalPath: OUTSIDE, content: "# Handoff" },
+        () => authority.current,
+      );
+      link.readOutsideTextFile.mockImplementationOnce(async () => {
+        harness.currentWorkspaceRootRef().current = ROOT_B;
+        harness.currentWorkspaceRootRef().current = ROOT_A;
+        authority.current = false;
+        return { kind: "file", canonicalPath: OUTSIDE, content: "# Handoff" };
+      });
+
+      let outcome: AgentLocalFileOpenOutcome = "opened";
+      await act(async () => {
+        outcome = await openOutsideLinkedFile(OUTSIDE, link.opening);
+      });
+
+      expect(outcome).toBe("superseded");
+      expect(harness.state().documents).toEqual({});
+      harness.unmount();
+    });
   });
 
   it("invalidates a loading Git diff when an ordinary tab is activated", async () => {

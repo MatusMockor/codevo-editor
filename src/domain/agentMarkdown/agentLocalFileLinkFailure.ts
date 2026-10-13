@@ -1,10 +1,24 @@
 export const MAX_AGENT_LINK_NOTICE_PATH_CHARS = 96;
 export const MAX_AGENT_LINK_NOTICE_PLACE_CHARS = 48;
+export const MAX_AGENT_OUTSIDE_LINKED_FILE_BYTES = 10 * 1_024 * 1_024;
 
-export type AgentLocalFileOpenOutcome = "opened" | "notFound" | "unreadable" | "failed";
+const OUTSIDE_LINKED_FILE_LIMIT = `${MAX_AGENT_OUTSIDE_LINKED_FILE_BYTES / (1_024 * 1_024)} MB`;
+
+export type AgentOutsideFileRefusal =
+  | "doesNotExist"
+  | "folder"
+  | "specialFile"
+  | "tooLarge"
+  | "notText"
+  | "notLocal"
+  | "otherProject"
+  | "busy";
+
+export type AgentLocalFileOpenOutcome =
+  "opened" | "superseded" | "notFound" | "unreadable" | "failed" | AgentOutsideFileRefusal;
 
 export type AgentLocalFileLinkFailureKind =
-  | Exclude<AgentLocalFileOpenOutcome, "opened">
+  | Exclude<AgentLocalFileOpenOutcome, "opened" | "superseded">
   | "outsideProject"
   | "serverAbsolutePath"
   | "checkoutFolder"
@@ -55,6 +69,22 @@ export function agentLocalFileLinkFailureMessage(failure: AgentLocalFileLinkFail
       return `${path} exists but couldn't be read.`;
     case "failed":
       return `${path} couldn't be opened.`;
+    case "doesNotExist":
+      return `${path} doesn't exist.`;
+    case "folder":
+      return `${path} is a folder, not a file.`;
+    case "specialFile":
+      return `${path} isn't a regular file, so it wasn't opened.`;
+    case "tooLarge":
+      return `${path} is larger than ${OUTSIDE_LINKED_FILE_LIMIT}, so it wasn't opened.`;
+    case "notText":
+      return `${path} isn't a text file, so it wasn't opened.`;
+    case "notLocal":
+      return `${path} is on a network or offloaded volume, so it wasn't opened.`;
+    case "otherProject":
+      return `${path} belongs to another open project, so it wasn't opened here.`;
+    case "busy":
+      return `Another linked file is still being read, so ${path} wasn't opened. Try again.`;
     case "serverAbsolutePath":
       return `Server threads can only open files inside ${place}, so ${path} wasn't opened.`;
     case "checkoutFolder":
@@ -78,10 +108,18 @@ export function agentLocalFileLinkFailureRemembered(kind: AgentLocalFileLinkFail
     case "outsideProject":
     case "unreadable":
     case "failed":
+    case "doesNotExist":
+    case "folder":
+    case "specialFile":
+    case "tooLarge":
+    case "notText":
+    case "notLocal":
+    case "otherProject":
     case "serverAbsolutePath":
     case "checkoutFolder":
     case "notRegularFile":
       return true;
+    case "busy":
     case "unsavedChanges":
     case "saveInProgress":
     case "filesUnavailable":

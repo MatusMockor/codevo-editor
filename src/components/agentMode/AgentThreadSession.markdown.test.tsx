@@ -443,24 +443,39 @@ describe("AgentThreadSession markdown", () => {
       root: ROOT,
     });
 
+    open.mockResolvedValueOnce("doesNotExist");
     expect(clickAt(2).defaultPrevented).toBe(true);
     await act(async () => undefined);
-    expect(open).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledTimes(3);
+    expect(open).toHaveBeenLastCalledWith({
+      location: { path: "/etc/passwd", line: null, column: null },
+      root: null,
+    });
     expect(report).toHaveBeenCalledExactlyOnceWith({
-      kind: "outsideProject",
+      kind: "doesNotExist",
       path: "/etc/passwd",
       place: { kind: "project", label: "app" },
     });
-    const refused = host.querySelectorAll<HTMLAnchorElement>("a.agent-md__link")[2];
-    expect(refused?.getAttribute("data-agent-link-state")).toBe("unavailable");
-    expect(refused?.title).toBe("/etc/passwd is outside this project (app), so it wasn't opened.");
+    const missing = host.querySelectorAll<HTMLAnchorElement>("a.agent-md__link")[2];
+    expect(missing?.getAttribute("data-agent-link-state")).toBe("unavailable");
+    expect(missing?.title).toBe("/etc/passwd doesn't exist.");
     expect(
       host.querySelectorAll<HTMLAnchorElement>("a.agent-md__link")[1]?.hasAttribute("title"),
     ).toBe(false);
 
+    clickAt(2);
+    await act(async () => undefined);
+    expect(open).toHaveBeenCalledTimes(4);
+    expect(report).toHaveBeenCalledOnce();
+    expect(
+      host
+        .querySelectorAll<HTMLAnchorElement>("a.agent-md__link")[2]
+        ?.hasAttribute("data-agent-link-state"),
+    ).toBe(false);
+
     clickAt(3);
     expect(openExternalLink).toHaveBeenCalledExactlyOnceWith("https://example.com/docs");
-    expect(open).toHaveBeenCalledTimes(2);
+    expect(open).toHaveBeenCalledTimes(4);
   });
 
   it("re-renders only the streaming message when a chunk arrives", () => {

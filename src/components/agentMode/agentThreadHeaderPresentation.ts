@@ -117,9 +117,13 @@ export function agentControlTooltip(label: string, shortcut: string): string {
   return `${label} (${glyphs})`;
 }
 
+export function isAgentRevealPathBounded(path: string): boolean {
+  if (path === "" || path.includes("\u0000")) return false;
+  return new TextEncoder().encode(path).length <= MAX_AGENT_REVEAL_PATH_BYTES;
+}
+
 export function agentRevealRootForPath(path: string, roots: ReadonlyArray<string>): string | null {
-  if (path === "" || path.includes("\u0000")) return null;
-  if (new TextEncoder().encode(path).length > MAX_AGENT_REVEAL_PATH_BYTES) return null;
+  if (!isAgentRevealPathBounded(path)) return null;
   const candidate = normalizeRevealPath(path);
   const matches = roots
     .map(normalizeRevealPath)

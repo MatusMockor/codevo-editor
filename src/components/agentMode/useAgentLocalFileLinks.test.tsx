@@ -38,6 +38,16 @@ it("has no port without an editor opener", () => {
   view.unmount();
 });
 
+it("passes a request without a containing root through unchanged", async () => {
+  const opener = vi.fn<AgentFileLocationOpener>().mockResolvedValueOnce("opened");
+  const view = probe(opener, []);
+  const outside = { location: { path: "/tmp/handoff.md", line: null, column: null }, root: null };
+
+  await expect(view.port?.open(outside)).resolves.toBe("opened");
+  expect(opener).toHaveBeenCalledExactlyOnceWith(outside);
+  view.unmount();
+});
+
 it("passes the open outcome through without reporting anything itself", async () => {
   const notices: AgentTasksNotice[] = [];
   const opener = vi.fn<AgentFileLocationOpener>().mockResolvedValueOnce("notFound");
@@ -56,6 +66,7 @@ it("reports each failure as a calm, specific, dismissible notice", () => {
   act(() => view.port?.report(agentLocalFileLinkFailure("notFound", "src/env.ts", EDITOR)));
   act(() => view.port?.report(agentLocalFileLinkFailure("outsideProject", "/etc/hosts", EDITOR)));
   act(() => view.port?.report(agentLocalFileLinkFailure("unreadable", "src/key.pem", EDITOR)));
+  act(() => view.port?.report(agentLocalFileLinkFailure("doesNotExist", "/tmp/gone.md", EDITOR)));
 
   expect(notices).toEqual([
     { kind: "info", message: "src/env.ts isn't in this project (editor).", action: null },
@@ -65,6 +76,7 @@ it("reports each failure as a calm, specific, dismissible notice", () => {
       action: null,
     },
     { kind: "info", message: "src/key.pem exists but couldn't be read.", action: null },
+    { kind: "info", message: "/tmp/gone.md doesn't exist.", action: null },
   ]);
   view.unmount();
 });

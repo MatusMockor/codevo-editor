@@ -24,16 +24,24 @@ import { shouldOpenPhpNavigationTargetReadOnly } from "../domain/phpNavigationTa
 import type { RecentFileEntry } from "../domain/recentFiles";
 import type { QuickOpenLocation } from "../domain/quickOpenQuery";
 import { canFinalizeNavigation, canNavigate, type NavigationRequest } from "./navigationRequest";
+import type { ReadOnlySnapshotReader } from "./useWorkbenchDocumentTabs";
 
 interface OpenNavigationOptions {
   readOnly?: boolean;
+  readOnlySnapshot?: ReadOnlySnapshotReader;
   shouldCommit?: () => boolean;
   shouldFinalize?: () => boolean;
 }
 
 interface OpenFileOptions {
   readOnly?: boolean;
+  readOnlySnapshot?: ReadOnlySnapshotReader;
   recordNavigation?: boolean;
+  shouldCommit?: () => boolean;
+}
+
+export interface OpenProblemNoticeOptions {
+  readOnlySnapshot?: ReadOnlySnapshotReader;
   shouldCommit?: () => boolean;
 }
 
@@ -70,7 +78,10 @@ export interface WorkbenchNavigation {
     request?: NavigationRequest,
   ) => Promise<boolean>;
   openPathForNavigation: (path: string, options?: OpenNavigationOptions) => Promise<boolean>;
-  openProblemNotice: (notice: WorkbenchNotice) => Promise<boolean>;
+  openProblemNotice: (
+    notice: WorkbenchNotice,
+    options?: OpenProblemNoticeOptions,
+  ) => Promise<boolean>;
   openRecentFile: (entry: RecentFileEntry) => Promise<void>;
   openCurrentFileLocation: (location: QuickOpenLocation) => void;
   openSearchResult: (result: FileSearchResult, location?: QuickOpenLocation) => Promise<boolean>;
@@ -266,6 +277,7 @@ export function useWorkbenchNavigation(
         {
           readOnly,
           recordNavigation: false,
+          ...(options.readOnlySnapshot ? { readOnlySnapshot: options.readOnlySnapshot } : {}),
           ...(options.shouldCommit ? { shouldCommit: options.shouldCommit } : {}),
         },
       );
@@ -325,14 +337,14 @@ export function useWorkbenchNavigation(
   );
 
   const openProblemNotice = useCallback(
-    async (notice: WorkbenchNotice) => {
+    async (notice: WorkbenchNotice, options: OpenProblemNoticeOptions = {}) => {
       const target = notice.navigationTarget;
 
       if (!target) {
         return false;
       }
 
-      return openNavigationTarget(target.path, target.range.start, "problem");
+      return openNavigationTarget(target.path, target.range.start, "problem", options);
     },
     [openNavigationTarget],
   );

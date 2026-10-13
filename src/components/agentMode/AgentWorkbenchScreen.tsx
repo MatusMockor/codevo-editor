@@ -123,9 +123,10 @@ import {
   type AgentWorkbenchChrome,
   type AgentWorkbenchThreadActivityChrome,
 } from "./agentWorkbenchChrome";
-import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 import { openThenRevealFiles } from "./openThenRevealFiles";
-import { openOrClassifyLinkedFile } from "../../application/agentLinkedFileProbe";
+import type { AgentOutsideTextFilePort } from "../../application/agentOutsideLinkedFile";
+import { TauriAgentLinkedFileGateway } from "../../infrastructure/tauriAgentLinkedFileGateway";
+import { useAgentLinkedFileOpener } from "./useAgentLinkedFileOpener";
 import { revealingFileOpeners } from "../editorPanel/revealingFileOpeners";
 import { useEditorSurfaceReveal } from "../editorPanel/useEditorSurfaceReveal";
 
@@ -200,6 +201,7 @@ export interface AgentWorkbenchScreenProps {
   readonly sessionRestore?: AgentSessionRestorePorts;
   readonly newThreadPicker?: AgentNewThreadPicker | null;
   readonly revealPathGateway?: RevealPathGateway;
+  readonly outsideLinkedFiles?: AgentOutsideTextFilePort;
   readonly directoryListingGateway?: DirectoryListingGateway;
   readonly localCloneGateway?: LocalProjectCloneGateway | null;
   readonly rightPanelGateways?: AgentRightPanelGateways;
@@ -211,6 +213,7 @@ export interface AgentWorkbenchScreenProps {
 export { ADD_PROJECT_REFUSED_REASON } from "./useAgentWorkbenchProjectOpening";
 export const SEARCH_FILES_COMMAND = "file.quickOpen";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
+const DEFAULT_OUTSIDE_LINKED_FILES: AgentOutsideTextFilePort = new TauriAgentLinkedFileGateway();
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
 const DEFAULT_LOCAL_CLONE_GATEWAY = new TauriLocalProjectCloneGateway();
@@ -253,6 +256,7 @@ export function AgentWorkbenchScreen({
   onResizeRightPanelStart,
   onTrustWorkspace,
   revealPathGateway = DEFAULT_REVEAL_PATH_GATEWAY,
+  outsideLinkedFiles = DEFAULT_OUTSIDE_LINKED_FILES,
   rightPanelGateways: injectedRightPanelGateways,
   fileSearch = UNAVAILABLE_AGENT_FILE_SEARCH,
   terminalGateway,
@@ -553,25 +557,18 @@ export function AgentWorkbenchScreen({
     [openProblemNotice, revealEditorSurface],
   );
 
-  const openFileLocation = useCallback<AgentFileLocationOpener>(
-    ({ location, root }) => {
-      const position = { column: location.column ?? 1, lineNumber: location.line ?? 1 };
-      const open = () =>
-        openThenRevealFiles(
-          () =>
-            openProblemNotice({
-              id: `agent-link:${location.path}:${position.lineNumber}:${position.column}`,
-              message: location.path,
-              navigationTarget: { path: location.path, range: { end: position, start: position } },
-              severity: "info",
-              source: "Agent",
-            }),
-          revealEditorSurface,
-        );
-      return openOrClassifyLinkedFile(open, location.path, root, files);
+  const openFileLocation = useAgentLinkedFileOpener({
+    files,
+    outsideFiles: outsideLinkedFiles,
+    workspace: {
+      root: workspaceRoot,
+      tabs: appSettings.workspaceTabs,
+      workspaceId,
+      admissionToken,
     },
-    [files, openProblemNotice, revealEditorSurface],
-  );
+    openProblemNotice,
+    revealEditorSurface,
+  });
 
   const localCloneSession = useRef<LocalProjectCloneSession["current"]>(null);
   const remoteCloneSession = useRef<RemoteAddProjectSession["current"]>(null);

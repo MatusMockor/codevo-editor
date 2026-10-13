@@ -271,6 +271,7 @@ export interface EditorDocument {
   language: string;
   revision?: WorkspaceFileRevision | null;
   readOnly?: boolean;
+  readOnlySnapshot?: boolean;
 }
 
 export interface ImageTab {
