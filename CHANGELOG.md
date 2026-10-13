@@ -7,6 +7,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.115] - 2026-10-13
+
+### Fixed
+
+- macOS release checks no longer fail while verifying that stalled or closed runner
+  connections have released their sockets.
+
 ## [0.2.0-beta.114] - 2026-10-13
 
 ### Added
