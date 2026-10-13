@@ -7,6 +7,26 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.114] - 2026-10-13
+
+### Added
+
+- Links in trusted local agent conversations to text files outside the project open as
+  read-only tabs. Files larger than 10 MB, non-text files, and files belonging to
+  another open project are refused with a clear reason.
+
+### Changed
+
+- MCP servers supplied by plugins are grouped under **From plugins** in Settings.
+
+### Fixed
+
+- Plugin HTTP and SSE MCP servers offer sign-in and sign-out actions when supported.
+  Ordinary Codex MCP servers can be removed from Settings.
+- Moving a new conversation to a server with **Run on** keeps it in the matching
+  trusted checkout of its project's repository when there is exactly one eligible
+  checkout, even if that checkout is displayed separately.
+
 ## [0.2.0-beta.113] - 2026-10-13
 
 ### Changed
