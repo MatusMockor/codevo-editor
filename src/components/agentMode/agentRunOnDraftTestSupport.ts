@@ -17,16 +17,18 @@ import {
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
 import type { AgentImageSurfacePort } from "../../domain/agentImageShrink";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import type { AgentProjectGroupingSettings } from "../../domain/agentProjectGrouping";
 import type {
   RemoteRunnerGateway,
   RemoteRunnerServer,
   RemoteRunnerTask,
 } from "../../domain/remoteRunner";
-import { environmentComposerScope, groupedEnvironmentProjects } from "./agentEnvironmentProjects";
+import { groupedEnvironmentProjects } from "./agentEnvironmentProjects";
 import { agentProjectGroups } from "./agentModePresentation";
 import { SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import { useAgentComposerState, type AgentComposerState } from "./useAgentComposerState";
+import { useAgentDraftEnvironment } from "./useAgentDraftEnvironment";
 import { useAgentThreadNavigation, type AgentThreadNavigation } from "./useAgentThreadNavigation";
 
 export const RUN_ON_SERVER: RemoteRunnerServer = {
@@ -53,6 +55,8 @@ export const RUN_ON_SECOND_ROOT = remoteAgentProjectKey("second", "runner", "pro
 
 export interface RunOnDraftOptions {
   readonly links?: ReadonlyMap<string, string>;
+  readonly repositoryIdentities?: ReadonlyMap<string, string>;
+  readonly grouping?: AgentProjectGroupingSettings;
   readonly localProjects?: ReadonlyArray<AgentProjectDescriptor>;
   readonly remoteProjects?: Readonly<Record<string, ReadonlyArray<string>>>;
   readonly servers?: ReadonlyArray<RemoteRunnerServer>;
@@ -236,6 +240,7 @@ export async function setupRunOnDraft(options: RunOnDraftOptions = {}) {
   const drafts = options.drafts ?? createAgentComposerDraftStore();
   let servers = options.servers ?? [RUN_ON_SERVER];
   const links = options.links ?? new Map<string, string>();
+  const repositoryIdentities = options.repositoryIdentities ?? new Map<string, string>();
   const startLocalThread = vi.fn<AgentThreadsSurface["startThread"]>(async () => ({
     threadId: "agt-started",
   }));
@@ -296,7 +301,14 @@ export async function setupRunOnDraft(options: RunOnDraftOptions = {}) {
       [agents.orphanedWorktrees, agents.threads, allProjects],
     );
     const groups = useMemo(
-      () => groupedEnvironmentProjects(executionGroups, allProjects, links),
+      () =>
+        groupedEnvironmentProjects(
+          executionGroups,
+          allProjects,
+          links,
+          repositoryIdentities,
+          options.grouping,
+        ),
       [executionGroups, allProjects],
     );
     const navigation = useAgentThreadNavigation({
@@ -309,28 +321,16 @@ export async function setupRunOnDraft(options: RunOnDraftOptions = {}) {
     const navigatedThreadId = navigation.selectedThreadId;
     useLayoutEffect(() => setSelectedThreadId(navigatedThreadId), [navigatedThreadId]);
     const selectedThread = navigation.selectedThread;
-    const composerScope = useMemo(
-      () =>
-        selectedThread === null
-          ? environmentComposerScope(
-              navigation.composerScope,
-              groups,
-              allProjects,
-              selectedServerId,
-            )
-          : navigation.composerScope,
-      [selectedThread, navigation.composerScope, groups, allProjects, selectedServerId],
-    );
-    const composerProjects = useMemo(() => {
-      if (selectedThread !== null) return allProjects;
-      const prefix =
-        selectedServerId === null ? null : `remote:${encodeURIComponent(selectedServerId)}:`;
-      return allProjects.filter((project) =>
-        prefix === null
-          ? !project.rootKey.startsWith("remote:")
-          : project.rootKey.startsWith(prefix),
-      );
-    }, [allProjects, selectedServerId, selectedThread]);
+    const { scope: composerScope, projects: composerProjects } = useAgentDraftEnvironment({
+      scope: navigation.composerScope,
+      selectedThread,
+      groups,
+      projects: allProjects,
+      displayProjects: allProjects,
+      selectedServerId,
+      repositoryIdentities,
+      projectLinks: links,
+    });
     const composer = useAgentComposerState({
       agents,
       drafts,

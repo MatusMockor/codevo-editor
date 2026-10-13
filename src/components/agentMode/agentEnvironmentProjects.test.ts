@@ -403,4 +403,304 @@ describe("project grouping modes", () => {
     });
     expect(remoteView.thread.owner.rootKey).toBe(remoteKey);
   });
+
+  it("routes a separately displayed project to the only checkout of its repository and back", () => {
+    const known = new Map(projects.map((project) => [project.rootKey, identity]));
+    const separate = groupedEnvironmentProjects(
+      source,
+      projects,
+      none,
+      known,
+      grouping("separate"),
+    );
+    expect(membersOf(separate)).toEqual([[local.rootKey], [remoteKey]]);
+    expect(environmentComposerScope(scope, separate, projects, "linux", known)).toEqual({
+      kind: "project",
+      projectRootKey: remoteKey,
+      repositoryRoot: remote.rootPath,
+      ownerId: remote.ownerId,
+      generation: remote.generation,
+    });
+    expect(environmentComposerScope(scope, separate, projects, null, known)).toBe(scope);
+    const serverScope = {
+      kind: "project" as const,
+      projectRootKey: remoteKey,
+      repositoryRoot: remote.rootPath,
+      ownerId: remote.ownerId,
+      generation: remote.generation,
+    };
+    expect(environmentComposerScope(serverScope, separate, projects, "linux", known)).toBe(
+      serverScope,
+    );
+    expect(environmentComposerScope(serverScope, separate, projects, null, known)).toEqual(scope);
+    expect(environmentComposerScope(scope, separate, projects, "other", known)?.kind).toBe(
+      "missing",
+    );
+  });
+
+  it("never routes by label when a repository identity is unknown or different", () => {
+    const sameLabel = { ...remote, label: local.label };
+    const labelled = [local, sameLabel];
+    const labelledSource = agentProjectGroups(labelled, views, []);
+    const fixtures = [
+      new Map([[local.rootKey, identity]]),
+      new Map([[remoteKey, identity]]),
+      new Map([
+        [local.rootKey, identity],
+        [remoteKey, "gitlab.com/acme/editor"],
+      ]),
+      none,
+    ];
+    for (const known of fixtures) {
+      for (const settings of [grouping("separate"), grouping("repository")]) {
+        const groups = groupedEnvironmentProjects(labelledSource, labelled, none, known, settings);
+        expect(environmentComposerScope(scope, groups, labelled, "linux", known)?.kind).toBe(
+          "missing",
+        );
+      }
+    }
+  });
+
+  it("requires an explicit choice between several checkouts of the repository on one server", () => {
+    const separate = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      none,
+      identities,
+      grouping("separate"),
+    );
+    expect(environmentComposerScope(scope, separate, inventory, "linux", identities)?.kind).toBe(
+      "missing",
+    );
+    const chosen = {
+      kind: "repository" as const,
+      projectRootKey: otherKey,
+      repositoryRoot: other.rootPath,
+      ownerId: other.ownerId,
+      generation: other.generation,
+    };
+    expect(environmentComposerScope(chosen, separate, inventory, "linux", identities)).toBe(chosen);
+  });
+
+  it("prefers the displayed member over another checkout of the same repository", () => {
+    const overridden = groupedEnvironmentProjects(
+      inventorySource,
+      inventory,
+      none,
+      identities,
+      grouping("repository", [[remoteKey, "separate"]]),
+    );
+    expect(
+      environmentComposerScope(scope, overridden, inventory, "linux", identities),
+    ).toMatchObject({ kind: "project", projectRootKey: otherKey, ownerId: otherKey });
+  });
+
+  it("never routes to a checkout that an explicit connection binds to another project", () => {
+    const elsewhereRoot = "/workspace/elsewhere";
+    const elsewhere = projectFixture({
+      rootKey: elsewhereRoot,
+      rootPath: elsewhereRoot,
+      ownerId: "agent-root:elsewhere",
+      label: "elsewhere",
+      repositories: [fixtureRepository(elsewhereRoot, "")],
+    });
+    const elsewhereScope = {
+      kind: "project" as const,
+      projectRootKey: elsewhere.rootKey,
+      repositoryRoot: elsewhere.rootPath,
+      ownerId: elsewhere.ownerId,
+      generation: elsewhere.generation,
+    };
+    const bound = new Map([[remoteKey, elsewhere.rootKey]]);
+    const locals = new Map([
+      [local.rootKey, identity],
+      [elsewhere.rootKey, "github.com/acme/elsewhere"],
+    ]);
+    const fixtures = [
+      { listed: [local, elsewhere, remote], known: new Map([...locals, [remoteKey, identity]]) },
+      { listed: [local, elsewhere, { ...remote, repositoryIdentity: identity }], known: locals },
+    ];
+    for (const { listed, known } of fixtures) {
+      for (const settings of [grouping("separate"), grouping("repository")]) {
+        const groups = groupedEnvironmentProjects(
+          agentProjectGroups(listed, views, []),
+          listed,
+          bound,
+          known,
+          settings,
+        );
+        expect(membersOf(groups)).toEqual([[local.rootKey], [elsewhere.rootKey, remoteKey]]);
+        expect(environmentComposerScope(scope, groups, listed, "linux", known, bound)?.kind).toBe(
+          "missing",
+        );
+        expect(
+          environmentComposerScope(elsewhereScope, groups, listed, "linux", known, bound),
+        ).toMatchObject({ kind: "project", projectRootKey: remoteKey });
+        const free = [...listed, other];
+        const freeKnown = new Map([...known, [otherKey, identity]]);
+        const freeGroups = groupedEnvironmentProjects(
+          agentProjectGroups(free, views, []),
+          free,
+          bound,
+          freeKnown,
+          grouping("separate"),
+        );
+        expect(
+          environmentComposerScope(scope, freeGroups, free, "linux", freeKnown, bound),
+        ).toMatchObject({ kind: "project", projectRootKey: otherKey });
+      }
+    }
+    const known = new Map(projects.map((project) => [project.rootKey, identity]));
+    const stale = new Map([[remoteKey, "/gone"]]);
+    const separate = groupedEnvironmentProjects(
+      source,
+      projects,
+      stale,
+      known,
+      grouping("separate"),
+    );
+    expect(
+      environmentComposerScope(scope, separate, projects, "linux", known, stale),
+    ).toMatchObject({ kind: "project", projectRootKey: remoteKey });
+  });
+
+  it("anchors repository routing to the scoped project inside a mixed-identity group", () => {
+    const fork = "github.com/me/editor";
+    const forkKey = "remote:second:runner:fork";
+    const forkCheckout = { ...remote, rootKey: forkKey, rootPath: forkKey, ownerId: forkKey };
+    const ownKey = "remote:second:runner:own";
+    const ownCheckout = { ...remote, rootKey: ownKey, rootPath: ownKey, ownerId: ownKey };
+    const listed = [local, remote, forkCheckout];
+    const known = new Map([
+      [local.rootKey, identity],
+      [remoteKey, fork],
+      [forkKey, fork],
+    ]);
+    for (const settings of [grouping("separate"), grouping("repository")]) {
+      const groups = groupedEnvironmentProjects(
+        agentProjectGroups(listed, views, []),
+        listed,
+        links,
+        known,
+        settings,
+      );
+      expect(membersOf(groups)).toEqual([[local.rootKey, remoteKey], [forkKey]]);
+      expect(environmentComposerScope(scope, groups, listed, "linux", known, links)).toMatchObject({
+        kind: "project",
+        projectRootKey: remoteKey,
+      });
+      expect(environmentComposerScope(scope, groups, listed, "second", known, links)?.kind).toBe(
+        "missing",
+      );
+      const anonymous = new Map([...known].filter(([rootKey]) => rootKey !== local.rootKey));
+      expect(
+        environmentComposerScope(scope, groups, listed, "second", anonymous, links)?.kind,
+      ).toBe("missing");
+    }
+    const withOwn = [...listed, ownCheckout];
+    const ownKnown = new Map([...known, [ownKey, identity]]);
+    const ownGroups = groupedEnvironmentProjects(
+      agentProjectGroups(withOwn, views, []),
+      withOwn,
+      links,
+      ownKnown,
+      grouping("separate"),
+    );
+    expect(
+      environmentComposerScope(scope, ownGroups, withOwn, "second", ownKnown, links),
+    ).toMatchObject({ kind: "project", projectRootKey: ownKey });
+  });
+
+  it("never routes to a repository checkout that cannot accept a draft", () => {
+    const known = new Map(projects.map((project) => [project.rootKey, identity]));
+    const refused = [
+      { ...remote, trust: "untrusted" as const },
+      { ...remote, origin: "closed-tab-live-tasks" as const },
+    ];
+    for (const checkout of refused) {
+      const listed = [local, checkout];
+      const separate = groupedEnvironmentProjects(
+        agentProjectGroups(listed, views, []),
+        listed,
+        none,
+        known,
+        grouping("separate"),
+      );
+      expect(environmentComposerScope(scope, separate, listed, "linux", known)?.kind).toBe(
+        "missing",
+      );
+    }
+  });
+
+  it("routes to the only checkout that accepts a draft next to one that cannot", () => {
+    const duplicateRoot = "/workspace/duplicate";
+    const duplicate = projectFixture({
+      rootKey: duplicateRoot,
+      rootPath: duplicateRoot,
+      ownerId: "agent-root:duplicate",
+      label: "duplicate",
+      repositories: [fixtureRepository(duplicateRoot, "")],
+    });
+    const serverScope = {
+      kind: "project" as const,
+      projectRootKey: remoteKey,
+      repositoryRoot: remote.rootPath,
+      ownerId: remote.ownerId,
+      generation: remote.generation,
+    };
+    const refusals = [
+      { trust: "untrusted" as const },
+      { origin: "closed-tab-live-tasks" as const },
+    ];
+    for (const refusal of refusals) {
+      const onServer = [local, remote, { ...other, ...refusal }];
+      const serverGroups = groupedEnvironmentProjects(
+        agentProjectGroups(onServer, views, []),
+        onServer,
+        none,
+        identities,
+        grouping("separate"),
+      );
+      expect(
+        environmentComposerScope(scope, serverGroups, onServer, "linux", identities),
+      ).toMatchObject({ kind: "project", projectRootKey: remoteKey, ownerId: remoteKey });
+
+      const known = new Map([...identities, [duplicate.rootKey, identity]]);
+      const onComputer = [local, { ...duplicate, ...refusal }, remote];
+      const computerGroups = groupedEnvironmentProjects(
+        agentProjectGroups(onComputer, views, []),
+        onComputer,
+        none,
+        known,
+        grouping("separate"),
+      );
+      expect(
+        environmentComposerScope(serverScope, computerGroups, onComputer, null, known),
+      ).toEqual(scope);
+
+      const refusedOnly = [{ ...duplicate, ...refusal }, remote];
+      const refusedGroups = groupedEnvironmentProjects(
+        agentProjectGroups(refusedOnly, views, []),
+        refusedOnly,
+        none,
+        known,
+        grouping("separate"),
+      );
+      expect(
+        environmentComposerScope(serverScope, refusedGroups, refusedOnly, null, known)?.kind,
+      ).toBe("missing");
+    }
+    const eligible = [local, duplicate, remote];
+    const known = new Map([...identities, [duplicate.rootKey, identity]]);
+    const eligibleGroups = groupedEnvironmentProjects(
+      agentProjectGroups(eligible, views, []),
+      eligible,
+      none,
+      known,
+      grouping("separate"),
+    );
+    expect(environmentComposerScope(serverScope, eligibleGroups, eligible, null, known)?.kind).toBe(
+      "missing",
+    );
+  });
 });

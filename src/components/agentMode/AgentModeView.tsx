@@ -37,7 +37,6 @@ import { useRemoteProjectLinks } from "../../application/useRemoteProjectLinks";
 import { useAgentProjectGrouping } from "../../application/useAgentProjectGrouping";
 import {
   groupedEnvironmentProjects,
-  environmentComposerScope,
   newThreadEnvironmentProjectRootKey,
 } from "./agentEnvironmentProjects";
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
@@ -145,6 +144,7 @@ import { useAgentSessionImport } from "./useAgentSessionImport";
 import { useAgentComposerControllerState } from "./useAgentComposerState";
 import { useAgentOwnedStartingThreads } from "./useAgentOwnedStartingThreads";
 import { useAgentComposerDrawerExtras } from "./useAgentComposerDrawerExtras";
+import { useAgentDraftEnvironment } from "./useAgentDraftEnvironment";
 import { AgentDictationProvider } from "./dictation/AgentDictationProvider";
 import { agentComposerThreadLocation } from "./agentComposerThreadLocation";
 import { agentNewThreadTooltip } from "./agentNewThreadRequest";
@@ -498,13 +498,17 @@ function LocalAgentModeView({
     () => (surfaceThread === null ? null : agentThreadCheckoutRoot(surfaceThread, projects)),
     [projects, surfaceThread],
   );
-  const composerScope = useMemo(
-    () =>
-      selectedThread === null
-        ? environmentComposerScope(navigation.composerScope, groups, projects, selectedServerId)
-        : navigation.composerScope,
-    [selectedThread, navigation.composerScope, groups, projects, selectedServerId],
-  );
+  const draft = useAgentDraftEnvironment({
+    scope: navigation.composerScope,
+    selectedThread,
+    groups,
+    projects,
+    displayProjects,
+    selectedServerId,
+    repositoryIdentities,
+    projectLinks,
+  });
+  const { scope: composerScope, projects: composerProjects } = draft;
   const remoteSurface = useRemoteSurfaceContext({
     remote: remoteContext,
     thread: selectedThread,
@@ -558,14 +562,6 @@ function LocalAgentModeView({
     [composerScope, displayProjects, workspaceRoot],
   );
 
-  const composerProjects = useMemo(() => {
-    if (selectedThread !== null) return displayProjects;
-    const prefix =
-      selectedServerId === null ? null : `remote:${encodeURIComponent(selectedServerId)}:`;
-    return displayProjects.filter((project) =>
-      prefix === null ? !project.rootKey.startsWith("remote:") : project.rootKey.startsWith(prefix),
-    );
-  }, [displayProjects, selectedServerId, selectedThread]);
   const queuedEdit = useAgentQueuedFollowUpEdit(agents, selectedThreadId);
   const previewedQueuedEdit = useAgentQueuedEditImagePreviews(
     queuedEdit.edit,
@@ -613,7 +609,7 @@ function LocalAgentModeView({
     );
   });
   const clearComposer = useAgentLatestCallback(() => {
-    resetDraftLaunch(navigation.newThreadTarget()?.projectRootKey ?? null);
+    resetDraftLaunch(draft.rootKey ?? navigation.newThreadTarget()?.projectRootKey ?? null);
     composer.clearSelection();
   });
   const selectComposerRepository = useAgentLatestCallback((repositoryRoot: string) => {

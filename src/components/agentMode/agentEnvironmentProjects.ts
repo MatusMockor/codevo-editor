@@ -9,6 +9,9 @@ import {
 import type { AgentProjectGroup } from "./agentModePresentation";
 import type { ComposerScope } from "./agentComposerTarget";
 
+const NO_REPOSITORY_IDENTITIES: ReadonlyMap<string, string> = new Map();
+const NO_LINKS: ReadonlyMap<string, string> = new Map();
+
 /** Display membership only: never rewrites a thread's execution owner or repository. */
 export function groupedEnvironmentProjects(
   groups: readonly AgentProjectGroup[],
@@ -23,8 +26,8 @@ export function groupedEnvironmentProjects(
   const groupByKey = new Map(groups.map((group) => [group.projectRootKey, group]));
   const identities = new Map<string, string>();
   for (const project of projects) {
-    const identity = repositoryIdentities.get(project.rootKey) ?? project.repositoryIdentity;
-    if (identity) identities.set(project.rootKey, identity);
+    const identity = repositoryIdentityOf(project, repositoryIdentities);
+    if (identity !== null) identities.set(project.rootKey, identity);
   }
   const explicit = new Map<string, string>();
   for (const [remoteKey, localRoot] of links) {
@@ -74,25 +77,76 @@ function bucketKey(
   }
 }
 
-/** Resolve an exact member of the displayed project, never an arbitrary project on a server. */
+function repositoryIdentityOf(
+  project: AgentProjectDescriptor,
+  repositoryIdentities: ReadonlyMap<string, string>,
+): string | null {
+  const identity = repositoryIdentities.get(project.rootKey) ?? project.repositoryIdentity;
+  return identity ? identity : null;
+}
+
+export function projectRunsOn(rootKey: string, serverId: string | null): boolean {
+  if (serverId === null) return !rootKey.startsWith("remote:");
+  return rootKey.startsWith(`remote:${encodeURIComponent(serverId)}:`);
+}
+
+function acceptsDraft(project: AgentProjectDescriptor): boolean {
+  return project.trust === "trusted" && project.origin !== "closed-tab-live-tasks";
+}
+
+function linkedToAnotherProject(
+  project: AgentProjectDescriptor,
+  members: readonly string[],
+  projects: readonly AgentProjectDescriptor[],
+  links: ReadonlyMap<string, string>,
+): boolean {
+  if (!project.rootKey.startsWith("remote:")) return false;
+  const localRoot = links.get(project.rootKey);
+  if (localRoot === undefined || localRoot.startsWith("remote:")) return false;
+  if (members.includes(localRoot)) return false;
+  return projects.some((candidate) => candidate.rootKey === localRoot);
+}
+
+function repositoryCounterparts(
+  source: AgentProjectDescriptor | undefined,
+  members: readonly string[],
+  projects: readonly AgentProjectDescriptor[],
+  reachable: readonly AgentProjectDescriptor[],
+  repositoryIdentities: ReadonlyMap<string, string>,
+  links: ReadonlyMap<string, string>,
+): readonly AgentProjectDescriptor[] {
+  if (source === undefined) return [];
+  const identity = repositoryIdentityOf(source, repositoryIdentities);
+  if (identity === null) return [];
+  return reachable.filter(
+    (project) =>
+      acceptsDraft(project) &&
+      repositoryIdentityOf(project, repositoryIdentities) === identity &&
+      !linkedToAnotherProject(project, members, projects, links),
+  );
+}
+
+/**
+ * Resolve an exact member of the displayed project, or the only checkout of the scoped
+ * project's repository that accepts a draft when none of its members runs there and no
+ * explicit connection binds that checkout to another project, never an arbitrary project
+ * on a server.
+ */
 export function environmentComposerScope(
   scope: ComposerScope | null,
   groups: readonly AgentProjectGroup[],
   projects: readonly AgentProjectDescriptor[],
   serverId: string | null,
+  repositoryIdentities: ReadonlyMap<string, string> = NO_REPOSITORY_IDENTITIES,
+  links: ReadonlyMap<string, string> = NO_LINKS,
 ): ComposerScope | null {
   if (scope === null || scope.kind === "missing") return scope;
+  const selected = projects.find((project) => project.rootKey === scope.projectRootKey);
   // An explicit physical project selection is already an exact destination, even
   // when the display group contains multiple linked projects on this server.
   if (scope.kind === "repository") {
-    const selected = projects.find((project) => project.rootKey === scope.projectRootKey);
-    const prefix = serverId === null ? null : `remote:${encodeURIComponent(serverId)}:`;
-    const sameEnvironment =
-      prefix === null
-        ? !scope.projectRootKey.startsWith("remote:")
-        : scope.projectRootKey.startsWith(prefix);
     if (
-      sameEnvironment &&
+      projectRunsOn(scope.projectRootKey, serverId) &&
       selected?.ownerId === scope.ownerId &&
       selected.generation === scope.generation
     )
@@ -105,14 +159,12 @@ export function environmentComposerScope(
       candidate.memberProjectRootKeys?.includes(scope.projectRootKey),
   );
   const members = group?.memberProjectRootKeys ?? [scope.projectRootKey];
-  const prefix = serverId === null ? null : `remote:${encodeURIComponent(serverId)}:`;
-  const candidates = projects.filter(
-    (project) =>
-      members.includes(project.rootKey) &&
-      (prefix === null
-        ? !project.rootKey.startsWith("remote:")
-        : project.rootKey.startsWith(prefix)),
-  );
+  const reachable = projects.filter((project) => projectRunsOn(project.rootKey, serverId));
+  const displayed = reachable.filter((project) => members.includes(project.rootKey));
+  const candidates =
+    displayed.length > 0
+      ? displayed
+      : repositoryCounterparts(selected, members, projects, reachable, repositoryIdentities, links);
   // Multiple linked checkouts on the same server require an explicit selection, not a guess.
   if (candidates.length !== 1)
     return {
