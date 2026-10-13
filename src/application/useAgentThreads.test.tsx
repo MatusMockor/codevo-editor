@@ -50,6 +50,7 @@ import {
   type AgentThreadsHookSurface,
 } from "./useAgentThreads";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import type { AgentInteractionFeed } from "./agentInteractionPorts";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentQuestionRequest } from "../domain/agentQuestion";
 
@@ -111,8 +112,14 @@ function gitStatusOf(rootPath: string, changeCount: number): GitStatus {
 
 describe("useAgentThreads facade", () => {
   it("keeps immediate steering until the exact running task's pending question is answered", async () => {
-    const list = vi.fn<AgentQuestionGateway["list"]>();
-    const harness = renderThreads({ agentQuestionGateway: { list, answer: vi.fn() } });
+    const currentInteractions = vi.fn<AgentInteractionFeed["currentInteractions"]>();
+    const gateway: AgentQuestionGateway & AgentInteractionFeed = {
+      list: vi.fn(),
+      answer: vi.fn(),
+      currentInteractions,
+      subscribeInteractions: vi.fn(),
+    };
+    const harness = renderThreads({ agentQuestionGateway: gateway });
     await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
     const threadId = (await act(() => harness.hook().startThread(startRequest())))!.threadId;
     act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
@@ -132,17 +139,24 @@ describe("useAgentThreads facade", () => {
         },
       ],
     };
-    list.mockResolvedValue([question]);
+    const owner = { workspaceId: OWNER, taskId: harness.turnIdOf(threadId) };
+    currentInteractions.mockResolvedValue({
+      ...owner,
+      sequence: 1,
+      questions: [question],
+      approvals: [],
+    });
     const request = { threadId, prompt: "Use the selected option", delivery: "immediate" as const };
     expect(await act(() => harness.hook().steer(request))).toBe("kept");
     expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
-    expect(list).toHaveBeenCalledWith({
-      kind: "local",
-      workspaceId: OWNER,
-      repositoryRoot: ROOT,
-      taskId: harness.turnIdOf(threadId),
+    expect(currentInteractions).toHaveBeenCalledWith(owner);
+    expect(gateway.list).not.toHaveBeenCalled();
+    currentInteractions.mockResolvedValue({
+      ...owner,
+      sequence: 2,
+      questions: [],
+      approvals: [],
     });
-    list.mockResolvedValue([]);
     expect(await act(() => harness.hook().steer(request))).toBe("sent");
     expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
     harness.unmount();

@@ -1,15 +1,20 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useMemo } from "react";
+import { isAgentInteractionFeed } from "./agentInteractionPorts";
+import { agentInteractionStore } from "./agentInteractionStore";
 import {
-  agentPendingRequestSnapshotAfterPoll,
-  agentPendingRequestSnapshotWhileSuspended,
-  emptyAgentPendingRequestSnapshot,
   sameAgentPendingRequestItems,
-  startAgentPendingRequestPolling,
   type AgentPendingRequestAvailability,
-  type AgentPendingRequestSnapshot,
-  type AgentPendingRequestSnapshotPolicy,
 } from "./agentPendingRequestPolling";
+import {
+  polledAgentPendingRequestSource,
+  pushedAgentPendingRequestSource,
+  type AgentPendingRequestSource,
+} from "./agentPendingRequestSource";
 import type { AgentQuestionGateway, AgentQuestionOwner } from "./agentQuestionPorts";
+import {
+  useAgentPendingRequests,
+  type AgentPendingRequestBinding,
+} from "./useAgentPendingRequests";
 import {
   parseAgentQuestionResponse,
   type AgentQuestion,
@@ -19,119 +24,70 @@ import {
   type AgentQuestionResponse,
 } from "../domain/agentQuestion";
 
-type Snapshot = AgentPendingRequestSnapshot<AgentQuestionRequest>;
+type QuestionBinding = AgentPendingRequestBinding<AgentQuestionRequest, AgentQuestionResponse>;
 
-const NO_QUESTION_REQUESTS: readonly AgentQuestionRequest[] = Object.freeze([]);
 const NO_QUESTION_ANSWERS: readonly AgentQuestionAnswer[] = Object.freeze([]);
-const QUESTION_SNAPSHOTS: AgentPendingRequestSnapshotPolicy<AgentQuestionRequest> = {
-  unreachableNotice: "Questions could not be refreshed. Reconnecting…",
-  sameRequest: sameQuestionRequest,
-};
+const QUESTIONS_UNAVAILABLE_NOTICE = "Questions from this agent can't be shown right now.";
+const QUESTIONS_RECONNECTING_NOTICE = "Questions could not be refreshed. Reconnecting…";
+const ANSWER_FAILURE_NOTICE =
+  "The answer could not be confirmed. Retry to safely check or send it.";
 
-/** Serial polling survives reconnects, while each selection owns a fresh generation. */
 export function useAgentQuestions(
   gateway: AgentQuestionGateway | null,
   owner: AgentQuestionOwner | null,
   running: boolean,
   availability: AgentPendingRequestAvailability = "available",
 ) {
-  const active = useRef<{
-    lease: object;
-    owner: AgentQuestionOwner;
-    busy: boolean;
-    revision: number;
-  } | null>(null);
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  useLayoutEffect(() => {
-    if (!gateway || !owner) {
-      active.current = null;
-      setSnapshot(null);
-      return;
-    }
-    const scope = { lease: {}, owner, busy: false, revision: 0 };
-    active.current = scope;
-    setSnapshot(emptyAgentPendingRequestSnapshot(scope.lease));
-    return () => {
-      if (active.current === scope) active.current = null;
-    };
-  }, [gateway, owner, running]);
-
-  useLayoutEffect(() => {
-    const scope = active.current;
-    if (!gateway || !owner || !scope) return;
-    if (availability !== "available") {
-      setSnapshot((previous) =>
-        agentPendingRequestSnapshotWhileSuspended(previous, scope.lease, QUESTION_SNAPSHOTS),
-      );
-      return;
-    }
-    return startAgentPendingRequestPolling<AgentQuestionRequest>({
-      cadence: running ? "repeating" : "once",
-      isCurrent: () => active.current === scope,
-      revision: () => scope.revision,
-      list: () => gateway.list(owner),
-      publish: (outcome) =>
-        setSnapshot((previous) =>
-          agentPendingRequestSnapshotAfterPoll(previous, scope.lease, outcome, QUESTION_SNAPSHOTS),
-        ),
-    });
-  }, [availability, gateway, owner, running]);
-
-  const answer = useCallback(
-    async (requestId: string, response: AgentQuestionResponse) => {
-      const scope = active.current;
-      if (!gateway || !scope || scope.busy || snapshot?.lease !== scope.lease) return;
-      const request = snapshot.requests.find(
-        (item) => item.id === requestId && item.status === "pending",
-      );
-      if (!request) return;
-      const validated = parseAgentQuestionResponse(response, request);
-      scope.busy = true;
-      scope.revision += 1;
-      setSnapshot((previous) =>
-        previous?.lease === scope.lease
-          ? { ...previous, answering: requestId, error: null }
-          : previous,
-      );
-      try {
-        const result = await gateway.answer(scope.owner, requestId, validated);
-        if (active.current !== scope) return;
-        scope.revision += 1;
-        setSnapshot((previous) =>
-          previous?.lease === scope.lease
-            ? {
-                ...previous,
-                requests: previous.requests.map((item) => (item.id === requestId ? result : item)),
-                answering: null,
-                error: null,
-              }
-            : previous,
-        );
-      } catch (error) {
-        if (active.current !== scope) return;
-        setSnapshot((previous) =>
-          previous?.lease === scope.lease
-            ? {
-                ...previous,
-                answering: null,
-                error: "The answer could not be confirmed. Retry to safely check or send it.",
-              }
-            : previous,
-        );
-        throw error;
-      } finally {
-        scope.busy = false;
-      }
-    },
-    [gateway, snapshot],
+  const polledWhileRunning = owner?.kind === "remote" && running;
+  const binding = useMemo(
+    () => questionBinding(gateway, owner, polledWhileRunning),
+    [gateway, owner, polledWhileRunning],
   );
-  const visible = snapshot?.lease === active.current?.lease ? snapshot : null;
+  return useAgentPendingRequests(binding, availability);
+}
+
+function questionBinding(
+  gateway: AgentQuestionGateway | null,
+  owner: AgentQuestionOwner | null,
+  polledWhileRunning: boolean,
+): QuestionBinding | null {
+  if (!gateway || !owner) return null;
+  const source = questionSource(gateway, owner, polledWhileRunning);
+  if (!source) return null;
   return {
-    requests: visible?.requests ?? NO_QUESTION_REQUESTS,
-    answering: visible?.answering ?? null,
-    error: visible?.error ?? null,
-    answer,
+    source,
+    answerFailureNotice: ANSWER_FAILURE_NOTICE,
+    sameRequest: sameQuestionRequest,
+    admit: (request, response) => parseAgentQuestionResponse(response, request),
+    send: (requestId, response) => gateway.answer(owner, requestId, response),
   };
+}
+
+function questionSource(
+  gateway: AgentQuestionGateway,
+  owner: AgentQuestionOwner,
+  polledWhileRunning: boolean,
+): AgentPendingRequestSource<AgentQuestionRequest> | null {
+  switch (owner.kind) {
+    case "local":
+      if (!isAgentInteractionFeed(gateway)) return null;
+      return pushedAgentPendingRequestSource({
+        store: agentInteractionStore(gateway),
+        owner: { workspaceId: owner.workspaceId, taskId: owner.taskId },
+        unreachableNotice: QUESTIONS_UNAVAILABLE_NOTICE,
+        select: (snapshot) => snapshot.questions,
+      });
+    case "remote":
+      return polledAgentPendingRequestSource({
+        cadence: polledWhileRunning ? "repeating" : "once",
+        unreachableNotice: QUESTIONS_RECONNECTING_NOTICE,
+        list: () => gateway.list(owner),
+      });
+    default: {
+      const exhaustive: never = owner;
+      return exhaustive;
+    }
+  }
 }
 
 function sameQuestionRequest(left: AgentQuestionRequest, right: AgentQuestionRequest): boolean {

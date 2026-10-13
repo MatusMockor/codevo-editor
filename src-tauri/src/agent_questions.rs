@@ -1,8 +1,17 @@
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 #[path = "agent_approvals.rs"]
 pub mod approvals;
+
+#[path = "agent_interactions.rs"]
+pub mod interactions;
+use interactions::{
+    AgentInteractionChanges, AgentInteractionObserver, AgentInteractionSequence,
+    AgentInteractionSettlement, AgentInteractionSnapshot,
+};
+use std::sync::atomic::AtomicU64;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -153,35 +162,76 @@ struct State {
     closed: bool,
     failure: Option<String>,
 }
-#[derive(Default)]
 pub struct AgentQuestionSession {
     state: Mutex<State>,
     approvals: approvals::AgentApprovalRegistry,
+    changes: AgentInteractionChanges,
+    sequence: Mutex<AgentInteractionSequence>,
+}
+impl Default for AgentQuestionSession {
+    fn default() -> Self {
+        Self::with_approval_timeout(approvals::AGENT_APPROVAL_TIMEOUT)
+    }
 }
 impl AgentQuestionSession {
+    pub fn with_approval_timeout(timeout: Duration) -> Self {
+        let changes = AgentInteractionChanges::default();
+        Self {
+            state: Mutex::default(),
+            approvals: approvals::AgentApprovalRegistry::observed(timeout, changes.clone()),
+            changes,
+            sequence: Mutex::default(),
+        }
+    }
+    fn locked(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+    pub fn observe(&self, observer: AgentInteractionObserver) {
+        self.changes.observe(observer);
+        self.changes.notify();
+    }
+    pub fn release_observer(&self) {
+        self.changes.release();
+    }
+    pub fn settling(&self) -> AgentInteractionSettlement {
+        self.changes.settling()
+    }
+    pub fn expire_overdue(&self) {
+        self.approvals.expire_overdue(Instant::now());
+    }
+    pub fn share_sequence(&self, shared: Arc<AtomicU64>) {
+        self.sequence
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .share(shared);
+    }
+    pub fn snapshot(&self, task_id: &str, workspace_id: &str) -> AgentInteractionSnapshot {
+        let mut sequence = self.sequence.lock().unwrap_or_else(PoisonError::into_inner);
+        AgentInteractionSnapshot {
+            task_id: task_id.into(),
+            workspace_id: workspace_id.into(),
+            sequence: sequence.advance(),
+            questions: self.list(task_id),
+            approvals: self.approvals.requests(task_id),
+        }
+    }
     pub fn approvals(&self) -> &approvals::AgentApprovalRegistry {
         &self.approvals
     }
     pub fn has_pending(&self) -> bool {
         self.approvals.has_pending()
             || self
-                .state
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
+                .locked()
                 .entries
                 .iter()
                 .any(|entry| entry.request.status == AgentQuestionStatus::Pending)
     }
     pub fn failure(&self) -> Option<String> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .failure
-            .clone()
+        self.locked().failure.clone()
     }
     pub fn fail(&self, reason: &str) {
         self.close();
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.locked();
         if state.failure.is_none() {
             state.failure = Some(reason.chars().take(1024).collect());
         }
@@ -198,7 +248,7 @@ impl AgentQuestionSession {
         if request.status != AgentQuestionStatus::Pending {
             return Err("Only pending questions may be registered.".into());
         }
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = self.locked();
         if state.closed
             || state.entries.iter().any(|e| e.request.id == request.id)
             || state
@@ -223,12 +273,12 @@ impl AgentQuestionSession {
             responder: Some(responder),
             submitting: false,
         });
+        drop(state);
+        self.changes.notify();
         Ok(())
     }
     pub fn list(&self, task_id: &str) -> Vec<AgentQuestionRequest> {
-        self.state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.locked()
             .entries
             .iter()
             .map(|e| {
@@ -238,55 +288,66 @@ impl AgentQuestionSession {
             })
             .collect()
     }
-    pub fn expire(&self, request_id: &str) {
-        self.approvals.expire(request_id);
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(entry) = state
+    fn settle_entry(
+        &self,
+        request_id: &str,
+        status: AgentQuestionStatus,
+        include_submitting: bool,
+    ) -> bool {
+        let mut state = self.locked();
+        let Some(entry) = state
             .entries
             .iter_mut()
             .find(|e| e.request.id == request_id)
+        else {
+            return false;
+        };
+        if entry.request.status != AgentQuestionStatus::Pending
+            || (entry.submitting && !include_submitting)
         {
-            if entry.request.status == AgentQuestionStatus::Pending && !entry.submitting {
+            return false;
+        }
+        entry.request.status = status;
+        entry.responder = None;
+        true
+    }
+    fn settle_all(&self, include_submitting: bool) -> bool {
+        let mut state = self.locked();
+        let mut changed = !state.closed;
+        state.closed = true;
+        for entry in &mut state.entries {
+            if entry.request.status == AgentQuestionStatus::Pending
+                && (include_submitting || !entry.submitting)
+            {
                 entry.request.status = AgentQuestionStatus::Expired;
                 entry.responder = None;
+                changed = true;
             }
         }
+        changed
+    }
+    fn notify_if(&self, approvals_changed: bool, questions_changed: bool) {
+        if approvals_changed || questions_changed {
+            self.changes.notify();
+        }
+    }
+    pub fn expire(&self, request_id: &str) {
+        self.notify_if(
+            self.approvals.mark_expired(request_id),
+            self.settle_entry(request_id, AgentQuestionStatus::Expired, false),
+        );
     }
     pub fn cancel(&self, request_id: &str) {
-        self.approvals.cancel(request_id);
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(entry) = state
-            .entries
-            .iter_mut()
-            .find(|e| e.request.id == request_id)
-        {
-            if entry.request.status == AgentQuestionStatus::Pending {
-                entry.request.status = AgentQuestionStatus::Cancelled;
-                entry.responder = None;
-            }
-        }
+        self.notify_if(
+            self.approvals.mark_cancelled(request_id),
+            self.settle_entry(request_id, AgentQuestionStatus::Cancelled, true),
+        );
     }
     pub fn finish(&self) {
-        self.approvals.finish();
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.closed = true;
-        for entry in &mut state.entries {
-            if entry.request.status == AgentQuestionStatus::Pending && !entry.submitting {
-                entry.request.status = AgentQuestionStatus::Expired;
-                entry.responder = None;
-            }
-        }
+        self.notify_if(self.approvals.settle_all(false), self.settle_all(false));
     }
     pub fn close(&self) {
-        self.approvals.close();
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        state.closed = true;
-        for entry in &mut state.entries {
-            if entry.request.status == AgentQuestionStatus::Pending {
-                entry.request.status = AgentQuestionStatus::Expired;
-                entry.responder = None;
-            }
-        }
+        self.notify_if(self.approvals.settle_all(true), self.settle_all(true));
     }
     pub fn answer(
         &self,
@@ -294,8 +355,9 @@ impl AgentQuestionSession {
         request_id: &str,
         response: AgentQuestionResponse,
     ) -> Result<AgentQuestionRequest, String> {
+        let _settlement = self.changes.settling();
         let responder = {
-            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut state = self.locked();
             if state.closed {
                 return Err("Question is no longer pending.".into());
             }
@@ -324,29 +386,33 @@ impl AgentQuestionSession {
         let result =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| responder(&response)))
                 .unwrap_or_else(|_| Err("Question response failed.".into()));
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let entry = state
-            .entries
-            .iter_mut()
-            .find(|e| e.request.id == request_id)
-            .ok_or("Question expired.")?;
-        if entry.request.status != AgentQuestionStatus::Pending {
-            return Err("Question expired while sending answer.".into());
-        }
-        entry.submitting = false;
-        match result {
-            Ok(()) => {
-                entry.request.status = AgentQuestionStatus::Answered;
-                entry.request.answers = Some(response.answers);
-                let mut r = entry.request.clone();
-                r.task_id = task_id.into();
-                Ok(r)
+        let outcome = {
+            let mut state = self.locked();
+            let entry = state
+                .entries
+                .iter_mut()
+                .find(|e| e.request.id == request_id)
+                .ok_or("Question expired.")?;
+            if entry.request.status != AgentQuestionStatus::Pending {
+                return Err("Question expired while sending answer.".into());
             }
-            Err(error) => {
-                entry.request.status = AgentQuestionStatus::Expired;
-                Err(error)
+            entry.submitting = false;
+            match result {
+                Ok(()) => {
+                    entry.request.status = AgentQuestionStatus::Answered;
+                    entry.request.answers = Some(response.answers);
+                    let mut r = entry.request.clone();
+                    r.task_id = task_id.into();
+                    Ok(r)
+                }
+                Err(error) => {
+                    entry.request.status = AgentQuestionStatus::Expired;
+                    Err(error)
+                }
             }
-        }
+        };
+        self.changes.notify();
+        outcome
     }
 }
 

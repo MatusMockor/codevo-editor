@@ -30,21 +30,39 @@ function renderHook<P, R>(hook: (props: P) => R, options?: { initialProps: P }) 
   rerender(options?.initialProps as P);
   return { result, rerender, unmount };
 }
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentQuestionGateway, AgentQuestionOwner } from "./agentQuestionPorts";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import type { AgentInteractionFeed } from "./agentInteractionPorts";
+import {
+  AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD as FAILURE_NOTICE_THRESHOLD,
+  AGENT_INTERACTION_RETRY_BASE_MS,
+} from "./agentInteractionStore";
+import type {
+  AgentLocalQuestionOwner,
+  AgentQuestionGateway,
+  AgentQuestionOwner,
+  AgentRemoteQuestionOwner,
+} from "./agentQuestionPorts";
+import type { AgentApprovalRequest } from "../domain/agentApproval";
+import type { AgentInteractionSnapshot } from "../domain/agentInteractionSnapshot";
 import type { AgentQuestionRequest } from "../domain/agentQuestion";
 import {
   AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD as FAILURE_THRESHOLD,
   AGENT_PENDING_REQUEST_POLL_MS as POLL_MS,
   type AgentPendingRequestAvailability,
 } from "./agentPendingRequestPolling";
+import {
+  agentInteractionFeedFake,
+  agentInteractionSnapshotOf,
+} from "../test/agentInteractionFeedFake";
 import { useAgentQuestions } from "./useAgentQuestions";
-const owner: AgentQuestionOwner = {
-  kind: "local",
-  workspaceId: "workspace",
-  repositoryRoot: "/project",
+const local: AgentLocalQuestionOwner = { kind: "local", workspaceId: "workspace", taskId: "task" };
+const owner: AgentRemoteQuestionOwner = {
+  kind: "remote",
+  serverId: "linux",
+  runnerId: "runner",
   taskId: "task",
 };
+const UNAVAILABLE_NOTICE = "Questions from this agent can't be shown right now.";
 const question: AgentQuestionRequest = {
   id: "question",
   taskId: "task",
@@ -61,7 +79,25 @@ const question: AgentQuestionRequest = {
     },
   ],
 };
+const second: AgentQuestionRequest = { ...question, id: "second" };
 const response = { answers: [{ questionId: "q", optionIds: ["a"], text: "" }] };
+const answered: AgentQuestionRequest = {
+  ...question,
+  status: "answered",
+  answers: response.answers,
+};
+const approval: AgentApprovalRequest = {
+  id: "approval",
+  taskId: "task",
+  provider: "codex",
+  kind: "command",
+  title: "Run a command?",
+  detail: "npm test",
+  detailTruncated: false,
+  facts: [],
+  decisions: ["allowOnce", "deny"],
+  status: "pending",
+};
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
@@ -76,13 +112,23 @@ async function settlePoll() {
     await Promise.resolve();
   });
 }
+async function settleFeed() {
+  await act(async () => {
+    for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
+  });
+}
 async function nextPoll() {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(POLL_MS);
   });
 }
+async function elapse(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
 interface ObservedProps {
-  target: AgentQuestionOwner;
+  target: AgentQuestionOwner | null;
   running: boolean;
   availability?: AgentPendingRequestAvailability;
 }
@@ -101,12 +147,365 @@ function renderObservedQuestions(port: AgentQuestionGateway, initialProps: Obser
 function gateway(): AgentQuestionGateway {
   return {
     list: vi.fn().mockResolvedValue([question]),
-    answer: vi
-      .fn()
-      .mockResolvedValue({ ...question, status: "answered", answers: response.answers }),
+    answer: vi.fn().mockResolvedValue(answered),
   };
 }
-describe("useAgentQuestions", () => {
+function feedGateway() {
+  return Object.assign(agentInteractionFeedFake(), {
+    list: vi.fn<AgentQuestionGateway["list"]>(),
+    answer: vi.fn<AgentQuestionGateway["answer"]>().mockResolvedValue(answered),
+  });
+}
+function listing(
+  sequence: number,
+  questions: readonly AgentQuestionRequest[],
+  approvals: readonly AgentApprovalRequest[] = [],
+): AgentInteractionSnapshot {
+  return agentInteractionSnapshotOf(local, sequence, { questions, approvals });
+}
+function statuses(requests: readonly AgentQuestionRequest[]) {
+  return requests.map((request) => [request.id, request.status]);
+}
+describe("useAgentQuestions for a local owner", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  it("shows a pushed question without any timer and answers it for the exact owner", async () => {
+    const port = feedGateway();
+    const { result } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    expect(result.current.requests).toEqual([]);
+    expect(result.current.error).toBeNull();
+    act(() => port.publish(listing(1, [question])));
+    expect(result.current.requests).toEqual([question]);
+    expect(vi.getTimerCount()).toBe(0);
+    await act(() => result.current.answer(question.id, response));
+    expect(port.answer).toHaveBeenCalledWith(local, question.id, response);
+    expect(result.current.requests[0].status).toBe("answered");
+    expect(result.current.answering).toBeNull();
+    expect(port.list).not.toHaveBeenCalled();
+  });
+  it("recovers the current pending question when it mounts after the push", async () => {
+    const port = feedGateway();
+    port.record(listing(3, [question]));
+    const { result } = renderObservedQuestions(port, { target: local, running: false });
+    await settleFeed();
+    expect(port.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(port.currentInteractions).toHaveBeenCalledWith({
+      workspaceId: "workspace",
+      taskId: "task",
+    });
+    expect(result.current.requests).toEqual([question]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("ignores stale, duplicate, reordered and foreign pushes", async () => {
+    const port = feedGateway();
+    const { result } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    act(() => port.push(listing(5, [question])));
+    const listed = result.current.requests;
+    act(() => {
+      port.push(listing(5, [second]));
+      port.push(listing(4, [second]));
+      port.push(listing(0, []));
+      port.push(
+        agentInteractionSnapshotOf({ workspaceId: "elsewhere", taskId: "task" }, 9, {
+          questions: [second],
+        }),
+      );
+      port.push(
+        agentInteractionSnapshotOf({ workspaceId: "workspace", taskId: "other" }, 9, {
+          questions: [{ ...second, taskId: "other" }],
+        }),
+      );
+    });
+    expect(result.current.requests).toBe(listed);
+    act(() => {
+      port.push(listing(7, [second]));
+      port.push(listing(6, [question]));
+    });
+    expect(result.current.requests).toEqual([second]);
+  });
+  it("isolates workspace A B A and drops the first generation's late read", async () => {
+    const late = deferred<AgentInteractionSnapshot>();
+    const port = feedGateway();
+    port.currentInteractions.mockImplementationOnce(() => late.promise);
+    port.record(listing(2, [question]));
+    const elsewhere: AgentLocalQuestionOwner = { ...local, workspaceId: "workspace-b" };
+    const { result, rerender } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    rerender({ target: elsewhere, running: true });
+    await settleFeed();
+    expect(port.currentInteractions).toHaveBeenLastCalledWith({
+      workspaceId: "workspace-b",
+      taskId: "task",
+    });
+    act(() => port.push(listing(8, [second])));
+    expect(result.current.requests).toEqual([]);
+    rerender({ target: local, running: true });
+    expect(result.current.requests).toEqual([]);
+    await settleFeed();
+    expect(result.current.requests).toEqual([question]);
+    await act(async () => {
+      late.resolve(listing(99, [{ ...question, id: "stale" }]));
+      await late.promise;
+    });
+    expect(result.current.requests).toEqual([question]);
+    expect(port.subscribers()).toBe(1);
+  });
+  it("prevents duplicate submissions and rejects late answer settlement after the owner changes", async () => {
+    const pending = deferred<AgentQuestionRequest>();
+    const port = feedGateway();
+    port.answer.mockReturnValue(pending.promise);
+    port.record(listing(1, [question]));
+    const { result, rerender } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    let answer!: Promise<void>;
+    act(() => {
+      answer = result.current.answer(question.id, response);
+      void result.current.answer(question.id, response);
+    });
+    expect(port.answer).toHaveBeenCalledTimes(1);
+    rerender({ target: null, running: true });
+    await act(async () => {
+      pending.resolve(answered);
+      await answer;
+    });
+    expect(result.current.requests).toEqual([]);
+    expect(port.subscribers()).toBe(0);
+  });
+  it("does nothing after an unmount during a pending read", async () => {
+    const read = deferred<AgentInteractionSnapshot>();
+    const port = feedGateway();
+    port.currentInteractions.mockImplementationOnce(() => read.promise);
+    const { errors, unmount } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    const renders = errors.length;
+    unmount();
+    await act(async () => {
+      read.reject(new Error("offline"));
+      await read.promise.catch(() => undefined);
+    });
+    act(() => port.push(listing(4, [question])));
+    await elapse(60_000);
+    expect(errors).toHaveLength(renders);
+    expect(port.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(port.subscribers()).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each<{ readonly name: string; failing(feed: AgentInteractionFeed): Mock }>([
+    { name: "read", failing: (feed) => vi.mocked(feed.currentInteractions) },
+    { name: "subscription", failing: (feed) => vi.mocked(feed.subscribeInteractions) },
+  ])("never shows a notice when a $name fails once and the retry succeeds", async ({ failing }) => {
+    const port = feedGateway();
+    port.record(listing(1, [question]));
+    failing(port).mockRejectedValueOnce(new Error("unavailable"));
+    const { result, errors } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    expect(result.current.requests).toEqual([]);
+    expect(vi.getTimerCount()).toBe(1);
+    await elapse(AGENT_INTERACTION_RETRY_BASE_MS);
+    expect(result.current.requests).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(new Set(errors)).toEqual(new Set([null]));
+  });
+  it.each<{ readonly name: string; failing(feed: AgentInteractionFeed): Mock }>([
+    { name: "read", failing: (feed) => vi.mocked(feed.currentInteractions) },
+    { name: "subscription", failing: (feed) => vi.mocked(feed.subscribeInteractions) },
+  ])(
+    "states calmly that questions are unavailable once the $name keeps failing and recovers without a remount",
+    async ({ failing }) => {
+      const port = feedGateway();
+      port.record(listing(1, [question]));
+      for (let failure = 1; failure <= FAILURE_NOTICE_THRESHOLD; failure += 1)
+        failing(port).mockRejectedValueOnce(new Error("unavailable"));
+      const { result, errors } = renderObservedQuestions(port, { target: local, running: true });
+      await settleFeed();
+      for (let failure = 1; failure < FAILURE_NOTICE_THRESHOLD; failure += 1) {
+        expect(result.current.error).toBeNull();
+        await elapse(AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (failure - 1));
+      }
+      expect(result.current.error).toBe(UNAVAILABLE_NOTICE);
+      expect(result.current.requests).toEqual([]);
+      await elapse(AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (FAILURE_NOTICE_THRESHOLD - 1));
+      expect(result.current.error).toBeNull();
+      expect(result.current.requests).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(errors.some((error) => error?.includes("Reconnecting"))).toBe(false);
+    },
+  );
+  it("keeps a confirmed answer over a stale pending push and yields to the real status", async () => {
+    const port = feedGateway();
+    port.record(listing(4, [question]));
+    const { result } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    await act(() => result.current.answer(question.id, response));
+    act(() => port.push(listing(5, [question, second])));
+    expect(statuses(result.current.requests)).toEqual([
+      ["question", "answered"],
+      ["second", "pending"],
+    ]);
+    act(() => port.push(listing(6, [{ ...question, status: "expired" }, second])));
+    expect(statuses(result.current.requests)).toEqual([
+      ["question", "expired"],
+      ["second", "pending"],
+    ]);
+    act(() => port.push(listing(7, [question, second])));
+    expect(statuses(result.current.requests)).toEqual([
+      ["question", "pending"],
+      ["second", "pending"],
+    ]);
+  });
+  it("keeps the answer in flight across a push and confirms it afterwards", async () => {
+    const receipt = deferred<AgentQuestionRequest>();
+    const port = feedGateway();
+    port.answer.mockReturnValueOnce(receipt.promise);
+    port.record(listing(4, [question]));
+    const { result } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    let answer!: Promise<void>;
+    act(() => {
+      answer = result.current.answer(question.id, response);
+    });
+    expect(result.current.answering).toBe(question.id);
+    act(() => port.push(listing(5, [question, second])));
+    expect(result.current.answering).toBe(question.id);
+    expect(result.current.requests).toEqual([question, second]);
+    await act(() => result.current.answer(second.id, response));
+    expect(port.answer).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      receipt.resolve(answered);
+      await answer;
+    });
+    expect(result.current.answering).toBeNull();
+    expect(statuses(result.current.requests)).toEqual([
+      ["question", "answered"],
+      ["second", "pending"],
+    ]);
+  });
+  it("lets a pushed real status win over the answer receipt that follows it", async () => {
+    const receipt = deferred<AgentQuestionRequest>();
+    const port = feedGateway();
+    port.answer.mockReturnValueOnce(receipt.promise);
+    port.record(listing(4, [question]));
+    const { result } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    let answer!: Promise<void>;
+    act(() => {
+      answer = result.current.answer(question.id, response);
+    });
+    act(() => port.push(listing(5, [{ ...question, status: "cancelled" }])));
+    await act(async () => {
+      receipt.resolve(answered);
+      await answer;
+    });
+    expect(statuses(result.current.requests)).toEqual([["question", "cancelled"]]);
+    expect(result.current.answering).toBeNull();
+  });
+  it("holds no timer, never polls and keeps the listed questions while the turn starts and stops", async () => {
+    const port = feedGateway();
+    const { result, rerender } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    act(() => port.publish(listing(1, [question])));
+    const listed = result.current.requests;
+    rerender({ target: local, running: false });
+    rerender({ target: local, running: true });
+    await settleFeed();
+    await elapse(60 * POLL_MS);
+    expect(result.current.requests).toBe(listed);
+    expect(port.subscribeInteractions).toHaveBeenCalledTimes(1);
+    expect(port.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(port.list).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("keeps the requests and the answer callback when a push changes only the approvals", async () => {
+    const port = feedGateway();
+    const { result } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    act(() => port.push(listing(1, [question])));
+    const listed = result.current.requests;
+    const answer = result.current.answer;
+    act(() => port.push(listing(2, [structuredClone(question)], [approval])));
+    act(() => port.push(listing(3, [structuredClone(question)])));
+    expect(result.current.requests).toBe(listed);
+    expect(result.current.answer).toBe(answer);
+  });
+  it.each<{ readonly name: string; readonly changed: AgentQuestionRequest }>([
+    { name: "another status", changed: { ...question, status: "cancelled" } },
+    {
+      name: "another prompt",
+      changed: { ...question, questions: [{ ...question.questions[0], prompt: "Which one?" }] },
+    },
+    { name: "an answer", changed: answered },
+  ])("publishes a push that lists $name", async ({ changed }) => {
+    const port = feedGateway();
+    const { result } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    act(() => port.push(listing(1, [question])));
+    const listed = result.current.requests;
+    act(() => port.push(listing(2, [changed])));
+    expect(result.current.requests).not.toBe(listed);
+    expect(result.current.requests).toEqual([changed]);
+  });
+  it("keeps unanswered data and exposes retry after an uncertain answer result", async () => {
+    const port = feedGateway();
+    port.answer.mockRejectedValueOnce(new Error("network"));
+    port.record(listing(1, [question]));
+    const { result } = renderObservedQuestions(port, { target: local, running: false });
+    await settleFeed();
+    await act(async () => {
+      await expect(result.current.answer(question.id, response)).rejects.toThrow("network");
+    });
+    expect(result.current.requests[0].status).toBe("pending");
+    expect(result.current.error).toContain("Retry");
+    await act(() => result.current.answer(question.id, response));
+    expect(result.current.requests[0].status).toBe("answered");
+    expect(result.current.error).toBeNull();
+  });
+  it("invalidates previously captured submit callbacks after A B A", async () => {
+    const port = feedGateway();
+    port.record(listing(1, [question]));
+    const { result, rerender } = renderObservedQuestions(port, { target: local, running: false });
+    await settleFeed();
+    expect(result.current.requests).toEqual([question]);
+    const obsolete = result.current.answer;
+    rerender({ target: { ...local, taskId: "other" }, running: false });
+    rerender({ target: local, running: false });
+    await settleFeed();
+    expect(result.current.requests).toEqual([question]);
+    await act(() => obsolete(question.id, response));
+    expect(port.answer).not.toHaveBeenCalled();
+  });
+  it("yields no requests and asks nothing when the gateway is not an interaction feed", async () => {
+    const port = gateway();
+    const { result, errors } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    await elapse(5 * POLL_MS);
+    expect(result.current.requests).toEqual([]);
+    expect(port.list).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(new Set(errors)).toEqual(new Set([null]));
+  });
+  it("stops watching while the owner is reported unreachable and keeps the listed questions", async () => {
+    const port = feedGateway();
+    port.record(listing(1, [question]));
+    const { result, rerender } = renderObservedQuestions(port, { target: local, running: true });
+    await settleFeed();
+    const listed = result.current.requests;
+    rerender({ target: local, running: true, availability: "unreachable" });
+    expect(port.subscribers()).toBe(0);
+    expect(result.current.requests).toBe(listed);
+    port.record(listing(2, [second]));
+    rerender({ target: local, running: true, availability: "available" });
+    await settleFeed();
+    expect(result.current.requests).toEqual([second]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+describe("useAgentQuestions for a remote owner", () => {
   it("recovers a pending question and answers it without starting another prompt", async () => {
     const port = gateway();
     const { result } = renderHook(() => useAgentQuestions(port, owner, false));
@@ -224,6 +623,41 @@ describe("useAgentQuestions", () => {
     await waitFor(() => expect(result.current.requests.length).toBe(1));
     await act(() => obsolete(question.id, response));
     expect(port.answer).not.toHaveBeenCalled();
+  });
+  it("retains nothing beyond the listed requests while a remote task answers many successive questions", async () => {
+    vi.useFakeTimers();
+    try {
+      const asked = Array.from({ length: 40 }, (_unused, index) => ({
+        ...question,
+        id: `question-${index}`,
+      }));
+      let listed: readonly AgentQuestionRequest[] = [];
+      const port = gateway();
+      vi.mocked(port.list).mockImplementation(() => Promise.resolve(listed));
+      vi.mocked(port.answer).mockImplementation((_owner, requestId) =>
+        Promise.resolve({ ...answered, id: requestId }),
+      );
+      const { result, unmount } = renderObservedQuestions(port, { target: owner, running: true });
+      await settlePoll();
+      for (const request of asked) {
+        listed = [request];
+        await nextPoll();
+        expect(result.current.requests).toBe(listed);
+        await act(() => result.current.answer(request.id, response));
+        expect(statuses(result.current.requests)).toEqual([[request.id, "answered"]]);
+      }
+      listed = asked.slice(0, 32);
+      await nextPoll();
+      expect(result.current.requests).toBe(listed);
+      listed = [{ ...asked[39], status: "cancelled" }];
+      await nextPoll();
+      await act(() => result.current.answer(asked[39].id, response));
+      expect(result.current.requests).toBe(listed);
+      expect(port.answer).toHaveBeenCalledTimes(asked.length);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("never shows the reconnecting notice for one disconnected poll and recovers pending questions", async () => {
     vi.useFakeTimers();
@@ -397,17 +831,9 @@ describe("useAgentQuestions", () => {
   });
 });
 describe("useAgentQuestions availability", () => {
-  const remoteOwner: AgentQuestionOwner = {
-    kind: "remote",
-    serverId: "linux",
-    runnerId: "runner",
-    taskId: "task",
-  };
+  const remoteOwner = owner;
   const notice = "Questions could not be refreshed. Reconnecting…";
-  const owners = [
-    { name: "a local owner", target: owner },
-    { name: "a remote owner", target: remoteOwner },
-  ];
+  const owners = [{ name: "a remote owner", target: remoteOwner }];
   beforeEach(() => {
     vi.useFakeTimers();
   });

@@ -136,6 +136,7 @@ fn output_fixture() -> (Arc<AgentTaskShared>, Arc<RecordingSink>) {
             group: None,
             input: None,
             questions: None,
+            interactions: None,
             watchdog: Arc::new(WatchdogGate::default()),
         },
     );

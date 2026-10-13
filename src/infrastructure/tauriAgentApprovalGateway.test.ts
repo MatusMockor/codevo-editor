@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentApprovalOwner } from "../application/agentApprovalPorts";
+import { isAgentApprovalGateway, type AgentApprovalOwner } from "../application/agentApprovalPorts";
 import { TauriAgentApprovalGateway } from "./tauriAgentApprovalGateway";
-import { TauriAgentQuestionGateway } from "./tauriAgentQuestionGateway";
 
 const owner: AgentApprovalOwner = {
   kind: "local",
   workspaceId: "workspace",
-  repositoryRoot: "/repo",
+  taskId: "task-1",
+};
+const remoteOwner: AgentApprovalOwner = {
+  kind: "remote",
+  serverId: "server",
+  runnerId: "runner",
   taskId: "task-1",
 };
 const wire = {
@@ -21,67 +25,102 @@ const wire = {
   decisions: ["allowOnce", "allowForSession", "deny"],
   status: "pending",
 };
+const approved = { ...wire, status: "approved", decision: "allowForSession" };
 
 describe("TauriAgentApprovalGateway", () => {
-  it("lists local approvals with the exact owner authority", async () => {
-    const invoke = vi.fn().mockResolvedValue([wire]);
-    const gateway = new TauriAgentApprovalGateway(invoke);
-    await expect(gateway.listApprovals(owner)).resolves.toEqual([wire]);
-    expect(invoke).toHaveBeenCalledWith("list_agent_approvals", {
-      request: { workspaceId: "workspace", repositoryRoot: "/repo", taskId: "task-1" },
-    });
+  it("satisfies the approval gateway port without a list capability", () => {
+    const gateway = new TauriAgentApprovalGateway(vi.fn());
+
+    expect(isAgentApprovalGateway(gateway)).toBe(true);
+    expect("listApprovals" in gateway).toBe(false);
   });
 
-  it("fails closed for foreign tasks, duplicates, and remote owners", async () => {
-    await expect(
-      new TauriAgentApprovalGateway(
-        vi.fn().mockResolvedValue([{ ...wire, taskId: "task-2" }]),
-      ).listApprovals(owner),
-    ).rejects.toThrow();
-    await expect(
-      new TauriAgentApprovalGateway(vi.fn().mockResolvedValue([wire, wire])).listApprovals(owner),
-    ).rejects.toThrow();
-    const invoke = vi.fn();
-    const remote = new TauriAgentApprovalGateway(invoke);
-    const remoteOwner: AgentApprovalOwner = {
-      kind: "remote",
-      serverId: "server",
-      runnerId: "runner",
-      taskId: "task-1",
-    };
-    await expect(remote.listApprovals(remoteOwner)).resolves.toEqual([]);
-    await expect(remote.answerApproval(remoteOwner, wire.id, "deny")).rejects.toThrow();
-    expect(invoke).not.toHaveBeenCalled();
-  });
-
-  it("sends a closed decision and requires the backend to confirm the same one", async () => {
-    const invoke = vi
-      .fn()
-      .mockResolvedValueOnce({ ...wire, status: "approved", decision: "allowForSession" })
-      .mockResolvedValueOnce({ ...wire, status: "approved", decision: "allowOnce" });
+  it("sends a closed decision with only the workspace and task identity", async () => {
+    const invoke = vi.fn().mockResolvedValue(approved);
     const gateway = new TauriAgentApprovalGateway(invoke);
+
     await expect(gateway.answerApproval(owner, wire.id, "allowForSession")).resolves.toMatchObject({
       status: "approved",
     });
-    expect(invoke).toHaveBeenCalledWith("answer_agent_approval", {
+
+    expect(invoke.mock.calls).toStrictEqual([
+      [
+        "answer_agent_approval",
+        {
+          request: {
+            workspaceId: "workspace",
+            taskId: "task-1",
+            requestId: wire.id,
+            decision: "allowForSession",
+          },
+        },
+      ],
+    ]);
+  });
+
+  it("drops a stale repository root carried by a local owner", async () => {
+    const invoke = vi.fn().mockResolvedValue(approved);
+    const gateway = new TauriAgentApprovalGateway(invoke);
+    const widened: AgentApprovalOwner = Object.assign({ repositoryRoot: "/repo/nested" }, owner);
+
+    await gateway.answerApproval(widened, wire.id, "allowForSession");
+
+    expect(invoke.mock.calls[0]?.[1]).toStrictEqual({
       request: {
         workspaceId: "workspace",
-        repositoryRoot: "/repo",
         taskId: "task-1",
         requestId: wire.id,
         decision: "allowForSession",
       },
     });
-    await expect(gateway.answerApproval(owner, wire.id, "deny")).rejects.toThrow();
-    await expect(
-      gateway.answerApproval(owner, wire.id, "always" as unknown as "deny"),
-    ).rejects.toThrow();
   });
 
-  it("is exposed by the question gateway used in the composition root", async () => {
-    const invoke = vi.fn().mockResolvedValue([wire]);
-    await expect(new TauriAgentQuestionGateway(invoke).listApprovals(owner)).resolves.toHaveLength(
-      1,
+  it("requires the backend to confirm the same decision", async () => {
+    const gateway = new TauriAgentApprovalGateway(
+      vi.fn().mockResolvedValue({ ...wire, status: "approved", decision: "allowOnce" }),
     );
+
+    await expect(gateway.answerApproval(owner, wire.id, "deny")).rejects.toThrow();
+    await expect(gateway.answerApproval(owner, wire.id, "allowForSession")).rejects.toThrow();
+  });
+
+  it.each([
+    ["a receipt of another task", { ...approved, taskId: "task-2" }],
+    ["a receipt of another request", { ...approved, id: "codex-question-2" }],
+    ["a receipt that is still pending", wire],
+    ["a receipt with an unknown key", { ...approved, extra: true }],
+    ["a list instead of a receipt", [approved]],
+  ])("fails closed for %s", async (_label, payload) => {
+    const gateway = new TauriAgentApprovalGateway(vi.fn().mockResolvedValue(payload));
+
+    await expect(gateway.answerApproval(owner, wire.id, "allowForSession")).rejects.toThrow();
+  });
+
+  it.each([
+    ["an unknown decision", owner, wire.id, "always"],
+    ["an invalid request id", owner, "", "deny"],
+    ["a blank workspace", { ...owner, workspaceId: "" }, wire.id, "deny"],
+    ["a path-like workspace", { ...owner, workspaceId: "/repo" }, wire.id, "deny"],
+    ["a blank task", { ...owner, taskId: "" }, wire.id, "deny"],
+  ])("rejects %s before invoking native", async (_label, invalidOwner, requestId, decision) => {
+    const invoke = vi.fn();
+    const gateway = new TauriAgentApprovalGateway(invoke);
+
+    await expect(
+      gateway.answerApproval(invalidOwner as AgentApprovalOwner, requestId, decision as "deny"),
+    ).rejects.toThrow();
+
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("keeps remote approvals unavailable without invoking native", async () => {
+    const invoke = vi.fn();
+    const gateway = new TauriAgentApprovalGateway(invoke);
+
+    await expect(gateway.answerApproval(remoteOwner, wire.id, "deny")).rejects.toThrow(
+      "Remote approvals are unavailable.",
+    );
+
+    expect(invoke).not.toHaveBeenCalled();
   });
 });

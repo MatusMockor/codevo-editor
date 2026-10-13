@@ -70,6 +70,7 @@ fn running_turn(signals: &Arc<RecordingSignals>) -> AgentTaskRegistryState {
             group: Some(group),
             input: None,
             questions: None,
+            interactions: None,
             watchdog: Arc::new(WatchdogGate::default()),
         },
     );

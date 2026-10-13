@@ -1,3 +1,4 @@
+use super::interactions::AgentInteractionChanges;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
@@ -134,6 +135,7 @@ struct Shared {
     state: Mutex<State>,
     wake: Condvar,
     timeout: Duration,
+    changes: AgentInteractionChanges,
 }
 
 impl Shared {
@@ -154,17 +156,22 @@ impl Default for AgentApprovalRegistry {
 
 impl Drop for AgentApprovalRegistry {
     fn drop(&mut self) {
-        self.close();
+        self.settle_all(true);
     }
 }
 
 impl AgentApprovalRegistry {
     pub fn with_timeout(timeout: Duration) -> Self {
+        Self::observed(timeout, AgentInteractionChanges::default())
+    }
+
+    pub(super) fn observed(timeout: Duration, changes: AgentInteractionChanges) -> Self {
         Self {
             shared: Arc::new(Shared {
                 state: Mutex::new(State::default()),
                 wake: Condvar::new(),
                 timeout,
+                changes,
             }),
         }
     }
@@ -230,6 +237,7 @@ impl AgentApprovalRegistry {
         if start_timer {
             self.spawn_timer();
         }
+        self.shared.changes.notify();
         Ok(())
     }
 
@@ -246,6 +254,10 @@ impl AgentApprovalRegistry {
 
     pub fn list(&self, task_id: &str) -> Vec<AgentApprovalRequest> {
         self.expire_overdue(Instant::now());
+        self.requests(task_id)
+    }
+
+    pub(super) fn requests(&self, task_id: &str) -> Vec<AgentApprovalRequest> {
         self.shared
             .locked()
             .entries
@@ -259,44 +271,65 @@ impl AgentApprovalRegistry {
     }
 
     pub fn cancel(&self, request_id: &str) {
-        let mut state = self.shared.locked();
-        if let Some(entry) = state
-            .entries
-            .iter_mut()
-            .find(|entry| entry.request.id == request_id)
-        {
-            if entry.request.status == AgentApprovalStatus::Pending {
-                entry.request.status = AgentApprovalStatus::Cancelled;
-                entry.responder = None;
-            }
+        if self.mark_cancelled(request_id) {
+            self.shared.changes.notify();
         }
     }
 
     pub fn expire(&self, request_id: &str) {
-        let mut state = self.shared.locked();
-        if let Some(entry) = state
-            .entries
-            .iter_mut()
-            .find(|entry| entry.request.id == request_id)
-        {
-            if entry.request.status == AgentApprovalStatus::Pending && !entry.submitting {
-                entry.request.status = AgentApprovalStatus::Expired;
-                entry.responder = None;
-            }
+        if self.mark_expired(request_id) {
+            self.shared.changes.notify();
         }
     }
 
     pub fn finish(&self) {
-        self.settle_all(false);
+        if self.settle_all(false) {
+            self.shared.changes.notify();
+        }
     }
 
     pub fn close(&self) {
-        self.settle_all(true);
+        if self.settle_all(true) {
+            self.shared.changes.notify();
+        }
     }
 
-    fn settle_all(&self, include_submitting: bool) {
+    pub(super) fn mark_cancelled(&self, request_id: &str) -> bool {
+        self.settle_entry(request_id, AgentApprovalStatus::Cancelled, true)
+    }
+
+    pub(super) fn mark_expired(&self, request_id: &str) -> bool {
+        self.settle_entry(request_id, AgentApprovalStatus::Expired, false)
+    }
+
+    fn settle_entry(
+        &self,
+        request_id: &str,
+        status: AgentApprovalStatus,
+        include_submitting: bool,
+    ) -> bool {
+        let mut state = self.shared.locked();
+        let Some(entry) = state
+            .entries
+            .iter_mut()
+            .find(|entry| entry.request.id == request_id)
+        else {
+            return false;
+        };
+        if entry.request.status != AgentApprovalStatus::Pending
+            || (entry.submitting && !include_submitting)
         {
+            return false;
+        }
+        entry.request.status = status;
+        entry.responder = None;
+        true
+    }
+
+    pub(super) fn settle_all(&self, include_submitting: bool) -> bool {
+        let changed = {
             let mut state = self.shared.locked();
+            let mut changed = !state.closed;
             state.closed = true;
             for entry in &mut state.entries {
                 if entry.request.status == AgentApprovalStatus::Pending
@@ -304,13 +337,16 @@ impl AgentApprovalRegistry {
                 {
                     entry.request.status = AgentApprovalStatus::Expired;
                     entry.responder = None;
+                    changed = true;
                 }
             }
-        }
+            changed
+        };
         self.shared.wake.notify_all();
+        changed
     }
 
-    fn expire_overdue(&self, now: Instant) {
+    pub(super) fn expire_overdue(&self, now: Instant) {
         expire_overdue(&self.shared, now);
     }
 
@@ -320,6 +356,7 @@ impl AgentApprovalRegistry {
         request_id: &str,
         decision: AgentApprovalDecision,
     ) -> Result<AgentApprovalRequest, String> {
+        let _settlement = self.shared.changes.settling();
         self.expire_overdue(Instant::now());
         let responder = {
             let mut state = self.shared.locked();
@@ -348,33 +385,50 @@ impl AgentApprovalRegistry {
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| responder(decision)))
             .unwrap_or_else(|_| Err("Approval response failed.".into()));
-        let mut state = self.shared.locked();
-        let entry = state
-            .entries
-            .iter_mut()
-            .find(|entry| entry.request.id == request_id)
-            .ok_or("Approval expired.")?;
-        entry.submitting = false;
-        if let Err(error) = result {
-            if entry.request.status == AgentApprovalStatus::Pending {
-                entry.request.status = AgentApprovalStatus::Expired;
-            }
-            return Err(error);
-        }
-        entry.request.status = match decision {
-            AgentApprovalDecision::Deny => AgentApprovalStatus::Denied,
-            AgentApprovalDecision::AllowOnce | AgentApprovalDecision::AllowForSession => {
-                AgentApprovalStatus::Approved
-            }
+        let (changed, outcome) = {
+            let mut state = self.shared.locked();
+            let entry = state
+                .entries
+                .iter_mut()
+                .find(|entry| entry.request.id == request_id)
+                .ok_or("Approval expired.")?;
+            entry.submitting = false;
+            record_answer(entry, task_id, decision, result)
         };
-        entry.request.decision = Some(decision);
-        let mut request = entry.request.clone();
-        request.task_id = task_id.into();
-        Ok(request)
+        if changed {
+            self.shared.changes.notify();
+        }
+        outcome
     }
 }
 
+fn record_answer(
+    entry: &mut Entry,
+    task_id: &str,
+    decision: AgentApprovalDecision,
+    result: Result<(), String>,
+) -> (bool, Result<AgentApprovalRequest, String>) {
+    if let Err(error) = result {
+        let pending = entry.request.status == AgentApprovalStatus::Pending;
+        if pending {
+            entry.request.status = AgentApprovalStatus::Expired;
+        }
+        return (pending, Err(error));
+    }
+    entry.request.status = match decision {
+        AgentApprovalDecision::Deny => AgentApprovalStatus::Denied,
+        AgentApprovalDecision::AllowOnce | AgentApprovalDecision::AllowForSession => {
+            AgentApprovalStatus::Approved
+        }
+    };
+    entry.request.decision = Some(decision);
+    let mut request = entry.request.clone();
+    request.task_id = task_id.into();
+    (true, Ok(request))
+}
+
 fn expire_overdue(shared: &Shared, now: Instant) {
+    let mut timed_out = false;
     let overdue: Vec<AgentApprovalResponder> = {
         let mut state = shared.locked();
         state
@@ -387,10 +441,14 @@ fn expire_overdue(shared: &Shared, now: Instant) {
             })
             .filter_map(|entry| {
                 entry.request.status = AgentApprovalStatus::TimedOut;
+                timed_out = true;
                 entry.responder.take()
             })
             .collect()
     };
+    if timed_out {
+        shared.changes.notify();
+    }
     for responder in overdue {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             responder(AgentApprovalDecision::Deny)

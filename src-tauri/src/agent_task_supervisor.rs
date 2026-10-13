@@ -115,6 +115,7 @@ pub const MAX_UNACKNOWLEDGED_AGENT_OUTPUT_EVENTS: usize = 64;
 
 pub const AGENT_TASK_STATUS_EVENT_CHANNEL: &str = "agent-task://status";
 pub const AGENT_TASK_OUTPUT_EVENT_CHANNEL: &str = "agent-task://output";
+pub const AGENT_TASK_INTERACTIONS_EVENT_CHANNEL: &str = "agent-task://interactions";
 
 pub(crate) const DUPLICATE_AGENT_TASK_ERROR: &str =
     "An agent task with this taskId already exists.";
@@ -202,6 +203,7 @@ pub trait AgentTaskEventSink: Send + Sync {
 
     fn status(&self, event: AgentTaskStatusEvent);
     fn output(&self, event: AgentTaskOutputEvent);
+    fn interactions(&self, _snapshot: AgentInteractionSnapshot) {}
     /// Asynchronous transports must opt into bounded consumption acknowledgement.
     /// Synchronous sinks finish consuming an event before returning from `output`.
     fn requires_output_acknowledgement(&self) -> bool {
@@ -550,6 +552,7 @@ struct AgentTaskEntry {
     group: Option<Arc<AgentProcessGroup>>,
     input: Option<Arc<AgentTaskInputSlot>>,
     questions: Option<Arc<crate::agent_questions::AgentQuestionSession>>,
+    interactions: Option<AgentInteractionSubscription>,
     watchdog: Arc<WatchdogGate>,
 }
 
@@ -582,6 +585,7 @@ impl AgentTaskEntry {
             group: None,
             input: None,
             questions: None,
+            interactions: None,
             watchdog,
         }
     }
@@ -593,6 +597,7 @@ struct AgentTaskRegistryState {
     starts_closed: bool,
     terminal_order: VecDeque<String>,
     pending_stops: PendingAgentTaskStops,
+    interaction_leases: AgentInteractionLeases,
 }
 
 struct AgentTaskShared {
@@ -876,6 +881,8 @@ impl AgentTaskRegistry {
             .child_mut()
             .ok_or_else(|| AGENT_TASK_START_PANIC_ERROR.to_string())?;
         let questions = child.take_questions();
+        let interactions =
+            AgentInteractionSubscription::open(&self.shared, &metadata, questions.as_ref());
         let input = child
             .take_input()
             .map(|writer| Arc::new(AgentTaskInputSlot::new(writer, questions.clone())));
@@ -904,6 +911,7 @@ impl AgentTaskRegistry {
             entry.group = Some(Arc::clone(&group));
             entry.input = input.clone();
             entry.questions = questions;
+            entry.interactions = interactions;
             entry.stop_requested
         };
         if stop_already_requested {
@@ -1628,3 +1636,8 @@ pub(crate) mod utf8_tests;
 
 #[path = "agent_task_questions.rs"]
 mod questions;
+
+#[path = "agent_task_interactions.rs"]
+mod interactions;
+pub use crate::agent_questions::interactions::AgentInteractionSnapshot;
+use interactions::{AgentInteractionLeases, AgentInteractionSubscription};

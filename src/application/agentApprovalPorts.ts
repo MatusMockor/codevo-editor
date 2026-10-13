@@ -4,7 +4,6 @@ import type { AgentQuestionOwner } from "./agentQuestionPorts";
 export type AgentApprovalOwner = AgentQuestionOwner;
 
 export interface AgentApprovalGateway {
-  listApprovals(owner: AgentApprovalOwner): Promise<readonly AgentApprovalRequest[]>;
   answerApproval(
     owner: AgentApprovalOwner,
     requestId: string,
@@ -15,7 +14,5 @@ export interface AgentApprovalGateway {
 export function isAgentApprovalGateway(value: unknown): value is AgentApprovalGateway {
   if (value === null || typeof value !== "object") return false;
   const candidate = value as Partial<AgentApprovalGateway>;
-  return (
-    typeof candidate.listApprovals === "function" && typeof candidate.answerApproval === "function"
-  );
+  return typeof candidate.answerApproval === "function";
 }

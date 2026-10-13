@@ -29,9 +29,10 @@ use crate::agent_task_spawner::{
 };
 use crate::agent_task_supervisor::agent_task_pending_stops::AGENT_TASK_STOPPED_BEFORE_START_ERROR;
 use crate::agent_task_supervisor::{
-    AgentTaskEventSink, AgentTaskIsolation, AgentTaskMetadata, AgentTaskOutputEvent,
-    AgentTaskRegistry, AgentTaskStartRequest as AgentTaskRegistryStartRequest,
-    AgentTaskStartResult, AgentTaskStatusEvent, AGENT_TASK_OUTPUT_EVENT_CHANNEL,
+    AgentInteractionSnapshot, AgentTaskEventSink, AgentTaskIsolation, AgentTaskMetadata,
+    AgentTaskOutputEvent, AgentTaskRegistry,
+    AgentTaskStartRequest as AgentTaskRegistryStartRequest, AgentTaskStartResult,
+    AgentTaskStatusEvent, AGENT_TASK_INTERACTIONS_EVENT_CHANNEL, AGENT_TASK_OUTPUT_EVENT_CHANNEL,
     AGENT_TASK_STARTS_CLOSED_ERROR, AGENT_TASK_STATUS_EVENT_CHANNEL,
 };
 use crate::effective_executable_environment::EffectiveExecutablePath;
@@ -203,6 +204,12 @@ impl AgentTaskEventSink for AppHandleAgentTaskEventSink {
 
     fn output(&self, event: AgentTaskOutputEvent) {
         let _ = self.app.emit(AGENT_TASK_OUTPUT_EVENT_CHANNEL, event);
+    }
+
+    fn interactions(&self, snapshot: AgentInteractionSnapshot) {
+        let _ = self
+            .app
+            .emit(AGENT_TASK_INTERACTIONS_EVENT_CHANNEL, snapshot);
     }
 }
 

@@ -391,19 +391,21 @@ struct TurnState {
 
 impl TurnState {
     fn settle(&self, exit: i32) {
-        let _gate = self
-            .question_gate
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        {
+            let _gate = self
+                .question_gate
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let _ = self
+                .exit
+                .compare_exchange(PENDING, exit, Ordering::SeqCst, Ordering::SeqCst);
+            self.input_closed.store(true, Ordering::SeqCst);
+        }
         if exit == 0 {
             self.questions.finish();
-        } else {
-            self.questions.close();
+            return;
         }
-        let _ = self
-            .exit
-            .compare_exchange(PENDING, exit, Ordering::SeqCst, Ordering::SeqCst);
-        self.input_closed.store(true, Ordering::SeqCst);
+        self.questions.close();
     }
 
     fn cleanup(&self, interrupt: bool) {

@@ -1,16 +1,32 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { AgentApprovalGateway } from "../application/agentApprovalPorts";
+import type {
+  AgentInteractionFeed,
+  AgentInteractionOwner,
+} from "../application/agentInteractionPorts";
+import type {
+  AgentQuestionGateway,
+  AgentQuestionOwner,
+  AgentRemoteQuestionOwner,
+} from "../application/agentQuestionPorts";
 import type { AgentApprovalDecision, AgentApprovalRequest } from "../domain/agentApproval";
-import { TauriAgentApprovalGateway } from "./tauriAgentApprovalGateway";
-import {
-  agentQuestionAuthority,
-  agentQuestionIdentifier as identifier,
-} from "./agentQuestionAuthority";
-import type { AgentQuestionGateway, AgentQuestionOwner } from "../application/agentQuestionPorts";
+import type { AgentInteractionSnapshot } from "../domain/agentInteractionSnapshot";
 import {
   parseAgentQuestionRequest,
   type AgentQuestionRequest,
   type AgentQuestionResponse,
 } from "../domain/agentQuestion";
+import {
+  agentQuestionAuthority,
+  agentQuestionIdentifier as identifier,
+  agentRemoteQuestionAuthority,
+} from "./agentQuestionAuthority";
+import { TauriAgentApprovalGateway } from "./tauriAgentApprovalGateway";
+import {
+  TauriAgentInteractionFeed,
+  type AgentInteractionRuntimeDetector,
+  type ListenToAgentInteractionEvent,
+} from "./tauriAgentInteractionFeed";
 
 type Invoke = (command: string, args: { readonly request: unknown }) => Promise<unknown>;
 function request(value: unknown, owner: AgentQuestionOwner): AgentQuestionRequest {
@@ -57,13 +73,30 @@ function outbound(response: AgentQuestionResponse): AgentQuestionResponse {
     throw new Error("Invalid question response.");
   return response;
 }
-export class TauriAgentQuestionGateway implements AgentQuestionGateway {
+export class TauriAgentQuestionGateway
+  implements AgentQuestionGateway, AgentApprovalGateway, AgentInteractionFeed
+{
   private readonly approvals: TauriAgentApprovalGateway;
-  constructor(private readonly invokeCommand: Invoke = invoke) {
+  private readonly interactions: TauriAgentInteractionFeed;
+  constructor(
+    private readonly invokeCommand: Invoke = invoke,
+    listenToEvent?: ListenToAgentInteractionEvent,
+    isRuntimeAvailable?: AgentInteractionRuntimeDetector,
+  ) {
     this.approvals = new TauriAgentApprovalGateway(invokeCommand);
+    this.interactions = new TauriAgentInteractionFeed(
+      invokeCommand,
+      listenToEvent,
+      isRuntimeAvailable,
+    );
   }
-  listApprovals(owner: AgentQuestionOwner): Promise<readonly AgentApprovalRequest[]> {
-    return this.approvals.listApprovals(owner);
+  currentInteractions(owner: AgentInteractionOwner): Promise<AgentInteractionSnapshot> {
+    return this.interactions.currentInteractions(owner);
+  }
+  subscribeInteractions(
+    handler: (snapshot: AgentInteractionSnapshot) => void,
+  ): Promise<() => void> {
+    return this.interactions.subscribeInteractions(handler);
   }
   answerApproval(
     owner: AgentQuestionOwner,
@@ -72,11 +105,10 @@ export class TauriAgentQuestionGateway implements AgentQuestionGateway {
   ): Promise<AgentApprovalRequest> {
     return this.approvals.answerApproval(owner, requestId, decision);
   }
-  async list(owner: AgentQuestionOwner): Promise<readonly AgentQuestionRequest[]> {
-    const result = await this.invokeCommand(
-      owner.kind === "local" ? "list_agent_questions" : "list_remote_agent_questions",
-      { request: agentQuestionAuthority(owner) },
-    );
+  async list(owner: AgentRemoteQuestionOwner): Promise<readonly AgentQuestionRequest[]> {
+    const result = await this.invokeCommand("list_remote_agent_questions", {
+      request: agentRemoteQuestionAuthority(owner),
+    });
     if (!Array.isArray(result) || result.length > 32) throw new Error("Invalid question list.");
     const requests = result.map((item) => request(item, owner));
     if (new Set(requests.map((item) => item.id)).size !== requests.length)

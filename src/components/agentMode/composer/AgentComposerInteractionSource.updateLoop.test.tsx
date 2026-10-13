@@ -2,6 +2,12 @@
 import { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentInteractionFeed } from "../../../application/agentInteractionPorts";
+import {
+  AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD,
+  AGENT_INTERACTION_RETRY_BASE_MS,
+  AGENT_INTERACTION_RETRY_CAP_MS,
+} from "../../../application/agentInteractionStore";
 import type {
   AgentQuestionGateway,
   AgentQuestionOwner,
@@ -15,6 +21,7 @@ import type { AgentApprovalRequest } from "../../../domain/agentApproval";
 import type { AgentQuestionRequest } from "../../../domain/agentQuestion";
 import { waitForReact } from "../../../test/reactTestLifecycle";
 import { ErrorBoundary } from "../../ErrorBoundary";
+import { FakeAgentInteractionGateway } from "../agentInteractionGatewayTestFixtures";
 import type {
   AgentComposerInteraction,
   AgentComposerQuestionAttachmentTarget,
@@ -24,9 +31,12 @@ import { AgentComposerInteractionSource } from "./AgentComposerInteractionSource
 const LOCAL_OWNER: AgentQuestionOwner = {
   kind: "local",
   workspaceId: "workspace",
-  repositoryRoot: "/repo",
   taskId: "task",
 };
+const LOCAL_FEED_OWNER = { workspaceId: "workspace", taskId: "task" };
+const LOCAL_RETRY_AFTER_NOTICE_MS =
+  AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD - 1);
+const LOCAL_NOTICE_AFTER_MS = LOCAL_RETRY_AFTER_NOTICE_MS - AGENT_INTERACTION_RETRY_BASE_MS;
 const REMOTE_OWNER: AgentQuestionOwner = {
   kind: "remote",
   serverId: "linux",
@@ -67,29 +77,31 @@ const OWNERS = [
   { name: "local", owner: LOCAL_OWNER },
 ];
 
-function unreachableGateway() {
-  return {
-    list: vi.fn(() => Promise.reject(new Error("The runner is unreachable."))),
-    answer: vi.fn(),
-    listApprovals: vi.fn(() => Promise.reject(new Error("The runner is unreachable."))),
-    answerApproval: vi.fn(),
-  };
+function unreachableGateway(): FakeAgentInteractionGateway {
+  const gateway = new FakeAgentInteractionGateway();
+  gateway.readable = false;
+  gateway.list.mockImplementation(() => Promise.reject(new Error("The runner is unreachable.")));
+  return gateway;
 }
 
-function questionGateway(): AgentQuestionGateway {
-  return { list: vi.fn().mockResolvedValue([QUESTION]), answer: vi.fn() };
+function questionOnlyGateway(): AgentQuestionGateway & AgentInteractionFeed {
+  const gateway = listingGateway([QUESTION], []);
+  return {
+    list: gateway.list,
+    answer: gateway.answer,
+    currentInteractions: gateway.currentInteractions,
+    subscribeInteractions: gateway.subscribeInteractions,
+  };
 }
 
 function listingGateway(
   questions: readonly AgentQuestionRequest[],
   approvals: readonly AgentApprovalRequest[],
-) {
-  return {
-    list: vi.fn(() => Promise.resolve(structuredClone(questions))),
-    answer: vi.fn(),
-    listApprovals: vi.fn(() => Promise.resolve(structuredClone(approvals))),
-    answerApproval: vi.fn(),
-  };
+): FakeAgentInteractionGateway {
+  const gateway = new FakeAgentInteractionGateway();
+  gateway.list.mockImplementation(() => Promise.resolve(structuredClone(questions)));
+  gateway.stage(LOCAL_FEED_OWNER, { questions, approvals });
+  return gateway;
 }
 
 describe("AgentComposerInteractionSource held in parent state", () => {
@@ -201,20 +213,149 @@ describe("AgentComposerInteractionSource held in parent state", () => {
     await waitForReact(() => expect(shown()).not.toBe("none"));
   }
 
-  it.each(OWNERS)(
-    "shows the reconnecting notice once for a $name turn whose polls keep failing",
-    async ({ owner }) => {
+  async function elapse(milliseconds: number): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(milliseconds);
+    });
+  }
+
+  function pushLocal(
+    gateway: FakeAgentInteractionGateway,
+    questions: readonly AgentQuestionRequest[],
+    approvals: readonly AgentApprovalRequest[],
+  ): void {
+    act(() => gateway.push(LOCAL_FEED_OWNER, { questions, approvals }));
+  }
+
+  function noticeText(): string | null {
+    const latest = published[published.length - 1];
+    return latest?.kind === "notice" ? latest.text : null;
+  }
+
+  it("shows the reconnecting notice once for a remote turn whose polls keep failing", async () => {
+    vi.useFakeTimers();
+    const gateway = unreachableGateway();
+    mount(gateway, REMOTE_OWNER);
+
+    await polls(AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD + 1);
+    const noticed = published.length;
+    await polls(4);
+
+    expectShown("notice");
+    expect(noticeText()).toBe("Questions could not be refreshed. Reconnecting…");
+    expect(published).toHaveLength(noticed);
+    expect(gateway.currentInteractions).not.toHaveBeenCalled();
+  });
+
+  it("shows no reconnecting notice for a remote turn after a single failed poll", async () => {
+    vi.useFakeTimers();
+    const gateway = listingGateway([], []);
+    gateway.list.mockImplementationOnce(() => Promise.reject(new Error("blip")));
+    mount(gateway, REMOTE_OWNER);
+
+    await firstPoll();
+    await polls(AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD + 1);
+
+    expectShown("none");
+    expect(publishedKinds()).toEqual(["none"]);
+  });
+
+  it("shows one unavailable notice, never the reconnecting one, once a local turn's reads keep failing", async () => {
+    vi.useFakeTimers();
+    const gateway = unreachableGateway();
+    mount(gateway, LOCAL_OWNER);
+
+    await firstPoll();
+    expectShown("none");
+    await elapse(LOCAL_NOTICE_AFTER_MS - 1);
+    expectShown("none");
+    expect(publishedKinds()).toEqual(["none"]);
+
+    await elapse(1);
+    expectShown("notice");
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(
+      AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD,
+    );
+    const noticed = published.length;
+    await elapse(3 * AGENT_INTERACTION_RETRY_CAP_MS);
+
+    expectShown("notice");
+    expect(noticeText()).not.toBeNull();
+    expect(noticeText()).not.toContain("Reconnecting");
+    expect(published).toHaveLength(noticed);
+    expect(publishedKinds()).toEqual(["none", "notice"]);
+    expect(gateway.currentInteractions.mock.calls.length).toBeGreaterThan(
+      AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD,
+    );
+    expect(gateway.list).not.toHaveBeenCalled();
+  });
+
+  it("drops a local turn's unavailable notice as soon as its interactions can be read again", async () => {
+    vi.useFakeTimers();
+    const gateway = unreachableGateway();
+    mount(gateway, LOCAL_OWNER);
+    await firstPoll();
+    await elapse(LOCAL_NOTICE_AFTER_MS);
+    expectShown("notice");
+
+    gateway.readable = true;
+    gateway.stage(LOCAL_FEED_OWNER, { questions: [QUESTION] });
+    await elapse(LOCAL_RETRY_AFTER_NOTICE_MS - 1);
+    expectShown("notice");
+    await elapse(1);
+
+    expectShown("question");
+    expect(publishedKinds()).toEqual(["none", "notice", "question"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    { name: "once", failures: 1 },
+    {
+      name: "one time short of the notice threshold",
+      failures: AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD - 1,
+    },
+  ])(
+    "never shows a notice for a local turn whose read fails $name and then succeeds",
+    async ({ failures }) => {
       vi.useFakeTimers();
-      mount(unreachableGateway(), owner);
+      const gateway = listingGateway([QUESTION], []);
+      for (let failure = 0; failure < failures; failure += 1) {
+        gateway.currentInteractions.mockImplementationOnce(() =>
+          Promise.reject(new Error("Agent interactions are unavailable.")),
+        );
+      }
+      mount(gateway, LOCAL_OWNER);
 
-      await polls(AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD + 1);
-      const noticed = published.length;
-      await polls(4);
+      await firstPoll();
+      expectShown("none");
+      await elapse(LOCAL_NOTICE_AFTER_MS);
+      expectShown("question");
+      await elapse(3 * AGENT_INTERACTION_RETRY_CAP_MS);
 
-      expectShown("notice");
-      expect(published).toHaveLength(noticed);
+      expectShown("question");
+      expect(publishedKinds()).toEqual(["none", "question"]);
+      expect(gateway.currentInteractions).toHaveBeenCalledTimes(failures + 1);
+      expect(gateway.list).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
     },
   );
+
+  it("shows no notice for a local turn whose interactions stay readable", async () => {
+    vi.useFakeTimers();
+    const gateway = listingGateway([], []);
+    gateway.list.mockImplementation(() => Promise.reject(new Error("The runner is unreachable.")));
+    mount(gateway, LOCAL_OWNER);
+
+    await firstPoll();
+    await polls(AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD + 2);
+
+    expectShown("none");
+    expect(publishedKinds()).toEqual(["none"]);
+    expect(gateway.list).not.toHaveBeenCalled();
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 
   it("shows a pending question of a remote turn", async () => {
     mount(listingGateway([QUESTION], []), REMOTE_OWNER);
@@ -224,15 +365,15 @@ describe("AgentComposerInteractionSource held in parent state", () => {
     expectShown("question");
   });
 
-  it("shows a pending question of a local turn when the gateway has no approvals", async () => {
-    mount(questionGateway(), LOCAL_OWNER);
+  it("shows a pending question of a local turn when the gateway answers no approvals", async () => {
+    mount(questionOnlyGateway(), LOCAL_OWNER);
 
     await interactionOrCrash();
 
     expectShown("question");
   });
 
-  it("shows a pending question of a local turn when the gateway also lists approvals", async () => {
+  it("shows a pending question of a local turn when the gateway also answers approvals", async () => {
     mount(listingGateway([QUESTION], []), LOCAL_OWNER);
 
     await interactionOrCrash();
@@ -248,33 +389,83 @@ describe("AgentComposerInteractionSource held in parent state", () => {
     expectShown("approval");
   });
 
-  it.each(OWNERS)(
-    "hands the parent a $name turn's question once while polls keep listing it",
-    async ({ owner }) => {
-      vi.useFakeTimers();
-      const gateway = listingGateway([QUESTION], []);
-      mount(gateway, owner);
+  it("hands the parent a remote turn's question once while polls keep listing it", async () => {
+    vi.useFakeTimers();
+    const gateway = listingGateway([QUESTION], []);
+    mount(gateway, REMOTE_OWNER);
 
-      await firstPoll();
-      await polls(5);
+    await firstPoll();
+    await polls(5);
 
-      expectShown("question");
-      expect(gateway.list).toHaveBeenCalledTimes(6);
-      expect(publishedKinds()).toEqual(["none", "question"]);
-    },
-  );
+    expectShown("question");
+    expect(gateway.list).toHaveBeenCalledTimes(6);
+    expect(gateway.currentInteractions).not.toHaveBeenCalled();
+    expect(publishedKinds()).toEqual(["none", "question"]);
+  });
 
-  it("hands the parent a local turn's approval once while polls keep listing it", async () => {
+  it("hands the parent a local turn's question once while the feed keeps pushing it", async () => {
+    vi.useFakeTimers();
+    const gateway = listingGateway([QUESTION], []);
+    mount(gateway, LOCAL_OWNER);
+
+    await firstPoll();
+    for (let round = 0; round < 5; round += 1) pushLocal(gateway, [QUESTION], []);
+    await polls(5);
+
+    expectShown("question");
+    expect(gateway.list).not.toHaveBeenCalled();
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(publishedKinds()).toEqual(["none", "question"]);
+  });
+
+  it("hands the parent a local turn's approval once while the feed keeps pushing it", async () => {
     vi.useFakeTimers();
     const gateway = listingGateway([], [APPROVAL]);
     mount(gateway, LOCAL_OWNER);
 
     await firstPoll();
+    for (let round = 0; round < 5; round += 1) pushLocal(gateway, [], [APPROVAL]);
     await polls(5);
 
     expectShown("approval");
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(6);
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
     expect(publishedKinds()).toEqual(["none", "approval"]);
+  });
+
+  it("shows a local turn's question the moment it is pushed and clears it once it is gone", async () => {
+    vi.useFakeTimers();
+    const gateway = listingGateway([], []);
+    mount(gateway, LOCAL_OWNER);
+    await firstPoll();
+    expectShown("none");
+
+    pushLocal(gateway, [QUESTION], []);
+    expectShown("question");
+
+    pushLocal(gateway, [], []);
+    expectShown("none");
+    expect(publishedKinds()).toEqual(["none", "question", "none"]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("hands the parent a new interaction when the pushed question changes", async () => {
+    vi.useFakeTimers();
+    const reworded: AgentQuestionRequest = {
+      ...QUESTION,
+      questions: [{ ...QUESTION.questions[0]!, prompt: "Which theme?" }],
+    };
+    const gateway = listingGateway([QUESTION], []);
+    mount(gateway, LOCAL_OWNER);
+    await firstPoll();
+
+    pushLocal(gateway, [reworded], []);
+
+    const latest = published[published.length - 1];
+    expectShown("question");
+    expect(publishedKinds()).toEqual(["none", "question", "question"]);
+    expect(latest?.kind === "question" ? latest.request : null).toEqual(reworded);
   });
 
   it("hands the parent a new interaction when the listed question changes", async () => {
@@ -307,7 +498,7 @@ describe("AgentComposerInteractionSource held in parent state", () => {
 
     expectShown("question");
     expect(gateway.list).toHaveBeenCalledTimes(1);
-    expect(gateway.listApprovals).not.toHaveBeenCalled();
+    expect(gateway.currentInteractions).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
     expect(publishedKinds()).toEqual(["none", "question"]);
 
@@ -315,11 +506,12 @@ describe("AgentComposerInteractionSource held in parent state", () => {
     await firstPoll();
 
     expect(gateway.list).toHaveBeenCalledTimes(2);
+    expect(gateway.currentInteractions).not.toHaveBeenCalled();
     expect(publishedKinds()).toEqual(["none", "question"]);
   });
 
   it.each(OWNERS)(
-    "shows no reconnecting notice for a $name turn whose runner is known to be unreachable",
+    "shows no notice for a $name turn whose runner is known to be unreachable",
     async ({ owner }) => {
       vi.useFakeTimers();
       const gateway = unreachableGateway();
@@ -328,8 +520,9 @@ describe("AgentComposerInteractionSource held in parent state", () => {
       await polls(AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD + 2);
 
       expectShown("none");
+      expect(publishedKinds()).toEqual(["none"]);
       expect(gateway.list).not.toHaveBeenCalled();
-      expect(gateway.listApprovals).not.toHaveBeenCalled();
+      expect(gateway.currentInteractions).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
     },
   );

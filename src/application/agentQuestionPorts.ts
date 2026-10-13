@@ -1,22 +1,23 @@
 import type { AgentQuestionRequest, AgentQuestionResponse } from "../domain/agentQuestion";
 
+export interface AgentLocalQuestionOwner {
+  readonly kind: "local";
+  readonly workspaceId: string;
+  readonly taskId: string;
+}
+
+export interface AgentRemoteQuestionOwner {
+  readonly kind: "remote";
+  readonly serverId: string;
+  readonly runnerId: string;
+  readonly taskId: string;
+}
+
 /** Authority belongs to the coordinator; question cards receive only display data. */
-export type AgentQuestionOwner =
-  | {
-      readonly kind: "local";
-      readonly workspaceId: string;
-      readonly repositoryRoot: string;
-      readonly taskId: string;
-    }
-  | {
-      readonly kind: "remote";
-      readonly serverId: string;
-      readonly runnerId: string;
-      readonly taskId: string;
-    };
+export type AgentQuestionOwner = AgentLocalQuestionOwner | AgentRemoteQuestionOwner;
 
 export interface AgentQuestionGateway {
-  list(owner: AgentQuestionOwner): Promise<readonly AgentQuestionRequest[]>;
+  list(owner: AgentRemoteQuestionOwner): Promise<readonly AgentQuestionRequest[]>;
   answer(
     owner: AgentQuestionOwner,
     requestId: string,

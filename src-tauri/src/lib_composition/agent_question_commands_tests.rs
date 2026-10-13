@@ -1,16 +1,68 @@
 use super::*;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::agent_questions::approvals::{
+    AgentApprovalFact, AgentApprovalKind, AgentApprovalStatus,
+};
+use crate::agent_questions::{
+    AgentQuestion, AgentQuestionAnswerItem, AgentQuestionSession, AgentQuestionStatus,
+};
+use crate::agent_task_spawner::{AgentChild, AgentProcessSpawner, AgentTaskProcessOwnership};
+use std::io::Read;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 
-struct RefusingSpawner;
+const TASK: &str = "agt-turn-interactions";
 
-impl crate::agent_task_spawner::AgentProcessSpawner for RefusingSpawner {
-    fn spawn(
-        &self,
-        _plan: &AgentTaskSpawnPlan,
-    ) -> Result<Box<dyn crate::agent_task_spawner::AgentChild>, String> {
-        Err("question command tests never spawn a child".to_string())
+struct WaitingTurn {
+    session: Arc<AgentQuestionSession>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl AgentChild for WaitingTurn {
+    fn take_questions(&mut self) -> Option<Arc<AgentQuestionSession>> {
+        Some(Arc::clone(&self.session))
+    }
+
+    fn stdout_reader(&mut self) -> Result<Box<dyn Read + Send>, String> {
+        Ok(Box::new(std::io::empty()))
+    }
+
+    fn stderr_reader(&mut self) -> Result<Box<dyn Read + Send>, String> {
+        Ok(Box::new(std::io::empty()))
+    }
+
+    fn observe_exit(&mut self) -> Result<bool, String> {
+        Ok(self.stopped.load(Ordering::SeqCst))
+    }
+
+    fn reap(&mut self) -> Result<i32, String> {
+        Ok(0)
+    }
+
+    fn process_group_id(&self) -> i32 {
+        0
+    }
+
+    fn ownership(&self) -> AgentTaskProcessOwnership {
+        AgentTaskProcessOwnership::SharedSession
+    }
+
+    fn force_kill(&mut self) -> Result<(), String> {
+        self.stopped.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+struct WaitingTurnSpawner {
+    session: Arc<AgentQuestionSession>,
+}
+
+impl AgentProcessSpawner for WaitingTurnSpawner {
+    fn spawn(&self, _plan: &AgentTaskSpawnPlan) -> Result<Box<dyn AgentChild>, String> {
+        Ok(Box::new(WaitingTurn {
+            session: Arc::clone(&self.session),
+            stopped: Arc::new(AtomicBool::new(false)),
+        }))
     }
 }
 
@@ -38,6 +90,12 @@ impl Workspace {
             root: std::fs::canonicalize(root).expect("canonical workspace root"),
         }
     }
+
+    fn nested(&self, name: &str) -> PathBuf {
+        let nested = self.root.join(name);
+        std::fs::create_dir_all(&nested).expect("nested repository");
+        nested
+    }
 }
 
 impl Drop for Workspace {
@@ -46,87 +104,385 @@ impl Drop for Workspace {
     }
 }
 
-fn tasks() -> AgentTaskRegistry {
+struct RunningTurn {
+    tasks: AgentTaskRegistry,
+    session: Arc<AgentQuestionSession>,
+}
+
+impl RunningTurn {
+    fn start(descriptor: &ManagedWorkspaceDescriptor, repository_root: &Path) -> Self {
+        let session = Arc::new(AgentQuestionSession::new());
+        let tasks = AgentTaskRegistry::new(
+            Arc::new(AgentTaskAdmissionRegistry::new()),
+            Arc::new(WaitingTurnSpawner {
+                session: Arc::clone(&session),
+            }),
+            Arc::new(SilentSink),
+        );
+        let admission = tasks
+            .admission()
+            .reserve(
+                &descriptor.workspace_id,
+                repository_root,
+                repository_root,
+                AgentTaskIsolation::InPlace,
+            )
+            .expect("admission");
+        let started = tasks.start(
+            AgentTaskRegistryStartRequest {
+                task_id: TASK.to_string(),
+                thread_id: "thread-interactions".to_string(),
+                workspace_id: descriptor.workspace_id.as_str().to_string(),
+                trust_root: descriptor.canonical_root_path.clone(),
+                repository_root: repository_root.to_path_buf(),
+                isolation: AgentTaskIsolation::InPlace,
+                worktree_path: None,
+            },
+            AgentTaskSpawnPlan::for_tests(
+                PathBuf::from("/bin/codevo-waiting-turn"),
+                Vec::new(),
+                repository_root.to_path_buf(),
+                Vec::new(),
+            ),
+            admission,
+        );
+        assert_eq!(started.map(|result| result.task_id), Ok(TASK.to_string()));
+        assert_eq!(tasks.acknowledge(TASK), Ok(()));
+        Self { tasks, session }
+    }
+
+    fn ask(&self) {
+        let question = AgentQuestionRequest {
+            id: "question-1".into(),
+            task_id: String::new(),
+            provider: "claudeCode".into(),
+            questions: vec![AgentQuestion {
+                id: "q".into(),
+                header: String::new(),
+                prompt: "Choose".into(),
+                options: Vec::new(),
+                multiple: false,
+                allow_custom: true,
+            }],
+            status: AgentQuestionStatus::Pending,
+            answers: None,
+        };
+        let approval = AgentApprovalRequest {
+            id: "approval-1".into(),
+            task_id: String::new(),
+            provider: "claudeCode".into(),
+            kind: AgentApprovalKind::Command,
+            title: "Run a command".into(),
+            detail: "npm test".into(),
+            detail_truncated: false,
+            facts: vec![AgentApprovalFact {
+                label: "Directory".into(),
+                value: "/repo".into(),
+            }],
+            decisions: vec![
+                AgentApprovalDecision::AllowOnce,
+                AgentApprovalDecision::Deny,
+            ],
+            status: AgentApprovalStatus::Pending,
+            decision: None,
+        };
+        assert_eq!(
+            self.session.register(question, Arc::new(|_| Ok(()))),
+            Ok(())
+        );
+        assert_eq!(
+            self.session
+                .approvals()
+                .register(approval, Arc::new(|_| Ok(()))),
+            Ok(())
+        );
+    }
+}
+
+fn idle_tasks() -> AgentTaskRegistry {
     AgentTaskRegistry::new(
         Arc::new(AgentTaskAdmissionRegistry::new()),
-        Arc::new(RefusingSpawner),
+        Arc::new(WaitingTurnSpawner {
+            session: Arc::new(AgentQuestionSession::new()),
+        }),
         Arc::new(SilentSink),
     )
 }
 
-fn owner(descriptor: &ManagedWorkspaceDescriptor, task_id: &str) -> QuestionOwner {
-    QuestionOwner {
-        task_id: task_id.to_string(),
+fn owner(descriptor: &ManagedWorkspaceDescriptor) -> InteractionOwner {
+    InteractionOwner {
+        task_id: TASK.to_string(),
         workspace_id: descriptor.workspace_id.clone(),
-        repository_root: descriptor
-            .canonical_root_path
-            .to_string_lossy()
-            .into_owned(),
     }
 }
 
+fn question_answer(descriptor: &ManagedWorkspaceDescriptor) -> QuestionAnswerRequest {
+    QuestionAnswerRequest {
+        task_id: TASK.to_string(),
+        workspace_id: descriptor.workspace_id.clone(),
+        request_id: "question-1".to_string(),
+        response: AgentQuestionResponse {
+            answers: vec![AgentQuestionAnswerItem {
+                question_id: "q".into(),
+                option_ids: Vec::new(),
+                text: "answer".into(),
+            }],
+        },
+    }
+}
+
+fn approval_answer(descriptor: &ManagedWorkspaceDescriptor) -> ApprovalAnswerRequest {
+    ApprovalAnswerRequest {
+        task_id: TASK.to_string(),
+        workspace_id: descriptor.workspace_id.clone(),
+        request_id: "approval-1".to_string(),
+        decision: AgentApprovalDecision::AllowOnce,
+    }
+}
+
+fn assert_every_command_is_rejected(
+    workspaces: &WorkspaceRegistry,
+    tasks: &AgentTaskRegistry,
+    descriptor: &ManagedWorkspaceDescriptor,
+) {
+    assert!(owned_interactions(workspaces, tasks, &owner(descriptor)).is_err());
+    assert!(answer_owned_question(workspaces, tasks, question_answer(descriptor)).is_err());
+    assert!(answer_owned_approval(workspaces, tasks, approval_answer(descriptor)).is_err());
+}
+
+fn assert_requests_stay_pending(turn: &RunningTurn) {
+    assert_eq!(
+        turn.session.list(TASK)[0].status,
+        AgentQuestionStatus::Pending
+    );
+    assert_eq!(
+        turn.session.approvals().list(TASK)[0].status,
+        AgentApprovalStatus::Pending
+    );
+}
+
 #[test]
-fn a_registered_workspace_lists_no_requests_for_a_task_that_has_not_started() {
+fn a_task_that_has_not_started_reads_as_the_empty_sequence_zero_snapshot() {
     let workspace = Workspace::create("not-started");
     let workspaces = WorkspaceRegistry::new();
     let descriptor = workspaces.register(&workspace.root).expect("register");
-    let tasks = tasks();
-    let owner = owner(&descriptor, "agt-turn-not-started");
+    let tasks = idle_tasks();
     assert_eq!(
-        list_owned_questions(&workspaces, &tasks, &owner).map(|requests| requests.len()),
-        Ok(0)
+        owned_interactions(&workspaces, &tasks, &owner(&descriptor)),
+        Ok(AgentInteractionSnapshot {
+            task_id: TASK.to_string(),
+            workspace_id: descriptor.workspace_id.as_str().to_string(),
+            sequence: 0,
+            questions: Vec::new(),
+            approvals: Vec::new(),
+        })
+    );
+    assert!(answer_owned_question(&workspaces, &tasks, question_answer(&descriptor)).is_err());
+    assert!(answer_owned_approval(&workspaces, &tasks, approval_answer(&descriptor)).is_err());
+}
+
+#[test]
+fn a_task_in_a_nested_repository_is_read_and_answered_through_its_workspace() {
+    let workspace = Workspace::create("nested");
+    let repository = workspace.nested("pa-mcp-be");
+    let workspaces = WorkspaceRegistry::new();
+    let descriptor = workspaces.register(&workspace.root).expect("register");
+    let turn = RunningTurn::start(&descriptor, &repository);
+    turn.ask();
+
+    let snapshot =
+        owned_interactions(&workspaces, &turn.tasks, &owner(&descriptor)).expect("snapshot");
+    assert_eq!(snapshot.task_id, TASK);
+    assert_eq!(snapshot.workspace_id, descriptor.workspace_id.as_str());
+    assert!(snapshot.sequence >= 1);
+    assert_eq!(snapshot.questions.len(), 1);
+    assert_eq!(snapshot.questions[0].task_id, TASK);
+    assert_eq!(snapshot.questions[0].status, AgentQuestionStatus::Pending);
+    assert_eq!(snapshot.approvals.len(), 1);
+    assert_eq!(snapshot.approvals[0].task_id, TASK);
+    assert_eq!(snapshot.approvals[0].status, AgentApprovalStatus::Pending);
+
+    assert_eq!(
+        answer_owned_question(&workspaces, &turn.tasks, question_answer(&descriptor))
+            .map(|request| request.status),
+        Ok(AgentQuestionStatus::Answered)
     );
     assert_eq!(
-        list_owned_approvals(&workspaces, &tasks, &owner).map(|requests| requests.len()),
-        Ok(0)
+        answer_owned_approval(&workspaces, &turn.tasks, approval_answer(&descriptor))
+            .map(|request| request.status),
+        Ok(AgentApprovalStatus::Approved)
+    );
+    let answered =
+        owned_interactions(&workspaces, &turn.tasks, &owner(&descriptor)).expect("snapshot");
+    assert!(answered.sequence > snapshot.sequence);
+    assert_eq!(answered.questions[0].status, AgentQuestionStatus::Answered);
+    assert_eq!(answered.approvals[0].status, AgentApprovalStatus::Approved);
+}
+
+#[test]
+fn a_task_at_the_workspace_root_is_read_and_answered() {
+    let workspace = Workspace::create("root");
+    let workspaces = WorkspaceRegistry::new();
+    let descriptor = workspaces.register(&workspace.root).expect("register");
+    let turn = RunningTurn::start(&descriptor, &workspace.root);
+    turn.ask();
+    assert_eq!(
+        owned_interactions(&workspaces, &turn.tasks, &owner(&descriptor))
+            .map(|snapshot| (snapshot.questions.len(), snapshot.approvals.len())),
+        Ok((1, 1))
+    );
+    assert_eq!(
+        answer_owned_question(&workspaces, &turn.tasks, question_answer(&descriptor))
+            .map(|request| request.status),
+        Ok(AgentQuestionStatus::Answered)
     );
 }
 
 #[test]
-fn an_unregistered_workspace_cannot_list_requests() {
+fn an_unregistered_workspace_cannot_read_or_answer_requests() {
     let workspace = Workspace::create("unregistered");
     let workspaces = WorkspaceRegistry::new();
     let descriptor = workspaces.register(&workspace.root).expect("register");
+    let turn = RunningTurn::start(&descriptor, &workspace.root);
+    turn.ask();
     workspaces
         .unregister(&descriptor.workspace_id)
         .expect("unregister");
-    let tasks = tasks();
-    let owner = owner(&descriptor, "agt-turn-not-started");
-    assert!(list_owned_questions(&workspaces, &tasks, &owner).is_err());
-    assert!(list_owned_approvals(&workspaces, &tasks, &owner).is_err());
+    assert_every_command_is_rejected(&workspaces, &turn.tasks, &descriptor);
+    assert_every_command_is_rejected(&workspaces, &idle_tasks(), &descriptor);
+    assert_requests_stay_pending(&turn);
 }
 
 #[test]
-fn a_replaced_workspace_generation_cannot_list_requests() {
+fn a_replaced_workspace_generation_cannot_read_or_answer_requests() {
     let workspace = Workspace::create("replaced");
     let workspaces = WorkspaceRegistry::new();
     let original = workspaces.register(&workspace.root).expect("register");
+    let turn = RunningTurn::start(&original, &workspace.root);
+    turn.ask();
     workspaces
         .unregister(&original.workspace_id)
         .expect("unregister");
     let replacement = workspaces.register(&workspace.root).expect("reregister");
     assert_ne!(original.workspace_id, replacement.workspace_id);
-    let tasks = tasks();
-    let owner = owner(&original, "agt-turn-not-started");
-    assert!(list_owned_questions(&workspaces, &tasks, &owner).is_err());
-    assert!(list_owned_approvals(&workspaces, &tasks, &owner).is_err());
+    assert_every_command_is_rejected(&workspaces, &turn.tasks, &original);
+    assert_every_command_is_rejected(&workspaces, &turn.tasks, &replacement);
+    assert_every_command_is_rejected(&workspaces, &idle_tasks(), &original);
+    assert_requests_stay_pending(&turn);
 }
 
 #[test]
-fn a_workspace_cannot_list_requests_under_a_foreign_root() {
-    let workspace = Workspace::create("owned-root");
-    let foreign = Workspace::create("foreign-root");
+fn a_task_cannot_be_read_or_answered_through_another_workspace() {
+    let owning = Workspace::create("owning");
+    let foreign = Workspace::create("foreign");
+    let workspaces = WorkspaceRegistry::new();
+    let owner_descriptor = workspaces.register(&owning.root).expect("register owner");
+    let foreign_descriptor = workspaces
+        .register(&foreign.root)
+        .expect("register foreign");
+    let turn = RunningTurn::start(&owner_descriptor, &owning.root);
+    turn.ask();
+    assert_every_command_is_rejected(&workspaces, &turn.tasks, &foreign_descriptor);
+    assert_requests_stay_pending(&turn);
+    assert_eq!(
+        owned_interactions(&workspaces, &turn.tasks, &owner(&owner_descriptor))
+            .map(|snapshot| snapshot.questions.len()),
+        Ok(1)
+    );
+}
+
+#[test]
+fn a_task_whose_repository_is_outside_the_workspace_root_is_rejected() {
+    let workspace = Workspace::create("contained");
+    let outside = Workspace::create("outside");
     let workspaces = WorkspaceRegistry::new();
     let descriptor = workspaces.register(&workspace.root).expect("register");
-    let tasks = tasks();
-    let mut owner = owner(&descriptor, "agt-turn-not-started");
-    owner.repository_root = foreign.root.to_string_lossy().into_owned();
+    let turn = RunningTurn::start(&descriptor, &outside.root);
+    turn.ask();
+    assert_every_command_is_rejected(&workspaces, &turn.tasks, &descriptor);
+    assert_requests_stay_pending(&turn);
+}
+
+#[test]
+fn requests_identify_the_task_by_workspace_and_task_id_only() {
+    assert!(
+        serde_json::from_value::<InteractionOwner>(serde_json::json!({
+            "workspaceId": "workspace",
+            "taskId": TASK
+        }))
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<InteractionOwner>(serde_json::json!({
+            "workspaceId": "workspace",
+            "taskId": TASK,
+            "repositoryRoot": "/repo"
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<QuestionAnswerRequest>(serde_json::json!({
+            "workspaceId": "workspace",
+            "taskId": TASK,
+            "requestId": "question-1",
+            "response": {"answers": []}
+        }))
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<QuestionAnswerRequest>(serde_json::json!({
+            "workspaceId": "workspace",
+            "taskId": TASK,
+            "repositoryRoot": "/repo",
+            "requestId": "question-1",
+            "response": {"answers": []}
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<ApprovalAnswerRequest>(serde_json::json!({
+            "workspaceId": "workspace",
+            "taskId": TASK,
+            "requestId": "approval-1",
+            "decision": "allowOnce"
+        }))
+        .is_ok()
+    );
+    assert!(
+        serde_json::from_value::<ApprovalAnswerRequest>(serde_json::json!({
+            "workspaceId": "workspace",
+            "taskId": TASK,
+            "repositoryRoot": "/repo",
+            "requestId": "approval-1",
+            "decision": "allowOnce"
+        }))
+        .is_err()
+    );
+}
+
+#[test]
+fn oversized_request_ids_are_rejected_before_reaching_the_task() {
+    let workspace = Workspace::create("bounds");
+    let workspaces = WorkspaceRegistry::new();
+    let descriptor = workspaces.register(&workspace.root).expect("register");
+    let turn = RunningTurn::start(&descriptor, &workspace.root);
+    turn.ask();
+    let oversized = "r".repeat(MAX_AGENT_INTERACTION_REQUEST_ID_BYTES + 1);
+    let question = QuestionAnswerRequest {
+        request_id: oversized.clone(),
+        ..question_answer(&descriptor)
+    };
+    let approval = ApprovalAnswerRequest {
+        request_id: oversized,
+        ..approval_answer(&descriptor)
+    };
     assert_eq!(
-        list_owned_questions(&workspaces, &tasks, &owner).map(|requests| requests.len()),
-        Err("Question workspace changed.".to_string())
+        answer_owned_question(&workspaces, &turn.tasks, question).map(|request| request.status),
+        Err("Invalid agent interaction request.".to_string())
     );
     assert_eq!(
-        list_owned_approvals(&workspaces, &tasks, &owner).map(|requests| requests.len()),
-        Err("Question workspace changed.".to_string())
+        answer_owned_approval(&workspaces, &turn.tasks, approval).map(|request| request.status),
+        Err("Invalid agent interaction request.".to_string())
     );
+    assert_requests_stay_pending(&turn);
 }

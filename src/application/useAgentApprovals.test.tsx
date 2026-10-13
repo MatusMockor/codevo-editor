@@ -1,16 +1,32 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { waitForReact as waitFor } from "../test/reactTestLifecycle";
-import type { AgentApprovalGateway, AgentApprovalOwner } from "./agentApprovalPorts";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
-  AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD as FAILURE_THRESHOLD,
-  AGENT_PENDING_REQUEST_POLL_MS as POLL_MS,
-  type AgentPendingRequestAvailability,
-} from "./agentPendingRequestPolling";
+  agentInteractionFeedFake,
+  agentInteractionSnapshotOf,
+} from "../test/agentInteractionFeedFake";
+import type { AgentApprovalGateway, AgentApprovalOwner } from "./agentApprovalPorts";
+import type { AgentInteractionFeed } from "./agentInteractionPorts";
+import {
+  AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD as FAILURE_NOTICE_THRESHOLD,
+  AGENT_INTERACTION_RETRY_BASE_MS,
+} from "./agentInteractionStore";
+import type { AgentPendingRequestAvailability } from "./agentPendingRequestPolling";
+import type { AgentLocalQuestionOwner, AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentApprovalRequest } from "../domain/agentApproval";
+import type { AgentInteractionSnapshot } from "../domain/agentInteractionSnapshot";
+import type { AgentQuestionRequest } from "../domain/agentQuestion";
 import { useAgentApprovals, type AgentApprovalsSurface } from "./useAgentApprovals";
+import { useAgentQuestions } from "./useAgentQuestions";
+
+const UNAVAILABLE_NOTICE = "Approvals from this agent can't be shown right now.";
+const REMOTE: AgentApprovalOwner = {
+  kind: "remote",
+  serverId: "server",
+  runnerId: "runner",
+  taskId: "task-a",
+};
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -41,12 +57,18 @@ function renderApprovals(initial: Props) {
   }
   const rerender = (props: Props) => act(() => root.render(<Harness {...props} />));
   rerender(initial);
-  cleanups.push(() => act(() => root.unmount()));
-  return { result, rerender, errors };
+  let mounted = true;
+  const unmount = () => {
+    if (!mounted) return;
+    mounted = false;
+    act(() => root.unmount());
+  };
+  cleanups.push(unmount);
+  return { result, rerender, unmount, errors };
 }
 
-function owner(taskId: string): AgentApprovalOwner {
-  return { kind: "local", workspaceId: "workspace", repositoryRoot: "/repo", taskId };
+function owner(taskId: string, workspaceId = "workspace"): AgentLocalQuestionOwner {
+  return { kind: "local", workspaceId, taskId };
 }
 
 function approval(taskId: string, id = "approval-1"): AgentApprovalRequest {
@@ -64,6 +86,25 @@ function approval(taskId: string, id = "approval-1"): AgentApprovalRequest {
   };
 }
 
+function question(taskId: string): AgentQuestionRequest {
+  return {
+    id: "question",
+    taskId,
+    provider: "claudeCode",
+    status: "pending",
+    questions: [
+      {
+        id: "q",
+        header: "Choose",
+        prompt: "Which?",
+        multiple: false,
+        allowCustom: true,
+        options: [{ id: "a", label: "A", description: "" }],
+      },
+    ],
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: Error) => void;
@@ -74,296 +115,42 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function settlePoll() {
+async function settleFeed() {
   await act(async () => {
-    await Promise.resolve();
+    for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
   });
 }
 
-async function nextPoll() {
+async function elapse(ms: number) {
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(POLL_MS);
+    await vi.advanceTimersByTimeAsync(ms);
   });
 }
 
-function listingGateway(
-  listApprovals: AgentApprovalGateway["listApprovals"],
-): AgentApprovalGateway & { readonly listApprovals: ReturnType<typeof vi.fn> } {
-  return { listApprovals: vi.fn(listApprovals), answerApproval: vi.fn() };
+function feedGateway() {
+  return Object.assign(agentInteractionFeedFake(), {
+    answerApproval: vi.fn<AgentApprovalGateway["answerApproval"]>(),
+  });
+}
+
+function listing(
+  target: AgentLocalQuestionOwner,
+  sequence: number,
+  approvals: readonly AgentApprovalRequest[],
+  questions: readonly AgentQuestionRequest[] = [],
+): AgentInteractionSnapshot {
+  return agentInteractionSnapshotOf(target, sequence, { approvals, questions });
+}
+
+function statuses(requests: readonly AgentApprovalRequest[]) {
+  return requests.map((request) => [request.id, request.status]);
 }
 
 describe("useAgentApprovals", () => {
-  it("lists pending approvals and publishes the confirmed decision", async () => {
-    const pending = approval("task-a");
-    const gateway: AgentApprovalGateway = {
-      listApprovals: vi.fn().mockResolvedValue([pending]),
-      answerApproval: vi
-        .fn()
-        .mockResolvedValue({ ...pending, status: "approved", decision: "allowOnce" }),
-    };
-    const { result } = renderApprovals({ gateway, owner: owner("task-a"), running: false });
-    await waitFor(() => expect(result.current.requests).toEqual([pending]));
-    await act(() => result.current.answer(pending.id, "allowOnce"));
-    expect(gateway.answerApproval).toHaveBeenCalledWith(owner("task-a"), pending.id, "allowOnce");
-    expect(result.current.requests[0]?.status).toBe("approved");
-    expect(result.current.answering).toBeNull();
-  });
-
-  it("ignores decisions the provider did not offer", async () => {
-    const pending = approval("task-a");
-    const gateway: AgentApprovalGateway = {
-      listApprovals: vi.fn().mockResolvedValue([pending]),
-      answerApproval: vi.fn(),
-    };
-    const { result } = renderApprovals({ gateway, owner: owner("task-a"), running: false });
-    await waitFor(() => expect(result.current.requests).toHaveLength(1));
-    await act(() => result.current.answer(pending.id, "allowForSession"));
-    expect(gateway.answerApproval).not.toHaveBeenCalled();
-  });
-
-  it("drops a late list from the previous owner after switching threads", async () => {
-    const late = deferred<readonly AgentApprovalRequest[]>();
-    const gateway: AgentApprovalGateway = {
-      listApprovals: vi.fn((current: AgentApprovalOwner) =>
-        current.taskId === "task-a" ? late.promise : Promise.resolve([approval("task-b")]),
-      ),
-      answerApproval: vi.fn(),
-    };
-    const { result, rerender } = renderApprovals({
-      gateway,
-      owner: owner("task-a"),
-      running: false,
-    });
-    rerender({ gateway, owner: owner("task-b"), running: false });
-    await waitFor(() => expect(result.current.requests[0]?.taskId).toBe("task-b"));
-    await act(async () => {
-      late.resolve([approval("task-a", "foreign")]);
-      await late.promise;
-    });
-    expect(result.current.requests.map((request) => request.id)).toEqual(["approval-1"]);
-    expect(result.current.requests[0]?.taskId).toBe("task-b");
-  });
-
-  it("surfaces a failed decision for retry and stays inactive for remote owners", async () => {
-    const pending = approval("task-a");
-    const gateway: AgentApprovalGateway = {
-      listApprovals: vi.fn().mockResolvedValue([pending]),
-      answerApproval: vi.fn().mockRejectedValue(new Error("expired")),
-    };
-    const { result, rerender } = renderApprovals({
-      gateway,
-      owner: owner("task-a"),
-      running: false,
-    });
-    await waitFor(() => expect(result.current.requests).toHaveLength(1));
-    await act(async () => {
-      await expect(result.current.answer(pending.id, "deny")).rejects.toThrow("expired");
-    });
-    expect(result.current.error).toContain("could not be confirmed");
-    rerender({
-      gateway,
-      owner: { kind: "remote", serverId: "server", runnerId: "runner", taskId: "task-a" },
-      running: true,
-    });
-    expect(result.current.requests).toEqual([]);
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
-  });
-
-  it.each<{ readonly name: string; readonly props: Props }>([
-    {
-      name: "a remote owner",
-      props: {
-        gateway: listingGateway(() => Promise.resolve([])),
-        owner: { kind: "remote", serverId: "server", runnerId: "runner", taskId: "task-a" },
-        running: true,
-      },
-    },
-    { name: "no gateway", props: { gateway: null, owner: owner("task-a"), running: true } },
-  ])("keeps the same empty requests across renders for $name", ({ props }) => {
-    const { result, rerender } = renderApprovals(props);
-    const first = result.current.requests;
-    rerender(props);
-    expect(first).toEqual([]);
-    expect(result.current.requests).toBe(first);
-  });
-
-  it("shows no error while a new turn's task is not registered yet and lists its approvals once it is", async () => {
-    vi.useFakeTimers();
-    try {
-      const pending = approval("task-a");
-      const next = approval("task-next", "approval-next");
-      const gateway = listingGateway(() => Promise.resolve([next]));
-      gateway.listApprovals.mockResolvedValueOnce([pending]);
-      for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1)
-        gateway.listApprovals.mockRejectedValueOnce(new Error("Agent task is unavailable."));
-      const { result, rerender, errors } = renderApprovals({
-        gateway,
-        owner: owner("task-a"),
-        running: false,
-      });
-      await settlePoll();
-      expect(result.current.requests).toEqual([pending]);
-      rerender({ gateway, owner: owner("task-next"), running: true });
-      await settlePoll();
-      for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1) {
-        expect(gateway.listApprovals).toHaveBeenCalledTimes(1 + failure);
-        expect(gateway.listApprovals).toHaveBeenLastCalledWith(owner("task-next"));
-        expect(result.current.requests).toEqual([]);
-        await nextPoll();
-      }
-      expect(result.current.requests).toEqual([next]);
-      expect(new Set(errors)).toEqual(new Set([null]));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("restarts the failure streak after a successful poll", async () => {
-    vi.useFakeTimers();
-    try {
-      const pending = approval("task-a");
-      const gateway = listingGateway(() => Promise.resolve([pending]));
-      for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1)
-        gateway.listApprovals.mockRejectedValueOnce(new Error("offline"));
-      gateway.listApprovals.mockResolvedValueOnce([pending]);
-      for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1)
-        gateway.listApprovals.mockRejectedValueOnce(new Error("offline"));
-      const polls = 2 * (FAILURE_THRESHOLD - 1) + 1;
-      const { result, errors } = renderApprovals({
-        gateway,
-        owner: owner("task-a"),
-        running: true,
-      });
-      await settlePoll();
-      for (let poll = 1; poll < polls; poll += 1) await nextPoll();
-      expect(gateway.listApprovals).toHaveBeenCalledTimes(polls);
-      expect(result.current.requests).toEqual([pending]);
-      expect(new Set(errors)).toEqual(new Set([null]));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("reports a failed refresh at once when the turn is not running and no later poll can recover", async () => {
-    vi.useFakeTimers();
-    try {
-      const pending = approval("task-a");
-      const gateway = listingGateway(() => Promise.resolve([pending]));
-      gateway.listApprovals.mockRejectedValueOnce(new Error("offline"));
-      const { result, rerender } = renderApprovals({
-        gateway,
-        owner: owner("task-a"),
-        running: false,
-      });
-      await settlePoll();
-      expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
-      expect(vi.getTimerCount()).toBe(0);
-      expect(result.current.error).toBe("Approvals could not be refreshed. Reconnecting…");
-      expect(result.current.requests).toEqual([]);
-      rerender({ gateway, owner: owner("task-a"), running: true });
-      expect(result.current.error).toBeNull();
-      await settlePoll();
-      expect(result.current.requests).toEqual([pending]);
-      expect(result.current.error).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("never shows the reconnecting notice for one failed poll followed by a success", async () => {
-    vi.useFakeTimers();
-    try {
-      const pending = approval("task-a");
-      const gateway = listingGateway(() => Promise.resolve([pending]));
-      gateway.listApprovals.mockRejectedValueOnce(new Error("offline"));
-      const { result, errors } = renderApprovals({
-        gateway,
-        owner: owner("task-a"),
-        running: true,
-      });
-      await settlePoll();
-      expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
-      expect(result.current.requests).toEqual([]);
-      expect(result.current.error).toBeNull();
-      await nextPoll();
-      expect(result.current.requests).toEqual([pending]);
-      expect(new Set(errors)).toEqual(new Set([null]));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("shows the reconnecting notice only after consecutive failed polls and clears it on success", async () => {
-    vi.useFakeTimers();
-    try {
-      const pending = approval("task-a");
-      const gateway = listingGateway(() => Promise.resolve([pending]));
-      gateway.listApprovals.mockResolvedValueOnce([pending]);
-      for (let failure = 0; failure < FAILURE_THRESHOLD; failure += 1)
-        gateway.listApprovals.mockRejectedValueOnce(new Error("offline"));
-      const { result } = renderApprovals({ gateway, owner: owner("task-a"), running: true });
-      await settlePoll();
-      expect(result.current.requests).toEqual([pending]);
-      for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1) {
-        await nextPoll();
-        expect(gateway.listApprovals).toHaveBeenCalledTimes(1 + failure);
-        expect(result.current.error).toBeNull();
-        expect(result.current.requests).toEqual([pending]);
-      }
-      await nextPoll();
-      expect(result.current.error).toBe("Approvals could not be refreshed. Reconnecting…");
-      expect(result.current.requests).toEqual([pending]);
-      await nextPoll();
-      expect(gateway.listApprovals).toHaveBeenCalledTimes(2 + FAILURE_THRESHOLD);
-      expect(result.current.error).toBeNull();
-      expect(result.current.requests).toEqual([pending]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("drops a late rejection from a previous generation across A B A", async () => {
-    vi.useFakeTimers();
-    try {
-      const pending = approval("task-a");
-      const late = deferred<readonly AgentApprovalRequest[]>();
-      const gateway = listingGateway(() => Promise.resolve([pending]));
-      for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1)
-        gateway.listApprovals.mockRejectedValueOnce(new Error("offline"));
-      gateway.listApprovals.mockImplementationOnce(() => late.promise);
-      gateway.listApprovals.mockRejectedValueOnce(new Error("offline"));
-      const { result, rerender, errors } = renderApprovals({
-        gateway,
-        owner: owner("task-a"),
-        running: true,
-      });
-      await settlePoll();
-      for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1) await nextPoll();
-      expect(gateway.listApprovals).toHaveBeenCalledTimes(FAILURE_THRESHOLD);
-      rerender({ gateway, owner: owner("task-b"), running: true });
-      await settlePoll();
-      expect(gateway.listApprovals).toHaveBeenLastCalledWith(owner("task-b"));
-      expect(result.current.error).toBeNull();
-      rerender({ gateway, owner: owner("task-a"), running: true });
-      await settlePoll();
-      expect(result.current.requests).toEqual([pending]);
-      await act(async () => {
-        late.reject(new Error("offline"));
-        await late.promise.catch(() => undefined);
-      });
-      expect(result.current.requests).toEqual([pending]);
-      expect(new Set(errors)).toEqual(new Set([null]));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
-
-describe("useAgentApprovals availability", () => {
-  const notice = "Approvals could not be refreshed. Reconnecting…";
+  const A = owner("task-a");
   const pending = approval("task-a");
-  const available = { owner: owner("task-a"), running: true } as const;
-  const unreachable = { ...available, availability: "unreachable" } as const;
+  const next = approval("task-a", "approval-next");
+  const approved: AgentApprovalRequest = { ...pending, status: "approved", decision: "allowOnce" };
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -373,162 +160,348 @@ describe("useAgentApprovals availability", () => {
     vi.useRealTimers();
   });
 
-  function freshlyListingGateway(listed: () => AgentApprovalRequest) {
-    return listingGateway(() => Promise.resolve([structuredClone(listed())]));
-  }
-
-  async function polls(count: number) {
-    for (let poll = 0; poll < count; poll += 1) await nextPoll();
-  }
-
-  it("asks the gateway nothing and holds no timer while unreachable", async () => {
-    const gateway = listingGateway(() => Promise.resolve([pending]));
-    const { result, errors } = renderApprovals({ gateway, ...unreachable });
-    await polls(FAILURE_THRESHOLD + 2);
-    expect(gateway.listApprovals).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
+  it("shows a pushed approval without any timer and publishes the confirmed decision", async () => {
+    const gateway = feedGateway();
+    gateway.answerApproval.mockResolvedValue(approved);
+    const { result } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
     expect(result.current.requests).toEqual([]);
+    act(() => gateway.publish(listing(A, 1, [pending])));
+    expect(result.current.requests).toEqual([pending]);
+    expect(vi.getTimerCount()).toBe(0);
+    await act(() => result.current.answer(pending.id, "allowOnce"));
+    expect(gateway.answerApproval).toHaveBeenCalledWith(A, pending.id, "allowOnce");
+    expect(result.current.requests[0]?.status).toBe("approved");
+    expect(result.current.answering).toBeNull();
+  });
+
+  it("recovers the current pending approval when it mounts after the push", async () => {
+    const gateway = feedGateway();
+    gateway.record(listing(A, 3, [pending]));
+    const { result } = renderApprovals({ gateway, owner: A, running: false });
+    await settleFeed();
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(gateway.currentInteractions).toHaveBeenCalledWith({
+      workspaceId: "workspace",
+      taskId: "task-a",
+    });
+    expect(result.current.requests).toEqual([pending]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("ignores decisions the provider did not offer", async () => {
+    const gateway = feedGateway();
+    gateway.record(listing(A, 1, [pending]));
+    const { result } = renderApprovals({ gateway, owner: A, running: false });
+    await settleFeed();
+    await act(() => result.current.answer(pending.id, "allowForSession"));
+    expect(gateway.answerApproval).not.toHaveBeenCalled();
+    expect(result.current.answering).toBeNull();
+  });
+
+  it("ignores stale, duplicate, reordered and foreign pushes", async () => {
+    const gateway = feedGateway();
+    const { result } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    act(() => gateway.push(listing(A, 5, [pending])));
+    const listed = result.current.requests;
+    act(() => {
+      gateway.push(listing(A, 5, [next]));
+      gateway.push(listing(A, 4, [next]));
+      gateway.push(listing(A, 0, []));
+      gateway.push(listing(owner("task-a", "elsewhere"), 9, [next]));
+      gateway.push(listing(owner("task-b"), 9, [approval("task-b", "foreign")]));
+    });
+    expect(result.current.requests).toBe(listed);
+    act(() => {
+      gateway.push(listing(A, 7, [next]));
+      gateway.push(listing(A, 6, [pending]));
+    });
+    expect(result.current.requests).toEqual([next]);
+  });
+
+  it("drops a late read from the previous owner after switching threads and back", async () => {
+    const late = deferred<AgentInteractionSnapshot>();
+    const gateway = feedGateway();
+    const B = owner("task-b");
+    gateway.currentInteractions.mockImplementationOnce(() => late.promise);
+    gateway.record(listing(A, 2, [pending]));
+    gateway.record(listing(B, 1, [approval("task-b")]));
+    const { result, rerender } = renderApprovals({ gateway, owner: A, running: false });
+    await settleFeed();
+    rerender({ gateway, owner: B, running: false });
+    await settleFeed();
+    expect(result.current.requests[0]?.taskId).toBe("task-b");
+    act(() => gateway.push(listing(A, 8, [next])));
+    expect(result.current.requests.map((request) => request.taskId)).toEqual(["task-b"]);
+    rerender({ gateway, owner: A, running: false });
+    expect(result.current.requests).toEqual([]);
+    await settleFeed();
+    expect(result.current.requests).toEqual([pending]);
+    await act(async () => {
+      late.resolve(listing(A, 99, [approval("task-a", "stale")]));
+      await late.promise;
+    });
+    expect(result.current.requests).toEqual([pending]);
+    expect(gateway.subscribers()).toBe(1);
+  });
+
+  it("isolates the same task id across workspaces A B A", async () => {
+    const gateway = feedGateway();
+    const elsewhere = owner("task-a", "workspace-b");
+    gateway.record(listing(A, 2, [pending]));
+    const { result, rerender } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    expect(result.current.requests).toEqual([pending]);
+    rerender({ gateway, owner: elsewhere, running: true });
+    await settleFeed();
+    expect(result.current.requests).toEqual([]);
+    act(() => gateway.publish(listing(A, 3, [pending, next])));
+    expect(result.current.requests).toEqual([]);
+    rerender({ gateway, owner: A, running: true });
+    await settleFeed();
+    expect(result.current.requests).toEqual([pending, next]);
+  });
+
+  it("surfaces a failed decision for retry and stays inactive for remote owners", async () => {
+    const gateway = feedGateway();
+    gateway.answerApproval.mockRejectedValue(new Error("expired"));
+    gateway.record(listing(A, 1, [pending]));
+    const { result, rerender } = renderApprovals({ gateway, owner: A, running: false });
+    await settleFeed();
+    await act(async () => {
+      await expect(result.current.answer(pending.id, "deny")).rejects.toThrow("expired");
+    });
+    expect(result.current.error).toBe(
+      "The decision could not be confirmed. It may have expired; retry to check.",
+    );
+    expect(result.current.requests[0]?.status).toBe("pending");
+    rerender({ gateway, owner: REMOTE, running: true });
+    await settleFeed();
+    expect(result.current.requests).toEqual([]);
+    expect(result.current.error).toBeNull();
+    expect(gateway.subscribers()).toBe(0);
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<{ readonly name: string; readonly props: Props }>([
+    { name: "a remote owner", props: { gateway: feedGateway(), owner: REMOTE, running: true } },
+    { name: "no gateway", props: { gateway: null, owner: A, running: true } },
+    {
+      name: "a gateway that is not an interaction feed",
+      props: { gateway: { answerApproval: vi.fn() }, owner: A, running: true },
+    },
+  ])("keeps the same empty requests across renders for $name", async ({ props }) => {
+    const { result, rerender, errors } = renderApprovals(props);
+    const first = result.current.requests;
+    await settleFeed();
+    rerender(props);
+    expect(first).toEqual([]);
+    expect(result.current.requests).toBe(first);
+    expect(new Set(errors)).toEqual(new Set([null]));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does nothing after an unmount during a pending read", async () => {
+    const read = deferred<AgentInteractionSnapshot>();
+    const gateway = feedGateway();
+    gateway.currentInteractions.mockImplementationOnce(() => read.promise);
+    const { errors, unmount } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    const renders = errors.length;
+    unmount();
+    await act(async () => {
+      read.reject(new Error("offline"));
+      await read.promise.catch(() => undefined);
+    });
+    act(() => gateway.push(listing(A, 4, [pending])));
+    await elapse(60_000);
+    expect(errors).toHaveLength(renders);
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(gateway.subscribers()).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each<{ readonly name: string; failing(feed: AgentInteractionFeed): Mock }>([
+    { name: "read", failing: (feed) => vi.mocked(feed.currentInteractions) },
+    { name: "subscription", failing: (feed) => vi.mocked(feed.subscribeInteractions) },
+  ])("never shows a notice when a $name fails once and the retry succeeds", async ({ failing }) => {
+    const gateway = feedGateway();
+    gateway.record(listing(A, 1, [pending]));
+    failing(gateway).mockRejectedValueOnce(new Error("unavailable"));
+    const { result, errors } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    expect(result.current.requests).toEqual([]);
+    expect(vi.getTimerCount()).toBe(1);
+    await elapse(AGENT_INTERACTION_RETRY_BASE_MS);
+    expect(result.current.requests).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
     expect(new Set(errors)).toEqual(new Set([null]));
   });
-
-  it("keeps the listed approvals while unreachable and polls at once on return", async () => {
-    const next = approval("task-a", "approval-next");
-    const gateway = listingGateway(() => Promise.resolve([pending]));
-    const { result, rerender } = renderApprovals({ gateway, ...available });
-    await settlePoll();
-    const listed = result.current.requests;
-    expect(listed).toEqual([pending]);
-    rerender({ gateway, ...unreachable });
-    await polls(FAILURE_THRESHOLD + 2);
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
-    expect(vi.getTimerCount()).toBe(0);
-    expect(result.current.requests).toBe(listed);
-    gateway.listApprovals.mockResolvedValue([next]);
-    rerender({ gateway, ...available });
-    await settlePoll();
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(2);
-    expect(result.current.requests).toEqual([next]);
-    await nextPoll();
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(3);
+  it.each<{ readonly name: string; failing(feed: AgentInteractionFeed): Mock }>([
+    { name: "read", failing: (feed) => vi.mocked(feed.currentInteractions) },
+    { name: "subscription", failing: (feed) => vi.mocked(feed.subscribeInteractions) },
+  ])(
+    "states calmly that approvals are unavailable once the $name keeps failing and recovers without a remount",
+    async ({ failing }) => {
+      const gateway = feedGateway();
+      gateway.record(listing(A, 1, [pending]));
+      for (let failure = 1; failure <= FAILURE_NOTICE_THRESHOLD; failure += 1)
+        failing(gateway).mockRejectedValueOnce(new Error("unavailable"));
+      const { result, errors } = renderApprovals({ gateway, owner: A, running: true });
+      await settleFeed();
+      for (let failure = 1; failure < FAILURE_NOTICE_THRESHOLD; failure += 1) {
+        expect(result.current.error).toBeNull();
+        await elapse(AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (failure - 1));
+      }
+      expect(result.current.error).toBe(UNAVAILABLE_NOTICE);
+      expect(result.current.requests).toEqual([]);
+      await elapse(AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (FAILURE_NOTICE_THRESHOLD - 1));
+      expect(result.current.error).toBeNull();
+      expect(result.current.requests).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(errors.some((error) => error?.includes("Reconnecting"))).toBe(false);
+    },
+  );
+  it("keeps a confirmed decision over a stale pending push and yields to the real status", async () => {
+    const gateway = feedGateway();
+    gateway.answerApproval.mockResolvedValue(approved);
+    gateway.record(listing(A, 4, [pending]));
+    const { result } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    await act(() => result.current.answer(pending.id, "allowOnce"));
+    act(() => gateway.push(listing(A, 5, [pending, next])));
+    expect(statuses(result.current.requests)).toEqual([
+      ["approval-1", "approved"],
+      ["approval-next", "pending"],
+    ]);
+    act(() => gateway.push(listing(A, 6, [{ ...pending, status: "timedOut" }, next])));
+    expect(statuses(result.current.requests)).toEqual([
+      ["approval-1", "timedOut"],
+      ["approval-next", "pending"],
+    ]);
   });
 
-  it("hides the reconnecting notice once unreachable and starts a fresh failure streak on return", async () => {
-    const gateway = listingGateway(() => Promise.reject(new Error("offline")));
-    gateway.listApprovals.mockResolvedValueOnce([pending]);
-    const { result, rerender } = renderApprovals({ gateway, ...available });
-    await settlePoll();
-    await polls(FAILURE_THRESHOLD);
-    const listed = result.current.requests;
-    expect(result.current.error).toBe(notice);
-    rerender({ gateway, ...unreachable });
-    expect(result.current.error).toBeNull();
-    expect(result.current.requests).toBe(listed);
-    rerender({ gateway, ...available });
-    await settlePoll();
-    await polls(FAILURE_THRESHOLD - 2);
-    expect(result.current.error).toBeNull();
-    await nextPoll();
-    expect(result.current.error).toBe(notice);
-    expect(result.current.requests).toBe(listed);
-  });
-
-  it("discards a poll that was in flight when the runner became unreachable", async () => {
-    const late = deferred<readonly AgentApprovalRequest[]>();
-    const gateway = listingGateway(() => late.promise);
-    gateway.listApprovals.mockResolvedValueOnce([pending]);
-    const { result, rerender } = renderApprovals({ gateway, ...available });
-    await settlePoll();
-    await nextPoll();
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(2);
-    rerender({ gateway, ...unreachable });
-    await act(async () => {
-      late.resolve([approval("task-a", "stale")]);
-      await late.promise;
+  it("keeps the decision in flight across a push and blocks a second decision meanwhile", async () => {
+    const receipt = deferred<AgentApprovalRequest>();
+    const gateway = feedGateway();
+    gateway.answerApproval.mockReturnValueOnce(receipt.promise);
+    gateway.record(listing(A, 4, [pending]));
+    const { result } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    let answer!: Promise<void>;
+    act(() => {
+      answer = result.current.answer(pending.id, "allowOnce");
     });
-    expect(result.current.requests).toEqual([pending]);
+    expect(result.current.answering).toBe(pending.id);
+    act(() => gateway.push(listing(A, 5, [pending, next])));
+    expect(result.current.answering).toBe(pending.id);
+    expect(result.current.requests).toEqual([pending, next]);
+    await act(() => result.current.answer(next.id, "deny"));
+    expect(gateway.answerApproval).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      receipt.resolve(approved);
+      await answer;
+    });
+    expect(result.current.answering).toBeNull();
+    expect(statuses(result.current.requests)).toEqual([
+      ["approval-1", "approved"],
+      ["approval-next", "pending"],
+    ]);
+  });
+
+  it("rejects a late decision settlement after the owner changes mid-flight", async () => {
+    const receipt = deferred<AgentApprovalRequest>();
+    const gateway = feedGateway();
+    const B = owner("task-b");
+    gateway.answerApproval.mockReturnValueOnce(receipt.promise);
+    gateway.record(listing(A, 1, [pending]));
+    gateway.record(listing(B, 1, [approval("task-b", pending.id)]));
+    const { result, rerender } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    let answer!: Promise<void>;
+    act(() => {
+      answer = result.current.answer(pending.id, "allowOnce");
+    });
+    rerender({ gateway, owner: B, running: true });
+    await settleFeed();
+    await act(async () => {
+      receipt.resolve(approved);
+      await answer;
+    });
+    expect(result.current.requests).toEqual([approval("task-b", pending.id)]);
+    expect(result.current.answering).toBeNull();
+  });
+
+  it("holds no timer and keeps the listed approvals while the turn starts and stops", async () => {
+    const gateway = feedGateway();
+    const { result, rerender } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    act(() => gateway.publish(listing(A, 1, [pending])));
+    const listed = result.current.requests;
+    rerender({ gateway, owner: A, running: false });
+    rerender({ gateway, owner: A, running: true });
+    await settleFeed();
+    await elapse(60_000);
+    expect(result.current.requests).toBe(listed);
+    expect(gateway.subscribeInteractions).toHaveBeenCalledTimes(1);
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("runs a single poll loop after the availability flaps", async () => {
-    const late = deferred<readonly AgentApprovalRequest[]>();
-    const gateway = listingGateway(() => Promise.resolve([pending]));
-    gateway.listApprovals.mockImplementationOnce(() => late.promise);
-    const { result, rerender } = renderApprovals({ gateway, ...available });
-    rerender({ gateway, ...unreachable });
-    rerender({ gateway, ...available });
-    await settlePoll();
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(2);
-    expect(result.current.requests).toEqual([pending]);
-    await act(async () => {
-      late.resolve([approval("task-a", "stale")]);
-      await late.promise;
-    });
-    expect(result.current.requests).toEqual([pending]);
-    expect(vi.getTimerCount()).toBe(1);
-    await nextPoll();
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(3);
-  });
-
-  it("keeps the requests and the answer callback while polls list the same approvals", async () => {
-    const gateway = freshlyListingGateway(() => pending);
-    const { result } = renderApprovals({ gateway, ...available });
-    await settlePoll();
+  it("keeps the requests and the answer callback when a push changes only the questions", async () => {
+    const gateway = feedGateway();
+    const { result } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    act(() => gateway.push(listing(A, 1, [pending])));
     const listed = result.current.requests;
     const answer = result.current.answer;
-    await polls(4);
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(5);
+    act(() => gateway.push(listing(A, 2, [structuredClone(pending)], [question("task-a")])));
+    act(() => gateway.push(listing(A, 3, [structuredClone(pending)])));
     expect(result.current.requests).toBe(listed);
     expect(result.current.answer).toBe(answer);
   });
 
   it.each<{ readonly name: string; readonly changed: AgentApprovalRequest }>([
     { name: "another status", changed: { ...pending, status: "expired" } },
-    { name: "a decision", changed: { ...pending, status: "approved", decision: "allowOnce" } },
+    { name: "a decision", changed: approved },
     { name: "another detail", changed: { ...pending, detail: "npm run lint" } },
     { name: "another fact", changed: { ...pending, facts: [{ label: "cwd", value: "/repo" }] } },
     { name: "other decisions", changed: { ...pending, decisions: ["deny"] } },
-  ])("publishes a poll that lists $name", async ({ changed }) => {
-    let current = pending;
-    const gateway = freshlyListingGateway(() => current);
-    const { result } = renderApprovals({ gateway, ...available });
-    await settlePoll();
+  ])("publishes a push that lists $name", async ({ changed }) => {
+    const gateway = feedGateway();
+    const { result } = renderApprovals({ gateway, owner: A, running: true });
+    await settleFeed();
+    act(() => gateway.push(listing(A, 1, [pending])));
     const listed = result.current.requests;
-    current = changed;
-    await nextPoll();
+    act(() => gateway.push(listing(A, 2, [changed])));
     expect(result.current.requests).not.toBe(listed);
     expect(result.current.requests).toEqual([changed]);
   });
 
-  it("leaves no timer when unmounted while unreachable", async () => {
-    const gateway = listingGateway(() => Promise.resolve([pending]));
-    const { rerender } = renderApprovals({ gateway, ...available });
-    await settlePoll();
-    rerender({ gateway, ...unreachable });
-    cleanups.splice(0).forEach((cleanup) => cleanup());
-    expect(vi.getTimerCount()).toBe(0);
-    await polls(2);
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
-  });
-
-  it("reports a decision that fails while unreachable and keeps it retryable without polling", async () => {
-    const gateway = listingGateway(() => Promise.resolve([pending]));
-    vi.mocked(gateway.answerApproval)
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValue({ ...pending, status: "denied", decision: "deny" });
-    const { result, rerender } = renderApprovals({ gateway, ...available });
-    await settlePoll();
-    rerender({ gateway, ...unreachable });
-    await act(async () => {
-      await expect(result.current.answer(pending.id, "deny")).rejects.toThrow("offline");
+  it("shares one subscription and one read with the questions of the same owner", async () => {
+    const gateway = Object.assign(feedGateway(), {
+      list: vi.fn<AgentQuestionGateway["list"]>(),
+      answer: vi.fn<AgentQuestionGateway["answer"]>(),
     });
-    expect(result.current.error).toBe(
-      "The decision could not be confirmed. It may have expired; retry to check.",
-    );
-    expect(result.current.requests[0]?.status).toBe("pending");
-    await act(() => result.current.answer(pending.id, "deny"));
-    expect(result.current.requests[0]?.status).toBe("denied");
-    expect(result.current.error).toBeNull();
-    expect(gateway.listApprovals).toHaveBeenCalledTimes(1);
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const root = createRoot(document.createElement("div"));
+    const seen = { approvals: 0, questions: 0 };
+    function Composer() {
+      seen.approvals = useAgentApprovals(gateway, A, true).requests.length;
+      seen.questions = useAgentQuestions(gateway, A, true).requests.length;
+      return null;
+    }
+    act(() => root.render(<Composer />));
+    cleanups.push(() => act(() => root.unmount()));
+    await settleFeed();
+    act(() => gateway.publish(listing(A, 1, [pending, next], [question("task-a")])));
+    expect(seen).toEqual({ approvals: 2, questions: 1 });
+    expect(gateway.subscribeInteractions).toHaveBeenCalledTimes(1);
+    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(gateway.subscribers()).toBe(1);
+    cleanups.splice(0).forEach((cleanup) => cleanup());
+    expect(gateway.subscribers()).toBe(0);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

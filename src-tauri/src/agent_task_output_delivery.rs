@@ -254,6 +254,7 @@ mod tests {
             group: None,
             input: None,
             questions: None,
+            interactions: None,
             watchdog: Arc::new(WatchdogGate::default()),
         }
     }

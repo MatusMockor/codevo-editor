@@ -73,6 +73,7 @@ const SERVER = {
 class FakeRunner {
   up = true;
   questionCalls = 0;
+  feedCalls = 0;
   pendingQuestions: AgentQuestionRequest[] = [];
   tasks: RemoteRunnerTask[] = [
     {
@@ -114,8 +115,15 @@ class FakeRunner {
         return this.reach(() => this.pendingQuestions);
       },
       answer: vi.fn(),
-      listApprovals: () => this.reach(() => []),
       answerApproval: vi.fn(),
+      currentInteractions: () => {
+        this.feedCalls += 1;
+        return Promise.reject(new Error("Remote turns are not pushed."));
+      },
+      subscribeInteractions: () => {
+        this.feedCalls += 1;
+        return Promise.resolve(() => undefined);
+      },
     };
     return gateway;
   }
@@ -377,6 +385,7 @@ describe("remote runner restart during a running turn", () => {
     expect(host.textContent).toContain("Linux server is reconnecting…");
     expect(host.textContent).not.toContain("Questions could not be refreshed. Reconnecting…");
     expect(runner.questionCalls).toBe(questionCallsAtOutage);
+    expect(runner.feedCalls).toBe(0);
 
     restartRunner(runner);
     await settle(700);
@@ -398,6 +407,8 @@ describe("remote runner restart during a running turn", () => {
     expect(fallback()).toBeNull();
     expect(updateDepthErrors()).toEqual([]);
     expect(host.textContent).toContain("Which layout?");
+    expect(runner.questionCalls).toBeGreaterThan(0);
+    expect(runner.feedCalls).toBe(0);
   }, 60_000);
 
   const scenarios = [

@@ -25,18 +25,17 @@ fn question_owner_is_exact_and_stop_expires_pending_before_process_reaping() {
     assert_eq!(
         fixture
             .registry
-            .list_questions("question-task", "ws-agent-tests", root)
-            .unwrap()
-            .len(),
-        1
+            .interactions("question-task", "ws-agent-tests", root)
+            .map(|snapshot| snapshot.questions.len()),
+        Ok(1)
     );
     assert!(fixture
         .registry
-        .list_questions("question-task", "foreign", root)
+        .interactions("question-task", "foreign", root)
         .is_err());
     assert!(fixture
         .registry
-        .list_questions("question-task", "ws-agent-tests", Path::new("/foreign"))
+        .interactions("question-task", "ws-agent-tests", Path::new("/foreign"))
         .is_err());
     fixture
         .registry
@@ -77,16 +76,13 @@ fn assert_no_pending_requests(fixture: &Fixture, task_id: &str, root: &Path) {
     assert_eq!(
         fixture
             .registry
-            .list_questions(task_id, "ws-agent-tests", root)
-            .map(|requests| requests.len()),
-        Ok(0)
-    );
-    assert_eq!(
-        fixture
-            .registry
-            .list_approvals(task_id, "ws-agent-tests", root)
-            .map(|requests| requests.len()),
-        Ok(0)
+            .interactions(task_id, "ws-agent-tests", root),
+        Ok(
+            agent_questions::interactions::AgentInteractionSnapshot::empty(
+                task_id,
+                "ws-agent-tests"
+            )
+        )
     );
 }
 fn assert_answers_are_rejected(fixture: &Fixture, task_id: &str, root: &Path) {
@@ -160,15 +156,19 @@ fn listing_a_registered_task_from_a_foreign_workspace_stays_an_error() {
     .unwrap();
     assert!(fixture
         .registry
-        .list_questions("owned-task", "foreign", root)
+        .interactions("owned-task", "foreign", root)
         .is_err());
     assert!(fixture
         .registry
-        .list_approvals("owned-task", "foreign", root)
+        .interactions("owned-task", "ws-agent-tests", Path::new("/foreign"))
         .is_err());
     assert!(fixture
         .registry
-        .list_approvals("owned-task", "ws-agent-tests", Path::new("/foreign"))
+        .interactions("owned-task", "ws-agent-tests", Path::new("/repo"))
+        .is_err());
+    assert!(fixture
+        .registry
+        .interactions("owned-task", "ws-agent-tests", Path::new(""))
         .is_err());
     fixture
         .registry

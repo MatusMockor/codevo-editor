@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { AGENT_PENDING_INTERACTION_POLL_MS } from "../../application/useAgentPendingInteractions";
 import { AGENT_THREAD_NOTIFICATION_DEBOUNCE_MS } from "../../application/agentThreadNotificationCenter";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,18 +9,14 @@ import {
   type AgentSystemAttentionPort,
   type AgentSystemNotification,
 } from "../../application/agentThreadNotificationCenter";
-import type { AgentApprovalGateway } from "../../application/agentApprovalPorts";
-import type {
-  AgentQuestionGateway,
-  AgentQuestionOwner,
-} from "../../application/agentQuestionPorts";
+import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentApprovalRequest } from "../../domain/agentApproval";
-import type { AgentQuestionRequest } from "../../domain/agentQuestion";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import { unconfiguredAgentProviderManagement } from "../../test/agentProviderManagementFixture";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
+import { FakeAgentInteractionGateway } from "./agentInteractionGatewayTestFixtures";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
 import {
   fixtureRepository,
@@ -125,25 +120,19 @@ function threadIn(
   });
 }
 
-class FakeInteractionGateway implements AgentQuestionGateway, AgentApprovalGateway {
-  readonly approvals = new Map<string, string>();
-
-  async list(): Promise<readonly AgentQuestionRequest[]> {
-    return [];
-  }
-
-  async answer(): Promise<never> {
-    throw new Error("unused");
-  }
-
-  async listApprovals(owner: AgentQuestionOwner): Promise<readonly AgentApprovalRequest[]> {
-    const id = this.approvals.get(owner.taskId);
-    return id === undefined ? [] : [{ id, status: "pending" } as AgentApprovalRequest];
-  }
-
-  async answerApproval(): Promise<never> {
-    throw new Error("unused");
-  }
+function pendingApproval(taskId: string, id: string): AgentApprovalRequest {
+  return {
+    id,
+    taskId,
+    provider: "codex",
+    kind: "command",
+    title: "Run a command?",
+    detail: "cargo test",
+    detailTruncated: false,
+    facts: [],
+    decisions: ["allowOnce", "deny"],
+    status: "pending",
+  };
 }
 
 const RUNNING = { kind: "running" } as const;
@@ -360,9 +349,10 @@ describe("agent thread notifications in agent mode", () => {
     expect(system.notifications).toEqual([]);
   });
 
-  it("does not repeat an approval after the agent view remounts", async () => {
+  it("toasts a pushed approval without polling and does not repeat it after the agent view remounts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const gateway = new FakeInteractionGateway();
+    const gateway = new FakeAgentInteractionGateway();
+    const owner = { workspaceId: "agent-root:api-service", taskId: "b1-turn" };
     const threads = [
       threadIn("a1", APP, "app", RUNNING),
       threadIn("b1", API, "api-service", RUNNING),
@@ -375,10 +365,12 @@ describe("agent thread notifications in agent mode", () => {
     render(threads, { key: "first", gateway });
     clickRow("a1");
     await settle(0);
+    expect(toasts()).toEqual([]);
 
-    gateway.approvals.set("b1-turn", "req-1");
-    await settle(AGENT_PENDING_INTERACTION_POLL_MS);
+    act(() => gateway.push(owner, { approvals: [pendingApproval("b1-turn", "req-1")] }));
     expect(messages()).toEqual(["Approval needed | Thread b1 | api-service"]);
+    expect(rowStatus("b1")).toBe("Approval");
+    expect(gateway.list).not.toHaveBeenCalled();
     act(() =>
       toasts()[0]
         ?.querySelector<HTMLButtonElement>('button[aria-label="Dismiss notification"]')
@@ -389,8 +381,8 @@ describe("agent thread notifications in agent mode", () => {
     await settle(AGENT_THREAD_NOTIFICATION_DEBOUNCE_MS + 1);
     render(threads, { key: "second", gateway });
     await settle(0);
-    await settle(AGENT_PENDING_INTERACTION_POLL_MS);
 
+    expect(rowStatus("b1")).toBe("Approval");
     expect(toasts()).toEqual([]);
   });
 

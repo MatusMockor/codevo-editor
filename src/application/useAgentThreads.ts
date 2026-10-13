@@ -61,6 +61,7 @@ import {
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import type { AgentInlineImageGateway } from "./agentInlineImagePorts";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import { agentThreadHasPendingInput } from "./agentThreadPendingInput";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import {
   useAgentComposerAttachments,
@@ -439,20 +440,11 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const dispatch = useAgentTurnDispatch({
     agentTaskGateway: dependencies.agentTaskGateway,
     inspectSessionRestart: sessions.inspectRestart,
-    hasPendingThreadInput: async (threadId) => {
-      const gateway = dependencies.agentQuestionGateway;
-      if (!gateway) return false;
-      const thread = store.state.threads.get(threadId);
-      const turn = thread && runningTurn(thread);
-      if (!thread || !turn) return true;
-      const questions = await gateway.list({
-        kind: "local",
-        workspaceId: thread.owner.ownerId,
-        repositoryRoot: thread.owner.repositoryRoot,
-        taskId: turn.turnId,
-      });
-      return questions.some((question) => question.status === "pending");
-    },
+    hasPendingThreadInput: (threadId) =>
+      agentThreadHasPendingInput(
+        dependencies.agentQuestionGateway,
+        store.state.threads.get(threadId),
+      ),
     agentAttachmentGateway: dependencies.agentAttachmentGateway,
     gitWorktreeGateway: dependencies.gitWorktreeGateway,
     projects,

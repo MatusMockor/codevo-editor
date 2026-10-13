@@ -3,31 +3,43 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentApprovalRequest } from "../domain/agentApproval";
+import type { AgentInteractionSnapshot } from "../domain/agentInteractionSnapshot";
 import type { AgentQuestionRequest } from "../domain/agentQuestion";
-import type { AgentApprovalGateway } from "./agentApprovalPorts";
-import type { AgentQuestionGateway, AgentQuestionOwner } from "./agentQuestionPorts";
+import {
+  agentInteractionFeedFake,
+  agentInteractionSnapshotOf,
+} from "../test/agentInteractionFeedFake";
+import type { AgentInteractionFeed, AgentInteractionOwner } from "./agentInteractionPorts";
+import {
+  AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD,
+  AGENT_INTERACTION_RETRY_BASE_MS,
+} from "./agentInteractionStore";
+import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentThreadView } from "./agentThreadPorts";
 import {
-  AGENT_PENDING_INTERACTION_POLL_MS,
   MAX_AGENT_PENDING_INTERACTION_THREADS,
   useAgentPendingInteractionObservations,
-  useAgentPendingInteractions,
   type AgentPendingInteractionObservations,
 } from "./useAgentPendingInteractions";
+
+const WORKSPACE = "ws";
+const RETRY_AFTER_UNAVAILABLE_MS =
+  AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD - 1);
+const UNAVAILABLE_AFTER_MS = RETRY_AFTER_UNAVAILABLE_MS - AGENT_INTERACTION_RETRY_BASE_MS;
 
 function runningView(
   threadId: string,
   turnId: string,
   updatedAtEpochMs: number,
-  provider: "claudeCode" | "codex" = "claudeCode",
+  options: { readonly provider?: "claudeCode" | "codex"; readonly workspaceId?: string } = {},
 ): AgentThreadView {
   return {
     lifecycle: "running",
     thread: {
       threadId,
       updatedAtEpochMs,
-      provider: { kind: provider },
-      owner: { rootKey: "/r", ownerId: "ws", repositoryRoot: "/r" },
+      provider: { kind: options.provider ?? "claudeCode" },
+      owner: { rootKey: "/r", ownerId: options.workspaceId ?? WORKSPACE, repositoryRoot: "/r" },
       turns: [{ turnId, status: { kind: "running" }, codexTransport: undefined }],
     },
   } as unknown as AgentThreadView;
@@ -45,76 +57,92 @@ function settledView(threadId: string, turnId: string): AgentThreadView {
   } as AgentThreadView;
 }
 
-class FakeGateway implements AgentQuestionGateway, AgentApprovalGateway {
-  readonly calls: string[] = [];
-  readonly pendingApproval = new Set<string>();
-  readonly pendingQuestion = new Set<string>();
-  inFlight = 0;
-  maxInFlight = 0;
+interface PendingRequests {
+  readonly approval?: string;
+  readonly question?: string;
+}
+
+class FakeFeed implements AgentQuestionGateway, AgentInteractionFeed {
+  readonly unreadable = new Set<string>();
+  readonly listed: string[] = [];
   hold: Promise<void> | null = null;
+  private readonly feed = agentInteractionFeedFake();
+  private sequence = 0;
+  readonly subscribeInteractions = this.feed.subscribeInteractions;
 
-  private async track<T>(value: T): Promise<T> {
-    this.inFlight += 1;
-    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
-    try {
-      if (this.hold !== null) await this.hold;
-      return value;
-    } finally {
-      this.inFlight -= 1;
-    }
+  get subscriptions(): number {
+    return this.feed.subscribeInteractions.mock.calls.length;
   }
 
-  async list(owner: AgentQuestionOwner): Promise<readonly AgentQuestionRequest[]> {
-    this.calls.push(`q:${owner.taskId}`);
-    return this.track(
-      this.pendingQuestion.has(owner.taskId) ? [{ status: "pending" } as AgentQuestionRequest] : [],
+  get subscribers(): number {
+    return this.feed.subscribers();
+  }
+
+  get reads(): readonly string[] {
+    return this.feed.currentInteractions.mock.calls.map(
+      ([owner]) => `${owner.workspaceId}:${owner.taskId}`,
     );
   }
 
-  async answer(): Promise<never> {
-    throw new Error("unused");
+  async list(owner: { readonly taskId: string }): Promise<readonly AgentQuestionRequest[]> {
+    this.listed.push(owner.taskId);
+    return [];
   }
 
-  async listApprovals(owner: AgentQuestionOwner): Promise<readonly AgentApprovalRequest[]> {
-    this.calls.push(`a:${owner.taskId}`);
-    return this.track(
-      this.pendingApproval.has(owner.taskId) ? [{ status: "pending" } as AgentApprovalRequest] : [],
-    );
+  answer(): Promise<never> {
+    return Promise.reject(new Error("unused"));
   }
 
-  async answerApproval(): Promise<never> {
-    throw new Error("unused");
+  async currentInteractions(owner: AgentInteractionOwner): Promise<AgentInteractionSnapshot> {
+    const recorded = this.feed.currentInteractions(owner);
+    if (this.hold !== null) await this.hold;
+    if (this.unreadable.has(owner.taskId)) return Promise.reject(new Error("offline"));
+    return recorded;
   }
+
+  seed(taskId: string, pending: PendingRequests, workspaceId = WORKSPACE): void {
+    this.feed.record(this.next({ workspaceId, taskId }, pending));
+  }
+
+  push(taskId: string, pending: PendingRequests, workspaceId = WORKSPACE): void {
+    this.feed.publish(this.next({ workspaceId, taskId }, pending));
+  }
+
+  readsOf(taskId: string, workspaceId = WORKSPACE): number {
+    return this.reads.filter((read) => read === `${workspaceId}:${taskId}`).length;
+  }
+
+  private next(owner: AgentInteractionOwner, pending: PendingRequests): AgentInteractionSnapshot {
+    this.sequence += 1;
+    return agentInteractionSnapshotOf(owner, this.sequence, {
+      approvals: requestsOf<AgentApprovalRequest>(owner, pending.approval),
+      questions: requestsOf<AgentQuestionRequest>(owner, pending.question),
+    });
+  }
+}
+
+function requestsOf<Request>(owner: AgentInteractionOwner, id: string | undefined): Request[] {
+  if (id === undefined) return [];
+  return [{ id, taskId: owner.taskId, status: "pending" } as Request];
 }
 
 let host: HTMLDivElement;
 let root: Root;
 let mounted = false;
-let latest: ReadonlyMap<string, string> = new Map();
+let observations: AgentPendingInteractionObservations;
+let renders = 0;
 
 function Probe({
   gateway,
   pinned = null,
   views,
 }: {
-  readonly gateway: FakeGateway | null;
+  readonly gateway: AgentQuestionGateway | null;
   readonly pinned?: string | null;
   readonly views: ReadonlyArray<AgentThreadView>;
 }) {
-  latest = useAgentPendingInteractions(gateway, views, pinned);
-  return null;
-}
-
-let observations: AgentPendingInteractionObservations | null = null;
-
-function ObservationProbe({
-  gateway,
-  views,
-}: {
-  readonly gateway: AgentQuestionGateway;
-  readonly views: ReadonlyArray<AgentThreadView>;
-}) {
-  observations = useAgentPendingInteractionObservations(gateway, views);
+  observations = useAgentPendingInteractionObservations(gateway, views, pinned);
+  renders += 1;
   return null;
 }
 
@@ -128,12 +156,41 @@ function unmount() {
   mounted = false;
 }
 
+async function settle() {
+  for (let round = 0; round < 20; round += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+async function elapse(milliseconds: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(milliseconds);
+  });
+}
+
+async function push(
+  feed: FakeFeed,
+  taskId: string,
+  pending: PendingRequests,
+  workspaceId?: string,
+) {
+  await act(async () => {
+    feed.push(taskId, pending, workspaceId);
+  });
+}
+
+function pending(threadId: string) {
+  return observations.pending.get(threadId);
+}
+
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.useFakeTimers();
   host = document.createElement("div");
   root = createRoot(host);
-  latest = new Map();
+  renders = 0;
 });
 
 afterEach(() => {
@@ -141,218 +198,357 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function flush() {
-  for (let round = 0; round < 40; round += 1) {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-  }
-}
-
-function questionCalls(gateway: FakeGateway): string[] {
-  return gateway.calls.filter((call) => call.startsWith("q:"));
-}
-
-describe("useAgentPendingInteractions", () => {
-  it("reports approval for the exact running turn and drops it when the turn changes", async () => {
-    const gateway = new FakeGateway();
-    gateway.pendingApproval.add("turn-1");
-    render(<Probe gateway={gateway} views={[runningView("a", "turn-1", 1)]} />);
-    await flush();
-    expect(latest.get("a")).toBe("approval");
-    render(<Probe gateway={gateway} views={[runningView("a", "turn-2", 2)]} />);
-    expect(latest.get("a")).toBeUndefined();
-    await flush();
-    expect(latest.get("a")).toBeUndefined();
-  });
-
-  it("keeps the returned map identity while the observed interactions are unchanged", async () => {
-    const gateway = new FakeGateway();
-    gateway.pendingApproval.add("turn-1");
-    render(<Probe gateway={gateway} views={[runningView("a", "turn-1", 1)]} />);
-    await flush();
-    const first = latest;
-    expect(first.get("a")).toBe("approval");
-    render(<Probe gateway={gateway} views={[runningView("a", "turn-1", 5)]} />);
-    expect(latest).toBe(first);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_PENDING_INTERACTION_POLL_MS);
-    });
-    await flush();
-    expect(latest).toBe(first);
-    gateway.pendingApproval.clear();
-    gateway.pendingQuestion.add("turn-1");
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_PENDING_INTERACTION_POLL_MS);
-    });
-    await flush();
-    expect(latest).not.toBe(first);
-    expect(latest.get("a")).toBe("input");
-  });
-
-  it("reports input for a pending question and clears it once the thread stops running", async () => {
-    const gateway = new FakeGateway();
-    gateway.pendingQuestion.add("turn-1");
-    render(<Probe gateway={gateway} views={[runningView("a", "turn-1", 1)]} />);
-    await flush();
-    expect(latest.get("a")).toBe("input");
-    render(<Probe gateway={gateway} views={[settledView("a", "turn-1")]} />);
-    expect(latest.size).toBe(0);
-  });
-
-  it("never publishes a late answer for a turn that was replaced while it was in flight", async () => {
-    const gateway = new FakeGateway();
-    gateway.pendingApproval.add("turn-1");
-    let release: () => void = () => undefined;
-    gateway.hold = new Promise<void>((done) => {
-      release = done;
-    });
-    render(<Probe gateway={gateway} views={[runningView("a", "turn-1", 1)]} />);
-    await flush();
-    expect(gateway.calls).toEqual(["a:turn-1"]);
-    render(<Probe gateway={gateway} views={[runningView("a", "turn-2", 2)]} />);
-    gateway.hold = null;
-    await act(async () => {
-      release();
-      await vi.advanceTimersByTimeAsync(0);
-    });
-    await flush();
-    expect(latest.get("a")).toBeUndefined();
-    expect(gateway.calls).toContain("a:turn-2");
-    expect(gateway.maxInFlight).toBe(1);
-  });
-
-  it("polls at most the newest 8 running threads, one request at a time, every 2 s, and stops on unmount", async () => {
-    const gateway = new FakeGateway();
-    const views = Array.from({ length: 12 }, (_, index) =>
-      runningView(`t${index}`, `turn-${index}`, index),
-    );
-    render(<Probe gateway={gateway} views={views} />);
-    await flush();
-    const firstRound = questionCalls(gateway);
-    expect(firstRound).toHaveLength(MAX_AGENT_PENDING_INTERACTION_THREADS);
-    expect(firstRound).not.toContain("q:turn-0");
-    expect(gateway.maxInFlight).toBe(1);
-    gateway.calls.length = 0;
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_PENDING_INTERACTION_POLL_MS - 1);
-    });
-    expect(gateway.calls).toEqual([]);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
-    });
-    await flush();
-    expect(questionCalls(gateway)).toHaveLength(MAX_AGENT_PENDING_INTERACTION_THREADS);
-    unmount();
-    gateway.calls.length = 0;
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_PENDING_INTERACTION_POLL_MS * 3);
-    });
-    expect(gateway.calls).toEqual([]);
-  });
-
-  it("keeps polling on schedule when running threads only swap recency order", async () => {
-    const gateway = new FakeGateway();
+describe("useAgentPendingInteractionObservations", () => {
+  it("reports a pushed approval and a pushed question without any timer", async () => {
+    const feed = new FakeFeed();
     render(
       <Probe
-        gateway={gateway}
+        gateway={feed}
+        views={[runningView("a", "turn-a", 2), runningView("b", "turn-b", 1)]}
+      />,
+    );
+    await settle();
+    expect(observations.observed.get("a")).toBeNull();
+    expect(observations.observed.get("b")).toBeNull();
+
+    await push(feed, "turn-a", { approval: "req-1" });
+    await push(feed, "turn-b", { question: "q-1" });
+
+    expect(pending("a")).toBe("approval");
+    expect(pending("b")).toBe("input");
+    expect(observations.observed.get("a")).toEqual({ kind: "approval", id: "req-1" });
+    expect(observations.observed.get("b")).toEqual({ kind: "input", id: "q-1" });
+    expect(feed.listed).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reports what is already pending when the thread starts being watched", async () => {
+    const feed = new FakeFeed();
+    feed.seed("turn-a", { question: "q-1" });
+    render(<Probe gateway={feed} views={[runningView("a", "turn-a", 1)]} />);
+    await settle();
+
+    expect(pending("a")).toBe("input");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("clears a pending interaction once it is resolved", async () => {
+    const feed = new FakeFeed();
+    render(<Probe gateway={feed} views={[runningView("a", "turn-a", 1)]} />);
+    await settle();
+    await push(feed, "turn-a", { approval: "req-1" });
+    expect(pending("a")).toBe("approval");
+
+    await push(feed, "turn-a", {});
+
+    expect(observations.pending.size).toBe(0);
+    expect(observations.observed.get("a")).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("prefers the approval while a question is pending too", async () => {
+    const feed = new FakeFeed();
+    render(<Probe gateway={feed} views={[runningView("a", "turn-a", 1)]} />);
+    await settle();
+
+    await push(feed, "turn-a", { approval: "req-1", question: "q-1" });
+
+    expect(observations.observed.get("a")).toEqual({ kind: "approval", id: "req-1" });
+  });
+
+  it("does not report a thread while its interactions cannot be read and reports it once they can", async () => {
+    const feed = new FakeFeed();
+    feed.unreadable.add("turn-b");
+    render(
+      <Probe
+        gateway={feed}
+        views={[runningView("a", "turn-a", 2), runningView("b", "turn-b", 1)]}
+      />,
+    );
+    await settle();
+    expect(observations.observed.get("a")).toBeNull();
+    expect(observations.observed.has("b")).toBe(false);
+
+    await elapse(UNAVAILABLE_AFTER_MS);
+    expect(feed.readsOf("turn-b")).toBe(AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD);
+    expect(observations.observed.get("a")).toBeNull();
+    expect(observations.observed.has("b")).toBe(false);
+    expect(observations.pending.has("b")).toBe(false);
+
+    feed.unreadable.delete("turn-b");
+    feed.seed("turn-b", { approval: "req-b" });
+    await elapse(RETRY_AFTER_UNAVAILABLE_MS);
+
+    expect(observations.observed.get("b")).toEqual({ kind: "approval", id: "req-b" });
+    expect(feed.readsOf("turn-a")).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops reporting a removed thread and ignores what is pushed for it afterwards", async () => {
+    const feed = new FakeFeed();
+    const a = runningView("a", "turn-a", 2);
+    const b = runningView("b", "turn-b", 1);
+    render(<Probe gateway={feed} views={[a, b]} />);
+    await settle();
+    await push(feed, "turn-b", { approval: "req-b" });
+    expect(pending("b")).toBe("approval");
+
+    render(<Probe gateway={feed} views={[a]} />);
+    expect(observations.observed.has("b")).toBe(false);
+    await settle();
+    const settled = observations;
+    const rendersBefore = renders;
+    await push(feed, "turn-b", { approval: "req-b2" });
+
+    expect(observations).toBe(settled);
+    expect(renders).toBe(rendersBefore);
+    expect(feed.readsOf("turn-a")).toBe(1);
+  });
+
+  it("watches a returning thread afresh instead of replaying what it saw before", async () => {
+    const feed = new FakeFeed();
+    const a = runningView("a", "turn-a", 2);
+    const b = runningView("b", "turn-b", 1);
+    render(<Probe gateway={feed} views={[a, b]} />);
+    await settle();
+    await push(feed, "turn-b", { approval: "req-b" });
+    render(<Probe gateway={feed} views={[a]} />);
+    await settle();
+    feed.seed("turn-b", {});
+
+    render(<Probe gateway={feed} views={[a, b]} />);
+    expect(observations.observed.has("b")).toBe(false);
+    await settle();
+
+    expect(observations.observed.get("b")).toBeNull();
+    expect(feed.readsOf("turn-b")).toBe(2);
+    expect(feed.readsOf("turn-a")).toBe(1);
+  });
+
+  it("drops the previous turn at once and reports only the new turn of a thread", async () => {
+    const feed = new FakeFeed();
+    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
+    await settle();
+    await push(feed, "turn-1", { approval: "req-1" });
+    expect(pending("a")).toBe("approval");
+
+    render(<Probe gateway={feed} views={[runningView("a", "turn-2", 2)]} />);
+    expect(observations.observed.has("a")).toBe(false);
+    await settle();
+    expect(observations.observed.get("a")).toBeNull();
+    expect(feed.readsOf("turn-2")).toBe(1);
+
+    await push(feed, "turn-1", { approval: "req-late" });
+    expect(observations.observed.get("a")).toBeNull();
+
+    await push(feed, "turn-2", { question: "q-2" });
+    expect(observations.observed.get("a")).toEqual({ kind: "input", id: "q-2" });
+  });
+
+  it("never publishes a read that settles after its turn was replaced", async () => {
+    const feed = new FakeFeed();
+    feed.seed("turn-1", { approval: "req-1" });
+    let release: () => void = () => undefined;
+    feed.hold = new Promise<void>((done) => {
+      release = done;
+    });
+    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
+    await settle();
+    expect(feed.readsOf("turn-1")).toBe(1);
+
+    render(<Probe gateway={feed} views={[runningView("a", "turn-2", 2)]} />);
+    feed.hold = null;
+    await act(async () => {
+      release();
+    });
+    await settle();
+
+    expect(pending("a")).toBeUndefined();
+    expect(observations.observed.get("a")).toBeNull();
+  });
+
+  it("treats workspace A, B and A again as separate owners of the same turn", async () => {
+    const feed = new FakeFeed();
+    const inA = runningView("a", "turn-1", 1, { workspaceId: "ws-a" });
+    const inB = runningView("a", "turn-1", 1, { workspaceId: "ws-b" });
+    render(<Probe gateway={feed} views={[inA]} />);
+    await settle();
+    await push(feed, "turn-1", { approval: "req-a" }, "ws-a");
+    expect(pending("a")).toBe("approval");
+
+    render(<Probe gateway={feed} views={[inB]} />);
+    expect(observations.observed.has("a")).toBe(false);
+    await settle();
+    expect(observations.observed.get("a")).toBeNull();
+    await push(feed, "turn-1", { approval: "req-a2" }, "ws-a");
+    expect(observations.observed.get("a")).toBeNull();
+
+    feed.seed("turn-1", {}, "ws-a");
+    render(<Probe gateway={feed} views={[inA]} />);
+    expect(observations.observed.has("a")).toBe(false);
+    await settle();
+
+    expect(observations.observed.get("a")).toBeNull();
+    expect(feed.readsOf("turn-1", "ws-a")).toBe(2);
+    expect(feed.readsOf("turn-1", "ws-b")).toBe(1);
+  });
+
+  it("keeps the result identity while nothing observable changes", async () => {
+    const feed = new FakeFeed();
+    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
+    await settle();
+    await push(feed, "turn-1", { approval: "req-1" });
+    const first = observations;
+    expect(first.pending.get("a")).toBe("approval");
+
+    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 5)]} />);
+    expect(observations).toBe(first);
+    expect(observations.pending).toBe(first.pending);
+
+    await push(feed, "turn-1", { approval: "req-1" });
+    const rendersBefore = renders;
+    await push(feed, "turn-1", { approval: "req-1" });
+    expect(observations).toBe(first);
+    expect(renders).toBe(rendersBefore);
+
+    await push(feed, "turn-1", { question: "q-1" });
+    expect(observations).not.toBe(first);
+    expect(pending("a")).toBe("input");
+  });
+
+  it("keeps its watches when running threads only swap recency order", async () => {
+    const feed = new FakeFeed();
+    render(
+      <Probe
+        gateway={feed}
         views={[runningView("t1", "turn-1", 1), runningView("t2", "turn-2", 2)]}
       />,
     );
-    await flush();
-    expect(questionCalls(gateway)).toHaveLength(2);
-    gateway.calls.length = 0;
+    await settle();
+    await push(feed, "turn-1", { approval: "req-1" });
+    const before = observations;
+    expect(feed.reads).toHaveLength(2);
+
     render(
       <Probe
-        gateway={gateway}
+        gateway={feed}
         views={[runningView("t1", "turn-1", 3), runningView("t2", "turn-2", 2)]}
       />,
     );
-    await flush();
-    expect(gateway.calls).toEqual([]);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_PENDING_INTERACTION_POLL_MS);
-    });
-    await flush();
-    expect(questionCalls(gateway)).toHaveLength(2);
+    await settle();
+
+    expect(feed.reads).toHaveLength(2);
+    expect(observations).toBe(before);
   });
 
-  it("issues no further request after unmounting mid-round", async () => {
-    const gateway = new FakeGateway();
-    let release: () => void = () => undefined;
-    gateway.hold = new Promise<void>((done) => {
-      release = done;
-    });
-    render(
-      <Probe
-        gateway={gateway}
-        views={[runningView("a", "turn-1", 1), runningView("b", "turn-2", 2)]}
-      />,
-    );
-    await flush();
-    expect(gateway.calls).toHaveLength(1);
-    unmount();
-    await act(async () => {
-      release();
-      await vi.advanceTimersByTimeAsync(AGENT_PENDING_INTERACTION_POLL_MS * 3);
-    });
-    expect(gateway.calls).toHaveLength(1);
-  });
-
-  it("always polls the open thread even when it is older than the newest 8", async () => {
-    const gateway = new FakeGateway();
+  it("watches at most the newest 8 running threads", async () => {
+    const feed = new FakeFeed();
     const views = Array.from({ length: 12 }, (_, index) =>
       runningView(`t${index}`, `turn-${index}`, index),
     );
-    render(<Probe gateway={gateway} pinned="t0" views={views} />);
-    await flush();
-    const polled = questionCalls(gateway);
-    expect(polled).toContain("q:turn-0");
-    expect(polled).toHaveLength(MAX_AGENT_PENDING_INTERACTION_THREADS);
+    render(<Probe gateway={feed} views={views} />);
+    await settle();
+
+    expect(feed.reads).toHaveLength(MAX_AGENT_PENDING_INTERACTION_THREADS);
+    expect(feed.readsOf("turn-3")).toBe(0);
+    expect(feed.readsOf("turn-4")).toBe(1);
+    expect(observations.observed.size).toBe(MAX_AGENT_PENDING_INTERACTION_THREADS);
+
+    await push(feed, "turn-0", { approval: "req-0" });
+    expect(observations.observed.has("t0")).toBe(false);
+    expect(observations.pending.size).toBe(0);
+  });
+
+  it("always watches the open thread even when it is older than the newest 8", async () => {
+    const feed = new FakeFeed();
+    const views = Array.from({ length: 12 }, (_, index) =>
+      runningView(`t${index}`, `turn-${index}`, index),
+    );
+    render(<Probe gateway={feed} pinned="t0" views={views} />);
+    await settle();
+
+    expect(feed.reads).toHaveLength(MAX_AGENT_PENDING_INTERACTION_THREADS);
+    expect(feed.readsOf("turn-0")).toBe(1);
+    expect(feed.readsOf("turn-4")).toBe(0);
+
+    await push(feed, "turn-0", { question: "q-0" });
+    expect(pending("t0")).toBe("input");
+  });
+
+  it("clears a pending interaction once the thread stops running", async () => {
+    const feed = new FakeFeed();
+    feed.seed("turn-1", { question: "q-1" });
+    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
+    await settle();
+    expect(pending("a")).toBe("input");
+
+    render(<Probe gateway={feed} views={[settledView("a", "turn-1")]} />);
+
+    expect(observations.pending.size).toBe(0);
+    expect(observations.observed.size).toBe(0);
   });
 
   it("skips remote threads and Codex exec turns that cannot hold interactions", async () => {
-    const gateway = new FakeGateway();
+    const feed = new FakeFeed();
     const remote = {
       ...runningView("remote", "turn-r", 3),
       execution: { kind: "remote", interactiveQuestions: true },
     } as unknown as AgentThreadView;
-    render(<Probe gateway={gateway} views={[remote, runningView("exec", "turn-x", 2, "codex")]} />);
-    await flush();
-    expect(gateway.calls).toEqual([]);
-    expect(latest.size).toBe(0);
-  });
-
-  it("does nothing without a gateway or running threads", async () => {
-    render(<Probe gateway={null} views={[runningView("a", "turn-1", 1)]} />);
-    await flush();
-    expect(latest.size).toBe(0);
-    const gateway = new FakeGateway();
-    render(<Probe gateway={gateway} views={[settledView("a", "turn-1")]} />);
-    await flush();
-    expect(gateway.calls).toEqual([]);
-  });
-
-  it("separates threads polled with nothing pending from threads not observed", async () => {
-    const gateway = new FakeGateway();
-    const failing: AgentQuestionGateway & AgentApprovalGateway = {
-      list: async (owner) => {
-        if (owner.taskId === "turn-b") throw new Error("offline");
-        return gateway.list(owner);
-      },
-      answer: gateway.answer,
-      listApprovals: (owner) => gateway.listApprovals(owner),
-      answerApproval: gateway.answerApproval,
-    };
     render(
-      <ObservationProbe
-        gateway={failing}
+      <Probe
+        gateway={feed}
+        views={[remote, runningView("exec", "turn-x", 2, { provider: "codex" })]}
+      />,
+    );
+    await settle();
+
+    expect(feed.reads).toEqual([]);
+    expect(feed.listed).toEqual([]);
+    expect(feed.subscriptions).toBe(0);
+    expect(observations.observed.size).toBe(0);
+  });
+
+  it("observes nothing without a gateway, without a feed or without running threads", async () => {
+    render(<Probe gateway={null} views={[runningView("a", "turn-1", 1)]} />);
+    await settle();
+    expect(observations.observed.size).toBe(0);
+
+    const list = vi.fn<AgentQuestionGateway["list"]>().mockResolvedValue([]);
+    const pollOnly: AgentQuestionGateway = { list, answer: vi.fn() };
+    render(<Probe gateway={pollOnly} views={[runningView("a", "turn-1", 1)]} />);
+    await settle();
+    expect(observations.observed.size).toBe(0);
+    expect(list).not.toHaveBeenCalled();
+
+    const feed = new FakeFeed();
+    render(<Probe gateway={feed} views={[settledView("a", "turn-1")]} />);
+    await settle();
+    expect(feed.reads).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("releases every watch on unmount and schedules nothing afterwards", async () => {
+    const feed = new FakeFeed();
+    render(
+      <Probe
+        gateway={feed}
         views={[runningView("a", "turn-a", 2), runningView("b", "turn-b", 1)]}
       />,
     );
-    await flush();
+    await settle();
+    expect(feed.subscriptions).toBe(1);
+    expect(feed.subscribers).toBe(1);
+    const reads = feed.reads.length;
+    const rendersBefore = renders;
 
-    expect(observations?.observed.get("a")).toBeNull();
-    expect(observations?.observed.has("b")).toBe(false);
+    unmount();
+    await settle();
+    feed.push("turn-a", { approval: "req-1" });
+    await settle();
+
+    expect(feed.subscribers).toBe(0);
+    expect(feed.reads).toHaveLength(reads);
+    expect(renders).toBe(rendersBefore);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

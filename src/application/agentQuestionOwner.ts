@@ -15,7 +15,6 @@ export function agentQuestionOwner(view: AgentThreadView | null): AgentQuestionO
   return {
     kind: "local",
     workspaceId: view.thread.owner.ownerId,
-    repositoryRoot: view.thread.owner.repositoryRoot,
     taskId: turn.turnId,
   };
 }

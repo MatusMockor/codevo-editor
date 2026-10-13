@@ -47,7 +47,6 @@ describe("agentQuestionOwner", () => {
     expect(agentQuestionOwner(local)).toEqual({
       kind: "local",
       workspaceId: "workspace",
-      repositoryRoot: "/repo",
       taskId: "task",
     });
     expect(

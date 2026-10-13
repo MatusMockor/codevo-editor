@@ -1,4 +1,5 @@
 use super::agent_task_trust_revocation::revoked_trust_payload;
+use super::interactions::AgentSettlingSession;
 use super::*;
 
 pub(super) fn capture_completion(shared: &Arc<AgentTaskShared>, task_id: &str) -> bool {
@@ -57,7 +58,7 @@ pub(super) fn complete_settled(
             entry.phase = AgentTaskPhase::Terminal;
             entry.admission.take();
             released_input = entry.input.take();
-            released_questions = entry.questions.clone();
+            released_questions = AgentSettlingSession::retain(entry.questions.as_ref());
             entry.watchdog.finish();
             let interrupted = entry.interrupt_requested && settled_by_interrupt != Some(false);
             let status = resolve_terminal_status(

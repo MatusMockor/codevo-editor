@@ -60,10 +60,10 @@ use agent_task_spawner::{
     MAX_AGENT_PROMPT_BYTES,
 };
 use agent_task_supervisor::{
-    AgentProcessGroupSignalSender, AgentTaskEventSink, AgentTaskIsolation, AgentTaskOutputEvent,
-    AgentTaskOutputStream, AgentTaskRegistry, AgentTaskStartRequest, AgentTaskStartResult,
-    AgentTaskStatusEvent, AgentTaskStatusPayload, KILL_PROCESS_GROUP_SIGNAL,
-    MAX_QUEUED_AGENT_TASK_EVENTS, TERMINATE_PROCESS_GROUP_SIGNAL,
+    AgentInteractionSnapshot, AgentProcessGroupSignalSender, AgentTaskEventSink,
+    AgentTaskIsolation, AgentTaskOutputEvent, AgentTaskOutputStream, AgentTaskRegistry,
+    AgentTaskStartRequest, AgentTaskStartResult, AgentTaskStatusEvent, AgentTaskStatusPayload,
+    KILL_PROCESS_GROUP_SIGNAL, MAX_QUEUED_AGENT_TASK_EVENTS, TERMINATE_PROCESS_GROUP_SIGNAL,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -113,6 +113,8 @@ struct RecordingSink {
     requires_ack: AtomicBool,
     statuses: Mutex<Vec<AgentTaskStatusEvent>>,
     outputs: Mutex<Vec<AgentTaskOutputEvent>>,
+    interactions: Mutex<Vec<AgentInteractionSnapshot>>,
+    panic_on_interactions: AtomicBool,
 }
 
 impl RecordingSink {
@@ -122,6 +124,10 @@ impl RecordingSink {
 
     fn outputs(&self) -> Vec<AgentTaskOutputEvent> {
         self.outputs.lock().expect("outputs lock").clone()
+    }
+
+    fn interactions(&self) -> Vec<AgentInteractionSnapshot> {
+        self.interactions.lock().expect("interactions lock").clone()
     }
 
     fn has_terminal_status(&self, task_id: &str) -> bool {
@@ -141,6 +147,16 @@ impl AgentTaskEventSink for RecordingSink {
 
     fn output(&self, event: AgentTaskOutputEvent) {
         self.outputs.lock().expect("outputs lock").push(event);
+    }
+
+    fn interactions(&self, snapshot: AgentInteractionSnapshot) {
+        self.interactions
+            .lock()
+            .expect("interactions lock")
+            .push(snapshot);
+        if self.panic_on_interactions.load(Ordering::SeqCst) {
+            panic!("interaction sink panic injected");
+        }
     }
 }
 
@@ -3768,6 +3784,9 @@ fn waiter_failure_closes_the_input_before_signalling() {
 
 #[path = "support/agent_task_question_lifecycle_tests.rs"]
 mod question_lifecycle;
+
+#[path = "support/agent_task_interaction_push_tests.rs"]
+mod interaction_push;
 
 #[test]
 fn real_process_background_monitor_keeps_stdin_until_delayed_answer() {

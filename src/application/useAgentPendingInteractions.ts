@@ -5,17 +5,21 @@ import {
   type AgentPendingInteractionIdentity,
 } from "../domain/agentPendingInteraction";
 import { runningTurn } from "../domain/agentThread";
-import { isAgentApprovalGateway, type AgentApprovalGateway } from "./agentApprovalPorts";
+import { isAgentInteractionFeed } from "./agentInteractionPorts";
+import {
+  agentInteractionStore,
+  type AgentInteractionObservation,
+  type AgentInteractionStore,
+} from "./agentInteractionStore";
 import { agentQuestionOwner } from "./agentQuestionOwner";
-import type { AgentQuestionGateway, AgentQuestionOwner } from "./agentQuestionPorts";
+import type { AgentLocalQuestionOwner, AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentThreadView } from "./agentThreadPorts";
 
-export const AGENT_PENDING_INTERACTION_POLL_MS = 2_000;
 export const MAX_AGENT_PENDING_INTERACTION_THREADS = 8;
 
 export interface AgentPendingInteractionTarget {
   readonly threadId: string;
-  readonly owner: AgentQuestionOwner;
+  readonly owner: AgentLocalQuestionOwner;
   readonly key: string;
 }
 
@@ -23,6 +27,13 @@ interface PendingObservation {
   readonly key: string;
   readonly pending: AgentPendingInteractionIdentity | null;
 }
+
+type ObservedThreads = ReadonlyMap<string, PendingObservation>;
+
+type PublishObservation = (
+  target: AgentPendingInteractionTarget,
+  observation: AgentInteractionObservation | null,
+) => void;
 
 export interface AgentPendingInteractionObservations {
   readonly pending: ReadonlyMap<string, AgentPendingInteraction>;
@@ -33,9 +44,9 @@ const NO_OBSERVATIONS: AgentPendingInteractionObservations = {
   pending: new Map(),
   observed: new Map(),
 };
+const NO_OBSERVED_THREADS: ObservedThreads = new Map();
 const TARGET_SEPARATOR = "\u0001";
 const LIST_SEPARATOR = "\u0002";
-const SETTLED: Promise<void> = Promise.resolve();
 
 export function agentPendingInteractionTargets(
   views: ReadonlyArray<AgentThreadView>,
@@ -82,74 +93,119 @@ export function useAgentPendingInteractionObservations(
     () => agentPendingInteractionTargets(views, pinnedThreadId),
     [pinnedThreadId, views],
   );
-  const signature = targets
-    .map((target) => `${target.threadId}${TARGET_SEPARATOR}${target.key}`)
-    .sort()
-    .join(LIST_SEPARATOR);
+  const signature = targets.map(watchKey).sort().join(LIST_SEPARATOR);
   const targetsRef = useRef(targets);
   useLayoutEffect(() => {
     targetsRef.current = targets;
   }, [targets]);
-  const inFlightRef = useRef<Promise<void>>(SETTLED);
-  const [observed, setObserved] = useState<ReadonlyMap<string, PendingObservation>>(
-    () => new Map(),
-  );
+  const store = useMemo(() => interactionStoreOf(gateway), [gateway]);
+  const watchesRef = useRef<AgentPendingInteractionWatches | null>(null);
+  const [observed, setObserved] = useState<ObservedThreads>(NO_OBSERVED_THREADS);
 
   useEffect(() => {
-    if (gateway === null || signature === "") return;
-    const captured = targetsRef.current;
-    const approvals = isAgentApprovalGateway(gateway) ? gateway : null;
-    let alive = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const request = async <T>(call: () => Promise<T>): Promise<T | null> => {
-      await inFlightRef.current;
-      if (!alive) return null;
-      const pending = call();
-      inFlightRef.current = pending.then(
-        () => undefined,
-        () => undefined,
-      );
-      return pending;
-    };
-    const observe = async (target: AgentPendingInteractionTarget) => {
-      const approvalRequests = await listApprovals(approvals, target.owner, request);
-      if (approvalRequests === null) return null;
-      const questionRequests = await request(() => gateway.list(target.owner));
-      if (questionRequests === null) return null;
-      return agentPendingInteractionIdentity(approvalRequests, questionRequests);
-    };
-    const poll = async (): Promise<void> => {
-      const next = new Map<string, PendingObservation>();
-      for (const target of captured) {
-        try {
-          const pending = await observe(target);
-          if (!alive) return;
-          next.set(target.threadId, { key: target.key, pending });
-        } catch {
-          if (!alive) return;
-        }
-      }
-      if (!alive) return;
-      setObserved((previous) => (sameObservations(previous, next) ? previous : next));
-      timer = setTimeout(() => {
-        void poll();
-      }, AGENT_PENDING_INTERACTION_POLL_MS);
-    };
-    void poll();
+    if (store === null) return;
+    const watches = new AgentPendingInteractionWatches(store, (target, observation) =>
+      setObserved((previous) => withObservation(previous, target, observation)),
+    );
+    watchesRef.current = watches;
     return () => {
-      alive = false;
-      clearTimeout(timer);
+      watchesRef.current = null;
+      watches.release();
     };
-  }, [gateway, signature]);
+  }, [store]);
+
+  useEffect(() => {
+    watchesRef.current?.follow(targetsRef.current);
+  }, [signature, store]);
 
   const resultSignature = JSON.stringify(
-    targets.flatMap((target) => {
+    [...targets].sort(byThreadId).flatMap((target) => {
       const seen = observed.get(target.threadId);
       if (seen?.key !== target.key) return [];
       return [[target.threadId, seen.pending?.kind ?? null, seen.pending?.id ?? ""]];
     }),
   );
   return useMemo(() => observationsFromSignature(resultSignature), [resultSignature]);
+}
+
+class AgentPendingInteractionWatches {
+  private readonly releases = new Map<string, () => void>();
+
+  constructor(
+    private readonly store: AgentInteractionStore,
+    private readonly publish: PublishObservation,
+  ) {}
+
+  follow(targets: ReadonlyArray<AgentPendingInteractionTarget>): void {
+    const wanted = new Map(targets.map((target) => [watchKey(target), target]));
+    for (const [key, release] of [...this.releases]) {
+      if (wanted.has(key)) continue;
+      this.releases.delete(key);
+      release();
+    }
+    for (const [key, target] of wanted) {
+      if (this.releases.has(key)) continue;
+      this.releases.set(key, this.watch(target));
+    }
+  }
+
+  release(): void {
+    this.follow([]);
+  }
+
+  private watch(target: AgentPendingInteractionTarget): () => void {
+    const { workspaceId, taskId } = target.owner;
+    const unwatch = this.store.watch({ workspaceId, taskId }, (observation) =>
+      this.publish(target, observation),
+    );
+    return () => {
+      unwatch();
+      this.publish(target, null);
+    };
+  }
+}
+
+function interactionStoreOf(gateway: AgentQuestionGateway | null): AgentInteractionStore | null {
+  if (gateway === null || !isAgentInteractionFeed(gateway)) return null;
+  return agentInteractionStore(gateway);
+}
+
+function watchKey(target: AgentPendingInteractionTarget): string {
+  return `${target.threadId}${TARGET_SEPARATOR}${target.key}`;
+}
+
+function byThreadId(
+  left: AgentPendingInteractionTarget,
+  right: AgentPendingInteractionTarget,
+): number {
+  if (left.threadId < right.threadId) return -1;
+  if (left.threadId > right.threadId) return 1;
+  return 0;
+}
+
+function withObservation(
+  previous: ObservedThreads,
+  target: AgentPendingInteractionTarget,
+  observation: AgentInteractionObservation | null,
+): ObservedThreads {
+  const seen = previous.get(target.threadId);
+  if (observation?.kind !== "observed") {
+    if (seen?.key !== target.key) return previous;
+    const next = new Map(previous);
+    next.delete(target.threadId);
+    return next;
+  }
+  const { approvals, questions } = observation.snapshot;
+  const pending = agentPendingInteractionIdentity(approvals, questions);
+  if (seen?.key === target.key && sameIdentity(seen.pending, pending)) return previous;
+  return new Map(previous).set(target.threadId, { key: target.key, pending });
+}
+
+function sameIdentity(
+  left: AgentPendingInteractionIdentity | null,
+  right: AgentPendingInteractionIdentity | null,
+): boolean {
+  return left?.kind === right?.kind && left?.id === right?.id;
 }
 
 function observationsFromSignature(signature: string): AgentPendingInteractionObservations {
@@ -168,27 +224,4 @@ function observationsFromSignature(signature: string): AgentPendingInteractionOb
     observed.set(threadId, { kind, id });
   }
   return { pending, observed };
-}
-
-function sameObservations(
-  left: ReadonlyMap<string, PendingObservation>,
-  right: ReadonlyMap<string, PendingObservation>,
-): boolean {
-  if (left.size !== right.size) return false;
-  for (const [threadId, observation] of right) {
-    const previous = left.get(threadId);
-    if (previous?.key !== observation.key) return false;
-    if (previous.pending?.kind !== observation.pending?.kind) return false;
-    if (previous.pending?.id !== observation.pending?.id) return false;
-  }
-  return true;
-}
-
-async function listApprovals(
-  approvals: AgentApprovalGateway | null,
-  owner: AgentQuestionOwner,
-  request: <T>(call: () => Promise<T>) => Promise<T | null>,
-) {
-  if (approvals === null) return [];
-  return request(() => approvals.listApprovals(owner));
 }

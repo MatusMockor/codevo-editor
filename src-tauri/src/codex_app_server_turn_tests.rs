@@ -772,3 +772,46 @@ fn file_change_approval_shows_the_files_announced_earlier_in_the_same_turn() {
     assert_eq!(listed[0].detail, "src/a.ts\nsrc/b.ts");
     child.state.settle(0);
 }
+
+#[test]
+fn settlement_publishes_interaction_changes_after_releasing_the_question_gate() {
+    use crate::agent_questions::AgentQuestionStatus;
+    for exit in [0, FAILED, STOPPED] {
+        let port = FakePort::new();
+        let child = port.child();
+        assert_eq!(
+            questions::register(
+                &child.state,
+                json!(7),
+                json!({"threadId":THREAD,"turnId":TURN,"questions":[{"id":"q","header":"Q","question":"Choose"}]}),
+            ),
+            Ok(())
+        );
+        let gate_was_free = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&gate_was_free);
+        let state = Arc::downgrade(&child.state);
+        child.state.questions.observe(Arc::new(move || {
+            let Some(state) = state.upgrade() else {
+                return;
+            };
+            let free = state.question_gate.try_lock().is_ok();
+            recorded.lock().unwrap().push(free);
+        }));
+        child.state.settle(exit);
+        assert_eq!(
+            *gate_was_free.lock().unwrap(),
+            vec![true, true],
+            "exit {exit}"
+        );
+        assert_eq!(
+            child.state.questions.list("task")[0].status,
+            AgentQuestionStatus::Expired,
+            "exit {exit}"
+        );
+        assert!(child.observe_exit(), "exit {exit}");
+        assert!(
+            child.state.input_closed.load(Ordering::SeqCst),
+            "exit {exit}"
+        );
+    }
+}

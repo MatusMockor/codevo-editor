@@ -1,65 +1,95 @@
 use super::*;
+use crate::agent_questions::approvals::{AgentApprovalDecision, AgentApprovalRequest};
+use crate::agent_questions::interactions::AgentInteractionSnapshot;
 use crate::agent_questions::{AgentQuestionRequest, AgentQuestionResponse};
+const MAX_AGENT_INTERACTION_REQUEST_ID_BYTES: usize = 128;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct QuestionOwner {
+pub(crate) struct InteractionOwner {
     task_id: String,
     workspace_id: WorkspaceId,
-    repository_root: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct QuestionAnswerRequest {
     task_id: String,
     workspace_id: WorkspaceId,
-    repository_root: String,
     request_id: String,
     response: AgentQuestionResponse,
 }
-fn validate_owner(
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ApprovalAnswerRequest {
+    task_id: String,
+    workspace_id: WorkspaceId,
+    request_id: String,
+    decision: AgentApprovalDecision,
+}
+fn registered_workspace_root(
     workspaces: &WorkspaceRegistry,
-    owner: &QuestionOwner,
-) -> Result<std::path::PathBuf, String> {
-    safe_agent_task_id(&owner.task_id)?;
-    ensure_workspace_id_bounds(&owner.workspace_id)?;
-    if owner.repository_root.len() > MAX_AGENT_TASK_PATH_BYTES
-        || owner.repository_root.contains('\0')
-    {
-        return Err("Invalid question workspace.".into());
-    }
+    task_id: &str,
+    workspace_id: &WorkspaceId,
+) -> Result<PathBuf, String> {
+    safe_agent_task_id(task_id)?;
+    ensure_workspace_id_bounds(workspace_id)?;
     let descriptor = workspaces
-        .descriptor(&owner.workspace_id)
+        .descriptor(workspace_id)
         .map_err(|error| error.to_string())?;
-    if descriptor.canonical_root_path != std::path::Path::new(&owner.repository_root) {
-        return Err("Question workspace changed.".into());
-    }
     revalidate_agent_steer_workspace(workspaces, &descriptor)
         .map_err(|_| "Question workspace changed.".to_string())?;
     Ok(descriptor.canonical_root_path)
 }
-fn list_owned_questions(
-    workspaces: &WorkspaceRegistry,
-    tasks: &AgentTaskRegistry,
-    owner: &QuestionOwner,
-) -> Result<Vec<AgentQuestionRequest>, String> {
-    let root = validate_owner(workspaces, owner)?;
-    tasks.list_questions(&owner.task_id, owner.workspace_id.as_str(), &root)
+fn ensure_request_id_bounds(request_id: &str) -> Result<(), String> {
+    if request_id.len() > MAX_AGENT_INTERACTION_REQUEST_ID_BYTES {
+        return Err("Invalid agent interaction request.".into());
+    }
+    Ok(())
 }
-fn list_owned_approvals(
+fn owned_interactions(
     workspaces: &WorkspaceRegistry,
     tasks: &AgentTaskRegistry,
-    owner: &QuestionOwner,
-) -> Result<Vec<crate::agent_questions::approvals::AgentApprovalRequest>, String> {
-    let root = validate_owner(workspaces, owner)?;
-    tasks.list_approvals(&owner.task_id, owner.workspace_id.as_str(), &root)
+    owner: &InteractionOwner,
+) -> Result<AgentInteractionSnapshot, String> {
+    let root = registered_workspace_root(workspaces, &owner.task_id, &owner.workspace_id)?;
+    tasks.interactions(&owner.task_id, owner.workspace_id.as_str(), &root)
+}
+fn answer_owned_question(
+    workspaces: &WorkspaceRegistry,
+    tasks: &AgentTaskRegistry,
+    request: QuestionAnswerRequest,
+) -> Result<AgentQuestionRequest, String> {
+    ensure_request_id_bounds(&request.request_id)?;
+    let root = registered_workspace_root(workspaces, &request.task_id, &request.workspace_id)?;
+    tasks.answer_question(
+        &request.task_id,
+        request.workspace_id.as_str(),
+        &root,
+        &request.request_id,
+        request.response,
+    )
+}
+fn answer_owned_approval(
+    workspaces: &WorkspaceRegistry,
+    tasks: &AgentTaskRegistry,
+    request: ApprovalAnswerRequest,
+) -> Result<AgentApprovalRequest, String> {
+    ensure_request_id_bounds(&request.request_id)?;
+    let root = registered_workspace_root(workspaces, &request.task_id, &request.workspace_id)?;
+    tasks.answer_approval(
+        &request.task_id,
+        request.workspace_id.as_str(),
+        &root,
+        &request.request_id,
+        request.decision,
+    )
 }
 #[tauri::command]
-pub(crate) async fn list_agent_questions(
+pub(crate) async fn get_agent_interactions(
     app: AppHandle,
-    request: QuestionOwner,
-) -> Result<Vec<AgentQuestionRequest>, String> {
+    request: InteractionOwner,
+) -> Result<AgentInteractionSnapshot, String> {
     run_blocking_command(move || {
-        list_owned_questions(
+        owned_interactions(
             &app.state::<WorkspaceRegistry>(),
             &app.state::<AgentTaskRegistry>(),
             &request,
@@ -73,41 +103,10 @@ pub(crate) async fn answer_agent_question(
     request: QuestionAnswerRequest,
 ) -> Result<AgentQuestionRequest, String> {
     run_blocking_command(move || {
-        let owner = QuestionOwner {
-            task_id: request.task_id,
-            workspace_id: request.workspace_id,
-            repository_root: request.repository_root,
-        };
-        let root = validate_owner(&app.state::<WorkspaceRegistry>(), &owner)?;
-        app.state::<AgentTaskRegistry>().answer_question(
-            &owner.task_id,
-            owner.workspace_id.as_str(),
-            &root,
-            &request.request_id,
-            request.response,
-        )
-    })
-    .await
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ApprovalAnswerRequest {
-    task_id: String,
-    workspace_id: WorkspaceId,
-    repository_root: String,
-    request_id: String,
-    decision: crate::agent_questions::approvals::AgentApprovalDecision,
-}
-#[tauri::command]
-pub(crate) async fn list_agent_approvals(
-    app: AppHandle,
-    request: QuestionOwner,
-) -> Result<Vec<crate::agent_questions::approvals::AgentApprovalRequest>, String> {
-    run_blocking_command(move || {
-        list_owned_approvals(
+        answer_owned_question(
             &app.state::<WorkspaceRegistry>(),
             &app.state::<AgentTaskRegistry>(),
-            &request,
+            request,
         )
     })
     .await
@@ -116,23 +115,12 @@ pub(crate) async fn list_agent_approvals(
 pub(crate) async fn answer_agent_approval(
     app: AppHandle,
     request: ApprovalAnswerRequest,
-) -> Result<crate::agent_questions::approvals::AgentApprovalRequest, String> {
+) -> Result<AgentApprovalRequest, String> {
     run_blocking_command(move || {
-        if request.request_id.len() > 128 {
-            return Err("Invalid approval.".into());
-        }
-        let owner = QuestionOwner {
-            task_id: request.task_id,
-            workspace_id: request.workspace_id,
-            repository_root: request.repository_root,
-        };
-        let root = validate_owner(&app.state::<WorkspaceRegistry>(), &owner)?;
-        app.state::<AgentTaskRegistry>().answer_approval(
-            &owner.task_id,
-            owner.workspace_id.as_str(),
-            &root,
-            &request.request_id,
-            request.decision,
+        answer_owned_approval(
+            &app.state::<WorkspaceRegistry>(),
+            &app.state::<AgentTaskRegistry>(),
+            request,
         )
     })
     .await
