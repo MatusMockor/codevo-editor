@@ -8,6 +8,7 @@ import type { AgentInteractionOwner } from "./agentInteractionPorts";
 import {
   AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD as FAILURE_THRESHOLD,
   AGENT_INTERACTION_MAX_RETRIES,
+  AGENT_INTERACTION_OPERATION_DEADLINE_MS as DEADLINE,
   AGENT_INTERACTION_RETRY_BASE_MS,
   AGENT_INTERACTION_RETRY_CAP_MS,
   MAX_AGENT_INTERACTION_WATCHED_OWNERS,
@@ -384,7 +385,7 @@ describe("agentInteractionStore", () => {
     expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(retryDelay(FAILURE_THRESHOLD - 1));
     expect(feed.subscribeInteractions).toHaveBeenCalledTimes(FAILURE_THRESHOLD + 1);
-    expect(vi.getTimerCount()).toBe(0);
+    expect(vi.getTimerCount()).toBe(1);
     const reconnecting = recorder();
     const unwatchReconnecting = store.watch(
       { ...B, taskId: "task-reconnecting" },
@@ -511,6 +512,127 @@ describe("agentInteractionStore", () => {
     expect(watcher.seen).toEqual([PENDING, observed(pushed)]);
     expect(vi.getTimerCount()).toBe(0);
     unwatch();
+  });
+
+  it("abandons a read that never settles, retries it and rejects its late answer", async () => {
+    const feed = agentInteractionFeedFake();
+    const current = agentInteractionSnapshotOf(A, 2);
+    feed.record(current);
+    const hung = deferred<AgentInteractionSnapshot>();
+    feed.currentInteractions.mockImplementationOnce(() => hung.promise);
+    const watcher = recorder();
+    const unwatch = agentInteractionStore(feed).watch(A, watcher.listener);
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(DEADLINE - 1);
+    expect(feed.currentInteractions).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(vi.getTimerCount()).toBe(1);
+    hung.resolve(agentInteractionSnapshotOf(A, 99));
+    await settle();
+    expect(watcher.seen).toEqual([PENDING]);
+    await vi.advanceTimersByTimeAsync(retryDelay(0));
+    expect(feed.currentInteractions).toHaveBeenCalledTimes(2);
+    expect(watcher.seen).toEqual([PENDING, observed(current)]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+  });
+
+  it("reports unavailable when every read hangs and lets a later read recover", async () => {
+    const feed = agentInteractionFeedFake();
+    const current = agentInteractionSnapshotOf(A, 2);
+    feed.record(current);
+    for (let failure = 1; failure <= FAILURE_THRESHOLD; failure += 1)
+      feed.currentInteractions.mockImplementationOnce(
+        () => deferred<AgentInteractionSnapshot>().promise,
+      );
+    const store = agentInteractionStore(feed);
+    const watcher = recorder();
+    const unwatch = store.watch(A, watcher.listener);
+    await settle();
+    for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1) {
+      await vi.advanceTimersByTimeAsync(DEADLINE + retryDelay(failure - 1));
+      expect(watcher.seen).toEqual([PENDING]);
+    }
+    const joined = recorder();
+    const unwatchJoined = store.watch(A, joined.listener);
+    expect(feed.currentInteractions).toHaveBeenCalledTimes(FAILURE_THRESHOLD);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    expect(watcher.seen).toEqual([PENDING, UNAVAILABLE]);
+    expect(joined.seen).toEqual([PENDING, UNAVAILABLE]);
+    await vi.advanceTimersByTimeAsync(retryDelay(FAILURE_THRESHOLD - 1));
+    expect(watcher.seen).toEqual([PENDING, UNAVAILABLE, observed(current)]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+    unwatchJoined();
+  });
+
+  it("observes a push while the read hangs and leaves no timer once the read is abandoned", async () => {
+    const feed = agentInteractionFeedFake();
+    feed.currentInteractions.mockImplementationOnce(
+      () => deferred<AgentInteractionSnapshot>().promise,
+    );
+    const watcher = recorder();
+    const unwatch = agentInteractionStore(feed).watch(A, watcher.listener);
+    await settle();
+    const pushed = agentInteractionSnapshotOf(A, 4);
+    feed.push(pushed);
+    expect(watcher.seen).toEqual([PENDING, observed(pushed)]);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10 * AGENT_INTERACTION_RETRY_CAP_MS);
+    expect(feed.currentInteractions).toHaveBeenCalledTimes(1);
+    expect(watcher.seen).toEqual([PENDING, observed(pushed)]);
+    unwatch();
+  });
+
+  it("abandons a subscription that never settles, reconnects and releases it when it settles late", async () => {
+    const feed = agentInteractionFeedFake();
+    const current = agentInteractionSnapshotOf(A, 2);
+    feed.record(current);
+    const hung = deferred<() => void>();
+    const releaseLate = vi.fn();
+    feed.subscribeInteractions.mockImplementationOnce(() => hung.promise);
+    const watcher = recorder();
+    const unwatch = agentInteractionStore(feed).watch(A, watcher.listener);
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(DEADLINE - 1);
+    expect(feed.subscribeInteractions).toHaveBeenCalledTimes(1);
+    expect(feed.currentInteractions).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1 + retryDelay(0));
+    expect(feed.subscribeInteractions).toHaveBeenCalledTimes(2);
+    expect(watcher.seen).toEqual([PENDING, observed(current)]);
+    expect(releaseLate).not.toHaveBeenCalled();
+    hung.resolve(releaseLate);
+    await settle();
+    expect(releaseLate).toHaveBeenCalledTimes(1);
+    const abandoned = feed.subscribeInteractions.mock.calls[0]?.[0];
+    abandoned?.(agentInteractionSnapshotOf(A, 9));
+    expect(abandoned).toBeTypeOf("function");
+    expect(watcher.seen).toEqual([PENDING, observed(current)]);
+    expect(feed.subscribers()).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+    expect(feed.subscribers()).toBe(0);
+  });
+
+  it("reports unavailable to every owner when every subscription hangs", async () => {
+    const feed = agentInteractionFeedFake();
+    feed.subscribeInteractions.mockImplementation(() => deferred<() => void>().promise);
+    const watcher = recorder();
+    const unwatch = agentInteractionStore(feed).watch(A, watcher.listener);
+    await settle();
+    for (let failure = 1; failure < FAILURE_THRESHOLD; failure += 1)
+      await vi.advanceTimersByTimeAsync(DEADLINE + retryDelay(failure - 1));
+    expect(watcher.seen).toEqual([PENDING]);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    expect(watcher.seen).toEqual([PENDING, UNAVAILABLE]);
+    expect(feed.subscribeInteractions).toHaveBeenCalledTimes(FAILURE_THRESHOLD);
+    expect(feed.currentInteractions).not.toHaveBeenCalled();
+    unwatch();
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("isolates a failing listener and honors an unwatch made during delivery", async () => {

@@ -1,0 +1,1591 @@
+{
+  "schemaVersion": 1,
+  "description": "Valid cases carry a complete value. Invalid cases name a valid base case of the same section; replace the top-level keys listed in patch, then remove the top-level keys listed in omit.",
+  "statuses": ["pending", "submitting", "resolved", "cancelled", "expired", "timedOut"],
+  "closeReasons": [
+    "turnEnded",
+    "providerCancelled",
+    "timedOut",
+    "deliveryFailed",
+    "appRestarted",
+    "answerUnconfirmed",
+    "runnerRestarted",
+    "runnerStopped",
+    "taskCancelled",
+    "unknown"
+  ],
+  "providers": ["codex", "claudeCode"],
+  "bodyKinds": ["question", "approval"],
+  "journals": ["saved", "degraded"],
+  "limits": {
+    "idBytes": 128,
+    "anchorToolIdBytes": 256,
+    "questions": 4,
+    "questionOptions": 12,
+    "approvalFacts": 8,
+    "approvalTitleBytes": 256,
+    "requestsPerMessage": 64,
+    "retainedRequestsPerThread": 256,
+    "retainedFencesPerThread": 1024
+  },
+  "transitions": {
+    "pending": ["submitting", "cancelled", "expired", "timedOut"],
+    "submitting": ["resolved", "pending", "expired"],
+    "resolved": [],
+    "cancelled": [],
+    "expired": [],
+    "timedOut": []
+  },
+  "retention": {
+    "description": "A receiver keeps at most retainedRequestsPerThread records per thread, ordered by the earliest createdAtEpochMs of the turn among the kept records, then turnId, then order, then id. Beyond the cap it drops the oldest closed records first, then the oldest open ones, orders what is left again, and reports the thread as truncated until the next reset or epoch change. For every dropped record it keeps a version fence per turnId and id, at most retainedFencesPerThread, and ignores a later record of that key unless its version is higher. Beyond the fence cap it forgets the fences with the lowest createdAtEpochMs first; from then on a record of an unknown key that is pending or submitting and was created at or before the latest forgotten fence is ignored when it arrives as a push and accepted when it comes from a pull of the current backend state, while closed records of unknown keys are always accepted. Fences apply to pulls and pushes alike. A pull clears neither the fences nor the forgotten range; only a reset or epoch change does."
+  },
+  "requests": {
+    "valid": [
+      {
+        "name": "pendingQuestion",
+        "description": "Pending question is live and anchored to a tool call.",
+        "value": {
+          "id": "req-0001",
+          "turnId": "agt-turn-0001",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000000000,
+          "resolvedAtEpochMs": null,
+          "order": 0,
+          "version": 1,
+          "anchorToolId": "call_7f3a",
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "scope",
+                "header": "Scope",
+                "prompt": "Which scope should the change cover?",
+                "options": [
+                  { "id": "narrow", "label": "Narrow", "description": "Only the failing module." },
+                  { "id": "wide", "label": "Wide", "description": "" }
+                ],
+                "multiple": false,
+                "allowCustom": false
+              }
+            ]
+          },
+          "status": "pending",
+          "responseCapability": { "kind": "live" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "pendingApproval",
+        "description": "Pending approval is live and has no anchor.",
+        "value": {
+          "id": "req-0002",
+          "turnId": "agt-turn-0001",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000001000,
+          "resolvedAtEpochMs": null,
+          "order": 1,
+          "version": 1,
+          "anchorToolId": null,
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          },
+          "status": "pending",
+          "responseCapability": { "kind": "live" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "submittingQuestionWithAnswers",
+        "description": "Submitting question records the answers the user sent.",
+        "value": {
+          "id": "req-0003",
+          "turnId": "agt-turn-0001",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000002000,
+          "resolvedAtEpochMs": null,
+          "order": 2,
+          "version": 2,
+          "anchorToolId": "call_7f3b",
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "scope",
+                "header": "Scope",
+                "prompt": "Which scope should the change cover?",
+                "options": [
+                  { "id": "narrow", "label": "Narrow", "description": "Only the failing module." },
+                  { "id": "wide", "label": "Wide", "description": "" }
+                ],
+                "multiple": false,
+                "allowCustom": false
+              }
+            ]
+          },
+          "status": "submitting",
+          "responseCapability": { "kind": "notResumable", "reason": "unknown" },
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "scope", "optionIds": ["narrow"], "text": "" }]
+          }
+        }
+      },
+      {
+        "name": "submittingApprovalWithoutResolution",
+        "description": "Submitting approval may omit what the user sent.",
+        "value": {
+          "id": "req-0004",
+          "turnId": "agt-turn-0001",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000003000,
+          "resolvedAtEpochMs": null,
+          "order": 3,
+          "version": 2,
+          "anchorToolId": "toolu_01Edit",
+          "body": {
+            "kind": "approval",
+            "approvalKind": "fileChange",
+            "title": "Edit src/server.ts",
+            "detail": "",
+            "detailTruncated": true,
+            "facts": [],
+            "decisions": ["allowOnce", "deny"]
+          },
+          "status": "submitting",
+          "responseCapability": { "kind": "notResumable", "reason": "unknown" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "resolvedQuestion",
+        "description": "Resolved question keeps one answer per question.",
+        "value": {
+          "id": "req-0005",
+          "turnId": "agt-turn-0002",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000100000,
+          "resolvedAtEpochMs": 1760000160000,
+          "order": 0,
+          "version": 3,
+          "anchorToolId": "toolu_01Ask",
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "targets",
+                "header": "Targets",
+                "prompt": "Which packages should be updated?",
+                "options": [
+                  { "id": "api", "label": "API", "description": "" },
+                  { "id": "web", "label": "Web", "description": "" }
+                ],
+                "multiple": true,
+                "allowCustom": true
+              },
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "resolved",
+          "responseCapability": { "kind": "notResumable", "reason": "unknown" },
+          "resolution": {
+            "kind": "answers",
+            "answers": [
+              { "questionId": "targets", "optionIds": ["api", "web"], "text": "Also the docs." },
+              { "questionId": "notes", "optionIds": [], "text": "Keep the public API stable." }
+            ]
+          }
+        }
+      },
+      {
+        "name": "resolvedApproval",
+        "description": "Resolved approval keeps the offered decision the user chose.",
+        "value": {
+          "id": "req-0006",
+          "turnId": "agt-turn-0002",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000101000,
+          "resolvedAtEpochMs": 1760000161000,
+          "order": 1,
+          "version": 3,
+          "anchorToolId": null,
+          "body": {
+            "kind": "approval",
+            "approvalKind": "tool",
+            "title": "Call the search tool",
+            "detail": "query: express router",
+            "detailTruncated": false,
+            "facts": [
+              { "label": "Tool", "value": "search" },
+              { "label": "Server", "value": "docs" }
+            ],
+            "decisions": ["allowOnce", "deny"]
+          },
+          "status": "resolved",
+          "responseCapability": { "kind": "notResumable", "reason": "unknown" },
+          "resolution": { "kind": "decision", "decision": "allowOnce" }
+        }
+      },
+      {
+        "name": "cancelledByProvider",
+        "description": "Provider withdrew the question before an answer.",
+        "value": {
+          "id": "req-0007",
+          "turnId": "agt-turn-0003",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000200000,
+          "resolvedAtEpochMs": 1760000205000,
+          "order": 0,
+          "version": 2,
+          "anchorToolId": "call_8a10",
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "scope",
+                "header": "Scope",
+                "prompt": "Which scope should the change cover?",
+                "options": [
+                  { "id": "narrow", "label": "Narrow", "description": "Only the failing module." },
+                  { "id": "wide", "label": "Wide", "description": "" }
+                ],
+                "multiple": false,
+                "allowCustom": false
+              }
+            ]
+          },
+          "status": "cancelled",
+          "responseCapability": { "kind": "notResumable", "reason": "providerCancelled" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "cancelledWithTask",
+        "description": "Approval closed because its task was cancelled.",
+        "value": {
+          "id": "req-0008",
+          "turnId": "agt-turn-0003",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000201000,
+          "resolvedAtEpochMs": 1760000206000,
+          "order": 1,
+          "version": 2,
+          "anchorToolId": null,
+          "body": {
+            "kind": "approval",
+            "approvalKind": "plan",
+            "title": "Approve the implementation plan",
+            "detail": "1. Add the route\n2. Cover it with tests",
+            "detailTruncated": false,
+            "facts": [],
+            "decisions": ["allowOnce", "deny"]
+          },
+          "status": "cancelled",
+          "responseCapability": { "kind": "notResumable", "reason": "taskCancelled" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "expiredTurnEnded",
+        "description": "Question expired because its turn ended.",
+        "value": {
+          "id": "req-0009",
+          "turnId": "agt-turn-0004",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000300000,
+          "resolvedAtEpochMs": 1760000310000,
+          "order": 0,
+          "version": 2,
+          "anchorToolId": null,
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "turnEnded" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "expiredAppRestarted",
+        "description": "Approval expired because the app restarted.",
+        "value": {
+          "id": "req-0010",
+          "turnId": "agt-turn-0004",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000301000,
+          "resolvedAtEpochMs": 1760000311000,
+          "order": 1,
+          "version": 2,
+          "anchorToolId": "toolu_01Mcp",
+          "body": {
+            "kind": "approval",
+            "approvalKind": "mcpElicitation",
+            "title": "Share the repository name",
+            "detail": "The server asks for the repository name.",
+            "detailTruncated": false,
+            "facts": [{ "label": "Server", "value": "issues" }],
+            "decisions": ["allowOnce", "deny"]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "appRestarted" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "expiredRunnerRestarted",
+        "description": "Question expired because the runner restarted.",
+        "value": {
+          "id": "req-0011",
+          "turnId": "agt-turn-0004",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000302000,
+          "resolvedAtEpochMs": 1760000312000,
+          "order": 2,
+          "version": 2,
+          "anchorToolId": null,
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "runnerRestarted" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "expiredRunnerStopped",
+        "description": "Approval expired because the runner stopped.",
+        "value": {
+          "id": "req-0012",
+          "turnId": "agt-turn-0004",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000303000,
+          "resolvedAtEpochMs": 1760000313000,
+          "order": 3,
+          "version": 2,
+          "anchorToolId": null,
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [],
+            "decisions": ["deny"]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "runnerStopped" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "expiredDeliveryFailed",
+        "description": "Question expired because the answer could not be delivered.",
+        "value": {
+          "id": "req-0013",
+          "turnId": "agt-turn-0004",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000304000,
+          "resolvedAtEpochMs": 1760000314000,
+          "order": 4,
+          "version": 3,
+          "anchorToolId": null,
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "deliveryFailed" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "expiredAnswerUnconfirmedWithAnswers",
+        "description": "Unconfirmed question keeps the answers the user sent.",
+        "value": {
+          "id": "req-0014",
+          "turnId": "agt-turn-0005",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000400000,
+          "resolvedAtEpochMs": 1760000410000,
+          "order": 0,
+          "version": 3,
+          "anchorToolId": null,
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "answerUnconfirmed" },
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "notes", "optionIds": [], "text": "Nothing else." }]
+          }
+        }
+      },
+      {
+        "name": "expiredAnswerUnconfirmedWithDecision",
+        "description": "Unconfirmed approval keeps the decision the user sent.",
+        "value": {
+          "id": "req-0015",
+          "turnId": "agt-turn-0005",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000401000,
+          "resolvedAtEpochMs": 1760000411000,
+          "order": 1,
+          "version": 3,
+          "anchorToolId": "toolu_01Bash",
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "answerUnconfirmed" },
+          "resolution": { "kind": "decision", "decision": "deny" }
+        }
+      },
+      {
+        "name": "expiredAnswerUnconfirmedWithoutResolution",
+        "description": "Unconfirmed request may omit what the user sent.",
+        "value": {
+          "id": "req-0016",
+          "turnId": "agt-turn-0005",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000402000,
+          "resolvedAtEpochMs": 1760000412000,
+          "order": 2,
+          "version": 3,
+          "anchorToolId": null,
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "answerUnconfirmed" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "timedOutApproval",
+        "description": "Approval timed out without a decision.",
+        "value": {
+          "id": "req-0017",
+          "turnId": "agt-turn-0006",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 0,
+          "resolvedAtEpochMs": 0,
+          "order": 0,
+          "version": 2,
+          "anchorToolId": null,
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [],
+            "decisions": ["allowOnce", "deny"]
+          },
+          "status": "timedOut",
+          "responseCapability": { "kind": "notResumable", "reason": "timedOut" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "nextLineOnlyPromptIsNotBlank",
+        "description": "Question prompt holding only U+0085 is not blank.",
+        "value": {
+          "id": "req-0018",
+          "turnId": "agt-turn-0007",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000500000,
+          "resolvedAtEpochMs": null,
+          "order": 0,
+          "version": 1,
+          "anchorToolId": null,
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "\u0085",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "pending",
+          "responseCapability": { "kind": "live" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "nextLineOnlyApprovalTitleIsNotBlank",
+        "description": "Approval title holding only U+0085 is not blank.",
+        "value": {
+          "id": "req-0019",
+          "turnId": "agt-turn-0007",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000501000,
+          "resolvedAtEpochMs": null,
+          "order": 1,
+          "version": 1,
+          "anchorToolId": null,
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "\u0085",
+            "detail": "",
+            "detailTruncated": false,
+            "facts": [],
+            "decisions": ["allowOnce", "deny"]
+          },
+          "status": "pending",
+          "responseCapability": { "kind": "live" },
+          "resolution": null
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "unknownKey",
+        "description": "Unknown top-level key.",
+        "base": "pendingQuestion",
+        "patch": { "note": "free text" }
+      },
+      {
+        "name": "missingKey",
+        "description": "Required anchorToolId key is missing.",
+        "base": "pendingQuestion",
+        "patch": {},
+        "omit": ["anchorToolId"]
+      },
+      {
+        "name": "unknownStatus",
+        "description": "Status outside the closed set.",
+        "base": "pendingQuestion",
+        "patch": { "status": "answered" }
+      },
+      {
+        "name": "unknownCloseReason",
+        "description": "Close reason outside the closed set.",
+        "base": "cancelledByProvider",
+        "patch": { "responseCapability": { "kind": "notResumable", "reason": "userDismissed" } }
+      },
+      {
+        "name": "unknownProvider",
+        "description": "Provider outside the closed set.",
+        "base": "pendingQuestion",
+        "patch": { "provider": "gemini" }
+      },
+      {
+        "name": "unknownCapabilityKind",
+        "description": "Response capability kind outside the closed set.",
+        "base": "pendingQuestion",
+        "patch": { "responseCapability": { "kind": "resumable" } }
+      },
+      {
+        "name": "unknownCapabilityKey",
+        "description": "Live capability carries an unknown key.",
+        "base": "pendingQuestion",
+        "patch": { "responseCapability": { "kind": "live", "reason": "unknown" } }
+      },
+      {
+        "name": "liveCapabilityWithNullReason",
+        "description": "Live capability carries a reason key holding null.",
+        "base": "pendingQuestion",
+        "patch": { "responseCapability": { "kind": "live", "reason": null } }
+      },
+      {
+        "name": "notResumableWithNullReason",
+        "description": "Not resumable capability carries a null reason.",
+        "base": "cancelledByProvider",
+        "patch": { "responseCapability": { "kind": "notResumable", "reason": null } }
+      },
+      {
+        "name": "notResumableWithoutReason",
+        "description": "Not resumable capability has no reason.",
+        "base": "cancelledByProvider",
+        "patch": { "responseCapability": { "kind": "notResumable" } }
+      },
+      {
+        "name": "liveWithCancelledStatus",
+        "description": "Live capability with a non-pending status.",
+        "base": "cancelledByProvider",
+        "patch": { "responseCapability": { "kind": "live" } }
+      },
+      {
+        "name": "liveWithSubmittingStatus",
+        "description": "Live capability while the answer is being submitted.",
+        "base": "submittingQuestionWithAnswers",
+        "patch": { "responseCapability": { "kind": "live" } }
+      },
+      {
+        "name": "notResumableWithPendingStatus",
+        "description": "Pending request that is not resumable.",
+        "base": "pendingQuestion",
+        "patch": { "responseCapability": { "kind": "notResumable", "reason": "unknown" } }
+      },
+      {
+        "name": "unknownBodyKind",
+        "description": "Body kind outside the closed set.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "notice",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "unknownBodyKey",
+        "description": "Question body carries an unknown key.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "title": "Notes"
+          }
+        }
+      },
+      {
+        "name": "unknownApprovalKind",
+        "description": "Approval kind outside the closed set.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "network",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          }
+        }
+      },
+      {
+        "name": "resolutionKindMismatchForQuestion",
+        "description": "Question resolved with a decision.",
+        "base": "resolvedQuestion",
+        "patch": { "resolution": { "kind": "decision", "decision": "deny" } }
+      },
+      {
+        "name": "resolutionKindMismatchForApproval",
+        "description": "Approval resolved with answers.",
+        "base": "resolvedApproval",
+        "patch": { "resolution": { "kind": "answers", "answers": [] } }
+      },
+      {
+        "name": "unknownResolutionKey",
+        "description": "Resolution carries an unknown key.",
+        "base": "resolvedApproval",
+        "patch": { "resolution": { "kind": "decision", "decision": "allowOnce", "note": "x" } }
+      },
+      {
+        "name": "decisionNotOffered",
+        "description": "Decision is not one of the offered decisions.",
+        "base": "resolvedApproval",
+        "patch": { "resolution": { "kind": "decision", "decision": "allowForSession" } }
+      },
+      {
+        "name": "unknownDecision",
+        "description": "Decision outside the closed set.",
+        "base": "resolvedApproval",
+        "patch": { "resolution": { "kind": "decision", "decision": "allowAlways" } }
+      },
+      {
+        "name": "answerForUnknownQuestion",
+        "description": "Answer names a question the body does not contain.",
+        "base": "resolvedQuestion",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [
+              { "questionId": "targets", "optionIds": ["api"], "text": "" },
+              { "questionId": "other", "optionIds": [], "text": "Keep the public API stable." }
+            ]
+          }
+        }
+      },
+      {
+        "name": "answerWithUnknownOption",
+        "description": "Answer selects an option the question does not offer.",
+        "base": "resolvedQuestion",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [
+              { "questionId": "targets", "optionIds": ["cli"], "text": "" },
+              { "questionId": "notes", "optionIds": [], "text": "Keep the public API stable." }
+            ]
+          }
+        }
+      },
+      {
+        "name": "answerMissingForQuestion",
+        "description": "One question of the body has no answer.",
+        "base": "resolvedQuestion",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "targets", "optionIds": ["api"], "text": "" }]
+          }
+        }
+      },
+      {
+        "name": "answerDuplicatedForQuestion",
+        "description": "Two answers name the same question.",
+        "base": "resolvedQuestion",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [
+              { "questionId": "targets", "optionIds": ["api"], "text": "" },
+              { "questionId": "targets", "optionIds": ["web"], "text": "" }
+            ]
+          }
+        }
+      },
+      {
+        "name": "answerWithSeveralOptionsForSingleChoice",
+        "description": "Single-choice question answered with two options.",
+        "base": "submittingQuestionWithAnswers",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "scope", "optionIds": ["narrow", "wide"], "text": "" }]
+          }
+        }
+      },
+      {
+        "name": "answerWithCustomTextNotAllowed",
+        "description": "Custom text for a question that does not allow it.",
+        "base": "submittingQuestionWithAnswers",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "scope", "optionIds": ["narrow"], "text": "Both." }]
+          }
+        }
+      },
+      {
+        "name": "resolvedWithoutResolution",
+        "description": "Resolved request has no resolution.",
+        "base": "resolvedQuestion",
+        "patch": { "resolution": null }
+      },
+      {
+        "name": "pendingWithResolution",
+        "description": "Pending request carries a resolution.",
+        "base": "pendingQuestion",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "scope", "optionIds": ["narrow"], "text": "" }]
+          }
+        }
+      },
+      {
+        "name": "cancelledWithResolution",
+        "description": "Cancelled request carries a resolution.",
+        "base": "cancelledByProvider",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "scope", "optionIds": ["narrow"], "text": "" }]
+          }
+        }
+      },
+      {
+        "name": "timedOutWithResolution",
+        "description": "Timed out request carries a resolution.",
+        "base": "timedOutApproval",
+        "patch": { "resolution": { "kind": "decision", "decision": "deny" } }
+      },
+      {
+        "name": "expiredTurnEndedWithResolution",
+        "description": "Expired request carries a resolution without the answerUnconfirmed reason.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "resolution": {
+            "kind": "answers",
+            "answers": [{ "questionId": "notes", "optionIds": [], "text": "Nothing else." }]
+          }
+        }
+      },
+      {
+        "name": "pendingWithResolvedAt",
+        "description": "Pending request has a resolution time.",
+        "base": "pendingQuestion",
+        "patch": { "resolvedAtEpochMs": 1760000005000 }
+      },
+      {
+        "name": "submittingWithResolvedAt",
+        "description": "Submitting request has a resolution time.",
+        "base": "submittingQuestionWithAnswers",
+        "patch": { "resolvedAtEpochMs": 1760000005000 }
+      },
+      {
+        "name": "resolvedWithoutResolvedAt",
+        "description": "Resolved request has no resolution time.",
+        "base": "resolvedQuestion",
+        "patch": { "resolvedAtEpochMs": null }
+      },
+      {
+        "name": "cancelledWithoutResolvedAt",
+        "description": "Cancelled request has no resolution time.",
+        "base": "cancelledByProvider",
+        "patch": { "resolvedAtEpochMs": null }
+      },
+      {
+        "name": "nonIntegerVersion",
+        "description": "Version is not an integer.",
+        "base": "pendingQuestion",
+        "patch": { "version": 1.5 }
+      },
+      {
+        "name": "zeroVersion",
+        "description": "Version is not positive.",
+        "base": "pendingQuestion",
+        "patch": { "version": 0 }
+      },
+      {
+        "name": "negativeOrder",
+        "description": "Order is negative.",
+        "base": "pendingQuestion",
+        "patch": { "order": -1 }
+      },
+      {
+        "name": "nonIntegerOrder",
+        "description": "Order is not an integer.",
+        "base": "pendingQuestion",
+        "patch": { "order": 0.5 }
+      },
+      {
+        "name": "textCreatedAt",
+        "description": "Creation time is text.",
+        "base": "pendingQuestion",
+        "patch": { "createdAtEpochMs": "1760000000000" }
+      },
+      {
+        "name": "negativeCreatedAt",
+        "description": "Creation time is negative.",
+        "base": "pendingQuestion",
+        "patch": { "createdAtEpochMs": -1 }
+      },
+      {
+        "name": "unsafeCreatedAt",
+        "description": "Creation time exceeds the safe integer range of 2^53 - 1.",
+        "base": "pendingQuestion",
+        "patch": { "createdAtEpochMs": 9007199254740992 }
+      },
+      {
+        "name": "nonIntegerResolvedAt",
+        "description": "Resolution time is not an integer.",
+        "base": "cancelledByProvider",
+        "patch": { "resolvedAtEpochMs": 1760000205000.5 }
+      },
+      {
+        "name": "malformedId",
+        "description": "Id starts with a separator.",
+        "base": "pendingQuestion",
+        "patch": { "id": "-req-0001" }
+      },
+      {
+        "name": "oversizeId",
+        "description": "Id is longer than idBytes.",
+        "base": "pendingQuestion",
+        "patch": {
+          "id": "r00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      {
+        "name": "malformedTurnId",
+        "description": "Turn id contains a path separator.",
+        "base": "pendingQuestion",
+        "patch": { "turnId": "agt/turn" }
+      },
+      {
+        "name": "emptyAnchorToolId",
+        "description": "Anchor tool id is empty instead of null.",
+        "base": "pendingQuestion",
+        "patch": { "anchorToolId": "" }
+      },
+      {
+        "name": "controlCharacterInAnchorToolId",
+        "description": "Anchor tool id contains a control character.",
+        "base": "pendingQuestion",
+        "patch": { "anchorToolId": "call\n7f3a" }
+      },
+      {
+        "name": "oversizeAnchorToolId",
+        "description": "Anchor tool id is longer than anchorToolIdBytes.",
+        "base": "pendingQuestion",
+        "patch": {
+          "anchorToolId": "call_00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      {
+        "name": "noQuestions",
+        "description": "Question body has no questions.",
+        "base": "pendingQuestion",
+        "patch": { "body": { "kind": "question", "questions": [] } }
+      },
+      {
+        "name": "tooManyQuestions",
+        "description": "Question body has more than the questions limit.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "q1",
+                "header": "",
+                "prompt": "First?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              },
+              {
+                "id": "q2",
+                "header": "",
+                "prompt": "Second?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              },
+              {
+                "id": "q3",
+                "header": "",
+                "prompt": "Third?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              },
+              {
+                "id": "q4",
+                "header": "",
+                "prompt": "Fourth?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              },
+              {
+                "id": "q5",
+                "header": "",
+                "prompt": "Fifth?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "duplicateQuestionIds",
+        "description": "Two questions share one id.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              },
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to avoid?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "tooManyOptions",
+        "description": "Question has more than the questionOptions limit.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [
+                  { "id": "o01", "label": "One", "description": "" },
+                  { "id": "o02", "label": "Two", "description": "" },
+                  { "id": "o03", "label": "Three", "description": "" },
+                  { "id": "o04", "label": "Four", "description": "" },
+                  { "id": "o05", "label": "Five", "description": "" },
+                  { "id": "o06", "label": "Six", "description": "" },
+                  { "id": "o07", "label": "Seven", "description": "" },
+                  { "id": "o08", "label": "Eight", "description": "" },
+                  { "id": "o09", "label": "Nine", "description": "" },
+                  { "id": "o10", "label": "Ten", "description": "" },
+                  { "id": "o11", "label": "Eleven", "description": "" },
+                  { "id": "o12", "label": "Twelve", "description": "" },
+                  { "id": "o13", "label": "Thirteen", "description": "" }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "duplicateOptionIds",
+        "description": "Two options of one question share one id.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [
+                  { "id": "yes", "label": "Yes", "description": "" },
+                  { "id": "yes", "label": "Also yes", "description": "" }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "questionWithoutAnyAnswerPath",
+        "description": "Question offers no options and no custom text.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": false
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "tooManyFacts",
+        "description": "Approval has more than the approvalFacts limit.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [
+              { "label": "Fact 1", "value": "" },
+              { "label": "Fact 2", "value": "" },
+              { "label": "Fact 3", "value": "" },
+              { "label": "Fact 4", "value": "" },
+              { "label": "Fact 5", "value": "" },
+              { "label": "Fact 6", "value": "" },
+              { "label": "Fact 7", "value": "" },
+              { "label": "Fact 8", "value": "" },
+              { "label": "Fact 9", "value": "" }
+            ],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          }
+        }
+      },
+      {
+        "name": "duplicateDecisions",
+        "description": "Approval offers one decision twice.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowOnce", "deny"]
+          }
+        }
+      },
+      {
+        "name": "decisionsWithoutDeny",
+        "description": "Approval does not offer deny.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowForSession"]
+          }
+        }
+      },
+      {
+        "name": "blankApprovalTitle",
+        "description": "Approval title is blank.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": " ",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          }
+        }
+      },
+      {
+        "name": "oversizeApprovalTitle",
+        "description": "Approval title is longer than approvalTitleBytes.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run 000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          }
+        }
+      },
+      {
+        "name": "byteOrderMarkOnlyPrompt",
+        "description": "Question prompt holding only U+FEFF is blank.",
+        "base": "expiredTurnEnded",
+        "patch": {
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "\uFEFF",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "byteOrderMarkOnlyApprovalTitle",
+        "description": "Approval title holding only U+FEFF is blank.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "\uFEFF",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          }
+        }
+      },
+      {
+        "name": "textDetailTruncated",
+        "description": "Approval detailTruncated is not a boolean.",
+        "base": "pendingApproval",
+        "patch": {
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": "false",
+            "facts": [{ "label": "Directory", "value": "packages/api" }],
+            "decisions": ["allowOnce", "allowForSession", "deny"]
+          }
+        }
+      }
+    ]
+  },
+  "threadRequests": {
+    "valid": [
+      {
+        "name": "emptySaved",
+        "description": "Saved thread without any request.",
+        "value": {
+          "workspaceId": "workspace-alpha",
+          "threadId": "agt-thread-0001",
+          "epoch": "boot-0001",
+          "journal": "saved",
+          "requests": [],
+          "truncated": false,
+          "unreadable": 0,
+          "reset": false
+        }
+      },
+      {
+        "name": "resetSnapshotAcrossTurns",
+        "description": "Reset snapshot where two turns reuse one request id.",
+        "value": {
+          "workspaceId": "workspace-alpha",
+          "threadId": "agt-thread-0001",
+          "epoch": "boot-0001",
+          "journal": "saved",
+          "requests": [
+            {
+              "id": "req-0001",
+              "turnId": "agt-turn-0001",
+              "provider": "codex",
+              "createdAtEpochMs": 1760000000000,
+              "resolvedAtEpochMs": 1760000010000,
+              "order": 0,
+              "version": 2,
+              "anchorToolId": null,
+              "body": {
+                "kind": "approval",
+                "approvalKind": "command",
+                "title": "Run the test suite",
+                "detail": "npm test -- --run",
+                "detailTruncated": false,
+                "facts": [],
+                "decisions": ["allowOnce", "deny"]
+              },
+              "status": "resolved",
+              "responseCapability": { "kind": "notResumable", "reason": "unknown" },
+              "resolution": { "kind": "decision", "decision": "deny" }
+            },
+            {
+              "id": "req-0001",
+              "turnId": "agt-turn-0002",
+              "provider": "codex",
+              "createdAtEpochMs": 1760000100000,
+              "resolvedAtEpochMs": null,
+              "order": 0,
+              "version": 1,
+              "anchorToolId": "call_9c01",
+              "body": {
+                "kind": "approval",
+                "approvalKind": "command",
+                "title": "Run the test suite",
+                "detail": "npm test -- --run",
+                "detailTruncated": false,
+                "facts": [],
+                "decisions": ["allowOnce", "deny"]
+              },
+              "status": "pending",
+              "responseCapability": { "kind": "live" },
+              "resolution": null
+            }
+          ],
+          "truncated": false,
+          "unreadable": 0,
+          "reset": true
+        }
+      },
+      {
+        "name": "degradedWithoutWorkspace",
+        "description": "Degraded journal with pruned and unreadable records and no workspace.",
+        "value": {
+          "workspaceId": null,
+          "threadId": "agt-thread-0002",
+          "epoch": "boot-0002",
+          "journal": "degraded",
+          "requests": [
+            {
+              "id": "req-0001",
+              "turnId": "agt-turn-0009",
+              "provider": "claudeCode",
+              "createdAtEpochMs": 1760000900000,
+              "resolvedAtEpochMs": 1760000910000,
+              "order": 0,
+              "version": 2,
+              "anchorToolId": null,
+              "body": {
+                "kind": "question",
+                "questions": [
+                  {
+                    "id": "notes",
+                    "header": "",
+                    "prompt": "Anything else to consider?",
+                    "options": [],
+                    "multiple": false,
+                    "allowCustom": true
+                  }
+                ]
+              },
+              "status": "expired",
+              "responseCapability": { "kind": "notResumable", "reason": "appRestarted" },
+              "resolution": null
+            }
+          ],
+          "truncated": true,
+          "unreadable": 3,
+          "reset": false
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "unknownKey",
+        "description": "Unknown top-level key.",
+        "base": "emptySaved",
+        "patch": { "sequence": 1 }
+      },
+      {
+        "name": "missingKey",
+        "description": "Required reset key is missing.",
+        "base": "emptySaved",
+        "patch": {},
+        "omit": ["reset"]
+      },
+      {
+        "name": "unknownJournal",
+        "description": "Journal outside the closed set.",
+        "base": "emptySaved",
+        "patch": { "journal": "lost" }
+      },
+      {
+        "name": "requestsNotAList",
+        "description": "Requests is not a list.",
+        "base": "emptySaved",
+        "patch": { "requests": null }
+      },
+      {
+        "name": "duplicateRequestIds",
+        "description": "Two requests share one turn id and id.",
+        "base": "emptySaved",
+        "patch": {
+          "requests": [
+            {
+              "id": "req-0001",
+              "turnId": "agt-turn-0001",
+              "provider": "codex",
+              "createdAtEpochMs": 1760000000000,
+              "resolvedAtEpochMs": null,
+              "order": 0,
+              "version": 1,
+              "anchorToolId": null,
+              "body": {
+                "kind": "approval",
+                "approvalKind": "command",
+                "title": "Run the test suite",
+                "detail": "npm test -- --run",
+                "detailTruncated": false,
+                "facts": [],
+                "decisions": ["allowOnce", "deny"]
+              },
+              "status": "pending",
+              "responseCapability": { "kind": "live" },
+              "resolution": null
+            },
+            {
+              "id": "req-0001",
+              "turnId": "agt-turn-0001",
+              "provider": "codex",
+              "createdAtEpochMs": 1760000000000,
+              "resolvedAtEpochMs": null,
+              "order": 1,
+              "version": 2,
+              "anchorToolId": null,
+              "body": {
+                "kind": "approval",
+                "approvalKind": "command",
+                "title": "Run the test suite",
+                "detail": "npm test -- --run",
+                "detailTruncated": false,
+                "facts": [],
+                "decisions": ["allowOnce", "deny"]
+              },
+              "status": "pending",
+              "responseCapability": { "kind": "live" },
+              "resolution": null
+            }
+          ]
+        }
+      },
+      {
+        "name": "invalidNestedRequest",
+        "description": "One request is a pending request that is not resumable.",
+        "base": "emptySaved",
+        "patch": {
+          "requests": [
+            {
+              "id": "req-0001",
+              "turnId": "agt-turn-0001",
+              "provider": "codex",
+              "createdAtEpochMs": 1760000000000,
+              "resolvedAtEpochMs": null,
+              "order": 0,
+              "version": 1,
+              "anchorToolId": null,
+              "body": {
+                "kind": "approval",
+                "approvalKind": "command",
+                "title": "Run the test suite",
+                "detail": "npm test -- --run",
+                "detailTruncated": false,
+                "facts": [],
+                "decisions": ["allowOnce", "deny"]
+              },
+              "status": "pending",
+              "responseCapability": { "kind": "notResumable", "reason": "unknown" },
+              "resolution": null
+            }
+          ]
+        }
+      },
+      {
+        "name": "negativeUnreadable",
+        "description": "Unreadable count is negative.",
+        "base": "emptySaved",
+        "patch": { "unreadable": -1 }
+      },
+      {
+        "name": "nonIntegerUnreadable",
+        "description": "Unreadable count is not an integer.",
+        "base": "emptySaved",
+        "patch": { "unreadable": 0.5 }
+      },
+      {
+        "name": "textTruncated",
+        "description": "Truncated is not a boolean.",
+        "base": "emptySaved",
+        "patch": { "truncated": "false" }
+      },
+      {
+        "name": "numericReset",
+        "description": "Reset is not a boolean.",
+        "base": "emptySaved",
+        "patch": { "reset": 0 }
+      },
+      {
+        "name": "malformedThreadId",
+        "description": "Thread id contains a space.",
+        "base": "emptySaved",
+        "patch": { "threadId": "agt thread" }
+      },
+      {
+        "name": "emptyEpoch",
+        "description": "Epoch is empty.",
+        "base": "emptySaved",
+        "patch": { "epoch": "" }
+      },
+      {
+        "name": "emptyWorkspaceId",
+        "description": "Workspace id is empty instead of null.",
+        "base": "emptySaved",
+        "patch": { "workspaceId": "" }
+      }
+    ]
+  }
+}

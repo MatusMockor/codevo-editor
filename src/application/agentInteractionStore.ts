@@ -1,10 +1,12 @@
 import type { AgentInteractionSnapshot } from "../domain/agentInteractionSnapshot";
 import type { AgentInteractionFeed, AgentInteractionOwner } from "./agentInteractionPorts";
+import { BoundedRetry, attemptWithinDeadline, type BoundedRetryPolicy } from "./boundedRetry";
 
 export const AGENT_INTERACTION_RETRY_BASE_MS = 250;
 export const AGENT_INTERACTION_RETRY_CAP_MS = 5_000;
 export const AGENT_INTERACTION_MAX_RETRIES = 10;
 export const AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD = 3;
+export const AGENT_INTERACTION_OPERATION_DEADLINE_MS = 5_000;
 export const MAX_AGENT_INTERACTION_WATCHED_OWNERS = 64;
 
 export type AgentInteractionObservation =
@@ -41,6 +43,12 @@ const PENDING: AgentInteractionObservation = Object.freeze({ kind: "pending" });
 const UNAVAILABLE: AgentInteractionObservation = Object.freeze({ kind: "unavailable" });
 const IDLE: Subscription = Object.freeze({ kind: "idle" });
 const FAILED: Subscription = Object.freeze({ kind: "failed" });
+const RETRY_POLICY: BoundedRetryPolicy = Object.freeze({
+  baseMs: AGENT_INTERACTION_RETRY_BASE_MS,
+  capMs: AGENT_INTERACTION_RETRY_CAP_MS,
+  maxRetries: AGENT_INTERACTION_MAX_RETRIES,
+  noticeThreshold: AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD,
+});
 const stores = new WeakMap<AgentInteractionFeed, AgentInteractionStore>();
 
 export function agentInteractionStore(feed: AgentInteractionFeed): AgentInteractionStore {
@@ -51,48 +59,9 @@ export function agentInteractionStore(feed: AgentInteractionFeed): AgentInteract
   return created;
 }
 
-class BoundedRetry {
-  private failures = 0;
-  private established = false;
-  private timer: ReturnType<typeof setTimeout> | undefined;
-
-  get waiting(): boolean {
-    return this.timer !== undefined;
-  }
-
-  get persistent(): boolean {
-    return this.established;
-  }
-
-  fail(retry: () => void): void {
-    this.failures += 1;
-    if (this.failures >= AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD) this.established = true;
-    if (this.waiting || this.failures > AGENT_INTERACTION_MAX_RETRIES) return;
-    const delay = Math.min(
-      AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (this.failures - 1),
-      AGENT_INTERACTION_RETRY_CAP_MS,
-    );
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      retry();
-    }, delay);
-  }
-
-  rearm(): void {
-    clearTimeout(this.timer);
-    this.timer = undefined;
-    this.failures = 0;
-  }
-
-  reset(): void {
-    this.rearm();
-    this.established = false;
-  }
-}
-
 class FeedAgentInteractionStore implements AgentInteractionStore {
   private readonly watched = new Map<string, WatchedOwner>();
-  private readonly reconnect = new BoundedRetry();
+  private readonly reconnect = new BoundedRetry(RETRY_POLICY);
   private subscription: Subscription = IDLE;
 
   constructor(private readonly feed: AgentInteractionFeed) {}
@@ -119,7 +88,7 @@ class FeedAgentInteractionStore implements AgentInteractionStore {
       key,
       owner: { workspaceId: owner.workspaceId, taskId: owner.taskId },
       listeners: new Set(),
-      retry: new BoundedRetry(),
+      retry: new BoundedRetry(RETRY_POLICY),
       observation: this.reconnect.persistent ? UNAVAILABLE : PENDING,
       applied: null,
       resyncing: false,
@@ -193,11 +162,13 @@ class FeedAgentInteractionStore implements AgentInteractionStore {
   }
 
   private async open(lease: object): Promise<(() => void) | null> {
-    try {
-      return await this.feed.subscribeInteractions((snapshot) => this.receive(lease, snapshot));
-    } catch {
-      return null;
-    }
+    const attempt = await attemptWithinDeadline(
+      () => this.feed.subscribeInteractions((snapshot) => this.receive(lease, snapshot)),
+      AGENT_INTERACTION_OPERATION_DEADLINE_MS,
+      release,
+    );
+    if (attempt.kind !== "settled") return null;
+    return attempt.value;
   }
 
   private holds(lease: object): boolean {
@@ -235,13 +206,12 @@ class FeedAgentInteractionStore implements AgentInteractionStore {
   }
 
   private async current(owner: AgentInteractionOwner): Promise<AgentInteractionSnapshot | null> {
-    try {
-      const snapshot = await this.feed.currentInteractions(owner);
-      if (ownerKey(snapshot) !== ownerKey(owner)) return null;
-      return snapshot;
-    } catch {
-      return null;
-    }
+    const attempt = await attemptWithinDeadline(
+      () => this.feed.currentInteractions(owner),
+      AGENT_INTERACTION_OPERATION_DEADLINE_MS,
+    );
+    if (attempt.kind !== "settled" || ownerKey(attempt.value) !== ownerKey(owner)) return null;
+    return attempt.value;
   }
 
   private observe(entry: WatchedOwner, snapshot: AgentInteractionSnapshot): void {
