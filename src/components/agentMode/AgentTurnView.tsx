@@ -32,6 +32,12 @@ import { AgentBackgroundActivity } from "./AgentBackgroundActivity";
 import type { AgentThreadInlineImageViewer } from "./agentInlineImagePort";
 import { useAgentTurnProse } from "./useAgentThreadInlineImages";
 import { AgentCompactionActivity } from "./AgentCompactionActivity";
+import {
+  AgentTurnRuntimeRequests,
+  AgentTurnUnanchoredRequests,
+  AgentTurnWorkInstance,
+  AgentTurnWorkRequests,
+} from "./AgentRuntimeRequestRow";
 import { AgentSubagentDisclosure } from "./AgentSubagentDisclosure";
 import { AgentToolDisclosureContext, useAgentTurnToolDisclosure } from "./AgentToolDisclosure";
 import { AgentTurnArtifacts, type AgentArtifactScope } from "./AgentTurnArtifacts";
@@ -393,82 +399,102 @@ export const AgentTurnView = memo(function AgentTurnView({
               state={earlier.state}
             />
             <AgentSubagentDisclosure onOpenAgents={onOpenAgents} subagents={subagents} />
-            {(workFold !== null || activityWindow !== null) && (
-              <AgentTurnWork
-                compacting={compacting}
-                backgroundTitle={live.backgroundTitle}
-                liveStatus={liveStatus}
-                attachmentImages={attachmentImages}
-                errorContext={errorContext}
-                highlight={highlight}
-                items={savedItems ?? workFold?.workItems ?? []}
-                key={running ? "running-work" : "settled-work"}
-                prose={prose}
-                running={live.workRunning}
-                settlement={
-                  activityWindow === null ? toolSettlement : savedToolSettlement(turn.status)
-                }
-                stream={activityWindow === null ? stream : "settled"}
-                label={workFoldTitle(
-                  agentWorkFoldLabel(
-                    savedItems ?? workFold?.workItems ?? [],
-                    agentPartialWorkSummary(
-                      workFold?.summary ?? "Activity",
-                      activityWindow === null ? projection.hiddenCount : 0,
-                    ),
-                  ),
-                  agentActivityAttentionCount(workFold?.workItems ?? [], halt),
-                )}
-                meta={
-                  foregroundRunning
-                    ? null
-                    : agentTurnDurationLabel(
-                        (turn.endedAtEpochMs ?? turn.startedAtEpochMs) - turn.startedAtEpochMs,
-                      )
-                }
-                textClipboard={textClipboard}
-                turn={turn}
-                autoOpen={
-                  activityWindow !== null ||
-                  foregroundRunning ||
-                  agentActivityAttentionCount(workFold?.workItems ?? [], halt) > 0
-                }
-                trailing={
-                  <AgentTurnLaterControl
-                    onLatest={(from) => {
-                      scrollAnchor.capture(from, from.closest<HTMLElement>(".agent-work") ?? from);
-                      setWindowOpenedRunning(false);
-                      earlier.latest();
-                    }}
-                    onLoadLater={() => void earlier.loadLater()}
-                    running={running || windowStale}
-                    state={earlier.state}
-                  />
-                }
-                savedRawOutput={
-                  savedRawLines.length > 0 ? <AgentRawOutput lines={savedRawLines} /> : null
-                }
-              />
-            )}
-            <AgentActivityItems
-              items={visibleItems}
-              currentEventKey={currentEventKey}
-              turn={stream === "streaming" ? "live" : "settled"}
-              renderItem={(item, thought) => (
-                <AgentTurnItemView
-                  attachmentImages={attachmentImages}
-                  errorContext={errorContext}
-                  highlight={itemHighlight(highlight, item.key, eventOffset)}
-                  groupHighlight={highlight}
-                  item={item}
-                  prose={prose}
-                  settlement={toolSettlement}
-                  stream={stream}
-                  textClipboard={textClipboard}
-                  thought={thought}
-                />
+            <AgentTurnRuntimeRequests
+              events={turn.events}
+              eventsTruncated={turn.eventsTruncated}
+              turnId={turn.turnId}
+              visibleItems={visibleItems}
+              workItems={savedItems ?? workFold?.workItems ?? null}
+            >
+              {(workFold !== null || activityWindow !== null) && (
+                <AgentTurnWorkInstance running={running}>
+                  {(focusHeld) => (
+                    <AgentTurnWork
+                      compacting={compacting}
+                      backgroundTitle={live.backgroundTitle}
+                      liveStatus={liveStatus}
+                      attachmentImages={attachmentImages}
+                      errorContext={errorContext}
+                      highlight={highlight}
+                      items={savedItems ?? workFold?.workItems ?? []}
+                      prose={prose}
+                      running={live.workRunning}
+                      settlement={
+                        activityWindow === null ? toolSettlement : savedToolSettlement(turn.status)
+                      }
+                      stream={activityWindow === null ? stream : "settled"}
+                      label={workFoldTitle(
+                        agentWorkFoldLabel(
+                          savedItems ?? workFold?.workItems ?? [],
+                          agentPartialWorkSummary(
+                            workFold?.summary ?? "Activity",
+                            activityWindow === null ? projection.hiddenCount : 0,
+                          ),
+                        ),
+                        agentActivityAttentionCount(workFold?.workItems ?? [], halt),
+                      )}
+                      meta={
+                        foregroundRunning
+                          ? null
+                          : agentTurnDurationLabel(
+                              (turn.endedAtEpochMs ?? turn.startedAtEpochMs) -
+                                turn.startedAtEpochMs,
+                            )
+                      }
+                      textClipboard={textClipboard}
+                      turn={turn}
+                      autoOpen={
+                        focusHeld ||
+                        activityWindow !== null ||
+                        foregroundRunning ||
+                        agentActivityAttentionCount(workFold?.workItems ?? [], halt) > 0
+                      }
+                      trailing={
+                        <>
+                          <AgentTurnWorkRequests attachmentImages={attachmentImages} />
+                          <AgentTurnLaterControl
+                            onLatest={(from) => {
+                              scrollAnchor.capture(
+                                from,
+                                from.closest<HTMLElement>(".agent-work") ?? from,
+                              );
+                              setWindowOpenedRunning(false);
+                              earlier.latest();
+                            }}
+                            onLoadLater={() => void earlier.loadLater()}
+                            running={running || windowStale}
+                            state={earlier.state}
+                          />
+                        </>
+                      }
+                      savedRawOutput={
+                        savedRawLines.length > 0 ? <AgentRawOutput lines={savedRawLines} /> : null
+                      }
+                    />
+                  )}
+                </AgentTurnWorkInstance>
               )}
-            />
+              <AgentActivityItems
+                items={visibleItems}
+                currentEventKey={currentEventKey}
+                turn={stream === "streaming" ? "live" : "settled"}
+                renderItem={(item, thought) => (
+                  <AgentTurnItemView
+                    attachmentImages={attachmentImages}
+                    errorContext={errorContext}
+                    highlight={itemHighlight(highlight, item.key, eventOffset)}
+                    groupHighlight={highlight}
+                    item={item}
+                    prose={prose}
+                    settlement={toolSettlement}
+                    stream={stream}
+                    textClipboard={textClipboard}
+                    thought={thought}
+                  />
+                )}
+              />
+              <AgentTurnUnanchoredRequests attachmentImages={attachmentImages} />
+            </AgentTurnRuntimeRequests>
             {workFold === null && activityWindow === null && liveStatus}
             {!compacting && (
               <AgentBackgroundActivity

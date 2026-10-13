@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { useContext, useMemo, type ReactNode } from "react";
 import {
   agentProviderErrorHeadline,
   classifyAgentProviderError,
@@ -17,6 +17,8 @@ import { AgentMessageCopyButton } from "./AgentMessageCopyButton";
 import { AgentThought } from "./AgentThought";
 import { isAgentQuestionTool } from "../../domain/agentQuestionTranscript";
 import { AgentQuestionToolRow } from "./AgentQuestionToolRow";
+import { AgentQuestionToolRequests, AgentToolRequestHistory } from "./AgentRuntimeRequestRow";
+import { AgentTurnRequestsScopeContext } from "./AgentRuntimeRequestsContext";
 import { AgentToolRow } from "./AgentToolRow";
 import { releaseFocusAfterPointerPress } from "./conversation/releasePointerFocus";
 import { AgentTurnPrompt } from "./AgentTurnParts";
@@ -92,9 +94,7 @@ export function AgentTurnItemView({
         />
       );
     case "tool":
-      if (isAgentQuestionTool(item.name))
-        return <AgentQuestionToolRow attachmentImages={attachmentImages} item={item} />;
-      return <AgentToolRow item={item} />;
+      return <AgentToolItem attachmentImages={attachmentImages} item={item} />;
     case "result":
       if (isAnswerResult(item))
         return (
@@ -123,6 +123,34 @@ export function AgentTurnItemView({
     default:
       return unsupportedItem(item);
   }
+}
+
+function AgentToolItem({
+  attachmentImages,
+  item,
+}: {
+  readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
+  readonly item: Extract<AgentTurnItem, { kind: "tool" }>;
+}) {
+  const scope = useContext(AgentTurnRequestsScopeContext);
+  if (isAgentQuestionTool(item.name) && scope !== null)
+    return (
+      <AgentQuestionToolRequests attachmentImages={attachmentImages} item={item} scope={scope} />
+    );
+  if (isAgentQuestionTool(item.name))
+    return <AgentQuestionToolRow attachmentImages={attachmentImages} item={item} />;
+  return (
+    <>
+      <AgentToolRow item={item} />
+      {scope !== null && scope.anchors.toolIdByKey.has(item.key) && (
+        <AgentToolRequestHistory
+          attachmentImages={attachmentImages}
+          itemKey={item.key}
+          scope={scope}
+        />
+      )}
+    </>
+  );
 }
 
 function isAnswerResult(item: Extract<AgentTurnItem, { kind: "result" }>): boolean {
