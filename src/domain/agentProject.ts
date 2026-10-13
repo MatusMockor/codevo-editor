@@ -1,5 +1,6 @@
 import type { ResolvedGitRepository } from "./gitRepositoryMapping";
 import { MAX_AGENT_TASK_PATH_BYTES, type AgentIsolationPolicy } from "./agentTask";
+import type { RemoteProjectKind } from "./remoteProjectKind";
 
 export type AgentProjectTrust = "trusted" | "untrusted" | "unknown";
 export type AgentProjectOrigin = "active-tab" | "background-tab" | "closed-tab-live-tasks";
@@ -18,6 +19,7 @@ export interface AgentProjectDescriptor {
   readonly repositories: ReadonlyArray<ResolvedGitRepository>;
   readonly isolationPolicy: AgentIsolationPolicy;
   readonly leaseToken: number | null;
+  readonly remoteProjectKind?: RemoteProjectKind;
 }
 
 export interface AgentRootLeaseAcquireRequest {

@@ -3,6 +3,7 @@ import {
   LOCAL_AGENT_SURFACE_ACTIVATION,
   agentSurfaceEditorSlot,
   agentSurfaceServes,
+  agentSurfaceUnavailability,
   effectiveAgentSurface,
   isAgentRemoteSurfaceKind,
   remoteSurfaceCapabilityOpen,
@@ -57,6 +58,68 @@ describe("agentSurfaceServes", () => {
     expect(agentSurfaceServes(REMOTE_NO_PROJECT, "files")).toBe(false);
     expect(agentSurfaceServes(REMOTE_WITH_PROJECT, "files")).toBe(true);
     expect(agentSurfaceServes(REMOTE_WITH_PROJECT, "terminal")).toBe(false);
+  });
+});
+
+describe("remote folder project", () => {
+  const REPOSITORY_THREAD: AgentSurfaceActivation = {
+    ...REMOTE_WITH_PROJECT,
+    threadPresent: true,
+    remoteGit: true,
+  };
+  const FOLDER_THREAD: AgentSurfaceActivation = {
+    ...REPOSITORY_THREAD,
+    remoteProjectKind: "folder",
+  };
+
+  it("never serves the Diff or Git surface, whatever the runner otherwise allows", () => {
+    for (const kind of ["diff", "git"] as const) {
+      expect(agentSurfaceUnavailability(FOLDER_THREAD, kind)).toBe("remoteProjectNotRepository");
+      expect(agentSurfaceServes(FOLDER_THREAD, kind)).toBe(false);
+      expect(effectiveAgentSurface(FOLDER_THREAD, kind)).toBeNull();
+    }
+    expect(servedAgentSurfaces(FOLDER_THREAD, AGENT_SURFACE_KINDS)).toEqual([
+      "files",
+      "history",
+      "agents",
+    ]);
+  });
+
+  it("keeps every other surface exactly as the capabilities declare", () => {
+    for (const kind of AGENT_SURFACE_KINDS.filter((kind) => kind !== "diff" && kind !== "git")) {
+      expect(agentSurfaceUnavailability(FOLDER_THREAD, kind)).toBeNull();
+      expect(agentSurfaceServes(FOLDER_THREAD, kind)).toBe(
+        agentSurfaceServes(REPOSITORY_THREAD, kind),
+      );
+    }
+    expect(agentSurfaceUnavailability(FOLDER_THREAD, null)).toBeNull();
+  });
+
+  it("leaves a repository project and a runner without kinds unchanged", () => {
+    for (const activation of [
+      REPOSITORY_THREAD,
+      { ...REPOSITORY_THREAD, remoteProjectKind: "repository" as const },
+    ]) {
+      for (const kind of AGENT_SURFACE_KINDS) {
+        expect(agentSurfaceUnavailability(activation, kind)).toBeNull();
+        expect(agentSurfaceServes(activation, kind)).toBe(
+          agentSurfaceServes(REPOSITORY_THREAD, kind),
+        );
+      }
+      expect(agentSurfaceServes(activation, "diff")).toBe(true);
+      expect(agentSurfaceServes(activation, "git")).toBe(true);
+    }
+  });
+
+  it("never applies a server project kind to a local thread", () => {
+    const local: AgentSurfaceActivation = {
+      ...LOCAL_AGENT_SURFACE_ACTIVATION,
+      remoteProjectKind: "folder",
+    };
+    for (const kind of AGENT_SURFACE_KINDS) {
+      expect(agentSurfaceUnavailability(local, kind)).toBeNull();
+      expect(agentSurfaceServes(local, kind)).toBe(true);
+    }
   });
 });
 

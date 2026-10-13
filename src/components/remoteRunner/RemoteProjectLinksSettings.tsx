@@ -12,6 +12,7 @@ import { useRepositoryIdentityOutcomes } from "../../application/useProjectRepos
 import { useRemoteInstructionSettings } from "../../application/useRemoteInstructionSettings";
 import { useRemoteProjectLinks } from "../../application/useRemoteProjectLinks";
 import { remoteAgentProjectKey } from "../../application/remoteAgentProjection";
+import { isRemoteFolderProject } from "../../domain/remoteProjectKind";
 import {
   removeRemoteProjectLink,
   saveRemoteProjectLink,
@@ -31,6 +32,7 @@ function unlinkedIdentityTargets(
   links: ReadonlyMap<string, string>,
 ): readonly RepositoryIdentityTarget[] {
   return projects
+    .filter((project) => !isRemoteFolderProject(project))
     .map((project) => remoteAgentProjectKey(serverId, runnerId, project.id))
     .filter((key) => !links.get(key))
     .map((key) => ({ key, root: key, authority: IDENTITY_AUTHORITY }));

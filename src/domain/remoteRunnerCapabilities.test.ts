@@ -190,3 +190,30 @@ describe.each(["gitSync", "portPreview"] as const)("remote runner %s capability"
     ).toThrow("Invalid remote runner getRunner response.");
   });
 });
+
+describe("remote runner folder projects capability", () => {
+  it.each([true, false, undefined])("accepts optional boolean %s", (folderProjects) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, folderProjects },
+      }),
+    ).not.toThrow();
+  });
+  it.each([null, "true", 1, {}, []])("rejects malformed flag %j", (folderProjects) => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, folderProjects },
+      }),
+    ).toThrow("Invalid remote runner getRunner response.");
+  });
+  it("keeps the descriptor closed next to the new flag", () => {
+    expect(() =>
+      validateRemoteRunnerValue("getRunner", "response", {
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, folderProjects: true, folderProjectsV2: true },
+      }),
+    ).toThrow("Invalid remote runner getRunner response.");
+  });
+});

@@ -1,6 +1,7 @@
 import type {
   RemoteAddProjectFolderFailure,
   RemoteAddProjectFolderState,
+  RemoteFolderProjectSupport,
 } from "../../../application/remoteAddProjectFolder";
 import { remoteAddProjectFolderNameError } from "../../../application/remoteAddProjectFolder";
 import type { RemoteProjectRegistrationRejection } from "../../../domain/remoteProjectRegistration";
@@ -8,17 +9,26 @@ import { remoteAddProjectNameErrorMessage } from "./remoteAddProjectMessages";
 
 export const REMOTE_FOLDER_PROJECT_TITLE = "Existing folder on server";
 
+export const REMOTE_FOLDER_PROJECT_HINT =
+  "If this folder is not a Git repository, threads run directly in it, without worktrees, branches, diffs, commit or push.";
+
+export function remoteFolderProjectHint(folder: RemoteAddProjectFolderState): string | null {
+  if (folder.phase === "browsing") return null;
+  if (folder.folderProjects !== "supported") return null;
+  return REMOTE_FOLDER_PROJECT_HINT;
+}
+
 export function remoteFolderProjectNameMessage(folder: RemoteAddProjectFolderState): string | null {
   const error = remoteAddProjectFolderNameError(folder);
   if (error === null) return null;
-  if (error === "taken") return rejectionMessage("name_taken");
+  if (error === "taken") return rejectionMessage("name_taken", folder.folderProjects);
   return remoteAddProjectNameErrorMessage("invalid");
 }
 
 export function remoteFolderProjectMessage(folder: RemoteAddProjectFolderState): string | null {
   if (folder.phase === "failed") return failureMessage(folder.failure);
   if (folder.phase !== "rejected" || folder.reason === "name_taken") return null;
-  return rejectionMessage(folder.reason);
+  return rejectionMessage(folder.reason, folder.folderProjects);
 }
 
 export function remoteFolderProjectPrimaryLabel(folder: RemoteAddProjectFolderState): string {
@@ -26,10 +36,13 @@ export function remoteFolderProjectPrimaryLabel(folder: RemoteAddProjectFolderSt
   return "Add project";
 }
 
-function rejectionMessage(reason: RemoteProjectRegistrationRejection): string {
+function rejectionMessage(
+  reason: RemoteProjectRegistrationRejection,
+  folderProjects: RemoteFolderProjectSupport,
+): string {
   switch (reason) {
     case "not_git_root":
-      return "This folder is not the root of a Git repository. Choose the repository's top-level folder.";
+      return notGitRootMessage(folderProjects);
     case "name_taken":
       return "A project with this name already exists on this server.";
     case "limit_reached":
@@ -38,6 +51,18 @@ function rejectionMessage(reason: RemoteProjectRegistrationRejection): string {
       return "This folder cannot be added as a project.";
     default:
       return unsupportedRejection(reason);
+  }
+}
+
+function notGitRootMessage(folderProjects: RemoteFolderProjectSupport): string {
+  switch (folderProjects) {
+    case "supported":
+      return "This folder is inside a Git repository. Choose the repository's top-level folder.";
+    case "unsupported":
+    case "unknown":
+      return "This folder is not the root of a Git repository. Choose the repository's top-level folder.";
+    default:
+      return unsupportedSupport(folderProjects);
   }
 }
 
@@ -58,6 +83,10 @@ function failureMessage(failure: RemoteAddProjectFolderFailure): string {
 
 function unsupportedRejection(reason: never): never {
   throw new TypeError(`Unsupported registration rejection: ${String(reason)}.`);
+}
+
+function unsupportedSupport(folderProjects: never): never {
+  throw new TypeError(`Unsupported folder project support: ${String(folderProjects)}.`);
 }
 
 function unsupportedFailure(failure: never): never {

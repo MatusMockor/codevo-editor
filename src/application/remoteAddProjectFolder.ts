@@ -13,10 +13,22 @@ export type RemoteAddProjectFolderFailure =
   | Readonly<{ kind: "projectMissing" }>
   | Readonly<{ kind: "unknown" }>;
 
-type ChosenFolder = Readonly<{ path: string; name: string }>;
+export type RemoteFolderProjectSupport = "unknown" | "supported" | "unsupported";
+
+export type RemoteRunnerFolderProjectSupport = Exclude<RemoteFolderProjectSupport, "unknown">;
+
+type ChosenFolder = Readonly<{
+  path: string;
+  name: string;
+  folderProjects: RemoteFolderProjectSupport;
+}>;
 
 export type RemoteAddProjectFolderState =
-  | Readonly<{ phase: "browsing"; path: string | null }>
+  | Readonly<{
+      phase: "browsing";
+      path: string | null;
+      folderProjects: RemoteFolderProjectSupport;
+    }>
   | (ChosenFolder & Readonly<{ phase: "naming" }>)
   | (ChosenFolder & Readonly<{ phase: "ready" }>)
   | (ChosenFolder & Readonly<{ phase: "submitting"; submission: number }>)
@@ -27,6 +39,7 @@ export type RemoteAddProjectFolderAction =
   | Readonly<{ kind: "chooseFolder"; path: string }>
   | Readonly<{ kind: "setName"; value: string }>
   | Readonly<{ kind: "back" }>
+  | Readonly<{ kind: "runnerDescribed"; folderProjects: RemoteRunnerFolderProjectSupport }>
   | Readonly<{ kind: "submitStarted"; submission: number }>
   | Readonly<{
       kind: "submitRejected";
@@ -42,6 +55,7 @@ export type RemoteAddProjectFolderAction =
 export const INITIAL_REMOTE_ADD_PROJECT_FOLDER: RemoteAddProjectFolderState = Object.freeze({
   phase: "browsing",
   path: null,
+  folderProjects: "unknown",
 });
 
 export function reduceRemoteAddProjectFolder(
@@ -55,14 +69,16 @@ export function reduceRemoteAddProjectFolder(
       return setName(state, action.value);
     case "back":
       return goBack(state);
+    case "runnerDescribed":
+      return describeRunner(state, action.folderProjects);
     case "submitStarted":
       return startSubmit(state, action.submission);
     case "submitRejected":
       if (!remoteAddProjectFolderAwaits(state, action.submission)) return state;
-      return { phase: "rejected", path: state.path, name: state.name, reason: action.reason };
+      return { ...chosen(state), phase: "rejected", reason: action.reason };
     case "submitFailed":
       if (!remoteAddProjectFolderAwaits(state, action.submission)) return state;
-      return { phase: "failed", path: state.path, name: state.name, failure: action.failure };
+      return { ...chosen(state), phase: "failed", failure: action.failure };
     default:
       return unsupportedAction(action);
   }
@@ -101,17 +117,29 @@ function chooseFolder(
 ): RemoteAddProjectFolderState {
   if (state.phase !== "browsing") return state;
   if (!isRemoteProjectRegistrationPath(path)) return state;
-  return named(path, remoteProjectNameFromPath(path));
+  return named({
+    path,
+    name: remoteProjectNameFromPath(path),
+    folderProjects: state.folderProjects,
+  });
 }
 
 function setName(state: RemoteAddProjectFolderState, value: string): RemoteAddProjectFolderState {
   if (state.phase === "browsing" || state.phase === "submitting") return state;
-  return named(state.path, value.slice(0, REMOTE_PROJECT_NAME_CHARS));
+  return named({ ...chosen(state), name: value.slice(0, REMOTE_PROJECT_NAME_CHARS) });
 }
 
 function goBack(state: RemoteAddProjectFolderState): RemoteAddProjectFolderState {
   if (state.phase === "browsing" || state.phase === "submitting") return state;
-  return { phase: "browsing", path: state.path };
+  return { phase: "browsing", path: state.path, folderProjects: state.folderProjects };
+}
+
+function describeRunner(
+  state: RemoteAddProjectFolderState,
+  folderProjects: RemoteRunnerFolderProjectSupport,
+): RemoteAddProjectFolderState {
+  if (state.folderProjects === folderProjects) return state;
+  return { ...state, folderProjects };
 }
 
 function startSubmit(
@@ -120,12 +148,22 @@ function startSubmit(
 ): RemoteAddProjectFolderState {
   const input = remoteAddProjectFolderInput(state);
   if (input === null) return state;
-  return { phase: "submitting", path: input.path, name: input.name, submission };
+  return {
+    phase: "submitting",
+    path: input.path,
+    name: input.name,
+    folderProjects: state.folderProjects,
+    submission,
+  };
 }
 
-function named(path: string, name: string): RemoteAddProjectFolderState {
-  if (isRemoteProjectName(name)) return { phase: "ready", path, name };
-  return { phase: "naming", path, name };
+function named(folder: ChosenFolder): RemoteAddProjectFolderState {
+  if (isRemoteProjectName(folder.name)) return { ...folder, phase: "ready" };
+  return { ...folder, phase: "naming" };
+}
+
+function chosen(folder: ChosenFolder): ChosenFolder {
+  return { path: folder.path, name: folder.name, folderProjects: folder.folderProjects };
 }
 
 export function remoteAddProjectFolderAwaits(

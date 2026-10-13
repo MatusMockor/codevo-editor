@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { RemoteRepositoryIdentityGateway } from "../../domain/remoteRepositoryIdentity";
-import type { RemoteRunnerDescriptor } from "../../domain/remoteRunner";
+import type { RemoteRunnerDescriptor, RemoteRunnerProject } from "../../domain/remoteRunner";
 import { RemoteRepositoryIdentityCoordinator } from "../../application/remoteRepositoryIdentityCoordinator";
 import { REPOSITORY_IDENTITY_RETRY_DELAYS_MS } from "../../application/repositoryIdentityRetry";
 import { manualIdentityTimers } from "../../test/repositoryIdentityTestSupport";
@@ -294,6 +294,55 @@ it("reads no repository for an explicitly connected project and drops its hint o
   act(() => retries.advance(60_000));
   await settle();
   expect(identity.discover).toHaveBeenCalledTimes(1);
+});
+
+it("reads no repository and shows no hint for a folder project, which can still be connected", async () => {
+  const api = gateway();
+  const items: RemoteRunnerProject[] = [
+    { id: "notes", name: "Notes folder", kind: "folder" },
+    { id: "app", name: "Server app", kind: "repository" },
+    { id: "legacy", name: "Legacy app" },
+  ];
+  api.listProjects.mockResolvedValue({ items });
+  const identity = { discover: vi.fn().mockRejectedValue(new Error("offline")) };
+  const retries = manualIdentityTimers();
+  act(() =>
+    root.render(
+      <RemoteProjectLinksSettings
+        gateway={api}
+        serverId="server"
+        connected
+        projects={[local]}
+        identity={identity}
+        identityTimers={retries.timers}
+      />,
+    ),
+  );
+  await expand();
+  await settle();
+  expect(identity.discover.mock.calls).toEqual([
+    [{ serverId: "server", runnerId: "runner", projectId: "app" }],
+    [{ serverId: "server", runnerId: "runner", projectId: "legacy" }],
+  ]);
+  const rows = Array.from(host.querySelectorAll("label.remote-instruction-source"));
+  expect(rows.map((row) => row.querySelector("[role=status]")?.textContent ?? null)).toEqual([
+    null,
+    RETRYING_HINT,
+    RETRYING_HINT,
+  ]);
+  expect(rows[0]!.textContent).toContain("Notes folder");
+  act(() => {
+    const select = rows[0]!.querySelector("select")!;
+    select.value = "/local";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(readRemoteProjectLinks().get("remote:server:runner:notes")).toBe("/local");
+  expect(host.querySelector("[role=alert]")).toBeNull();
+  act(() => retries.advance(REPOSITORY_IDENTITY_RETRY_DELAYS_MS[0]!));
+  await settle();
+  expect(identity.discover.mock.calls.some(([request]) => request.projectId === "notes")).toBe(
+    false,
+  );
 });
 
 it("cancels the pending identity retry when the section unmounts", async () => {

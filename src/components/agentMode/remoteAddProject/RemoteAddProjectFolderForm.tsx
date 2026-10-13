@@ -1,4 +1,4 @@
-import { FolderGit2 } from "lucide-react";
+import { Folder, FolderGit2 } from "lucide-react";
 import { useId, type KeyboardEvent } from "react";
 import {
   remoteAddProjectFolderInput,
@@ -7,6 +7,7 @@ import {
 import { REMOTE_PROJECT_NAME_CHARS } from "../../../domain/remoteProjectRegistration";
 import { remoteAddProjectBoundedText } from "./remoteAddProjectPresentation";
 import {
+  remoteFolderProjectHint,
   remoteFolderProjectMessage,
   remoteFolderProjectNameMessage,
 } from "./remoteFolderProjectMessages";
@@ -30,6 +31,8 @@ export function RemoteAddProjectFolderForm({
   const canSubmit = remoteAddProjectFolderInput(folder) !== null;
   const nameMessage = remoteFolderProjectNameMessage(folder);
   const message = remoteFolderProjectMessage(folder);
+  const hint = remoteFolderProjectHint(folder);
+  const FolderIcon = folder.folderProjects === "supported" ? Folder : FolderGit2;
   const submitOnEnter = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter" || event.repeat || event.nativeEvent.isComposing) return;
     if (event.metaKey || event.ctrlKey) return;
@@ -47,12 +50,13 @@ export function RemoteAddProjectFolderForm({
       }}
     >
       <div className="agent-remote-add-project__repo">
-        <FolderGit2 aria-hidden="true" size={15} />
+        <FolderIcon aria-hidden="true" size={15} />
         <span>
           <strong>{folderLabel(folder.path)}</strong>
           <small className="agent-remote-add-project__path">{folder.path}</small>
         </span>
       </div>
+      {hint !== null && <p className="agent-remote-add-project__note">{hint}</p>}
 
       <label className="agent-remote-add-project__field" htmlFor={nameId}>
         <span>Project name</span>

@@ -1,5 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import type { GitChangedFile } from "../domain/git";
+import { REMOTE_GIT_NOT_REPOSITORY_MESSAGE } from "../domain/remoteGitSync";
+import { isRemoteFolderProject, remoteProjectKindOf } from "../domain/remoteProjectKind";
 import type { RemoteRunnerGateway } from "../domain/remoteRunner";
 import type { AgentTaskChangeSummary, RemoteAgentThreadExecution } from "./agentThreadPorts";
 
@@ -19,6 +21,7 @@ const EMPTY: AgentTaskChangeSummary = {
   removing: false,
   diff: null,
 };
+const CHANGES_UNREADABLE = "The server worktree changes could not be read.";
 const MAX_SUMMARIES = 32;
 const MAX_PENDING = 64;
 interface Entry {
@@ -34,9 +37,17 @@ function targetKey(target: RemoteAgentThreadExecution): string {
     target.serverId,
     target.runnerId,
     target.projectId,
+    remoteProjectKindOf({ kind: target.projectKind }),
+    target.projectListing ?? null,
     target.conversationId,
     target.latestTaskId,
   ]);
+}
+function inFolderProject(target: RemoteAgentThreadExecution): boolean {
+  return isRemoteFolderProject({ kind: target.projectKind });
+}
+function inUnlistedProject(target: RemoteAgentThreadExecution): boolean {
+  return target.projectListing === "unlisted";
 }
 function safePath(path: string): boolean {
   return (
@@ -132,6 +143,16 @@ export function useRemoteAgentChanges(input: RemoteAgentChangesInput) {
       entry.statusToken = token;
       // A new snapshot invalidates any diff belonging to the previous snapshot.
       entry.diffToken = undefined;
+      if (inFolderProject(target)) {
+        entry.summary = { ...EMPTY, error: REMOTE_GIT_NOT_REPOSITORY_MESSAGE };
+        publish();
+        return;
+      }
+      if (inUnlistedProject(target)) {
+        entry.summary = { ...EMPTY, error: CHANGES_UNREADABLE };
+        publish();
+        return;
+      }
       entry.summary = { ...EMPTY, loading: true };
       publish();
       pending.current += 1;
@@ -158,10 +179,9 @@ export function useRemoteAgentChanges(input: RemoteAgentChangesInput) {
         publish();
       } catch {
         if (!current(threadId, entry) || entry.statusToken !== token) return;
-        const message = "The server worktree changes could not be read.";
-        entry.summary = { ...EMPTY, error: message };
+        entry.summary = { ...EMPTY, error: CHANGES_UNREADABLE };
         publish();
-        dependencies.current.report(message);
+        dependencies.current.report(CHANGES_UNREADABLE);
       } finally {
         pending.current -= 1;
       }
@@ -205,6 +225,7 @@ export function useRemoteAgentChanges(input: RemoteAgentChangesInput) {
       const acquired = acquire(threadId);
       if (!acquired) return;
       const { entry, target } = acquired;
+      if (inFolderProject(target) || inUnlistedProject(target)) return;
       const token = {};
       entry.diffToken = token;
       const loading = {

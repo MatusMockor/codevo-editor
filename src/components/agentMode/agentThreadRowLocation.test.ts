@@ -98,6 +98,20 @@ describe("agentThreadRowLocation", () => {
         rememberedBranch: "main",
       }),
     ).toEqual({ branch: { kind: "unknown" }, title: "build-box · Server checkout" });
+    const listed = remote(inPlace());
+    const titleOf = (projectKind: "folder" | "repository") =>
+      agentThreadRowLocation(
+        { ...listed, execution: { ...listed.execution!, projectKind } },
+        { serverName: "build-box", rememberedBranch: "main" },
+      );
+    expect(titleOf("folder")).toEqual({
+      branch: { kind: "unknown" },
+      title: "build-box · Server folder",
+    });
+    expect(titleOf("repository")).toEqual({
+      branch: { kind: "unknown" },
+      title: "build-box · Server checkout",
+    });
     const worktree = { ...remote(surfaceThreadView()), ship: shipOn("agent/agt-1") };
     expect(
       agentThreadRowLocation(worktree, { serverName: "build-box", rememberedBranch: null }),

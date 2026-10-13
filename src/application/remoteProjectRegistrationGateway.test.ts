@@ -75,8 +75,49 @@ it("identifies the runner of the captured server", async () => {
     { getRunner, registerProject: vi.fn() } as unknown as RemoteRunnerGateway,
     "server-a",
   );
-  expect(await gateway?.identifyRunner()).toBe("runner-a");
+  expect(await gateway?.identifyRunner()).toEqual({
+    runnerId: "runner-a",
+    folderProjects: "unsupported",
+  });
   expect(getRunner).toHaveBeenCalledExactlyOnceWith({ serverId: "server-a" });
+});
+
+it("reports a runner that announces folder projects", async () => {
+  const getRunner = vi.fn(async () => ({
+    runnerId: "runner-a",
+    capabilities: { projectCloning: true, folderProjects: true },
+  }));
+  const gateway = createRemoteProjectRegistrationGateway(
+    { getRunner, registerProject: vi.fn() } as unknown as RemoteRunnerGateway,
+    "server-a",
+  );
+  expect(await gateway?.identifyRunner()).toEqual({
+    runnerId: "runner-a",
+    folderProjects: "supported",
+  });
+});
+
+it.each([
+  undefined,
+  null,
+  {},
+  { projectCloning: true },
+  { folderProjects: false },
+  { folderProjects: "true" },
+  { folderProjects: 1 },
+  { folderProjects: null },
+])("treats the capabilities %j as a runner without folder projects", async (capabilities) => {
+  const gateway = createRemoteProjectRegistrationGateway(
+    {
+      getRunner: vi.fn(async () => ({ runnerId: "runner-a", capabilities })),
+      registerProject: vi.fn(),
+    } as unknown as RemoteRunnerGateway,
+    "server-a",
+  );
+  expect(await gateway?.identifyRunner()).toEqual({
+    runnerId: "runner-a",
+    folderProjects: "unsupported",
+  });
 });
 
 it.each([null, {}, { runnerId: "" }, { runnerId: 7 }])(

@@ -11,7 +11,7 @@ pub(super) const CONNECTION_FAILED: &str =
 const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
 
 pub(super) const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging,fileAttachments";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging,fileAttachments,folderProjects";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -154,6 +154,8 @@ async fn execute(
     let mcp_status = is_mcp_servers_route(prepared.method.as_str(), &prepared.path);
     let mcp_management =
         mcp_server_manage_wire::Route::of(prepared.method.as_str(), &prepared.path).is_some();
+    let git_read = prepared.method == reqwest::Method::GET
+        && git_sync_wire::repository_read_route(&prepared.path);
     let timeout = request_timeout(prepared.method.as_str(), &prepared.path);
     let mut request = client
         .request(
@@ -250,6 +252,15 @@ async fn execute(
                 .await
                 .as_deref()
                 .and_then(git_sync_wire::refusal_error)
+            {
+                return Err(refusal);
+            }
+        }
+        if status == 409 && git_read {
+            if let Some(refusal) = bounded_error_body(&mut response, inbound)
+                .await
+                .as_deref()
+                .and_then(git_sync_wire::not_repository_error)
             {
                 return Err(refusal);
             }
@@ -634,6 +645,7 @@ mod tests {
         assert!(tokens.contains(&"mcpServerManagement"));
         assert!(tokens.contains(&"eventBackwardPaging"));
         assert!(tokens.contains(&"fileAttachments"));
+        assert!(tokens.contains(&"folderProjects"));
         for token in tokens {
             assert_eq!(token, token.trim());
             assert!(!token.is_empty() && token.len() <= 64);
@@ -1132,8 +1144,17 @@ mod tests {
         let update = "/v1/projects/storefront/git/update";
         let status = "/v1/projects/storefront/git/status";
         let poll = "/v1/git-operations/5f0c1d2e-3a4b-4c5d-9e6f-7a8b9c0d1e2f";
+        let branches = "/v1/projects/storefront/git/branches";
+        let task_status = "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/git/status";
+        let task_files = "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/files";
         let refusal = git_sync_wire::refusal_error(b"{\"error\":\"git_dirty\"}").unwrap();
         let oversized = format!("{{\"error\":\"git_dirty\",\"x\":\"{}\"}}", "x".repeat(1024));
+        let not_repository =
+            git_sync_wire::refusal_error(b"{\"error\":\"git_not_repository\"}").unwrap();
+        let oversized_not_repository = format!(
+            "{{\"error\":\"git_not_repository\",\"x\":\"{}\"}}",
+            "x".repeat(1024)
+        );
         for (method, path, status_code, body, expected) in [
             (
                 "POST",
@@ -1162,6 +1183,83 @@ mod tests {
                 409,
                 "{\"error\":\"git_dirty\"}",
                 "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                status,
+                409,
+                "{\"error\":\"conflict\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                branches,
+                409,
+                "{\"error\":\"git_dirty\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                task_status,
+                409,
+                "{\"error\":\"busy\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                status,
+                409,
+                "{\"error\":\"git_not_repository\"}",
+                not_repository.as_str(),
+            ),
+            (
+                "GET",
+                branches,
+                409,
+                "{\"error\":\"git_not_repository\"}",
+                not_repository.as_str(),
+            ),
+            (
+                "GET",
+                task_status,
+                409,
+                "{\"error\":\"git_not_repository\"}",
+                not_repository.as_str(),
+            ),
+            (
+                "GET",
+                status,
+                409,
+                "{\"error\":\"git_not_repository\",\"kind\":\"folder\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                status,
+                409,
+                oversized_not_repository.as_str(),
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "POST",
+                status,
+                409,
+                "{\"error\":\"git_not_repository\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "GET",
+                task_files,
+                409,
+                "{\"error\":\"git_not_repository\"}",
+                "Runner request failed (HTTP 409).",
+            ),
+            (
+                "POST",
+                update,
+                409,
+                "{\"error\":\"git_not_repository\"}",
+                not_repository.as_str(),
             ),
             ("GET", poll, 404, "{}", git_sync_wire::GIT_OPERATION_UNKNOWN),
             (
@@ -1201,6 +1299,89 @@ mod tests {
                 "{method} {path} {status_code}"
             );
             server.join().unwrap();
+        }
+    }
+    #[cfg(unix)]
+    struct SocketGitRunner {
+        socket: std::path::PathBuf,
+    }
+    #[cfg(unix)]
+    impl crate::remote_runner::git_sync::GitRunnerPort for SocketGitRunner {
+        fn runner_id(&self) -> &str {
+            "linux-runner"
+        }
+
+        fn is_current(&self) -> bool {
+            true
+        }
+
+        fn call(
+            &self,
+            method: &'static str,
+            path: &str,
+            body: Option<Value>,
+        ) -> Result<Value, String> {
+            tauri::async_runtime::block_on(async {
+                let client = reqwest::Client::builder()
+                    .unix_socket(self.socket.clone())
+                    .no_proxy()
+                    .build()
+                    .unwrap();
+                request(
+                    &client,
+                    "private-token",
+                    None,
+                    prepare(method, path, body, vec![])?,
+                    4096,
+                )
+                .await
+            })
+        }
+    }
+    #[cfg(unix)]
+    fn git_settled(request: Value, body: &str) -> Result<Value, String> {
+        use crate::remote_runner::{canonical_wire::Canonical, git_sync};
+        let request = serde_json::from_value::<Canonical<git_sync_wire::RemoteGitRequest>>(request)
+            .unwrap()
+            .0;
+        let (socket, server) = test_server(vec![(409, body)]);
+        let settled = git_sync::execute(&SocketGitRunner { socket }, &request)
+            .map(|response| serde_json::to_value(response).unwrap());
+        assert_eq!(server.join().unwrap().len(), 1);
+        settled
+    }
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_project_git_read_settles_as_not_a_repository_end_to_end() {
+        let task = "7389088c-29b8-4cec-9a15-e825e1fb2f66";
+        let key = "0b9d6f3e-6a51-4c1f-8d2e-7f1a2b3c4d5e";
+        let project = |operation: &str| json!({"operation": operation, "serverId": "linux", "runnerId": "linux-runner", "projectId": "storefront"});
+        let reads = [
+            project("projectBranches"),
+            project("projectStatus"),
+            json!({"operation": "threadStatus", "serverId": "linux", "runnerId": "linux-runner", "taskId": task}),
+        ];
+        for read in reads {
+            assert_eq!(
+                git_settled(read.clone(), "{\"error\":\"git_not_repository\"}"),
+                Err(git_sync_wire::GIT_NOT_REPOSITORY.into()),
+                "{read}"
+            );
+            for code in ["git_dirty", "conflict", "busy", "invalid_input"] {
+                assert_eq!(
+                    git_settled(read.clone(), &json!({ "error": code }).to_string()),
+                    Err("Runner request failed (HTTP 409).".into()),
+                    "{read} {code}"
+                );
+            }
+        }
+        let update = json!({"operation": "projectUpdate", "serverId": "linux", "runnerId": "linux-runner", "projectId": "storefront", "idempotencyKey": key});
+        for code in ["git_not_repository", "git_dirty"] {
+            assert_eq!(
+                git_settled(update.clone(), &json!({ "error": code }).to_string()),
+                Ok(json!({ "error": code })),
+                "{code}"
+            );
         }
     }
     #[cfg(unix)]

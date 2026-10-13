@@ -3,6 +3,7 @@ import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
 import { codexUnavailableModelNotice } from "./codexLaunchPresentation";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
+import type { RemoteProjectKind } from "../../domain/remoteProjectKind";
 import {
   useCallback,
   useMemo,
@@ -169,6 +170,7 @@ export interface AgentComposerProps {
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
   readonly remoteGit?: RemoteComposerGit | null;
+  readonly remoteProjectKind?: RemoteProjectKind;
   readonly worktreeBase?: AgentWorktreeBase;
   onWorktreeBaseChange?(base: AgentWorktreeBase): void;
   onRefreshIsolation?(): void;
@@ -218,6 +220,7 @@ export function AgentComposer({
   onIsolationChange,
   worktreeBase = HEAD_WORKTREE_BASE,
   remoteGit = null,
+  remoteProjectKind,
   onWorktreeBaseChange = ignoreWorktreeBase,
   onRefreshIsolation,
   onLaunchChange,
@@ -917,6 +920,7 @@ export function AgentComposer({
           onSelectRepository={onSelectRepository}
           previousWorktree={followUp ? null : previousWorktree}
           remote={executionTarget === "server"}
+          remoteProjectKind={remoteProjectKind}
           target={target}
           threadLocation={threadLocation}
           worktreeAvailable={worktreeAvailable}

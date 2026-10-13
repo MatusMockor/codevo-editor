@@ -113,6 +113,60 @@ describe("AgentEnvironmentCheckoutPicker", () => {
     expect(row("Server checkout")?.getAttribute("aria-checked")).toBe("true");
   });
 
+  it("offers only the server folder for a server folder project", () => {
+    const current = render({
+      remote: true,
+      checkout: "serverCheckout",
+      projectKind: "folder",
+      worktreeAvailable: false,
+    });
+    expect(trigger().textContent).toBe("Server folder");
+    expect(trigger().getAttribute("aria-label")).toBe("Workspace: Server folder");
+    expect(trigger().getAttribute("data-checkout")).toBe("serverCheckout");
+    act(() => trigger().click());
+    expect(
+      rows().map((node) => node.querySelector(".cv-menu__text")?.firstChild?.textContent),
+    ).toEqual(["Server folder"]);
+    expect(row("Server folder")?.getAttribute("aria-checked")).toBe("true");
+    expect(row("Server folder")?.getAttribute("aria-disabled")).not.toBe("true");
+    expect(row("Server checkout")).toBeUndefined();
+    expect(row("New worktree")).toBeUndefined();
+    act(() => row("Server folder")?.click());
+    expect(current.onIsolationChange).not.toHaveBeenCalled();
+  });
+
+  it("names the disabled in-place choice of a worktree-only server folder project", () => {
+    render({
+      remote: true,
+      checkout: "newWorktree",
+      isolation: "worktree",
+      projectKind: "folder",
+      worktreeAvailable: false,
+      worktreeOnly: true,
+    });
+    expect(trigger().textContent).toBe("New worktree");
+    act(() => trigger().click());
+    expect(row("Server folder")?.getAttribute("aria-disabled")).toBe("true");
+    expect(row("Server checkout")).toBeUndefined();
+  });
+
+  it.each([undefined, "repository"] as const)(
+    "keeps the server checkout and the worktree choice for a %s server project",
+    (projectKind) => {
+      render({ remote: true, checkout: "serverCheckout", projectKind });
+      expect(trigger().textContent).toBe("Server checkout");
+      act(() => trigger().click());
+      expect(
+        rows().map((node) => node.querySelector(".cv-menu__text")?.firstChild?.textContent),
+      ).toEqual(["Server checkout", "New worktree"]);
+    },
+  );
+
+  it("never renames the local checkout", () => {
+    render({ projectKind: "folder" });
+    expect(trigger().textContent).toBe("Local checkout");
+  });
+
   it("offers the previous worktree with its branch and leaves it for a fresh checkout", () => {
     const onSelect = vi.fn();
     const available = { threadId: "agt-9", worktreePath: "/wt/agt-9", branch: "agent/retry" };

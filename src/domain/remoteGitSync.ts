@@ -129,6 +129,8 @@ export function settledRemoteGitOperation(
   }
 }
 
+export const REMOTE_GIT_NOT_REPOSITORY_MESSAGE = "This server project is not a Git repository.";
+
 export function remoteGitErrorMessage(code: RemoteGitErrorCode): string {
   switch (code) {
     case "git_remote_unavailable":
@@ -161,6 +163,8 @@ export function remoteGitErrorMessage(code: RemoteGitErrorCode): string {
       return "Nothing to commit.";
     case "git_identity_missing":
       return "The server runner has no Git author. Set CODEVO_GIT_AUTHOR_NAME and CODEVO_GIT_AUTHOR_EMAIL, or user.name and user.email in the repository.";
+    case "git_not_repository":
+      return REMOTE_GIT_NOT_REPOSITORY_MESSAGE;
     case "busy":
       return "A conversation is still running in this server checkout. Wait for it to finish and try again.";
     case "conflict":

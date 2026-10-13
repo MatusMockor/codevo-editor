@@ -1,6 +1,9 @@
 import type { AgentProjectDescriptor } from "../domain/agentProject";
+import { isRemoteFolderProject } from "../domain/remoteProjectKind";
 
 const isRemoteKey = (rootKey: string): boolean => rootKey.startsWith("remote:");
+const isFolderProject = (project: AgentProjectDescriptor): boolean =>
+  isRemoteKey(project.rootKey) && isRemoteFolderProject({ kind: project.remoteProjectKind });
 
 export function repositoryIdentityCandidates(
   projects: readonly AgentProjectDescriptor[],
@@ -14,5 +17,7 @@ export function repositoryIdentityCandidates(
     const localRoot = links.get(rootKey);
     return localRoot !== undefined && localRoots.has(localRoot);
   };
-  return projects.filter((project) => !explicitlyLinked(project.rootKey));
+  return projects.filter(
+    (project) => !isFolderProject(project) && !explicitlyLinked(project.rootKey),
+  );
 }

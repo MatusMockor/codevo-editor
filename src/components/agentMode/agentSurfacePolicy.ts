@@ -5,7 +5,13 @@ import {
   type AgentProjectDescriptor,
 } from "../../domain/agentProject";
 import type { AgentThreadTarget } from "../../domain/agentThread";
+import {
+  agentSurfaceUnavailability,
+  type AgentSurfaceUnavailability,
+} from "../../domain/agentSurfaceActivation";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
+import { REMOTE_GIT_NOT_REPOSITORY_MESSAGE } from "../../domain/remoteGitSync";
+import { isRemoteFolderProject, type RemoteProjectKind } from "../../domain/remoteProjectKind";
 import {
   DEFAULT_TERMINAL_LAUNCH_TARGET,
   terminalLaunchTargetForThread,
@@ -27,8 +33,64 @@ export const SURFACE_REMOTE_NO_PROJECT_DESCRIPTION =
 export const SURFACE_REMOTE_NO_THREAD_DESCRIPTION =
   "Select a server conversation to review its changes.";
 
+export const SURFACE_REMOTE_NOT_REPOSITORY_REASON = REMOTE_GIT_NOT_REPOSITORY_MESSAGE;
+
+export function remoteThreadProjectKind(
+  thread: AgentThreadView | null,
+): RemoteProjectKind | undefined {
+  const execution = thread?.execution;
+  if (execution?.kind !== "remote") return undefined;
+  return execution.projectKind;
+}
+
+export function isRemoteFolderProjectThread(thread: AgentThreadView | null): boolean {
+  return (
+    thread?.execution?.kind === "remote" &&
+    isRemoteFolderProject({ kind: thread.execution.projectKind })
+  );
+}
+
 export function isRemoteGitShipThread(thread: AgentThreadView | null): boolean {
+  if (isRemoteFolderProjectThread(thread)) return false;
   return thread?.execution?.kind === "remote" && thread.execution.gitShip === true;
+}
+
+export function remoteThreadSurfaceUnavailability(
+  kind: AgentSurfaceKind | null,
+  thread: AgentThreadView | null,
+): AgentSurfaceUnavailability | null {
+  return agentSurfaceUnavailability(
+    {
+      remote: thread?.execution?.kind === "remote",
+      remoteProjectKind: remoteThreadProjectKind(thread),
+    },
+    kind,
+  );
+}
+
+export function agentSurfaceUnavailabilityReason(
+  unavailability: AgentSurfaceUnavailability,
+): string {
+  switch (unavailability) {
+    case "remoteProjectNotRepository":
+      return SURFACE_REMOTE_NOT_REPOSITORY_REASON;
+    default:
+      return unsupportedSurfaceUnavailability(unavailability);
+  }
+}
+
+function unsupportedSurfaceUnavailability(unavailability: never): never {
+  throw new TypeError(`Unsupported surface unavailability: ${String(unavailability)}.`);
+}
+
+export function agentSurfaceRemoteUnavailableMessage(
+  kind: AgentSurfaceKind | null,
+  thread: AgentThreadView | null,
+): string {
+  const unavailability = remoteThreadSurfaceUnavailability(kind, thread);
+  if (unavailability !== null) return agentSurfaceUnavailabilityReason(unavailability);
+  if (thread === null && kind === "diff") return SURFACE_REMOTE_NO_THREAD_DESCRIPTION;
+  return SURFACE_REMOTE_UNAVAILABLE_REASON;
 }
 
 export function isRemoteAgentSurfaceThread(thread: AgentThreadView | null): boolean {
@@ -239,6 +301,8 @@ export function agentSurfaceBlockedReason(
   if (kind === "agents") return null;
   if (kind === "editor")
     return isRemoteAgentSurfaceThread(thread) ? SURFACE_REMOTE_UNAVAILABLE_REASON : null;
+  const unavailability = remoteThreadSurfaceUnavailability(kind, thread);
+  if (unavailability !== null) return agentSurfaceUnavailabilityReason(unavailability);
   if (isRemoteAgentSurfaceThread(thread))
     return kind === "diff" || (kind === "git" && isRemoteGitShipThread(thread))
       ? null

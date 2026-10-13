@@ -5,6 +5,7 @@ import type {
 } from "../../../application/agentMcpServerProjects";
 import type { AgentMcpServersProject } from "../../../domain/agentMcpServersTarget";
 import { MAX_AGENT_PROJECT_ROOTS } from "../../../domain/agentProject";
+import type { RemoteRunnerProject } from "../../../domain/remoteRunner";
 import {
   MAX_MCP_PROJECT_OPTIONS,
   MAX_MCP_SERVER_PROJECT_OPTIONS,
@@ -31,7 +32,7 @@ function ready(
   id: string,
   name: string,
   runnerId: string,
-  projects: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  projects: ReadonlyArray<RemoteRunnerProject>,
   truncated = false,
   stale = false,
 ): AgentMcpServerHost {
@@ -164,6 +165,23 @@ describe("MCP server project options", () => {
       name: "Codevo Editor",
       location: "Linux box · Server checkout",
     });
+  });
+
+  it("labels a server folder project as a folder and a repository project as a checkout", () => {
+    const options = mcpProjectOptions(
+      "/work/app",
+      [],
+      hosts(
+        ready("linux", "Linux box", "runner-home", [
+          { id: "playablemaker", name: "playablemaker", kind: "folder" },
+          { id: "api", name: "api", kind: "repository" },
+        ]),
+      ),
+    );
+    expect(options.slice(1).map((option) => option.location)).toEqual([
+      "Linux box · Server folder",
+      "Linux box · Server checkout",
+    ]);
   });
 
   it("lists every connected server in its given order and nothing for one that is not ready", () => {

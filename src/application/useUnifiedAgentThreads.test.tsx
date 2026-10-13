@@ -21,6 +21,10 @@ import type { AgentThreadStartRequest } from "./agentThreadPorts";
 import type { RemoteGitSyncPort } from "../domain/remoteGitSync";
 import { REMOTE_START_BASE_INVALID } from "../domain/remoteDraftGitBase";
 import {
+  REMOTE_FOLDER_NEEDS_IN_PLACE,
+  REMOTE_PROJECT_KIND_CHANGED,
+} from "./remoteFolderProjectLaunch";
+import {
   REMOTE_RUNNER_OPERATIONS_BUSY_MESSAGE,
   RemoteRunnerRequestRejectedError,
 } from "../domain/remoteRunnerErrors";
@@ -1098,5 +1102,352 @@ describe("server Git sync routing", () => {
     });
     const calls = h.gw.startTask.mock.calls;
     expect(calls[calls.length - 1]?.[0]).not.toHaveProperty("base");
+  });
+});
+
+describe("server folder projects", () => {
+  const folderKey = remoteAgentProjectKey(server.id, "runner", "notes");
+  const folderThreadId = remoteAgentThreadKey(server.id, "runner", "note");
+  const folderStart: AgentThreadStartRequest = {
+    ...start,
+    projectRootKey: folderKey,
+    repositoryRoot: folderKey,
+    isolation: "in-place",
+  };
+  const note = task({
+    id: "note",
+    sequence: 3,
+    projectId: "notes",
+    isolation: "in-place",
+    parts: [{ type: "text", text: "Summarise the notes" }],
+  });
+
+  function folderSetup() {
+    return setup(true, (configured) => {
+      configured.listProjects.mockResolvedValue({
+        items: [
+          { id: "project", name: "App", kind: "repository" },
+          { id: "notes", name: "Notes", kind: "folder" },
+        ],
+      });
+      configured.listTasks.mockImplementation(
+        async ({ after, serverId }: { after: number; serverId: string }) => ({
+          items: after === 0 && serverId === server.id ? [task(), child, note] : [],
+          nextCursor: null,
+        }),
+      );
+    });
+  }
+  const descriptorOf = (h: Awaited<ReturnType<typeof setup>>, key: string) =>
+    h.current.projects.find((project) => project.rootKey === key);
+  const viewOf = (h: Awaited<ReturnType<typeof setup>>, id: string) =>
+    h.current.agents.threads.find((view) => view.thread.threadId === id);
+
+  it("delivers the folder kind beside a repository project on the same runner", async () => {
+    const h = await folderSetup();
+    expect(descriptorOf(h, folderKey)).toMatchObject({
+      label: "Notes",
+      remoteProjectKind: "folder",
+      isolationPolicy: "in-place",
+      repositories: [
+        {
+          repositoryRoot: folderKey,
+          repositoryRelativePath: "",
+          mapping: { rootRelativePath: "" },
+        },
+      ],
+    });
+    expect(descriptorOf(h, projectKey)).toMatchObject({ label: "App" });
+    expect(descriptorOf(h, projectKey)).not.toHaveProperty("remoteProjectKind");
+    expect(viewOf(h, folderThreadId)?.execution).toMatchObject({
+      projectId: "notes",
+      projectKind: "folder",
+    });
+    expect(viewOf(h, remoteId)?.execution).not.toHaveProperty("projectKind");
+    expect(h.current.agents.isolationPreview(folderKey, folderKey)).toEqual({
+      repositoryRoot: folderKey,
+      repositoryStatus: { kind: "notRepository" },
+      recommended: { kind: "in-place" },
+      inPlaceGuard: { kind: "safe" },
+      inPlaceAllowed: true,
+      confirmationKey: null,
+    });
+    expect(h.current.agents.isolationPreview(projectKey, projectKey).repositoryStatus).toEqual({
+      kind: "ready",
+    });
+  });
+
+  it("keeps a folder conversation's view stable across unrelated renders", async () => {
+    const h = await folderSetup();
+    const before = viewOf(h, folderThreadId);
+    expect(before?.execution?.projectKind).toBe("folder");
+    await h.render({ selectedProjectRootKey: folderKey });
+    await h.render({ selectedProjectRootKey: projectKey });
+    expect(viewOf(h, folderThreadId)).toBe(before);
+  });
+
+  it("keeps a runner that sends no kind exactly as before", async () => {
+    const h = await setup(true);
+    expect(descriptorOf(h, projectKey)).not.toHaveProperty("remoteProjectKind");
+    expect(viewOf(h, remoteId)?.execution).not.toHaveProperty("projectKind");
+    expect(h.current.agents.isolationPreview(projectKey, projectKey)).toEqual({
+      repositoryRoot: projectKey,
+      repositoryStatus: { kind: "ready" },
+      recommended: { kind: "in-place" },
+      inPlaceGuard: { kind: "safe" },
+      inPlaceAllowed: true,
+      confirmationKey: null,
+    });
+  });
+
+  it("starts a folder project in place and never drafts a worktree task for it", async () => {
+    const h = await folderSetup();
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: folderKey });
+    await act(async () => {
+      expect(
+        await h.current.agents.startThread({ ...folderStart, isolation: "worktree" }),
+      ).toBeNull();
+    });
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.current.agents.notice?.message).toBe(REMOTE_FOLDER_NEEDS_IN_PLACE);
+
+    h.gw.createTask.mockResolvedValue({
+      task: task({
+        id: "new",
+        sequence: 4,
+        status: "draft",
+        projectId: undefined,
+        isolation: "in-place",
+      }),
+      created: true,
+    });
+    h.gw.startTask.mockResolvedValue(
+      task({ id: "new", sequence: 4, status: "queued", projectId: "notes", isolation: "in-place" }),
+    );
+    await act(async () => {
+      expect(
+        await h.current.agents.startThread({
+          ...folderStart,
+          worktreeBase: { kind: "ref", ref: "refs/remotes/origin/main" },
+        }),
+      ).toEqual({ threadId: remoteAgentThreadKey(server.id, "runner", "new") });
+    });
+    expect(h.gw.createTask).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ serverId: server.id, isolation: "in-place" }),
+    );
+    expect(h.gw.startTask).toHaveBeenCalledExactlyOnceWith({
+      serverId: server.id,
+      projectId: "notes",
+      taskId: "new",
+    });
+  });
+
+  it("drafts nothing when a refresh drops the project while the launch reads the runner", async () => {
+    const listed = { project: true };
+    const h = await setup(true, (configured) => {
+      configured.listProjects.mockImplementation(async () => ({
+        items: listed.project ? [{ id: "project", name: "App" }] : [{ id: "other", name: "Other" }],
+      }));
+    });
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    const described = await h.gw.getRunner();
+    let settleRunner!: (descriptor: typeof described) => void;
+    h.gw.getRunner.mockReturnValueOnce(
+      new Promise<typeof described>((settle) => {
+        settleRunner = settle;
+      }),
+    );
+    const reads = h.gw.getRunner.mock.calls.length;
+    let starting!: ReturnType<typeof h.current.agents.startThread>;
+    await act(async () => {
+      starting = h.current.agents.startThread(start);
+    });
+    await vi.waitFor(() => expect(h.gw.getRunner.mock.calls.length).toBe(reads + 1));
+    listed.project = false;
+    await act(async () => h.current.refreshRemote());
+    await vi.waitFor(() => expect(descriptorOf(h, projectKey)).toBeUndefined());
+    await act(async () => {
+      settleRunner(described);
+      expect(await starting).toBeNull();
+    });
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.gw.startTask).not.toHaveBeenCalled();
+    expect(h.current.agents.notice?.message).toBe(REMOTE_PROJECT_KIND_CHANGED);
+  });
+
+  it("sends no Git request for a retained task once its folder project is omitted", async () => {
+    const listTaskFiles = vi.fn().mockResolvedValue({
+      files: [{ path: "src/app.ts", status: "modified" }],
+      truncated: false,
+    });
+    const getTaskFileDiff = vi.fn();
+    const getTurnChanges = vi.fn();
+    const getTurnFileDiff = vi.fn();
+    const listed = { notes: true };
+    const h = await setup(true, (configured) => {
+      configured.getRunner.mockResolvedValue({
+        protocolVersion: 1,
+        runnerId: "runner",
+        name: "Linux",
+        capabilities: {
+          taskExecution: true,
+          instructionSync: true,
+          eventReplay: true,
+          taskContinuation: true,
+          taskLaunchOptions: true,
+          taskFileDiffs: true,
+          turnChanges: true,
+          gitSync: true,
+        },
+      });
+      configured.listProjects.mockImplementation(async () => ({
+        items: [
+          { id: "project", name: "App", kind: "repository" },
+          ...(listed.notes ? [{ id: "notes", name: "Notes", kind: "folder" }] : []),
+        ],
+      }));
+      configured.listTasks.mockImplementation(
+        async ({ after, serverId }: { after: number; serverId: string }) => ({
+          items: after === 0 && serverId === server.id ? [task(), child, note] : [],
+          nextCursor: null,
+        }),
+      );
+      configured.getTask.mockImplementation(async ({ taskId }: { taskId: string }) =>
+        taskId === "note" ? note : taskId === "child" ? child : task({ id: taskId }),
+      );
+      Object.assign(configured, {
+        listTaskFiles,
+        getTaskFileDiff,
+        getTurnChanges,
+        getTurnFileDiff,
+      });
+    });
+    const port = {
+      branches: vi.fn(),
+      projectStatus: vi.fn(),
+      fetch: vi.fn(),
+      update: vi.fn(),
+      threadStatus: vi.fn(),
+      commit: vi.fn(),
+      push: vi.fn(),
+      pollOperation: vi.fn(),
+      awaitOperation: vi.fn(),
+    } satisfies RemoteGitSyncPort;
+    const identity = { discover: vi.fn().mockResolvedValue("github.com/acme/app") };
+    await h.render({
+      gitSync: port,
+      repositoryIdentity: identity,
+      externalUrlOpener: null,
+      selectedThreadId: folderThreadId,
+    });
+    const settle = () =>
+      act(async () => {
+        for (let round = 0; round < 6; round += 1) await new Promise((done) => setTimeout(done, 0));
+      });
+    const exercise = async () => {
+      await settle();
+      await act(async () => h.current.agents.showChanges(folderThreadId));
+      await act(async () => h.current.agents.refreshShipStatus(folderThreadId));
+      const turnId = viewOf(h, folderThreadId)?.thread.turns[0]?.turnId ?? "";
+      await act(async () => {
+        await h.current.agents.getTurnChanges?.(folderThreadId, turnId);
+      });
+      let committed: unknown;
+      let pushed: unknown;
+      await act(async () => {
+        committed = await h.current.agents.commitThreadChanges(folderThreadId, "Ship it");
+        pushed = await h.current.agents.pushThreadBranch(folderThreadId);
+      });
+      await settle();
+      return { committed, pushed };
+    };
+    const unavailable = {
+      kind: "notRun",
+      message: "This action is not available for a server conversation yet.",
+    };
+    const quiet = () => {
+      expect(listTaskFiles).not.toHaveBeenCalled();
+      expect(getTaskFileDiff).not.toHaveBeenCalled();
+      expect(getTurnChanges).not.toHaveBeenCalled();
+      expect(getTurnFileDiff).not.toHaveBeenCalled();
+      for (const call of Object.values(port)) expect(call).not.toHaveBeenCalled();
+      expect(identity.discover).not.toHaveBeenCalled();
+      expect(viewOf(h, folderThreadId)?.execution?.gitShip).toBeUndefined();
+    };
+
+    expect(await exercise()).toEqual({ committed: unavailable, pushed: unavailable });
+    expect(viewOf(h, folderThreadId)?.execution).toMatchObject({ projectKind: "folder" });
+    expect(viewOf(h, folderThreadId)?.changeSummary?.error).toBe(
+      "This server project is not a Git repository.",
+    );
+    quiet();
+
+    listed.notes = false;
+    await act(async () => h.current.refreshRemote());
+    await settle();
+    await vi.waitFor(() => expect(descriptorOf(h, folderKey)).toBeUndefined());
+    const retained = viewOf(h, folderThreadId)?.execution;
+    expect(retained).toMatchObject({ projectId: "notes", projectListing: "unlisted" });
+    expect(retained).not.toHaveProperty("projectKind");
+    expect(h.current.agents.remoteGit?.project(folderKey)).toBeNull();
+    expect(await exercise()).toEqual({ committed: unavailable, pushed: unavailable });
+    expect(viewOf(h, folderThreadId)?.changeSummary?.error).toBe(
+      "The server worktree changes could not be read.",
+    );
+    quiet();
+
+    expect(viewOf(h, remoteId)?.execution).not.toHaveProperty("projectListing");
+    await h.render({ selectedThreadId: remoteId });
+    await settle();
+    await act(async () => h.current.agents.showChanges(remoteId));
+    expect(listTaskFiles).toHaveBeenCalledExactlyOnceWith({ serverId: server.id, taskId: "child" });
+    expect(viewOf(h, remoteId)?.execution?.gitShip).toBe(true);
+    expect(identity.discover).toHaveBeenCalledExactlyOnceWith({
+      serverId: server.id,
+      runnerId: "runner",
+      projectId: "project",
+    });
+  });
+
+  it("does not leak a folder kind across server A to B to A", async () => {
+    const other: RemoteRunnerServer = { ...server, id: "other", name: "Other" };
+    const otherKey = remoteAgentProjectKey(other.id, "runner", "project");
+    const h = await setup(true, (configured) => {
+      configured.listProjects.mockImplementation(async ({ serverId }: { serverId: string }) => ({
+        items: [
+          { id: "project", name: "App", ...(serverId === other.id ? { kind: "folder" } : {}) },
+        ],
+      }));
+    });
+    await h.render({ servers: [server, other] });
+    const kinds = () => ({
+      a: descriptorOf(h, projectKey)?.remoteProjectKind ?? null,
+      b: descriptorOf(h, otherKey)?.remoteProjectKind ?? null,
+      previewA: h.current.agents.isolationPreview(projectKey, projectKey).repositoryStatus?.kind,
+      previewB: h.current.agents.isolationPreview(otherKey, otherKey).repositoryStatus?.kind,
+      thread: viewOf(h, remoteId)?.execution?.projectKind ?? null,
+    });
+    const expected = {
+      a: null,
+      b: "folder",
+      previewA: "ready",
+      previewB: "notRepository",
+      thread: null,
+    };
+    await vi.waitFor(() => expect(kinds()).toEqual(expected));
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    expect(kinds()).toEqual(expected);
+    await h.render({ selectedServerId: other.id, selectedProjectRootKey: otherKey });
+    expect(kinds()).toEqual(expected);
+    await h.render({ selectedServerId: server.id, selectedProjectRootKey: projectKey });
+    expect(kinds()).toEqual(expected);
+    await act(async () => {
+      expect(await h.current.agents.startThread(start)).toEqual({
+        threadId: remoteAgentThreadKey(server.id, "runner", "new"),
+      });
+    });
+    expect(h.gw.createTask).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ serverId: server.id, isolation: "worktree" }),
+    );
   });
 });

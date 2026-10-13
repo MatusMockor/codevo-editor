@@ -16,6 +16,7 @@ import {
 import { defaultAgentLaunchOptions, type AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentTurn } from "../../domain/agentThread";
 import { remoteAgentProjectKey } from "../../application/remoteAgentProjection";
+import { remoteProjectIsolationPreview } from "../../application/remoteFolderProjectLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { agentProjectGroups } from "./agentModePresentation";
@@ -30,6 +31,8 @@ import {
 import {
   AGENT_COMPOSER_PROMPT_ID,
   NOT_REPOSITORY_COMPOSER_CAPTION,
+  NOT_REPOSITORY_SERVER_CAPTION,
+  NOT_REPOSITORY_SERVER_WORKTREE_ONLY_CAPTION,
   NOT_REPOSITORY_WORKTREE_ONLY_CAPTION,
   useAgentComposerState,
   type AgentComposerState,
@@ -1525,6 +1528,120 @@ describe("useAgentComposerState", () => {
       }),
     );
     expect(startThread).toHaveBeenCalledWith(expect.objectContaining({ isolation: "worktree" }));
+  });
+
+  it("runs a server folder project in the server folder over a stored worktree choice", async () => {
+    const remoteRoot = "remote:server:runner:project";
+    const repository = projectFixture({ rootKey: remoteRoot, isolationPolicy: "in-place" });
+    const folder = projectFixture({
+      rootKey: remoteRoot,
+      isolationPolicy: "in-place",
+      remoteProjectKind: "folder",
+    });
+    let listed = repository;
+    const startThread = vi.fn(async () => ({ threadId: "remote-thread" }));
+    const agents = threadsSurfaceFixture({
+      startThread,
+      isolationPreview: (repositoryRoot) => remoteProjectIsolationPreview(repositoryRoot, listed),
+    });
+    render(agents, [listed]);
+    act(() => current().composer.startNewThread(remoteRoot, repository.rootPath));
+    expect(current().composer.composerProps.worktreeAvailable).toBe(true);
+    expect(current().composer.composerProps.remoteProjectKind).toBeUndefined();
+    expect(current().composer.composerProps.isolation).toBe("in-place");
+    expect(current().composer.composerProps.isolationReason).toBeNull();
+    act(() => current().composer.composerProps.onIsolationChange("worktree"));
+    expect(current().composer.composerProps.isolation).toBe("worktree");
+
+    listed = folder;
+    render(agents, [listed]);
+    const props = current().composer.composerProps;
+    expect(props.worktreeAvailable).toBe(false);
+    expect(props.remoteProjectKind).toBe("folder");
+    expect(props.worktreeOnly).toBe(false);
+    expect(props.worktreeOnlyReason).toBeNull();
+    expect(props.isolation).toBe("in-place");
+    expect(props.isolationReason).toBe(NOT_REPOSITORY_SERVER_CAPTION);
+    act(() => current().composer.composerProps.onIsolationChange("worktree"));
+    expect(current().composer.composerProps.isolation).toBe("in-place");
+
+    act(() => current().composer.composerProps.onPromptChange("Summarise the notes"));
+    expect(current().composer.composerProps.submitBlocked).toBe(false);
+    await act(async () =>
+      current().composer.composerProps.onSubmit({
+        launch: defaultAgentLaunchOptions("claudeCode"),
+        dangerousLaunchConfirmed: false,
+      }),
+    );
+    expect(startThread).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ isolation: "in-place", projectRootKey: remoteRoot }),
+    );
+
+    listed = repository;
+    render(agents, [listed]);
+    expect(current().composer.composerProps.worktreeAvailable).toBe(true);
+    expect(current().composer.composerProps.remoteProjectKind).toBeUndefined();
+    expect(current().composer.composerProps.isolationReason).toBeNull();
+  });
+
+  it.each(["folder", "repository", undefined] as const)(
+    "takes a started server thread's project kind from the thread itself (%s)",
+    (projectKind) => {
+      const key = remoteAgentProjectKey("server", "runner", "project");
+      const base = surfaceThreadView();
+      const thread: AgentThreadView = {
+        ...base,
+        lifecycle: "settled",
+        thread: {
+          ...base.thread,
+          owner: { rootKey: key, ownerId: key, repositoryRoot: key },
+          target: { isolation: "in-place", worktreePath: null },
+        },
+        execution: {
+          kind: "remote",
+          serverId: "server",
+          runnerId: "runner",
+          projectId: "project",
+          ...(projectKind === undefined ? {} : { projectKind }),
+          conversationId: "agt-1",
+          latestTaskId: "agt-1-t1",
+          resume: { available: true, reason: null },
+          reachability: REMOTE_RUNNER_REACHABLE,
+        },
+      };
+      const listedAsFolder = projectFixture({
+        rootKey: key,
+        rootPath: key,
+        isolationPolicy: "in-place",
+        remoteProjectKind: "folder",
+      });
+      render(threadsSurfaceFixture({ threads: [thread] }), [listedAsFolder]);
+      act(() => current().navigation.selectThread("agt-1"));
+      expect(current().navigation.selectedThreadId).toBe("agt-1");
+      expect(current().composer.composerProps.remoteProjectKind).toBe(projectKind);
+    },
+  );
+
+  it("blocks a server folder project on a runner that cannot run in the server folder", () => {
+    const remoteRoot = "remote:server:runner:project";
+    const folder = projectFixture({
+      rootKey: remoteRoot,
+      isolationPolicy: "worktree",
+      remoteProjectKind: "folder",
+    });
+    render(
+      threadsSurfaceFixture({
+        isolationPreview: (repositoryRoot) => remoteProjectIsolationPreview(repositoryRoot, folder),
+      }),
+      [folder],
+    );
+    act(() => current().composer.startNewThread(remoteRoot, folder.rootPath));
+    act(() => current().composer.composerProps.onPromptChange("Summarise the notes"));
+    const props = current().composer.composerProps;
+    expect(props.worktreeOnly).toBe(true);
+    expect(props.submitBlocked).toBe(true);
+    expect(props.isolationReason).toBe(NOT_REPOSITORY_SERVER_WORKTREE_ONLY_CAPTION);
+    expect(props.worktreeOnlyReason).toBe(NOT_REPOSITORY_SERVER_WORKTREE_ONLY_CAPTION);
   });
 
   it("keeps a selected follow-up blocked until its provider is ready", async () => {

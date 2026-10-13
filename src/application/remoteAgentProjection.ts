@@ -21,6 +21,7 @@ import type {
   RemoteRunnerTask,
   RemoteRunnerTaskResume,
 } from "../domain/remoteRunner";
+import { isRemoteFolderProject, remoteProjectKindOf } from "../domain/remoteProjectKind";
 import type { AgentThreadView } from "./agentThreadPorts";
 import { stabilizeRemoteAgentViews } from "./remoteAgentProjectionStability";
 import type { AgentAttachment } from "../domain/agentAttachment";
@@ -261,6 +262,7 @@ function projectConversation(
   const tasks = all.slice(-MAX_AGENT_TURNS_PER_THREAD);
   const projectId = first.projectId ?? "";
   const projectKey = remoteAgentProjectKey(input.serverId, input.runnerId, projectId);
+  const project = input.projects.find((candidate) => candidate.id === projectId);
   const thread: AgentThread = {
     threadId: remoteAgentThreadKey(input.serverId, input.runnerId, conversationId),
     owner: { rootKey: projectKey, ownerId: projectKey, repositoryRoot: projectKey },
@@ -347,8 +349,7 @@ function projectConversation(
     lifecycle: agentThreadLifecycle(thread),
     attention: agentThreadAttention(thread, false),
     unread: false,
-    repositoryLabel:
-      input.projects.find((project) => project.id === projectId)?.name ?? "Server project",
+    repositoryLabel: project?.name ?? "Server project",
     projectOrigin: "active-tab",
     worktreeRemoved: false,
     worktreeMissing: false,
@@ -364,6 +365,10 @@ function projectConversation(
       serverId: input.serverId,
       runnerId: input.runnerId,
       projectId,
+      ...(project !== undefined && isRemoteFolderProject(project)
+        ? { projectKind: remoteProjectKindOf(project) }
+        : {}),
+      ...(project === undefined ? { projectListing: "unlisted" as const } : {}),
       conversationId,
       latestTaskId: latest.id,
       resume: input.resumes.get(latest.id) ?? null,

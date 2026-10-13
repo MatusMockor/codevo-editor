@@ -10,6 +10,8 @@ import { TauriTerminalGateway } from "../../infrastructure/tauriTerminalGateway"
 import type { ComposerScope } from "./agentComposerTarget";
 import {
   NO_AGENT_SURFACE_SCOPE,
+  SURFACE_REMOTE_NOT_REPOSITORY_REASON,
+  SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
   SURFACE_REMOTE_UNAVAILABLE_REASON,
   SURFACE_UNTRUSTED_GIT_REASON,
   agentSurfaceTerminalLaunchTarget,
@@ -27,6 +29,12 @@ import {
   agentSurfaceFilesDescription,
   agentSurfaceLocalAvailable,
   agentSurfaceForeignRootMessage,
+  agentSurfaceRemoteUnavailableMessage,
+  agentSurfaceUnavailabilityReason,
+  isRemoteFolderProjectThread,
+  isRemoteGitShipThread,
+  remoteThreadProjectKind,
+  remoteThreadSurfaceUnavailability,
   agentSurfaceScopeFor,
   agentSurfaceTerminalLaunchTargetFor,
   agentThreadCheckoutRoot,
@@ -438,6 +446,100 @@ describe("remote surface boundary", () => {
     expect(() => agentSurfaceTerminalLaunchTargetFor(remote.thread.threadId, "worktree")).toThrow(
       SURFACE_REMOTE_UNAVAILABLE_REASON,
     );
+  });
+});
+
+describe("remote folder project surfaces", () => {
+  const execution = {
+    kind: "remote",
+    serverId: "server",
+    runnerId: "runner",
+    projectId: "project",
+    conversationId: "conversation",
+    latestTaskId: "task",
+    resume: null,
+    reachability: REMOTE_RUNNER_REACHABLE,
+    gitShip: true,
+  } as const;
+  const repository = { ...surfaceThreadView(), execution };
+  const explicitRepository = {
+    ...surfaceThreadView(),
+    execution: { ...execution, projectKind: "repository" as const },
+  };
+  const folder = {
+    ...surfaceThreadView(),
+    execution: { ...execution, projectKind: "folder" as const },
+  };
+
+  it("says the project is not a Git repository on the Diff and Git surfaces", () => {
+    expect(SURFACE_REMOTE_NOT_REPOSITORY_REASON).toBe(
+      "This server project is not a Git repository.",
+    );
+    for (const kind of ["diff", "git"] as const) {
+      expect(remoteThreadSurfaceUnavailability(kind, folder)).toBe("remoteProjectNotRepository");
+      expect(agentSurfaceBlockedReason(kind, folder, true, SURFACE_FIXTURE_ROOT)).toBe(
+        SURFACE_REMOTE_NOT_REPOSITORY_REASON,
+      );
+      expect(agentSurfaceRemoteUnavailableMessage(kind, folder)).toBe(
+        SURFACE_REMOTE_NOT_REPOSITORY_REASON,
+      );
+    }
+    expect(agentSurfaceUnavailabilityReason("remoteProjectNotRepository")).toBe(
+      SURFACE_REMOTE_NOT_REPOSITORY_REASON,
+    );
+    expect(isRemoteFolderProjectThread(folder)).toBe(true);
+    expect(remoteThreadProjectKind(folder)).toBe("folder");
+  });
+
+  it("never treats a folder project thread as shippable, even with a stale ship flag", () => {
+    expect(isRemoteGitShipThread(folder)).toBe(false);
+    expect(isRemoteGitShipThread(repository)).toBe(true);
+    expect(isRemoteGitShipThread(explicitRepository)).toBe(true);
+  });
+
+  it("keeps the other server surfaces of a folder project on their existing reasons", () => {
+    for (const kind of ["files", "history", "terminal", "scripts", "pullRequest"] as const) {
+      expect(remoteThreadSurfaceUnavailability(kind, folder)).toBeNull();
+      expect(agentSurfaceBlockedReason(kind, folder, true, SURFACE_FIXTURE_ROOT)).toBe(
+        SURFACE_REMOTE_UNAVAILABLE_REASON,
+      );
+      expect(agentSurfaceRemoteUnavailableMessage(kind, folder)).toBe(
+        SURFACE_REMOTE_UNAVAILABLE_REASON,
+      );
+    }
+    expect(agentSurfaceBlockedReason("agents", folder, true, SURFACE_FIXTURE_ROOT)).toBeNull();
+    expect(agentSurfaceBlockedReason("editor", folder, true, SURFACE_FIXTURE_ROOT)).toBe(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
+  });
+
+  it("leaves a repository project and a runner without kinds unchanged", () => {
+    for (const thread of [repository, explicitRepository]) {
+      expect(isRemoteFolderProjectThread(thread)).toBe(false);
+      for (const kind of ["diff", "git"] as const) {
+        expect(remoteThreadSurfaceUnavailability(kind, thread)).toBeNull();
+        expect(agentSurfaceBlockedReason(kind, thread, true, SURFACE_FIXTURE_ROOT)).toBeNull();
+      }
+      expect(agentSurfaceRemoteUnavailableMessage("terminal", thread)).toBe(
+        SURFACE_REMOTE_UNAVAILABLE_REASON,
+      );
+    }
+    expect(remoteThreadProjectKind(repository)).toBeUndefined();
+    expect(agentSurfaceRemoteUnavailableMessage("diff", null)).toBe(
+      SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
+    );
+    expect(agentSurfaceRemoteUnavailableMessage("git", null)).toBe(
+      SURFACE_REMOTE_UNAVAILABLE_REASON,
+    );
+  });
+
+  it("ignores a project kind on a thread that does not run on a server", () => {
+    const local = surfaceThreadView();
+    expect(isRemoteFolderProjectThread(local)).toBe(false);
+    expect(isRemoteFolderProjectThread(null)).toBe(false);
+    expect(remoteThreadProjectKind(local)).toBeUndefined();
+    expect(remoteThreadSurfaceUnavailability("diff", local)).toBeNull();
+    expect(agentSurfaceBlockedReason("diff", local, true, SURFACE_FIXTURE_ROOT)).toBeNull();
   });
 });
 

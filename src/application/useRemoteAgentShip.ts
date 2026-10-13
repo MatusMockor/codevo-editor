@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { AgentShipState } from "../domain/agentShip";
 import type { RemoteGitProjectKey, RemoteGitSyncPort } from "../domain/remoteGitSync";
+import { remoteProjectKindOf, type RemoteProjectKind } from "../domain/remoteProjectKind";
 import type { RemoteRepositoryIdentityGateway } from "../domain/remoteRepositoryIdentity";
 import type { RemoteRunnerServer } from "../domain/remoteRunner";
 import type { AgentTasksNotice, AgentThreadView, RemoteAgentGitAccess } from "./agentThreadPorts";
@@ -38,13 +39,12 @@ export interface RemoteAgentShip {
 }
 
 type GitSyncProjects = ReadonlyMap<string, RemoteGitProjectKey>;
+type GitSyncProjectEntry = readonly [string, RemoteGitProjectKey, RemoteProjectKind];
 
 interface PresentedView {
   readonly ship: AgentShipState;
   readonly view: AgentThreadView;
 }
-
-const runnerKey = (serverId: string, runnerId: string) => JSON.stringify([serverId, runnerId]);
 
 function projectIdentityKey(project: RemoteGitProjectKey): string {
   return JSON.stringify([project.serverId, project.runnerId, project.projectId]);
@@ -54,7 +54,7 @@ function gitSyncProjectSignature(
   snapshots: readonly RemoteAgentInventorySnapshot[],
   servers: readonly RemoteRunnerServer[],
 ): string {
-  const entries: [string, RemoteGitProjectKey][] = [];
+  const entries: GitSyncProjectEntry[] = [];
   for (const snapshot of snapshots) {
     const descriptor = snapshot.descriptor;
     if (
@@ -68,10 +68,34 @@ function gitSyncProjectSignature(
       entries.push([
         remoteAgentProjectKey(snapshot.serverId, descriptor.runnerId, project.id),
         { serverId: snapshot.serverId, runnerId: descriptor.runnerId, projectId: project.id },
+        remoteProjectKindOf(project),
       ]);
     }
   }
   return JSON.stringify(entries);
+}
+
+function gitSyncRepositories(signature: string): GitSyncProjects {
+  const repositories = new Map<string, RemoteGitProjectKey>();
+  const folders = new Set<string>();
+  for (const [key, project, kind] of JSON.parse(signature) as GitSyncProjectEntry[]) {
+    switch (kind) {
+      case "repository":
+        repositories.set(key, project);
+        break;
+      case "folder":
+        folders.add(key);
+        break;
+      default:
+        return unsupportedProjectKind(kind);
+    }
+  }
+  for (const key of folders) repositories.delete(key);
+  return repositories;
+}
+
+function unsupportedProjectKind(kind: never): never {
+  throw new TypeError(`Unsupported remote project kind: ${String(kind)}.`);
 }
 
 function remoteProjectOf(view: AgentThreadView | undefined): RemoteGitProjectKey | null {
@@ -88,24 +112,19 @@ export function useRemoteAgentShip(options: RemoteAgentShipOptions): RemoteAgent
   const { identity, port, report, reportError, selectedThreadId, views } = options;
   const identityTimers = options.identityTimers ?? SYSTEM_REPOSITORY_IDENTITY_TIMERS;
   const signature = gitSyncProjectSignature(options.snapshots, options.servers);
-  const projects = useMemo<GitSyncProjects>(
-    () => new Map(JSON.parse(signature) as [string, RemoteGitProjectKey][]),
-    [signature],
-  );
-  const runners = useMemo(
-    () =>
-      new Set(
-        [...projects.values()].map((project) => runnerKey(project.serverId, project.runnerId)),
-      ),
-    [projects],
-  );
+  const projects = useMemo(() => gitSyncRepositories(signature), [signature]);
   const shipProject = useCallback(
     (view: AgentThreadView | undefined): RemoteGitProjectKey | null => {
       const project = remoteProjectOf(view);
       if (port === null || project === null) return null;
-      return runners.has(runnerKey(project.serverId, project.runnerId)) ? project : null;
+      const projectKey = remoteAgentProjectKey(
+        project.serverId,
+        project.runnerId,
+        project.projectId,
+      );
+      return projects.has(projectKey) ? project : null;
     },
-    [port, runners],
+    [port, projects],
   );
 
   const wanted =

@@ -6,6 +6,7 @@ import {
   type AgentWorkspaceLocation,
 } from "../../domain/agentWorkspaceLocation";
 import type { AgentCliKind } from "../../domain/agentTask";
+import type { RemoteProjectKind } from "../../domain/remoteProjectKind";
 import { agentShipBranchLabel } from "./agentModePresentation";
 import { agentProviderLabel } from "./agentSidebarPresentation";
 
@@ -40,7 +41,10 @@ export function agentThreadRowLocation(
     serverName: input.serverName,
     branch: knownBranch(view, input),
   });
-  return { branch: rowBranch(location), title: rowTitle(location) };
+  return {
+    branch: rowBranch(location),
+    title: rowTitle(location, view.execution?.projectKind),
+  };
 }
 
 export function agentThreadRowServerName(
@@ -105,8 +109,8 @@ function rowBranch(location: AgentWorkspaceLocation): AgentThreadRowBranch {
   }
 }
 
-function rowTitle(location: AgentWorkspaceLocation): string {
-  const text = agentLocationTokenText(location);
+function rowTitle(location: AgentWorkspaceLocation, projectKind?: RemoteProjectKind): string {
+  const text = agentLocationTokenText(location, projectKind);
   if (location.machine.kind === "server") return text;
   return `${agentMachineLabel(location.machine)}${SEPARATOR}${text}`;
 }

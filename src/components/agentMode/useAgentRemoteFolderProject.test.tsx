@@ -142,7 +142,11 @@ describe("useAgentRemoteFolderProject under StrictMode", () => {
 
   async function submitFor(serverId: string, path: string): Promise<void> {
     await run((current) => current.openFor(serverId));
-    expect(folder.folder).toEqual({ phase: "browsing", path: null });
+    expect(folder.folder).toEqual({
+      phase: "browsing",
+      path: null,
+      folderProjects: "unsupported",
+    });
     await run((current) => current.chooseFolder(path));
     await run((current) => current.submit());
   }
@@ -178,12 +182,17 @@ describe("useAgentRemoteFolderProject under StrictMode", () => {
     expect(folder.open).toBe(false);
     await run((current) => current.openFor("srv-b"));
     await run((current) => current.chooseFolder(OTHER_PATH));
-    expect(folder.folder).toEqual({ phase: "ready", path: OTHER_PATH, name: "other" });
+    expect(folder.folder).toEqual({
+      phase: "ready",
+      path: OTHER_PATH,
+      name: "other",
+      folderProjects: "unsupported",
+    });
 
     workspaceRoot = "/a";
     await render();
     expect(folder.open).toBe(false);
-    expect(folder.folder).toEqual({ phase: "browsing", path: null });
+    expect(folder.folder).toEqual({ phase: "browsing", path: null, folderProjects: "unknown" });
 
     await settle(0, REGISTERED);
     expect(refreshProjects).not.toHaveBeenCalled();

@@ -12,6 +12,7 @@ import {
   type AgentSurfaceKind,
   type AgentWorkbenchLayout,
 } from "../../domain/agentWorkbenchLayout";
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { WorkbenchShellFrame } from "../WorkbenchShellFrame";
 import {
@@ -38,6 +39,7 @@ import {
   SURFACE_FILES_PROJECT_DESCRIPTION,
   SURFACE_FOREIGN_ROOT_TERMINAL_REASON,
   SURFACE_NO_PROJECT_REASON,
+  SURFACE_REMOTE_NOT_REPOSITORY_REASON,
   SURFACE_UNTRUSTED_GIT_REASON,
   SURFACE_UNTRUSTED_TERMINAL_REASON,
   SURFACE_WORKTREE_GONE_REASON,
@@ -438,6 +440,45 @@ describe("AgentSurfacePanel", () => {
     await waitForReact(() => expect(fit).toHaveBeenCalledTimes(initialFitCalls + 3));
     expect(gateway.start).toHaveBeenCalledTimes(1);
     expect(gateway.stop).not.toHaveBeenCalled();
+  });
+
+  it("drops the Diff and Git tabs of a folder project and explains why on the chooser", () => {
+    const local = surfaceThreadView();
+    const execution = {
+      kind: "remote",
+      serverId: "server",
+      runnerId: "runner",
+      projectId: "project",
+      conversationId: "conversation",
+      latestTaskId: "task",
+      resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
+      gitShip: true,
+    } as const;
+    const onOpenSurface = vi.fn();
+    const tabs = () =>
+      Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent);
+
+    render({
+      layout: open(["diff", "git"], "diff"),
+      onOpenSurface,
+      thread: { ...local, execution: { ...execution, projectKind: "folder" } },
+    });
+    expect(tabs()).toEqual([]);
+    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-surface")).toBe("empty");
+    expect(host.querySelector('[data-surface-panel="diff"]')).toBeNull();
+    expect(host.querySelector('[data-surface-panel="git"]')).toBeNull();
+    const diff = host.querySelector<HTMLButtonElement>('[aria-label="Open Diff surface"]');
+    expect(diff?.disabled).toBe(true);
+    expect(host.querySelector("#agent-surface-card-diff")?.textContent).toBe(
+      SURFACE_REMOTE_NOT_REPOSITORY_REASON,
+    );
+    keydown(host.querySelector('[role="group"]'), "d");
+    expect(onOpenSurface).not.toHaveBeenCalled();
+
+    render({ layout: open(["diff"], "diff"), onOpenSurface, thread: { ...local, execution } });
+    expect(tabs()).toEqual(["Diff"]);
+    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-surface")).toBe("diff");
   });
 
   it("explains a blocked open tab instead of mounting its surface", async () => {

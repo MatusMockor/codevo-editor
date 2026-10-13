@@ -1,13 +1,19 @@
-import type { RemoteRunnerGateway } from "../domain/remoteRunner";
+import type { RemoteRunnerDescriptor, RemoteRunnerGateway } from "../domain/remoteRunner";
 import {
   isRemoteProjectRegistration,
   isRemoteProjectRegistrationInput,
   type RemoteProjectRegistration,
   type RemoteProjectRegistrationInput,
 } from "../domain/remoteProjectRegistration";
+import type { RemoteRunnerFolderProjectSupport } from "./remoteAddProjectFolder";
+
+export type RemoteProjectRegistrationRunner = Readonly<{
+  runnerId: string;
+  folderProjects: RemoteRunnerFolderProjectSupport;
+}>;
 
 export interface RemoteProjectRegistrationGateway {
-  identifyRunner(): Promise<string>;
+  identifyRunner(): Promise<RemoteProjectRegistrationRunner>;
   registerProject(input: RemoteProjectRegistrationInput): Promise<RemoteProjectRegistration>;
 }
 
@@ -22,7 +28,7 @@ export function createRemoteProjectRegistrationGateway(
       const descriptor = await runner.getRunner({ serverId });
       if (typeof descriptor?.runnerId !== "string" || descriptor.runnerId === "")
         throw new Error("Invalid server runner identity.");
-      return descriptor.runnerId;
+      return { runnerId: descriptor.runnerId, folderProjects: folderProjectSupport(descriptor) };
     },
     async registerProject({ path, name }) {
       if (!isRemoteProjectRegistrationInput({ path, name }))
@@ -33,4 +39,11 @@ export function createRemoteProjectRegistrationGateway(
       return result;
     },
   };
+}
+
+function folderProjectSupport(
+  descriptor: RemoteRunnerDescriptor,
+): RemoteRunnerFolderProjectSupport {
+  if (descriptor.capabilities?.folderProjects === true) return "supported";
+  return "unsupported";
 }

@@ -3,9 +3,9 @@ use super::{
     commands::{blocking, OperationClass},
     git_sync_wire::{
         operation_route, parse_branch_list, parse_checkout_status, parse_commit_result,
-        parse_operation, parse_thread_status, refused, CommitBody, GitErrorBody, GitOperationKind,
-        IdempotentBody, OperationLost, PushBody, RemoteGitRequest, RemoteGitResponse,
-        GIT_OPERATION_UNKNOWN,
+        parse_operation, parse_thread_status, refused, repository_read_route, CommitBody,
+        GitErrorBody, GitErrorCode, GitOperationKind, IdempotentBody, OperationLost, PushBody,
+        RemoteGitRequest, RemoteGitResponse, GIT_NOT_REPOSITORY, GIT_OPERATION_UNKNOWN,
     },
     service::{ConnectionLease, RemoteRunnerState},
 };
@@ -178,6 +178,11 @@ impl GitPlan {
             && error == GIT_OPERATION_UNKNOWN
         {
             return Ok(RemoteGitResponse::Lost(OperationLost::Unknown));
+        }
+        if refused(&error) == Some(GitErrorCode::GitNotRepository)
+            && repository_read_route(&self.path)
+        {
+            return Err(GIT_NOT_REPOSITORY.into());
         }
         if refused(&error).is_some() || error == GIT_OPERATION_UNKNOWN {
             return Err(INVALID_RESPONSE.into());

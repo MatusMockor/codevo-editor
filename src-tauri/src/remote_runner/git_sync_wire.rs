@@ -17,6 +17,7 @@ const INVALID: &str = "Invalid runner Git sync response";
 const REFUSAL_PREFIX: &str = "Runner refused the Git operation: ";
 pub(super) const GIT_OPERATION_UNKNOWN: &str =
     "The runner no longer knows this Git operation. Refresh the Git status.";
+pub(super) const GIT_NOT_REPOSITORY: &str = "This server project is not a Git repository.";
 
 fn required<'de, D: Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
     Option::deserialize(d)
@@ -133,6 +134,7 @@ pub enum GitErrorCode {
     GitRejected,
     GitNothingToCommit,
     GitIdentityMissing,
+    GitNotRepository,
     Busy,
     Conflict,
 }
@@ -423,6 +425,20 @@ pub(super) fn refusable_route(path: &str) -> bool {
     project || task
 }
 
+pub(super) fn repository_read_route(path: &str) -> bool {
+    let project = path
+        .strip_prefix("/v1/projects/")
+        .and_then(|rest| rest.split_once("/git/"))
+        .is_some_and(|(project, action)| {
+            id(project).is_ok() && matches!(action, "branches" | "status")
+        });
+    let task = path
+        .strip_prefix("/v1/tasks/")
+        .and_then(|rest| rest.split_once("/git/"))
+        .is_some_and(|(task, action)| uuid(task).is_ok() && action == "status");
+    project || task
+}
+
 pub(super) fn operation_route(path: &str) -> bool {
     path.strip_prefix("/v1/git-operations/")
         .is_some_and(|operation| uuid(operation).is_ok())
@@ -438,6 +454,11 @@ pub(super) fn refusal_error(body: &[u8]) -> Option<String> {
 pub(super) fn refused(error: &str) -> Option<GitErrorCode> {
     let code = error.strip_prefix(REFUSAL_PREFIX)?;
     serde_json::from_value(Value::String(code.into())).ok()
+}
+
+pub(super) fn not_repository_error(body: &[u8]) -> Option<String> {
+    let error = refusal_error(body)?;
+    (refused(&error) == Some(GitErrorCode::GitNotRepository)).then_some(error)
 }
 
 impl Tracking {

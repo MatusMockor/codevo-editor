@@ -43,6 +43,7 @@ import type {
 import type { AgentLaunchOptions } from "./agentLaunch";
 import type { RemoteStartBase } from "./remoteGitSyncWire";
 import type { SpeechLanguage } from "./speechDictation";
+import type { RemoteProjectKind } from "./remoteProjectKind";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
 export type RemoteRunnerIsolation = "in-place" | "worktree";
@@ -91,9 +92,10 @@ export type RemoteRunnerDescriptor = Readonly<{
     speechTranscription?: boolean;
     eventBackwardPaging?: boolean;
     fileAttachments?: boolean;
+    folderProjects?: boolean;
   }>;
 }>;
-export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
+export type RemoteRunnerProject = Readonly<{ id: string; name: string; kind?: RemoteProjectKind }>;
 export type RemoteRunnerCloneRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;
@@ -105,10 +107,11 @@ export type RemoteRunnerCloneRequest = RemoteRunnerServerRequest &
 export type RemoteRunnerCloneJobRequest = RemoteRunnerServerRequest & Readonly<{ cloneId: string }>;
 export type RemoteRunnerRegisterProjectRequest = RemoteRunnerServerRequest &
   RemoteProjectRegistrationInput;
+export type RemoteRunnerCloneJobProject = Readonly<{ id: string; name: string }>;
 export type RemoteRunnerCloneJob = Readonly<{
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
-  project: RemoteRunnerProject | null;
+  project: RemoteRunnerCloneJobProject | null;
   error: string | null;
 }>;
 export type RemoteRunnerTaskStatus =

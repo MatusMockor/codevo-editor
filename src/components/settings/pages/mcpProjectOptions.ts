@@ -162,7 +162,7 @@ function hostSeeds(
         project,
         label: `${listed.name} — ${serverName}`,
         name: listed.name,
-        location: `${serverName} · ${agentCheckoutLabel("serverCheckout")}`,
+        location: `${serverName} · ${agentCheckoutLabel("serverCheckout", listed.kind)}`,
         distinction: listed.id,
       },
     ];

@@ -38,6 +38,7 @@ import {
   isRemoteProjectRegistration,
   isRemoteProjectRegistrationPath,
 } from "./remoteProjectRegistration";
+import { isRemoteProjectKind } from "./remoteProjectKind";
 import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
@@ -455,6 +456,7 @@ export const remoteRunnerChecks = {
         speechTranscription: optional(boolean),
         eventBackwardPaging: optional(boolean),
         fileAttachments: optional(boolean),
+        folderProjects: optional(boolean),
       }),
     }),
   },
@@ -509,7 +511,12 @@ export const remoteRunnerChecks = {
   },
   listProjects: {
     request: object(serverRequest),
-    response: object({ items: array(object({ id: identifier, name: text(256) }), 1000) }),
+    response: object({
+      items: array(
+        object({ id: identifier, name: text(256), kind: optional(isRemoteProjectKind) }),
+        1000,
+      ),
+    }),
   },
   cloneProject: {
     request: object({

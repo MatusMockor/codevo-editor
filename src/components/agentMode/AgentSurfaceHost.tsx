@@ -24,10 +24,11 @@ import {
 import {
   agentSurfaceActivationNotice,
   agentSurfaceLocalAvailable,
+  agentSurfaceRemoteUnavailableMessage,
   isRemoteAgentSurfaceThread,
+  isRemoteFolderProjectThread,
   isRemoteGitShipThread,
-  SURFACE_REMOTE_UNAVAILABLE_REASON,
-  SURFACE_REMOTE_NO_THREAD_DESCRIPTION,
+  remoteThreadSurfaceUnavailability,
   type AgentSurfaceScope,
 } from "./agentSurfacePolicy";
 import type { AgentWorkbenchChrome } from "./agentWorkbenchChrome";
@@ -147,19 +148,21 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     activation: activation?.state,
   });
   const activationNotice = agentSurfaceActivationNotice(activation?.state, scope);
+  const remoteRepositorySurfaceServed =
+    remoteThreadSurfaceUnavailability(layout.activeSurface, thread) === null;
   const unavailable =
     available ||
     remoteActiveAvailable ||
     (remote &&
       (layout.activeSurface === null ||
-        (layout.activeSurface === "diff" && thread !== null) ||
+        (layout.activeSurface === "diff" && thread !== null && remoteRepositorySurfaceServed) ||
         (layout.activeSurface === "agents" && thread !== null) ||
-        (layout.activeSurface === "git" && isRemoteGitShipThread(thread)))) ? null : (
+        (layout.activeSurface === "git" &&
+          isRemoteGitShipThread(thread) &&
+          remoteRepositorySurfaceServed))) ? null : (
       <div className="agent-note" role="status">
         {remote
-          ? thread === null && layout.activeSurface === "diff"
-            ? SURFACE_REMOTE_NO_THREAD_DESCRIPTION
-            : SURFACE_REMOTE_UNAVAILABLE_REASON
+          ? agentSurfaceRemoteUnavailableMessage(layout.activeSurface, thread)
           : activationNotice.kind === "failed"
             ? activationNotice.message
             : activationNotice.kind === "opening"
@@ -185,9 +188,10 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
 
   const changeSummary = thread?.changeSummary ?? null;
   const hasThread = thread !== null;
+  const folderProject = isRemoteFolderProjectThread(thread);
   const legacyWorkingTreeDiff = useMemo<AgentSurfaceDiffPanelProps | null>(
     () =>
-      !remote || !hasThread
+      !remote || !hasThread || folderProject
         ? null
         : {
             ...chrome.diff,
@@ -200,7 +204,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
             onOpenChangedFileDiff: (threadId, change) =>
               void agents.openChangedFileDiff(threadId, change),
           },
-    [agents, changeSummary, chrome.diff, hasThread, remote],
+    [agents, changeSummary, chrome.diff, folderProject, hasThread, remote],
   );
 
   const terminalChrome = chrome.terminal;

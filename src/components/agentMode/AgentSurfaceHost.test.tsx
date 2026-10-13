@@ -210,6 +210,62 @@ describe("AgentSurfaceHost", () => {
     );
   });
 
+  it("tells a folder project it is not a Git repository instead of reading its changes", async () => {
+    const local = surfaceThreadView();
+    const execution = {
+      kind: "remote",
+      serverId: "server",
+      runnerId: "runner",
+      projectId: "project",
+      conversationId: "conversation",
+      latestTaskId: "task",
+      resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
+      gitShip: true,
+    } as const;
+    const repository = {
+      ...local,
+      changeSummary: null,
+      thread: { ...local.thread, threadId: "remote:server:task" },
+      execution,
+    };
+    const folder = { ...repository, execution: { ...execution, projectKind: "folder" as const } };
+    const showChanges = vi.fn(async () => undefined);
+    const agents = { ...defaultProps().agents, showChanges };
+    const note = () => host.querySelector('.agent-note[role="status"]')?.textContent ?? null;
+    const tabs = () =>
+      Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent);
+
+    for (const activeSurface of ["diff", "git"] as const) {
+      render({ thread: folder, agents, layout: { openSurfaces: ["diff", "git"], activeSurface } });
+      await act(async () => Promise.resolve());
+      expect(note()).toBe("This server project is not a Git repository.");
+      expect(tabs()).toEqual([]);
+      expect(host.querySelector("[data-agent-surface-diff]")).toBeNull();
+      expect(host.querySelector('[data-surface-panel="diff"]')).toBeNull();
+      expect(host.querySelector('[data-surface-panel="git"]')).toBeNull();
+      expect(host.textContent).not.toContain("Reading the worktree changes");
+      expect(host.textContent).not.toContain("This server panel is unavailable");
+    }
+    expect(showChanges).not.toHaveBeenCalled();
+
+    render({
+      thread: repository,
+      agents,
+      layout: { openSurfaces: ["diff"], activeSurface: "diff" },
+    });
+    await waitForReact(() => expect(showChanges).toHaveBeenCalledWith(repository.thread.threadId));
+    expect(note()).toBeNull();
+    expect(tabs()).toEqual(["Diff"]);
+
+    render({ thread: folder, agents, layout: { openSurfaces: ["diff"], activeSurface: "diff" } });
+    await act(async () => Promise.resolve());
+    expect(note()).toBe("This server project is not a Git repository.");
+    expect(host.querySelector("[data-agent-surface-diff]")).toBeNull();
+    expect(host.textContent).not.toContain("Reading the worktree changes");
+    expect(showChanges).toHaveBeenCalledTimes(1);
+  });
+
   it("does not mount hidden local surface bodies retained from the previous project", async () => {
     const local = surfaceThreadView();
     const thread = {

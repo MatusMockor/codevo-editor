@@ -1,6 +1,7 @@
 import { memo } from "react";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
 import type { AgentWorkspaceLocation } from "../../domain/agentWorkspaceLocation";
+import type { RemoteProjectKind } from "../../domain/remoteProjectKind";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import type { AgentComposerTarget } from "./agentComposerCheckout";
 import {
@@ -20,6 +21,7 @@ export interface AgentComposerDrawerStartProps {
   readonly checkoutDisabled: boolean;
   readonly executionServerId: string | null;
   readonly isolation: AgentTaskIsolation;
+  readonly remoteProjectKind?: RemoteProjectKind;
   readonly target: AgentComposerTarget | null;
   readonly worktreeAvailable: boolean;
   readonly worktreeOnly: boolean;
@@ -44,6 +46,7 @@ export const AgentComposerDrawerStart = memo(function AgentComposerDrawerStart({
   onSelectRepository,
   previousWorktree = null,
   remote,
+  remoteProjectKind,
   target,
   threadLocation = null,
   worktreeAvailable,
@@ -83,7 +86,10 @@ export const AgentComposerDrawerStart = memo(function AgentComposerDrawerStart({
       <>
         {runOn}
         {divider}
-        <AgentComposerLockedCheckout checkout={strip.checkout.checkout} />
+        <AgentComposerLockedCheckout
+          checkout={strip.checkout.checkout}
+          projectKind={remoteProjectKind}
+        />
       </>
     );
   }
@@ -99,6 +105,7 @@ export const AgentComposerDrawerStart = memo(function AgentComposerDrawerStart({
         onOpenEnvironmentSettings={runOnPicker ? undefined : onOpenEnvironmentSettings}
         onRefreshIsolation={onRefreshIsolation}
         previousWorktree={previousWorktree}
+        projectKind={remoteProjectKind}
         remote={remote}
         worktreeAvailable={worktreeAvailable}
         worktreeOnly={worktreeOnly}

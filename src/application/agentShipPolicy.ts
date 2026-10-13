@@ -9,6 +9,8 @@ import {
 } from "../domain/agentShip";
 import { UNTITLED_AGENT_THREAD_TITLE, type AgentThread } from "../domain/agentThread";
 import type { GitShipRemote, GitShipStatus } from "../domain/gitIntegration";
+import { REMOTE_GIT_NOT_REPOSITORY_MESSAGE } from "../domain/remoteGitSync";
+import { isRemoteFolderProject } from "../domain/remoteProjectKind";
 import type { AgentThreadView } from "./agentThreadPorts";
 
 export type { AgentShipAvailability } from "../domain/agentShip";
@@ -28,6 +30,7 @@ export const IN_PLACE_REMOVE_REASON = "Threads in the local checkout have no wor
 export const SHIP_STEP_RUNNING_REASON = "Another ship step is already running.";
 export const SHIP_STATUS_UNAVAILABLE_REASON = "The branch status is not loaded yet.";
 export const NOTHING_TO_INTEGRATE_REASON = "The branch has no commits to integrate.";
+export const REMOTE_PROJECT_NOT_REPOSITORY_REASON = REMOTE_GIT_NOT_REPOSITORY_MESSAGE;
 
 const AVAILABLE: AgentShipAvailability = Object.freeze({ kind: "available" });
 
@@ -136,11 +139,18 @@ export function defaultIntegrationMode(status: GitShipStatus): AgentShipIntegrat
 }
 
 function shipGate(view: AgentThreadView, state: AgentShipState): AgentShipAvailability | null {
+  if (isRemoteFolderProjectView(view)) return blocked(REMOTE_PROJECT_NOT_REPOSITORY_REASON);
   if (view.lifecycle === "running") return blocked(AGENT_STILL_RUNNING_REASON);
   if (view.worktreeRemoved || view.worktreeMissing) return blocked(WORKTREE_GONE_REASON);
   if (state.kind === "worktreeRemoved") return blocked(WORKTREE_GONE_REASON);
   if (isAgentShipBusy(state)) return blocked(SHIP_STEP_RUNNING_REASON);
   return null;
+}
+
+function isRemoteFolderProjectView(view: AgentThreadView): boolean {
+  const execution = view.execution;
+  if (execution?.kind !== "remote") return false;
+  return isRemoteFolderProject({ kind: execution.projectKind });
 }
 
 function hasPushableCommits(

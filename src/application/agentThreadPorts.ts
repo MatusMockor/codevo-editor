@@ -68,6 +68,7 @@ import type { GitChangedFile } from "../domain/git";
 import type { AgentCommitSelection } from "../domain/gitCommitSelection";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import type { RemoteRunnerTaskResume } from "../domain/remoteRunner";
+import type { RemoteProjectKind } from "../domain/remoteProjectKind";
 
 export interface AgentRestartFollowUpAction {
   readonly kind: "restartFollowUp";
@@ -276,6 +277,8 @@ export interface RemoteAgentThreadExecution {
   readonly serverId: string;
   readonly runnerId: string;
   readonly projectId: string;
+  readonly projectKind?: RemoteProjectKind;
+  readonly projectListing?: "unlisted";
   readonly conversationId: string;
   readonly latestTaskId: string;
   readonly resume: RemoteRunnerTaskResume | null;

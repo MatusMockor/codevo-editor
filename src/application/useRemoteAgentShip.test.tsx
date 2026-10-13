@@ -6,10 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import wireContract from "../../contracts/remote-git-sync-wire.json";
 import { projectFixture } from "../components/agentMode/agentThreadsSurfaceTestFixtures";
 import type { RemoteGitSyncPort, RemoteThreadGitStatus } from "../domain/remoteGitSync";
+import type { RemoteProjectKind } from "../domain/remoteProjectKind";
 import type { RemoteRepositoryIdentityGateway } from "../domain/remoteRepositoryIdentity";
 import type { RemoteRunnerServer } from "../domain/remoteRunner";
 import type { AgentThreadView } from "./agentThreadPorts";
-import { emptyRemoteInventory } from "./remoteAgentInventoryLoad";
+import {
+  emptyRemoteInventory,
+  type RemoteAgentInventorySnapshot,
+} from "./remoteAgentInventoryLoad";
 import { remoteAgentProjectKey, remoteAgentThreadKey } from "./remoteAgentProjection";
 import { RemoteRepositoryIdentityCoordinator } from "./remoteRepositoryIdentityCoordinator";
 import { REPOSITORY_IDENTITY_RETRY_DELAYS_MS } from "./repositoryIdentityRetry";
@@ -97,6 +101,8 @@ function gitPort() {
 interface HarnessProps {
   readonly identity: RemoteRepositoryIdentityGateway | null;
   readonly selectedThreadId: string | null;
+  readonly snapshots?: readonly RemoteAgentInventorySnapshot[];
+  readonly servers?: readonly RemoteRunnerServer[];
   readonly discover?: boolean;
   readonly strict?: boolean;
 }
@@ -122,8 +128,8 @@ function mount(initial: HarnessProps, retries = manualIdentityTimers()) {
       identity: props.identity,
       identityTimers: retries.timers,
       externalUrlOpener: null,
-      snapshots,
-      servers,
+      snapshots: props.snapshots ?? snapshots,
+      servers: props.servers ?? servers,
       views,
       selectedThreadId: props.selectedThreadId,
       report,
@@ -446,5 +452,236 @@ describe("remote agent ship repository identity", () => {
     expect(runner.requests.filter((request) => request.projectId === "project0")).toHaveLength(1);
     expect(h.ship().supports(threadIdOf("project0"))).toBe(true);
     expect(h.identities().get(remoteAgentProjectKey(SERVER, RUNNER, "project0"))).toBe(REPOSITORY);
+  });
+});
+
+describe("remote agent ship in a folder project", () => {
+  const APP_KEY = remoteAgentProjectKey(SERVER, RUNNER, "app");
+  const SIBLING = "project0";
+  const SIBLING_THREAD = threadIdOf(SIBLING);
+  const SIBLING_KEY = remoteAgentProjectKey(SERVER, RUNNER, SIBLING);
+  const withKinds = (
+    kinds: Readonly<Record<string, RemoteProjectKind>>,
+    base: RemoteAgentInventorySnapshot = snapshot,
+  ): readonly RemoteAgentInventorySnapshot[] => [
+    {
+      ...base,
+      projects: PROJECT_IDS.map((id) => {
+        const kind = kinds[id];
+        return kind === undefined ? { id, name: id } : { id, name: id, kind };
+      }),
+    },
+  ];
+  const APP_FOLDER = withKinds({ app: "folder" });
+  const APP_REPOSITORY = withKinds({ app: "repository" });
+  const ALL_FOLDERS = withKinds(
+    Object.fromEntries(PROJECT_IDS.map((id) => [id, "folder" as const])),
+  );
+  const appView = views.get(APP_THREAD)!;
+
+  it("asks the runner nothing and leaves the thread unshippable", async () => {
+    const runner = recordingRemoteIdentityGateway(() => Promise.resolve(REPOSITORY));
+    const h = mount({
+      identity: runner.gateway,
+      selectedThreadId: APP_THREAD,
+      snapshots: APP_FOLDER,
+    });
+    await settle();
+    act(() => h.retries.advance(REMOTE_SHIP_IDENTITY_WAIT_MS));
+    await settle();
+    expect(runner.requests).toEqual([]);
+    expect(h.retries.scheduled).toEqual([]);
+    expect(h.ship().supports(APP_THREAD)).toBe(false);
+    expect(h.ship().present(appView)).toBe(appView);
+    expect(h.ship().present(appView).execution?.gitShip).toBeUndefined();
+    expect(h.ship().access?.project(APP_KEY)).toBeNull();
+    await act(async () => h.ship().ship.refreshShipStatus(APP_THREAD));
+    let committed: Awaited<ReturnType<RemoteAgentShip["ship"]["commit"]>> | undefined;
+    let pushed: Awaited<ReturnType<RemoteAgentShip["ship"]["push"]>> | undefined;
+    await act(async () => {
+      committed = await h.ship().ship.commit(APP_THREAD, "message");
+      pushed = await h.ship().ship.push(APP_THREAD);
+    });
+    expect(committed?.kind).toBe("notRun");
+    expect(pushed?.kind).toBe("notRun");
+    expect(h.port.threadStatus).not.toHaveBeenCalled();
+    expect(h.port.commit).not.toHaveBeenCalled();
+    expect(h.port.push).not.toHaveBeenCalled();
+    expect(h.ship().ship.states.size).toBe(0);
+    expect(h.report).not.toHaveBeenCalled();
+    expect(h.reportError).not.toHaveBeenCalled();
+  });
+
+  it("keeps a repository project on the same runner shippable", async () => {
+    const runner = recordingRemoteIdentityGateway(() => Promise.resolve(REPOSITORY));
+    const h = mount({
+      identity: runner.gateway,
+      selectedThreadId: SIBLING_THREAD,
+      snapshots: APP_FOLDER,
+    });
+    await settle();
+    expect(runner.requests.map((request) => request.projectId)).toEqual([SIBLING]);
+    expect(h.ship().supports(SIBLING_THREAD)).toBe(true);
+    expect(h.ship().present(views.get(SIBLING_THREAD)!).execution?.gitShip).toBe(true);
+    expect(h.ship().access?.project(SIBLING_KEY)).toEqual({
+      serverId: SERVER,
+      runnerId: RUNNER,
+      projectId: SIBLING,
+    });
+    expect(h.ship().access?.project(APP_KEY)).toBeNull();
+    await act(async () => h.ship().ship.refreshShipStatus(SIBLING_THREAD));
+    expect(h.port.threadStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats an explicit repository kind exactly like a runner that reports no kind", async () => {
+    const runner = recordingRemoteIdentityGateway(() => Promise.resolve(REPOSITORY));
+    const h = mount({ identity: runner.gateway, selectedThreadId: APP_THREAD });
+    await settle();
+    const access = h.ship().access;
+    expect(h.ship().supports(APP_THREAD)).toBe(true);
+    h.render({ identity: runner.gateway, selectedThreadId: APP_THREAD, snapshots: APP_REPOSITORY });
+    await settle();
+    expect(h.ship().supports(APP_THREAD)).toBe(true);
+    expect(h.ship().access?.project(APP_KEY)).toEqual(access?.project(APP_KEY));
+    expect(runner.requests).toHaveLength(1);
+  });
+
+  it("offers no Git access at all on a runner that has only folder projects", async () => {
+    const runner = recordingRemoteIdentityGateway(() => Promise.resolve(REPOSITORY));
+    const h = mount({
+      identity: runner.gateway,
+      selectedThreadId: APP_THREAD,
+      snapshots: ALL_FOLDERS,
+    });
+    await settle();
+    expect(h.ship().access).toBeUndefined();
+    expect(h.ship().supports(APP_THREAD)).toBe(false);
+    expect(h.ship().supports(SIBLING_THREAD)).toBe(false);
+    expect(runner.requests).toEqual([]);
+  });
+
+  it("invalidates the project map and drops a late status when the kind changes", async () => {
+    const runner = recordingRemoteIdentityGateway(() => Promise.resolve(REPOSITORY));
+    const late = deferred<RemoteThreadGitStatus>();
+    const h = mount({ identity: runner.gateway, selectedThreadId: APP_THREAD });
+    await settle();
+    const repositoryAccess = h.ship().access;
+    expect(repositoryAccess?.project(APP_KEY)).not.toBeNull();
+    h.port.threadStatus.mockReturnValueOnce(late.promise);
+    let refresh!: Promise<void>;
+    await act(async () => {
+      refresh = h.ship().ship.refreshShipStatus(APP_THREAD);
+    });
+    expect(h.port.threadStatus).toHaveBeenCalledTimes(1);
+
+    h.render({ identity: runner.gateway, selectedThreadId: APP_THREAD, snapshots: APP_FOLDER });
+    expect(h.ship().access).not.toBe(repositoryAccess);
+    expect(h.ship().access?.project(APP_KEY)).toBeNull();
+    expect(h.ship().supports(APP_THREAD)).toBe(false);
+    await act(async () => {
+      late.resolve(status);
+      await refresh;
+    });
+    await settle();
+    expect(h.ship().ship.gitStatuses.has(APP_THREAD)).toBe(false);
+    expect(h.ship().present(appView)).toBe(appView);
+    expect(h.reportError).not.toHaveBeenCalled();
+    await act(async () => h.ship().ship.refreshShipStatus(APP_THREAD));
+    expect(h.port.threadStatus).toHaveBeenCalledTimes(1);
+
+    h.render({ identity: runner.gateway, selectedThreadId: APP_THREAD });
+    await settle();
+    expect(h.ship().access?.project(APP_KEY)).toEqual(repositoryAccess?.project(APP_KEY));
+    expect(h.ship().supports(APP_THREAD)).toBe(true);
+    await act(async () => h.ship().ship.refreshShipStatus(APP_THREAD));
+    expect(h.port.threadStatus).toHaveBeenCalledTimes(2);
+    expect(h.ship().ship.gitStatuses.has(APP_THREAD)).toBe(true);
+  });
+
+  it.each(["folder", "repository"] as const)(
+    "sends nothing for a retained thread once its %s project is omitted from the inventory",
+    async (kind) => {
+      const omitted: readonly RemoteAgentInventorySnapshot[] = [
+        {
+          ...snapshot,
+          projects: PROJECT_IDS.filter((id) => id !== "app").map((id) => ({ id, name: id })),
+        },
+      ];
+      const runner = recordingRemoteIdentityGateway(() => Promise.resolve(REPOSITORY));
+      const h = mount({
+        identity: runner.gateway,
+        selectedThreadId: APP_THREAD,
+        snapshots: withKinds({ app: kind }),
+      });
+      await settle();
+      const listedRequests = runner.requests.length;
+      expect(h.ship().supports(APP_THREAD)).toBe(kind === "repository");
+
+      h.render({ identity: runner.gateway, selectedThreadId: APP_THREAD, snapshots: omitted });
+      await settle();
+      act(() => h.retries.advance(REMOTE_SHIP_IDENTITY_WAIT_MS));
+      await settle();
+      expect(runner.requests).toHaveLength(listedRequests);
+      expect(h.ship().supports(APP_THREAD)).toBe(false);
+      expect(h.ship().present(appView)).toBe(appView);
+      expect(h.ship().present(appView).execution?.gitShip).toBeUndefined();
+      expect(h.ship().access?.project(APP_KEY)).toBeNull();
+      await act(async () => h.ship().ship.refreshShipStatus(APP_THREAD));
+      let committed: Awaited<ReturnType<RemoteAgentShip["ship"]["commit"]>> | undefined;
+      let pushed: Awaited<ReturnType<RemoteAgentShip["ship"]["push"]>> | undefined;
+      await act(async () => {
+        committed = await h.ship().ship.commit(APP_THREAD, "message");
+        pushed = await h.ship().ship.push(APP_THREAD);
+      });
+      expect(committed?.kind).toBe("notRun");
+      expect(pushed?.kind).toBe("notRun");
+      expect(h.port.threadStatus).not.toHaveBeenCalled();
+      expect(h.port.commit).not.toHaveBeenCalled();
+      expect(h.port.push).not.toHaveBeenCalled();
+      expect(h.reportError).not.toHaveBeenCalled();
+
+      expect(h.ship().access?.project(SIBLING_KEY)).not.toBeNull();
+      h.render({ identity: runner.gateway, selectedThreadId: SIBLING_THREAD, snapshots: omitted });
+      await settle();
+      expect(runner.requests.slice(listedRequests).map((request) => request.projectId)).toEqual([
+        SIBLING,
+      ]);
+      expect(h.ship().supports(SIBLING_THREAD)).toBe(true);
+      await act(async () => h.ship().ship.refreshShipStatus(SIBLING_THREAD));
+      expect(h.port.threadStatus).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps the folder kind of one server away from the same project id on another", async () => {
+    const OTHER = "other";
+    const otherServer: RemoteRunnerServer = { ...server, id: OTHER, name: "Other" };
+    const otherFolder = withKinds({ app: "folder" }, { ...snapshot, serverId: OTHER });
+    const OTHER_APP_KEY = remoteAgentProjectKey(OTHER, RUNNER, "app");
+    const runner = recordingRemoteIdentityGateway(() => Promise.resolve(REPOSITORY));
+    const both = { snapshots: [snapshot, ...otherFolder], servers: [server, otherServer] };
+    const h = mount({ identity: runner.gateway, selectedThreadId: APP_THREAD, ...both });
+    await settle();
+    expect(h.ship().supports(APP_THREAD)).toBe(true);
+    expect(h.ship().access?.project(APP_KEY)).not.toBeNull();
+    expect(h.ship().access?.project(OTHER_APP_KEY)).toBeNull();
+    expect(runner.requests.map((request) => request.serverId)).toEqual([SERVER]);
+
+    h.render({
+      identity: runner.gateway,
+      selectedThreadId: APP_THREAD,
+      snapshots: otherFolder,
+      servers: [otherServer],
+    });
+    await settle();
+    expect(h.ship().supports(APP_THREAD)).toBe(false);
+    expect(h.ship().access?.project(APP_KEY)).toBeNull();
+    expect(h.ship().access?.project(OTHER_APP_KEY)).toBeNull();
+
+    h.render({ identity: runner.gateway, selectedThreadId: APP_THREAD, ...both });
+    await settle();
+    expect(h.ship().supports(APP_THREAD)).toBe(true);
+    expect(h.ship().access?.project(APP_KEY)).not.toBeNull();
+    expect(h.ship().access?.project(OTHER_APP_KEY)).toBeNull();
+    expect(runner.requests.every((request) => request.serverId === SERVER)).toBe(true);
   });
 });

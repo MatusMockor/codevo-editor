@@ -31,6 +31,10 @@ const diff: RemoteRunnerTaskFileDiff = {
   modified: { text: "after", truncated: false },
   unavailableReason: null,
 };
+const folderTarget: RemoteAgentThreadExecution = { ...target, projectKind: "folder" };
+const NOT_REPOSITORY = "This server project is not a Git repository.";
+const unlistedTarget: RemoteAgentThreadExecution = { ...target, projectListing: "unlisted" };
+const UNREADABLE = "The server worktree changes could not be read.";
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -61,6 +65,7 @@ async function harness() {
   return {
     listTaskFiles,
     getTaskFileDiff,
+    report: input.report,
     surface: () => surface,
     async update(next: Partial<RemoteAgentChangesInput>) {
       input = { ...input, ...next };
@@ -177,6 +182,192 @@ describe("remote agent changes", () => {
         await Promise.all(work);
       });
       expect(h.surface().summaries.size).toBe(0);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it("states that a folder project is not a repository without any runner request", async () => {
+    const h = await harness();
+    try {
+      await h.update({
+        resolveTarget: (threadId) => (threadId === "folder" ? folderTarget : target),
+      });
+      await act(async () => h.surface().showChanges("folder"));
+      const summary = h.surface().summaries.get("folder");
+      expect(summary).toEqual({
+        loading: false,
+        error: NOT_REPOSITORY,
+        files: [],
+        truncated: false,
+        removing: false,
+        diff: null,
+      });
+      await act(async () =>
+        h.surface().showFileDiff("folder", {
+          path: "src/a.ts",
+          relativePath: "src/a.ts",
+          status: "modified",
+          oldPath: null,
+          oldRelativePath: null,
+          isStaged: false,
+          isUnversioned: false,
+        }),
+      );
+      expect(h.surface().summaries.get("folder")).toEqual(summary);
+      expect(h.listTaskFiles).not.toHaveBeenCalled();
+      expect(h.getTaskFileDiff).not.toHaveBeenCalled();
+      expect(h.report).not.toHaveBeenCalled();
+
+      await act(async () => h.surface().showChanges("repository"));
+      expect(h.listTaskFiles).toHaveBeenCalledTimes(1);
+      expect(h.surface().summaries.get("repository")?.files).toHaveLength(1);
+      expect(h.surface().summaries.get("folder")).toEqual(summary);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it.each(["files", "diff"])(
+    "drops a late %s response once the project is known to be a folder",
+    async (request) => {
+      const h = await harness();
+      const pendingFiles = deferred<RemoteRunnerTaskFiles>();
+      const pendingDiff = deferred<RemoteRunnerTaskFileDiff>();
+      let work!: Promise<void>;
+      try {
+        if (request === "files") h.listTaskFiles.mockReturnValueOnce(pendingFiles.promise);
+        await act(async () => {
+          work = h.surface().showChanges("thread");
+          if (request === "diff") await work;
+        });
+        if (request === "diff") {
+          h.getTaskFileDiff.mockReturnValueOnce(pendingDiff.promise);
+          await act(async () => {
+            work = h
+              .surface()
+              .showFileDiff("thread", h.surface().summaries.get("thread")!.files[0]);
+          });
+        }
+        await h.update({ resolveTarget: () => folderTarget });
+        expect(h.surface().summaries.size).toBe(0);
+        await act(async () => {
+          pendingFiles.resolve(files);
+          pendingDiff.resolve(diff);
+          await work;
+        });
+        expect(h.surface().summaries.size).toBe(0);
+        await act(async () => h.surface().showChanges("thread"));
+        expect(h.surface().summaries.get("thread")?.error).toBe(NOT_REPOSITORY);
+        expect(h.listTaskFiles).toHaveBeenCalledTimes(1);
+        expect(h.getTaskFileDiff).toHaveBeenCalledTimes(request === "diff" ? 1 : 0);
+
+        await h.update({ resolveTarget: () => ({ ...target, projectKind: "repository" }) });
+        expect(h.surface().summaries.size).toBe(0);
+        await act(async () => h.surface().showChanges("thread"));
+        expect(h.surface().summaries.get("thread")?.files).toHaveLength(1);
+        expect(h.listTaskFiles).toHaveBeenCalledTimes(2);
+        expect(h.report).not.toHaveBeenCalled();
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it("asks the runner nothing for a project the inventory no longer lists", async () => {
+    const h = await harness();
+    try {
+      await h.update({
+        resolveTarget: (threadId) => (threadId === "unlisted" ? unlistedTarget : target),
+      });
+      await act(async () => h.surface().showChanges("unlisted"));
+      const summary = h.surface().summaries.get("unlisted");
+      expect(summary).toEqual({
+        loading: false,
+        error: UNREADABLE,
+        files: [],
+        truncated: false,
+        removing: false,
+        diff: null,
+      });
+      await act(async () =>
+        h.surface().showFileDiff("unlisted", {
+          path: "src/a.ts",
+          relativePath: "src/a.ts",
+          status: "modified",
+          oldPath: null,
+          oldRelativePath: null,
+          isStaged: false,
+          isUnversioned: false,
+        }),
+      );
+      expect(h.surface().summaries.get("unlisted")).toEqual(summary);
+      expect(h.listTaskFiles).not.toHaveBeenCalled();
+      expect(h.getTaskFileDiff).not.toHaveBeenCalled();
+      expect(h.report).not.toHaveBeenCalled();
+
+      await act(async () => h.surface().showChanges("repository"));
+      expect(h.listTaskFiles).toHaveBeenCalledTimes(1);
+      expect(h.surface().summaries.get("repository")?.files).toHaveLength(1);
+    } finally {
+      await h.dispose();
+    }
+  });
+
+  it.each(["files", "diff"])(
+    "drops a late %s response and requests nothing once a folder project is omitted",
+    async (request) => {
+      const h = await harness();
+      const pendingFiles = deferred<RemoteRunnerTaskFiles>();
+      const pendingDiff = deferred<RemoteRunnerTaskFileDiff>();
+      let work!: Promise<void>;
+      try {
+        if (request === "files") h.listTaskFiles.mockReturnValueOnce(pendingFiles.promise);
+        await act(async () => {
+          work = h.surface().showChanges("thread");
+          if (request === "diff") await work;
+        });
+        const listed = h.surface().summaries.get("thread")?.files[0];
+        if (request === "diff") {
+          h.getTaskFileDiff.mockReturnValueOnce(pendingDiff.promise);
+          await act(async () => {
+            work = h.surface().showFileDiff("thread", listed!);
+          });
+        }
+        await h.update({ resolveTarget: () => folderTarget });
+        await h.update({ resolveTarget: () => unlistedTarget });
+        expect(h.surface().summaries.size).toBe(0);
+        await act(async () => {
+          pendingFiles.resolve(files);
+          pendingDiff.resolve(diff);
+          await work;
+        });
+        expect(h.surface().summaries.size).toBe(0);
+        await act(async () => h.surface().showChanges("thread"));
+        expect(h.surface().summaries.get("thread")?.error).toBe(UNREADABLE);
+        expect(h.surface().summaries.get("thread")?.files).toEqual([]);
+        expect(h.listTaskFiles).toHaveBeenCalledTimes(1);
+        expect(h.getTaskFileDiff).toHaveBeenCalledTimes(request === "diff" ? 1 : 0);
+        expect(h.report).not.toHaveBeenCalled();
+
+        await h.update({ resolveTarget: () => target });
+        expect(h.surface().summaries.size).toBe(0);
+        await act(async () => h.surface().showChanges("thread"));
+        expect(h.surface().summaries.get("thread")?.files).toHaveLength(1);
+        expect(h.listTaskFiles).toHaveBeenCalledTimes(2);
+      } finally {
+        await h.dispose();
+      }
+    },
+  );
+
+  it("treats an absent kind and an explicit repository kind as the same target", async () => {
+    const h = await harness();
+    try {
+      await act(async () => h.surface().showChanges("thread"));
+      await h.update({ resolveTarget: () => ({ ...target, projectKind: "repository" }) });
+      expect(h.surface().summaries.get("thread")?.files).toHaveLength(1);
+      expect(h.listTaskFiles).toHaveBeenCalledTimes(1);
     } finally {
       await h.dispose();
     }

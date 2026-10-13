@@ -33,6 +33,7 @@ export const REMOTE_GIT_ERROR_CODES = [
   "git_rejected",
   "git_nothing_to_commit",
   "git_identity_missing",
+  "git_not_repository",
   "busy",
   "conflict",
 ] as const;

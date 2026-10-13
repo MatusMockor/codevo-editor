@@ -336,6 +336,46 @@ describe("AgentComposer workspace strip", () => {
     expect(branchTrigger()).toBeNull();
   });
 
+  it("names the server folder of a folder project before the first message", async () => {
+    await render(
+      base({
+        composer: composerProps({
+          executionServerId: "linux",
+          remoteProjectKind: "folder",
+          worktreeAvailable: false,
+        }),
+      }),
+      [LINUX],
+    );
+    expect(button("#agent-checkout")?.textContent).toBe("Server folder");
+    expect(button("#agent-checkout")?.getAttribute("aria-label")).toBe("Workspace: Server folder");
+    act(() => button("#agent-checkout")?.click());
+    expect(menuRows().map((row) => rowLabel(row))).toEqual(["Server folder"]);
+  });
+
+  it("locks a started folder project thread on the server folder", async () => {
+    const view = remoteView();
+    const live = new Map([[ROOT, "main"]]);
+    await render(
+      base({
+        composer: { ...started(view, live), remoteProjectKind: "folder" },
+        thread: view,
+        live,
+      }),
+      [LINUX],
+    );
+    expect(locks()).toEqual(["Runs on:Linux server", "Checkout:Server folder"]);
+    await render(
+      base({
+        composer: { ...started(view, live), remoteProjectKind: "repository" },
+        thread: view,
+        live,
+      }),
+      [LINUX],
+    );
+    expect(locks()).toEqual(["Runs on:Linux server", "Checkout:Server checkout"]);
+  });
+
   it("locks a started local checkout and keeps its branch picker live", async () => {
     const view = inPlaceView();
     const live = new Map([[ROOT, "main"]]);
