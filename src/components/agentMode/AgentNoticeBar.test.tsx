@@ -90,6 +90,33 @@ describe("AgentNoticeBar", () => {
     expect(host.querySelector('[aria-label="Open agent settings"]')).toBeNull();
   });
 
+  it.each(["info", "warning", "error"] as const)(
+    "marks a %s notice with a tone icon beside the message and dismisses it",
+    (kind) => {
+      const onDismiss = vi.fn();
+      act(() =>
+        root.render(
+          <AgentNoticeBar
+            notice={{ kind, message: "The server is busy.", action: null }}
+            onConfigure={vi.fn()}
+            onDismiss={onDismiss}
+          />,
+        ),
+      );
+      const notice = host.querySelector(`.agent-notice.agent-notice--${kind}`);
+      expect(notice?.querySelectorAll("svg.agent-notice__icon")).toHaveLength(1);
+      expect(notice?.querySelector(".agent-notice__message")?.textContent).toBe(
+        "The server is busy.",
+      );
+      const dismiss = notice?.querySelector<HTMLButtonElement>(
+        '.agent-notice__actions > button[aria-label="Dismiss agent notice"]',
+      );
+      expect(dismiss).toBeInstanceOf(HTMLButtonElement);
+      act(() => dismiss?.click());
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("shows no restart action for other notices", () => {
     act(() =>
       root.render(

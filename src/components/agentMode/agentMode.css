@@ -116,23 +116,51 @@
 /* Notice bar (agent CLI not configured, cap reached, gateway failures). */
 .agent-notice {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 10px;
+  box-sizing: border-box;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--cv-r-card);
   background: var(--cv-raised);
-  color: var(--cv-fg-muted);
+  box-shadow: var(--cv-ring-hair), var(--cv-lift);
+  color: var(--cv-fg);
   font-size: calc(var(--cv-t-md) * var(--cv-type-scale));
-  padding: 7px 16px;
+  line-height: 20px;
 }
 
-.agent-notice__spacer {
+.agent-notice__icon {
+  flex: none;
+  margin-top: 4px;
+  color: var(--cv-fg-subtle);
+}
+
+.agent-notice__message {
   flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.agent-notice__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
 }
 
 .agent-notice--warning {
+  background: color-mix(in srgb, var(--cv-warn) 9%, var(--cv-raised));
+}
+
+.agent-notice--warning .agent-notice__icon {
   color: var(--cv-warn);
 }
 
 .agent-notice--error {
+  background: color-mix(in srgb, var(--cv-danger) 9%, var(--cv-raised));
+  box-shadow: var(--cv-ring-danger-soft), var(--cv-lift);
+}
+
+.agent-notice--error .agent-notice__icon {
   color: var(--cv-danger);
 }
 
@@ -527,13 +555,12 @@
 
 .agent-thread-notice {
   min-width: 0;
-  padding: 0 24px 8px;
+  padding: 4px 20px 10px;
 }
 
 .agent-thread-notice > .agent-notice {
-  max-width: 768px;
+  max-width: var(--cv-column);
   margin: 0 auto;
-  border-radius: var(--cv-r-group);
   overflow-wrap: anywhere;
 }
 
