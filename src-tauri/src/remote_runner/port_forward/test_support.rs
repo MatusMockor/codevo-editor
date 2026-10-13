@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const LISTENER: &str = "import os,socket,subprocess,sys,time\nif sys.argv[3]:\n    open(sys.argv[3],'w').write(str(os.getpid()))\ntime.sleep(float(sys.argv[2]))\ns=socket.socket()\ns.bind(('127.0.0.1',int(sys.argv[1])))\ns.listen(16)\nsubprocess.Popen(['sleep','60'])\nwhile True:\n    c,_=s.accept()\n    c.close()";
+const LISTENER: &str = "import os,socket,subprocess,sys,time\nif sys.argv[3]:\n    open(sys.argv[3],'w').write(str(os.getpid()))\ntime.sleep(float(sys.argv[2]))\ns=socket.socket()\ns.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind(('127.0.0.1',int(sys.argv[1])))\ns.listen(16)\nsubprocess.Popen(['sleep','60'])\nwhile True:\n    c,_=s.accept()\n    c.close()";
 
 pub(super) const TASK_A: &str = "7389088c-29b8-4cec-9a15-e825e1fb2f66";
 pub(super) const TASK_B: &str = "5a0c43a8-6c1e-4b8e-9c38-3f3a3c7d8e21";
