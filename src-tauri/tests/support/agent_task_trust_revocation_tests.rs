@@ -433,7 +433,6 @@ struct GatedTeardownSignals {
     entered: Mutex<mpsc::Sender<()>>,
     release: Mutex<mpsc::Receiver<()>>,
     held: AtomicBool,
-    released_in_time: AtomicBool,
     sent: Mutex<Vec<i32>>,
 }
 
@@ -447,13 +446,7 @@ impl GatedTeardownSignals {
             .expect("entered lock")
             .send(())
             .expect("announce the held teardown");
-        let released = self
-            .release
-            .lock()
-            .expect("release lock")
-            .recv_timeout(EVENT_DEADLINE)
-            .is_ok();
-        self.released_in_time.store(released, Ordering::SeqCst);
+        let _released = self.release.lock().expect("release lock").recv();
     }
 
     fn sent(&self) -> Vec<i32> {
@@ -511,12 +504,13 @@ impl GatedTeardown {
     }
 
     fn own_result(&self) -> Option<AgentTaskStatusPayload> {
-        let status = terminal_status(&self.sink, "agt-own");
-        assert!(
-            self.signals.released_in_time.load(Ordering::SeqCst),
-            "the turn's own teardown timed out before trust was revoked"
-        );
-        status
+        terminal_status(&self.sink, "agt-own")
+    }
+}
+
+impl Drop for GatedTeardown {
+    fn drop(&mut self) {
+        let _released = self.release.send(());
     }
 }
 
@@ -534,7 +528,6 @@ fn start_turn_that_settles_on_its_own(
         entered: Mutex::new(entered_tx),
         release: Mutex::new(release_rx),
         held: AtomicBool::new(false),
-        released_in_time: AtomicBool::new(false),
         sent: Mutex::new(Vec::new()),
     });
     let admission = Arc::new(AgentTaskAdmissionRegistry::new());

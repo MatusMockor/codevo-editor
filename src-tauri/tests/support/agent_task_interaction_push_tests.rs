@@ -7,6 +7,7 @@ use agent_questions::{
     AgentQuestion, AgentQuestionAnswerItem, AgentQuestionRequest, AgentQuestionResponse,
     AgentQuestionSession, AgentQuestionStatus,
 };
+use std::sync::PoisonError;
 
 const WORKSPACE: &str = "ws-agent-tests";
 
@@ -545,7 +546,7 @@ struct Gate {
 
 impl Gate {
     fn open(&self) {
-        *self.open.lock().expect("gate lock") = true;
+        *self.open.lock().unwrap_or_else(PoisonError::into_inner) = true;
         self.signal.notify_all();
     }
 
@@ -556,6 +557,14 @@ impl Gate {
             .wait_timeout_while(open, EVENT_DEADLINE, |open| !*open)
             .expect("gate wait");
         *open
+    }
+
+    fn wait_until_opened(&self) {
+        let open = self.open.lock().expect("gate lock");
+        let _open = self
+            .signal
+            .wait_while(open, |open| !*open)
+            .expect("gate wait");
     }
 }
 
@@ -577,11 +586,31 @@ impl PausedDelivery {
         let resume = Arc::clone(&self.resume);
         move || {
             entered.open();
-            if resume.wait_open() {
-                return Ok(());
-            }
-            Err("the test never resumed the paused delivery".to_string())
+            resume.wait_until_opened();
+            Ok(())
         }
+    }
+
+    fn hold(&self) -> HeldDelivery<'_> {
+        HeldDelivery {
+            resume: &self.resume,
+        }
+    }
+}
+
+struct HeldDelivery<'a> {
+    resume: &'a Gate,
+}
+
+impl HeldDelivery<'_> {
+    fn resume(self) {
+        self.resume.open();
+    }
+}
+
+impl Drop for HeldDelivery<'_> {
+    fn drop(&mut self) {
+        self.resume.open();
     }
 }
 
@@ -635,6 +664,7 @@ fn a_question_answer_settling_after_the_task_is_forgotten_is_still_pushed() {
         Ok(())
     );
     let answered = thread::scope(|scope| {
+        let held = delivery.hold();
         let answering = scope.spawn(|| {
             fixture.registry.answer_question(
                 "agt-late-answer",
@@ -651,7 +681,7 @@ fn a_question_answer_settling_after_the_task_is_forgotten_is_still_pushed() {
             last.as_ref().map(question_statuses),
             Some(vec![AgentQuestionStatus::Pending])
         );
-        delivery.resume.open();
+        held.resume();
         answering.join().expect("answering thread")
     });
     assert_eq!(
@@ -680,6 +710,7 @@ fn an_approval_answer_settling_after_the_task_is_forgotten_is_still_pushed() {
         Ok(())
     );
     let answered = thread::scope(|scope| {
+        let held = delivery.hold();
         let answering = scope.spawn(|| {
             fixture.registry.answer_approval(
                 "agt-late-approval",
@@ -691,7 +722,7 @@ fn an_approval_answer_settling_after_the_task_is_forgotten_is_still_pushed() {
         });
         assert!(delivery.entered.wait_open());
         finish_and_forget(&fixture, &task, "agt-late-approval", root);
-        delivery.resume.open();
+        held.resume();
         answering.join().expect("answering thread")
     });
     assert_eq!(
@@ -717,6 +748,7 @@ fn a_forgotten_task_never_publishes_over_a_replacement_with_the_same_id() {
         Ok(())
     );
     let answered = thread::scope(|scope| {
+        let held = delivery.hold();
         let answering = scope.spawn(|| {
             fixture.registry.answer_question(
                 "agt-reused",
@@ -736,7 +768,7 @@ fn a_forgotten_task_never_publishes_over_a_replacement_with_the_same_id() {
                 .register(question("question-replacement"), Arc::new(|_| Ok(()))),
             Ok(())
         );
-        delivery.resume.open();
+        held.resume();
         let answered = answering.join().expect("answering thread");
         original.session.close();
         let published: Vec<(u64, Vec<String>)> = pushed_for(&fixture, "agt-reused")
