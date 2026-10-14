@@ -192,6 +192,23 @@ describe("how a runtime request ended", () => {
     ).toBe("This was allowed for the rest of the session.");
   });
 
+  it("says that a wider grant on a remote runner lasted for the turn", () => {
+    const base = wireValue("resolvedApproval");
+    const request = wireRequest("resolvedApproval", {
+      body: { ...(base.body as Patch), decisions: AGENT_APPROVAL_DECISIONS },
+      resolution: { kind: "decision", decision: "allowForSession" },
+    });
+
+    expect(presentAgentRuntimeRequest(request, "turn")).toMatchObject({
+      summary: "Allowed for this turn",
+      ending: "This was allowed for the rest of the turn.",
+    });
+    expect(presentAgentRuntimeRequest(request)).toMatchObject({
+      summary: "Allowed for this session",
+      ending: "This was allowed for the rest of the session.",
+    });
+  });
+
   it("rejects a close reason, status or body kind it does not know", () => {
     expect(() =>
       agentRuntimeRequestEnding(

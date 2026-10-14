@@ -12,7 +12,7 @@ describe("App agent and updater composition", () => {
     const gateways = readFileSync(new URL("./workbenchComposition.ts", import.meta.url), "utf8");
     expect(source).toContain("...agentControllerGateways,");
     expect(gateways).toContain("agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway()");
-    expect(gateways).toContain("agentQuestionGateway: new TauriAgentQuestionGateway()");
+    expect(gateways).not.toContain("agentQuestionGateway");
     expect(source).not.toContain("agentCliVersionGateway");
     expect(source).toMatch(/<WorkbenchOverlayDialogsHost\s+appUpdater=\{appUpdater\}/u);
     expect(source).not.toContain("<WorkbenchAppUpdaterHost");

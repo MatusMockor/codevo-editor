@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { isAgentApprovalGateway } from "../application/agentApprovalPorts";
-import type {
-  AgentLocalQuestionOwner,
-  AgentRemoteQuestionOwner,
-} from "../application/agentQuestionPorts";
+import type { AgentLocalQuestionOwner } from "../application/agentQuestionPorts";
 import { TauriAgentQuestionGateway } from "./tauriAgentQuestionGateway";
 
 const local: AgentLocalQuestionOwner = {
@@ -11,12 +8,12 @@ const local: AgentLocalQuestionOwner = {
   workspaceId: "workspace",
   taskId: "task",
 };
-const remote: AgentRemoteQuestionOwner = {
+const remote = {
   kind: "remote",
   serverId: "server",
   runnerId: "runner",
   taskId: "task",
-};
+} as const;
 const question = {
   id: "question",
   taskId: "task",
@@ -73,37 +70,23 @@ describe("TauriAgentQuestionGateway", () => {
     });
   });
 
-  it("keeps the remote answer command unchanged and no longer lists remote questions", async () => {
-    const invoke = vi.fn().mockResolvedValueOnce(answered);
+  it("has no remote answer path and no longer lists questions", async () => {
+    const invoke = vi.fn().mockResolvedValue(answered);
     const gateway = new TauriAgentQuestionGateway(invoke);
+    const foreign: unknown = remote;
 
-    await expect(gateway.answer(remote, "question", response)).resolves.toMatchObject({
-      status: "answered",
-    });
+    await expect(
+      gateway.answer(foreign as AgentLocalQuestionOwner, "question", response),
+    ).rejects.toThrow();
 
     expect("list" in gateway).toBe(false);
-    expect(invoke.mock.calls).toStrictEqual([
-      [
-        "answer_remote_agent_question",
-        {
-          request: {
-            serverId: "server",
-            runnerId: "runner",
-            taskId: "task",
-            requestId: "question",
-            response,
-          },
-        },
-      ],
-    ]);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it.each([
     ["blank workspace", { ...local, workspaceId: "" }],
     ["path-like workspace", { ...local, workspaceId: "/repo" }],
     ["blank task", { ...local, taskId: "" }],
-    ["blank server", { ...remote, serverId: "" }],
-    ["blank runner", { ...remote, runnerId: "" }],
   ])("rejects an owner with %s before invoking native", async (_label, owner) => {
     const invoke = vi.fn();
     const gateway = new TauriAgentQuestionGateway(invoke);
@@ -113,11 +96,11 @@ describe("TauriAgentQuestionGateway", () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it.each([local, remote])("rejects mismatched answer receipts for $kind", async (owner) => {
+  it("rejects mismatched answer receipts", async () => {
     const gateway = new TauriAgentQuestionGateway(
       vi.fn().mockResolvedValue({ ...answered, id: "foreign" }),
     );
-    await expect(gateway.answer(owner, question.id, response)).rejects.toThrow();
+    await expect(gateway.answer(local, question.id, response)).rejects.toThrow();
   });
 
   it("rejects an answer receipt that belongs to another task", async () => {

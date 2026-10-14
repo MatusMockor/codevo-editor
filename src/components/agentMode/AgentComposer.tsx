@@ -15,7 +15,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
-import { AlertTriangle, Paperclip } from "lucide-react";
+import { Paperclip } from "lucide-react";
 import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
@@ -84,7 +84,6 @@ import {
 import { AgentComposerDrawerStart } from "./AgentComposerDrawerStart";
 import { AgentEndSessionConfirmationBanner } from "./AgentEndSessionConfirmationBanner";
 import type { AgentEndSessionConfirmationView } from "./useAgentEndSessionCommand";
-import { ComposerBanner } from "../../ui/foundation/ComposerBanner";
 import { AgentSessionRestartBanner } from "./AgentSessionRestartBanner";
 import type { AgentSessionRestartConfirmation } from "./useAgentSessionRestartConsent";
 import { IconButton } from "../../ui/foundation/IconButton";
@@ -290,7 +289,7 @@ export function AgentComposer({
   const compact = useCompactComposerControls(composerRef);
   const favorites = useAgentModelFavorites(modelFavoritesPersistence);
   const followUp = mode.kind !== "new";
-  const interactionActive = interaction !== null && interaction.kind !== "notice";
+  const interactionActive = interaction !== null;
   const slabRef = useRef<HTMLDivElement>(null);
   useAgentComposerFocusReturn(interactionActive, slabRef, textareaRef);
   useAgentStopConfirmationFocus(stopConfirmation?.kind ?? null, textareaRef);
@@ -895,11 +894,6 @@ export function AgentComposer({
             }
           />
           {queuedEdit !== null && <AgentComposerQueuedEditBar edit={queuedEdit} />}
-          {interaction?.kind === "notice" && (
-            <ComposerBanner icon={<AlertTriangle size={12} strokeWidth={1.5} />} tone="warn">
-              {interaction.text}
-            </ComposerBanner>
-          )}
         </>
       }
       drawerEnd={renderDrawerEnd === undefined ? null : renderDrawerEnd(drawerContext)}

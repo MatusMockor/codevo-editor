@@ -11,7 +11,7 @@ pub(super) const CONNECTION_FAILED: &str =
 const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging,runtimeRequests";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging,runtimeRequests,interactiveApprovals";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -629,16 +629,15 @@ mod tests {
     #[test]
     fn announced_token_count_is_pinned_below_the_runner_limit_of_sixteen() {
         const RUNNER_TOKEN_LIMIT: usize = 16;
-        const DEFERRED_INTERACTION_TOKENS: [&str; 1] = ["interactiveApprovals"];
+        const INTERACTION_TOKENS: [&str; 2] = ["runtimeRequests", "interactiveApprovals"];
         let tokens: Vec<&str> = CLIENT_CAPABILITIES.split(',').collect();
         let unique: std::collections::HashSet<&str> = tokens.iter().copied().collect();
-        assert_eq!(tokens.len(), 13);
+        assert_eq!(tokens.len(), 14);
         assert_eq!(unique.len(), tokens.len());
         assert!(tokens.len() <= RUNNER_TOKEN_LIMIT);
-        for token in DEFERRED_INTERACTION_TOKENS {
-            assert!(!tokens.contains(&token), "{token}");
+        for token in INTERACTION_TOKENS {
+            assert!(tokens.contains(&token), "{token}");
         }
-        assert!(tokens.len() + DEFERRED_INTERACTION_TOKENS.len() <= RUNNER_TOKEN_LIMIT);
     }
 
     #[test]

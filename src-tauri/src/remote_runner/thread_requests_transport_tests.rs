@@ -166,8 +166,8 @@ fn server_a_can_neither_read_nor_answer_through_server_b() {
             .split(',')
             .collect();
         assert!(tokens.contains(&"runtimeRequests"));
-        assert!(!tokens.contains(&"interactiveApprovals"));
-        assert_eq!(tokens.len(), 13);
+        assert!(tokens.contains(&"interactiveApprovals"));
+        assert_eq!(tokens.len(), 14);
     }
     let text = format!(
         "{}{}{}{}",

@@ -7,6 +7,8 @@ import type {
 
 export type AgentApprovalActionTone = "primary" | "secondary" | "danger";
 
+export type AgentApprovalGrantScope = "session" | "turn";
+
 export interface AgentApprovalAction {
   readonly decision: AgentApprovalDecision;
   readonly label: string;
@@ -34,14 +36,18 @@ const DETAIL_LABEL: Record<AgentApprovalKind, string> = {
   mcpElicitation: "Message",
 };
 
-function actionLabel(kind: AgentApprovalKind, decision: AgentApprovalDecision): string {
+function actionLabel(
+  kind: AgentApprovalKind,
+  decision: AgentApprovalDecision,
+  grant: AgentApprovalGrantScope,
+): string {
   if (kind === "plan") return decision === "deny" ? "Keep planning" : "Approve plan";
   if (kind === "mcpElicitation") return decision === "deny" ? "Decline" : "Accept";
   switch (decision) {
     case "allowOnce":
       return "Approve";
     case "allowForSession":
-      return "Approve for this session";
+      return `Approve for this ${grant}`;
     case "deny":
       return "Decline";
     default: {
@@ -66,14 +72,14 @@ function tone(decision: AgentApprovalDecision): AgentApprovalActionTone {
   }
 }
 
-function statusText(request: AgentApprovalRequest): string {
+function statusText(request: AgentApprovalRequest, grant: AgentApprovalGrantScope): string {
   const plan = request.kind === "plan";
   switch (request.status) {
     case "pending":
       return plan ? "Waiting for you to review the plan" : "Waiting for your approval";
     case "approved":
       if (plan) return "Plan approved";
-      return request.decision === "allowForSession" ? "Allowed for this session" : "Allowed once";
+      return request.decision === "allowForSession" ? `Allowed for this ${grant}` : "Allowed once";
     case "denied":
       return plan ? "Kept planning" : "Denied";
     case "cancelled":
@@ -89,7 +95,10 @@ function statusText(request: AgentApprovalRequest): string {
   }
 }
 
-export function presentAgentApproval(request: AgentApprovalRequest): AgentApprovalView {
+export function presentAgentApproval(
+  request: AgentApprovalRequest,
+  grant: AgentApprovalGrantScope = "session",
+): AgentApprovalView {
   const pending = request.status === "pending";
   return {
     id: request.id,
@@ -106,11 +115,11 @@ export function presentAgentApproval(request: AgentApprovalRequest): AgentApprov
     actions: pending
       ? request.decisions.map((decision) => ({
           decision,
-          label: actionLabel(request.kind, decision),
+          label: actionLabel(request.kind, decision, grant),
           tone: tone(decision),
         }))
       : [],
-    statusText: statusText(request),
+    statusText: statusText(request, grant),
   };
 }
 

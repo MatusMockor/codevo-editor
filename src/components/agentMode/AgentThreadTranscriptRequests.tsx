@@ -4,6 +4,7 @@ import type { AgentThreadRequestGaps } from "../../application/useAgentThreadRun
 import type { AgentTurn } from "../../domain/agentThread";
 import { AgentRuntimeRequestsProvider } from "./AgentRuntimeRequestRow";
 import {
+  AgentApprovalGrantScopeContext,
   AgentThreadRequestsScopeContext,
   AgentThreadRequestTurnsReportContext,
 } from "./agentThreadRequestsScopeContext";
@@ -31,14 +32,16 @@ export function AgentThreadTranscriptRequests({
   if (shared === null || shared.threadId !== threadId) return children;
   const note = agentRequestHistoryNote(shared.requests.gaps);
   return (
-    <AgentRuntimeRequestsProvider requests={shared.requests.byTurn}>
-      {note !== null && (
-        <p className="agent-note" data-agent-request-history-note="" role="status">
-          {note}
-        </p>
-      )}
-      {children}
-    </AgentRuntimeRequestsProvider>
+    <AgentApprovalGrantScopeContext.Provider value={shared.remote ? "turn" : "session"}>
+      <AgentRuntimeRequestsProvider requests={shared.requests.byTurn}>
+        {note !== null && (
+          <p className="agent-note" data-agent-request-history-note="" role="status">
+            {note}
+          </p>
+        )}
+        {children}
+      </AgentRuntimeRequestsProvider>
+    </AgentApprovalGrantScopeContext.Provider>
   );
 }
 

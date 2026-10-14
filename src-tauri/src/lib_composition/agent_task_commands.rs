@@ -33,8 +33,8 @@ use crate::agent_task_supervisor::{
     AgentInteractionSnapshot, AgentTaskEventSink, AgentTaskIsolation, AgentTaskMetadata,
     AgentTaskOutputEvent, AgentTaskRegistry,
     AgentTaskStartRequest as AgentTaskRegistryStartRequest, AgentTaskStartResult,
-    AgentTaskStatusEvent, AGENT_TASK_INTERACTIONS_EVENT_CHANNEL, AGENT_TASK_OUTPUT_EVENT_CHANNEL,
-    AGENT_TASK_STARTS_CLOSED_ERROR, AGENT_TASK_STATUS_EVENT_CHANNEL, DUPLICATE_AGENT_TASK_ERROR,
+    AgentTaskStatusEvent, AGENT_TASK_OUTPUT_EVENT_CHANNEL, AGENT_TASK_STARTS_CLOSED_ERROR,
+    AGENT_TASK_STATUS_EVENT_CHANNEL, DUPLICATE_AGENT_TASK_ERROR,
 };
 use crate::effective_executable_environment::EffectiveExecutablePath;
 use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
@@ -214,9 +214,6 @@ impl AgentTaskEventSink for AppHandleAgentTaskEventSink {
     }
 
     fn interactions(&self, task: &AgentTaskMetadata, snapshot: AgentInteractionSnapshot) {
-        let _ = self
-            .app
-            .emit(AGENT_TASK_INTERACTIONS_EVENT_CHANNEL, &snapshot);
         let Some(journal) = self.app.try_state::<Arc<RuntimeRequestJournal>>() else {
             return;
         };

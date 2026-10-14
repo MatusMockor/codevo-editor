@@ -8,10 +8,8 @@ import type {
   RemoteAgentThreadRequestConfirmation,
   RemoteAgentThreadRequestRespondOutcome,
 } from "./remoteAgentThreadRequestFeed";
+import type { RemoteAgentThreadRequestResponse } from "./remoteAgentThreadRequestPorts";
 import type { RemoteAgentThreadRequestControl } from "./unifiedAgentThreadRequestFeed";
-
-export const AGENT_REMOTE_APPROVAL_READ_ONLY =
-  "Approvals on a remote server can't be answered from Codevo yet.";
 
 export type AgentThreadRequestReply =
   | { readonly kind: "question"; readonly answers: readonly AgentQuestionAnswer[] }
@@ -21,7 +19,6 @@ export type AgentThreadRequestDelivery =
   RemoteAgentThreadRequestRespondOutcome | { readonly kind: "notSent"; readonly reason: "failed" };
 
 export interface AgentThreadRequestResponder {
-  readOnlyReason(request: AgentRuntimeRequest): string | null;
   respond(
     request: AgentRuntimeRequest,
     reply: AgentThreadRequestReply,
@@ -39,7 +36,6 @@ export function localAgentThreadRequestResponder(
   workspaceId: string,
 ): AgentThreadRequestResponder {
   return {
-    readOnlyReason: () => null,
     reconfirm: () => Promise.resolve(UNCONFIRMED),
     respond: async (request, reply) => {
       const owner: AgentLocalQuestionOwner = { kind: "local", workspaceId, taskId: request.turnId };
@@ -58,14 +54,33 @@ export function remoteAgentThreadRequestResponder(
   scope: AgentThreadRequestScope,
 ): AgentThreadRequestResponder {
   return {
-    readOnlyReason: (request) =>
-      request.body.kind === "approval" ? AGENT_REMOTE_APPROVAL_READ_ONLY : null,
     respond: (request, reply) => {
-      if (reply.kind === "approval") return Promise.resolve(REFUSED);
-      return control.respond(scope, request.turnId, request.id, reply);
+      const response = remoteResponse(request, reply);
+      if (response === null) return Promise.resolve(REFUSED);
+      return control.respond(scope, request.turnId, request.id, response);
     },
     reconfirm: (request) => control.confirm(scope, request.turnId, request.id),
   };
+}
+
+function remoteResponse(
+  request: AgentRuntimeRequest,
+  reply: AgentThreadRequestReply,
+): RemoteAgentThreadRequestResponse | null {
+  const kind = reply.kind;
+  switch (kind) {
+    case "question":
+      if (request.body.kind !== "question") return null;
+      return { kind, answers: reply.answers };
+    case "approval":
+      if (request.body.kind !== "approval") return null;
+      if (!request.body.decisions.includes(reply.decision)) return null;
+      return { kind, decision: reply.decision };
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
 }
 
 async function sendLocally(

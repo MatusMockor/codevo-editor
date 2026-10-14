@@ -103,6 +103,16 @@ impl UnservedScopes {
         Some((scope.clone(), thread_id))
     }
 
+    pub fn next_probe_in(&self, now: Instant, interval: Duration) -> Duration {
+        self.locked()
+            .entries
+            .values()
+            .map(|entry| (entry.probed_at + interval).saturating_duration_since(now))
+            .min()
+            .unwrap_or(interval)
+            .min(interval)
+    }
+
     pub fn failing(&self) -> usize {
         self.locked().entries.len()
     }

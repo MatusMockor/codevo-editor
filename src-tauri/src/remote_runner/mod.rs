@@ -24,7 +24,6 @@ mod launch;
 mod mcp_server_manage_wire;
 mod pending_messages;
 mod project_clone;
-mod questions;
 mod repository;
 mod repository_identity;
 mod service;
@@ -45,16 +44,13 @@ pub use service::RemoteRunnerState;
 
 pub use artifacts::*;
 
-pub use questions::*;
-
 mod interactions;
+#[cfg(test)]
+mod interactions_fake;
 mod interactions_ledger;
 mod interactions_respond;
 mod interactions_rules;
 mod interactions_wire;
-pub use interactions::*;
-#[cfg(test)]
-mod interactions_fake;
 mod send_gate;
 mod thread_requests;
 mod thread_requests_budget;

@@ -5,6 +5,7 @@ import type {
 } from "../../../application/useAgentThreadPendingRequests";
 import type { AgentRuntimeRequest } from "../../../domain/agentRuntimeRequest";
 import { agentRuntimeRequestOf } from "../../../test/agentThreadRequestFeedFake";
+import type { AgentApprovalGrantScope } from "../agentApprovalPresenter";
 import { AGENT_REQUEST_CHECKING, pickAgentComposerInteraction } from "./agentComposerInteraction";
 
 const NO_ATTACHMENTS = { kind: "unavailable", reason: "No attachments." } as const;
@@ -21,8 +22,18 @@ function item(
 const approval = agentRuntimeRequestOf("pendingApproval", { turnId: "turn" });
 const question = agentRuntimeRequestOf("pendingQuestion", { turnId: "turn" });
 
-function pick(requests: readonly AgentThreadPendingRequest[], respond = vi.fn()) {
-  return pickAgentComposerInteraction({ requests, attachments: NO_ATTACHMENTS, respond });
+function pick(
+  requests: readonly AgentThreadPendingRequest[],
+  respond = vi.fn(),
+  grant: AgentApprovalGrantScope = "session",
+) {
+  return pickAgentComposerInteraction({ requests, attachments: NO_ATTACHMENTS, grant, respond });
+}
+
+function actionLabels(grant: AgentApprovalGrantScope): readonly string[] {
+  const picked = pick([item(approval)], vi.fn(), grant);
+  expect(picked?.kind).toBe("approval");
+  return picked?.kind === "approval" ? picked.view.actions.map((action) => action.label) : [];
 }
 
 describe("pickAgentComposerInteraction", () => {
@@ -34,6 +45,11 @@ describe("pickAgentComposerInteraction", () => {
     expect(picked?.kind === "approval" && picked.pendingCount).toBe(2);
     expect(picked?.kind === "approval" && picked.sending).toBe(true);
     expect(picked?.key).toBe("approval:turn:req-0002");
+  });
+
+  it("offers exactly the request's decisions and words the wider grant by where it ends", () => {
+    expect(actionLabels("session")).toEqual(["Approve", "Approve for this session", "Decline"]);
+    expect(actionLabels("turn")).toEqual(["Approve", "Approve for this turn", "Decline"]);
   });
 
   it("routes a decision and an answer to the picked request only", async () => {

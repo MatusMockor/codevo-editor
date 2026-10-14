@@ -115,7 +115,6 @@ pub const MAX_UNACKNOWLEDGED_AGENT_OUTPUT_EVENTS: usize = 64;
 
 pub const AGENT_TASK_STATUS_EVENT_CHANNEL: &str = "agent-task://status";
 pub const AGENT_TASK_OUTPUT_EVENT_CHANNEL: &str = "agent-task://output";
-pub const AGENT_TASK_INTERACTIONS_EVENT_CHANNEL: &str = "agent-task://interactions";
 
 pub(crate) const DUPLICATE_AGENT_TASK_ERROR: &str =
     "An agent task with this taskId already exists.";

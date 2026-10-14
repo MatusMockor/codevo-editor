@@ -8,6 +8,7 @@ import {
 } from "./agentThreadRequestDeliveryLedger";
 import {
   AGENT_REQUEST_NOT_ANSWERABLE,
+  agentThreadRequestProjection,
   deliveryAfterConfirmation,
   deliveryAfterOutcome,
   deliveryAfterProjection,
@@ -20,6 +21,7 @@ import type {
   AgentThreadRequestReply,
   AgentThreadRequestResponder,
 } from "./agentThreadRequestResponders";
+import type { AgentThreadRequestClosure } from "./useAgentThreadRuntimeRequests";
 
 export const AGENT_REQUEST_NOT_LIVE = "This request can no longer be answered here.";
 
@@ -46,7 +48,7 @@ export interface AgentThreadPendingRequestsInput {
   readonly ledger: AgentThreadRequestDeliveryLedger;
   readonly ownerKey: string | null;
   readonly open: readonly AgentRuntimeRequest[];
-  readonly covered: ReadonlySet<string>;
+  readonly closure: AgentThreadRequestClosure;
   readonly responder: AgentThreadRequestResponder | null;
   readonly reachable: boolean;
 }
@@ -84,7 +86,7 @@ export function useAgentThreadPendingRequests({
   ledger,
   ownerKey,
   open,
-  covered,
+  closure,
   responder,
   reachable,
 }: AgentThreadPendingRequestsInput): AgentThreadPendingRequests {
@@ -93,9 +95,10 @@ export function useAgentThreadPendingRequests({
   const latest = useRef({ ownerKey, open, responder });
   const shown = useRef<readonly AgentThreadPendingRequest[]>(NO_ITEMS);
 
+  const answerable = responder !== null && reachable;
   const items = useMemo(
-    () => stable(shown.current, present(open, deliveries, responder, reachable)),
-    [deliveries, open, reachable, responder],
+    () => stable(shown.current, present(open, deliveries, answerable)),
+    [answerable, deliveries, open],
   );
 
   useEffect(() => {
@@ -120,13 +123,16 @@ export function useAgentThreadPendingRequests({
   useEffect(() => {
     if (ownerKey === null) return;
     const byKey = new Map(open.map((request) => [agentThreadPendingRequestKey(request), request]));
+    const closed = new Set(closure.closed.map(agentThreadPendingRequestKey));
     for (const [key, record] of deliveries) {
-      const decided = deliveryAfterProjection(record, byKey.get(key), covered.has(turnIdOf(key)));
+      const evidence = closed.has(key) || closure.listedTurnIds.has(turnIdOf(key));
+      const projection = agentThreadRequestProjection(byKey.get(key), evidence);
+      const decided = deliveryAfterProjection(record, projection);
       if (decided === null) continue;
       if (!ledger.write(ownerKey, key, decided.next, record.attempt)) continue;
       settle(key, record.attempt, decided.release);
     }
-  }, [covered, deliveries, ledger, open, ownerKey, settle]);
+  }, [closure, deliveries, ledger, open, ownerKey, settle]);
 
   useAgentThreadRequestReconfirmation({
     ledger,
@@ -202,8 +208,7 @@ function release(
 function present(
   open: readonly AgentRuntimeRequest[],
   deliveries: AgentThreadRequestDeliveries,
-  responder: AgentThreadRequestResponder | null,
-  reachable: boolean,
+  sendable: boolean,
 ): readonly AgentThreadPendingRequest[] {
   if (open.length === 0) return NO_ITEMS;
   return open.map((request) => {
@@ -212,7 +217,7 @@ function present(
     return {
       key,
       request,
-      state: stateOf(request, delivery, responder, reachable),
+      state: stateOf(request, delivery, sendable),
       error: delivery?.kind === "refused" ? delivery.error : null,
     };
   });
@@ -221,16 +226,13 @@ function present(
 function stateOf(
   request: AgentRuntimeRequest,
   delivery: AgentThreadRequestDeliveryRecord | undefined,
-  responder: AgentThreadRequestResponder | null,
-  reachable: boolean,
+  sendable: boolean,
 ): AgentThreadPendingRequestState {
   const sending = sendingState(delivery);
   if (sending !== null) return sending;
   if (request.status !== "pending") return NOT_LIVE;
-  const reason = responder?.readOnlyReason(request) ?? null;
-  if (reason !== null) return { kind: "readOnly", reason };
   if (delivery?.kind === "closed" && delivery.version === request.version) return NOT_ANSWERABLE;
-  if (responder === null || !reachable) return DISABLED;
+  if (!sendable) return DISABLED;
   return ANSWERABLE;
 }
 

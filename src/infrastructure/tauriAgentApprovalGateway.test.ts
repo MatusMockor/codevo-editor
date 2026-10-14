@@ -7,12 +7,6 @@ const owner: AgentApprovalOwner = {
   workspaceId: "workspace",
   taskId: "task-1",
 };
-const remoteOwner: AgentApprovalOwner = {
-  kind: "remote",
-  serverId: "server",
-  runnerId: "runner",
-  taskId: "task-1",
-};
 const wire = {
   id: "codex-question-1",
   taskId: "task-1",
@@ -102,6 +96,7 @@ describe("TauriAgentApprovalGateway", () => {
     ["a blank workspace", { ...owner, workspaceId: "" }, wire.id, "deny"],
     ["a path-like workspace", { ...owner, workspaceId: "/repo" }, wire.id, "deny"],
     ["a blank task", { ...owner, taskId: "" }, wire.id, "deny"],
+    ["a remote owner", { kind: "remote", serverId: "server", taskId: "task-1" }, wire.id, "deny"],
   ])("rejects %s before invoking native", async (_label, invalidOwner, requestId, decision) => {
     const invoke = vi.fn();
     const gateway = new TauriAgentApprovalGateway(invoke);
@@ -109,17 +104,6 @@ describe("TauriAgentApprovalGateway", () => {
     await expect(
       gateway.answerApproval(invalidOwner as AgentApprovalOwner, requestId, decision as "deny"),
     ).rejects.toThrow();
-
-    expect(invoke).not.toHaveBeenCalled();
-  });
-
-  it("keeps remote approvals unavailable without invoking native", async () => {
-    const invoke = vi.fn();
-    const gateway = new TauriAgentApprovalGateway(invoke);
-
-    await expect(gateway.answerApproval(remoteOwner, wire.id, "deny")).rejects.toThrow(
-      "Remote approvals are unavailable.",
-    );
 
     expect(invoke).not.toHaveBeenCalled();
   });

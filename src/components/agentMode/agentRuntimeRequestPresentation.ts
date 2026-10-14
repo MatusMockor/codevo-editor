@@ -11,7 +11,7 @@ import type {
   AgentRuntimeRequestCloseReason,
 } from "../../domain/agentRuntimeRequest";
 import type { ClosedAgentRuntimeRequest } from "../../domain/agentTurnRequestRows";
-import { presentAgentApproval } from "./agentApprovalPresenter";
+import { presentAgentApproval, type AgentApprovalGrantScope } from "./agentApprovalPresenter";
 import type { AgentTurnAttachmentView } from "./agentTurnAttachmentPresentation";
 
 export const AGENT_REQUEST_ROW_LIMITS = {
@@ -124,15 +124,19 @@ const ANSWER_NOT_RECORDED_NOTE = "Answer not recorded";
 
 export function presentAgentRuntimeRequest(
   request: ClosedAgentRuntimeRequest,
+  grant: AgentApprovalGrantScope = "session",
 ): AgentRuntimeRequestView {
   if (isQuestionRequest(request)) return presentQuestion(request);
-  if (isApprovalRequest(request)) return presentApproval(request);
+  if (isApprovalRequest(request)) return presentApproval(request, grant);
   return unsupported(request);
 }
 
-export function agentRuntimeRequestEnding(request: ClosedAgentRuntimeRequest): string {
+export function agentRuntimeRequestEnding(
+  request: ClosedAgentRuntimeRequest,
+  grant: AgentApprovalGrantScope = "session",
+): string {
   if (isQuestionRequest(request)) return questionEnding(request);
-  if (isApprovalRequest(request)) return approvalEnding(request);
+  if (isApprovalRequest(request)) return approvalEnding(request, grant);
   return unsupported(request);
 }
 
@@ -173,7 +177,10 @@ function presentQuestion(request: ClosedQuestionRequest): AgentRuntimeRequestVie
   };
 }
 
-function presentApproval(request: ClosedApprovalRequest): AgentRuntimeRequestView {
+function presentApproval(
+  request: ClosedApprovalRequest,
+  grant: AgentApprovalGrantScope,
+): AgentRuntimeRequestView {
   const body = request.body;
   const settled = request.status === "resolved";
   const decision = request.resolution?.decision ?? null;
@@ -196,8 +203,9 @@ function presentApproval(request: ClosedApprovalRequest): AgentRuntimeRequestVie
     settled,
     label: approvalLabel(body.approvalKind, settled ? decision : null),
     title: shortened(firstLine(body.title), AGENT_REQUEST_ROW_LIMITS.titleChars),
-    summary: decision === null ? null : decisionSummary(body.approvalKind, decision, settled),
-    ending: approvalEnding(request),
+    summary:
+      decision === null ? null : decisionSummary(body.approvalKind, decision, settled, grant),
+    ending: approvalEnding(request, grant),
     detail: {
       kind: "approval",
       heading: clampedText(
@@ -374,14 +382,15 @@ function decisionSummary(
   kind: AgentApprovalKind,
   decision: AgentApprovalDecision,
   settled: boolean,
+  grant: AgentApprovalGrantScope,
 ): string | null {
-  if (!settled) return `Sent: ${decisionPhrase(kind, decision)}`;
+  if (!settled) return `Sent: ${decisionPhrase(kind, decision, grant)}`;
   if (kind === "plan" || kind === "mcpElicitation") return null;
   switch (decision) {
     case "allowOnce":
       return "Allowed once";
     case "allowForSession":
-      return "Allowed for this session";
+      return `Allowed for this ${grant}`;
     case "deny":
       return null;
     default:
@@ -389,14 +398,18 @@ function decisionSummary(
   }
 }
 
-function decisionPhrase(kind: AgentApprovalKind, decision: AgentApprovalDecision): string {
+function decisionPhrase(
+  kind: AgentApprovalKind,
+  decision: AgentApprovalDecision,
+  grant: AgentApprovalGrantScope,
+): string {
   if (kind === "plan") return decision === "deny" ? "keep planning" : "approve the plan";
   if (kind === "mcpElicitation") return decision === "deny" ? "decline" : "accept";
   switch (decision) {
     case "allowOnce":
       return "allow once";
     case "allowForSession":
-      return "allow for this session";
+      return `allow for this ${grant}`;
     case "deny":
       return "deny";
     default:
@@ -409,13 +422,17 @@ function questionEnding(request: ClosedQuestionRequest): string {
   return unresolvedEnding(request.status, request.responseCapability.reason, QUESTION_WORDING);
 }
 
-function approvalEnding(request: ClosedApprovalRequest): string {
+function approvalEnding(request: ClosedApprovalRequest, grant: AgentApprovalGrantScope): string {
   if (request.status === "resolved")
-    return decidedEnding(request.body.approvalKind, request.resolution.decision);
+    return decidedEnding(request.body.approvalKind, request.resolution.decision, grant);
   return unresolvedEnding(request.status, request.responseCapability.reason, APPROVAL_WORDING);
 }
 
-function decidedEnding(kind: AgentApprovalKind, decision: AgentApprovalDecision): string {
+function decidedEnding(
+  kind: AgentApprovalKind,
+  decision: AgentApprovalDecision,
+  grant: AgentApprovalGrantScope,
+): string {
   if (kind === "plan")
     return decision === "deny" ? "The agent was asked to keep planning." : "The plan was approved.";
   if (kind === "mcpElicitation")
@@ -424,7 +441,7 @@ function decidedEnding(kind: AgentApprovalKind, decision: AgentApprovalDecision)
     case "allowOnce":
       return "This was allowed once.";
     case "allowForSession":
-      return "This was allowed for the rest of the session.";
+      return `This was allowed for the rest of the ${grant}.`;
     case "deny":
       return "This was denied.";
     default:

@@ -1222,6 +1222,8 @@ fn boot_identity_is_a_wire_identifier_and_differs_between_boots() {
 mod feed;
 #[path = "journal_loss_tests.rs"]
 mod loss;
+#[path = "probe_tests.rs"]
+mod probe;
 #[path = "projection_tests.rs"]
 mod projection;
 #[path = "projection_race_tests.rs"]

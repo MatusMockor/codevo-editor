@@ -1,6 +1,5 @@
 use super::*;
 use crate::agent_questions::approvals::{AgentApprovalDecision, AgentApprovalRequest};
-use crate::agent_questions::interactions::AgentInteractionSnapshot;
 use crate::agent_questions::{AgentQuestionRequest, AgentQuestionResponse};
 use crate::agent_runtime_requests::journal::RuntimeRequestJournal;
 use crate::agent_runtime_requests::model::RequestResolution;
@@ -9,12 +8,6 @@ use agent_answer_journal::JournaledAnswer;
 #[path = "agent_answer_journal.rs"]
 mod agent_answer_journal;
 const MAX_AGENT_INTERACTION_REQUEST_ID_BYTES: usize = 128;
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct InteractionOwner {
-    task_id: String,
-    workspace_id: WorkspaceId,
-}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct QuestionAnswerRequest {
@@ -50,14 +43,6 @@ fn ensure_request_id_bounds(request_id: &str) -> Result<(), String> {
         return Err("Invalid agent interaction request.".into());
     }
     Ok(())
-}
-fn owned_interactions(
-    workspaces: &WorkspaceRegistry,
-    tasks: &AgentTaskRegistry,
-    owner: &InteractionOwner,
-) -> Result<AgentInteractionSnapshot, String> {
-    let root = registered_workspace_root(workspaces, &owner.task_id, &owner.workspace_id)?;
-    tasks.interactions(&owner.task_id, owner.workspace_id.as_str(), &root)
 }
 fn answer_owned_question(
     workspaces: &WorkspaceRegistry,
@@ -118,20 +103,6 @@ fn deliver_approval_answer(
     let answered = tasks.answer_captured_approval(task, &request.request_id, request.decision);
     journaled.finish(&answered);
     answered
-}
-#[tauri::command]
-pub(crate) async fn get_agent_interactions(
-    app: AppHandle,
-    request: InteractionOwner,
-) -> Result<AgentInteractionSnapshot, String> {
-    run_blocking_command(move || {
-        owned_interactions(
-            &app.state::<WorkspaceRegistry>(),
-            &app.state::<AgentTaskRegistry>(),
-            &request,
-        )
-    })
-    .await
 }
 #[tauri::command]
 pub(crate) async fn answer_agent_question(

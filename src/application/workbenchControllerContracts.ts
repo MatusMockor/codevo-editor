@@ -4,7 +4,6 @@ import type { AgentRootLeaseGateway } from "../domain/agentProject";
 import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
-import type { AgentQuestionGateway } from "./agentQuestionPorts";
 import type { AgentThreadRequestFeed } from "./agentThreadRequestPorts";
 import type { AgentInlineImageGateway } from "./agentInlineImagePorts";
 import type { AgentSidebarRailPreferencePort } from "./useAgentWorkbenchLayout";
@@ -81,7 +80,6 @@ export interface WorkbenchControllerOptions {
   agentTaskGateway?: AgentTaskGateway;
   agentThreadSessionGateway?: AgentThreadSessionGateway;
   turnChangesGateway?: AgentTurnChangesGateway;
-  agentQuestionGateway?: AgentQuestionGateway;
   agentThreadRequestFeed?: AgentThreadRequestFeed;
   agentInlineImageGateway?: AgentInlineImageGateway;
   gitWorktreeGateway?: GitWorktreeGateway;

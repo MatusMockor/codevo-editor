@@ -1,7 +1,7 @@
 import type { AgentApprovalDecision, AgentApprovalRequest } from "../domain/agentApproval";
-import type { AgentQuestionOwner } from "./agentQuestionPorts";
+import type { AgentLocalQuestionOwner } from "./agentQuestionPorts";
 
-export type AgentApprovalOwner = AgentQuestionOwner;
+export type AgentApprovalOwner = AgentLocalQuestionOwner;
 
 export interface AgentApprovalGateway {
   answerApproval(

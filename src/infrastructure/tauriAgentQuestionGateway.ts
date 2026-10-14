@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentApprovalGateway } from "../application/agentApprovalPorts";
-import type { AgentQuestionGateway, AgentQuestionOwner } from "../application/agentQuestionPorts";
+import type {
+  AgentLocalQuestionOwner,
+  AgentQuestionGateway,
+} from "../application/agentQuestionPorts";
 import type { AgentApprovalDecision, AgentApprovalRequest } from "../domain/agentApproval";
 import {
   parseAgentQuestionRequest,
@@ -8,13 +11,13 @@ import {
   type AgentQuestionResponse,
 } from "../domain/agentQuestion";
 import {
-  agentQuestionAuthority,
+  agentLocalQuestionAuthority,
   agentQuestionIdentifier as identifier,
 } from "./agentQuestionAuthority";
 import { TauriAgentApprovalGateway } from "./tauriAgentApprovalGateway";
 
 type Invoke = (command: string, args: { readonly request: unknown }) => Promise<unknown>;
-function request(value: unknown, owner: AgentQuestionOwner): AgentQuestionRequest {
+function request(value: unknown, owner: AgentLocalQuestionOwner): AgentQuestionRequest {
   const result = parseAgentQuestionRequest(value);
   if (result.taskId !== owner.taskId) throw new Error("Question belongs to another task.");
   return result;
@@ -64,25 +67,24 @@ export class TauriAgentQuestionGateway implements AgentQuestionGateway, AgentApp
     this.approvals = new TauriAgentApprovalGateway(invokeCommand);
   }
   answerApproval(
-    owner: AgentQuestionOwner,
+    owner: AgentLocalQuestionOwner,
     requestId: string,
     decision: AgentApprovalDecision,
   ): Promise<AgentApprovalRequest> {
     return this.approvals.answerApproval(owner, requestId, decision);
   }
   async answer(
-    owner: AgentQuestionOwner,
+    owner: AgentLocalQuestionOwner,
     requestId: string,
     response: AgentQuestionResponse,
   ): Promise<AgentQuestionRequest> {
-    const captured = agentQuestionAuthority(owner);
+    const captured = agentLocalQuestionAuthority(owner);
     identifier(requestId);
     const validated = outbound(response);
     const result = request(
-      await this.invokeCommand(
-        owner.kind === "local" ? "answer_agent_question" : "answer_remote_agent_question",
-        { request: { ...captured, requestId, response: validated } },
-      ),
+      await this.invokeCommand("answer_agent_question", {
+        request: { ...captured, requestId, response: validated },
+      }),
       owner,
     );
     if (result.id !== requestId || result.status !== "answered")

@@ -315,13 +315,6 @@ fn idle_tasks() -> AgentTaskRegistry {
     )
 }
 
-fn owner(descriptor: &ManagedWorkspaceDescriptor) -> InteractionOwner {
-    InteractionOwner {
-        task_id: TASK.to_string(),
-        workspace_id: descriptor.workspace_id.clone(),
-    }
-}
-
 fn question_answer(descriptor: &ManagedWorkspaceDescriptor) -> QuestionAnswerRequest {
     QuestionAnswerRequest {
         task_id: TASK.to_string(),
@@ -351,7 +344,6 @@ fn assert_every_command_is_rejected(
     tasks: &AgentTaskRegistry,
     descriptor: &ManagedWorkspaceDescriptor,
 ) {
-    assert!(owned_interactions(workspaces, tasks, &owner(descriptor)).is_err());
     assert!(answer_owned_question(
         workspaces,
         tasks,
@@ -380,21 +372,11 @@ fn assert_requests_stay_pending(turn: &RunningTurn) {
 }
 
 #[test]
-fn a_task_that_has_not_started_reads_as_the_empty_sequence_zero_snapshot() {
+fn a_task_that_has_not_started_cannot_be_answered() {
     let workspace = Workspace::create("not-started");
     let workspaces = WorkspaceRegistry::new();
     let descriptor = workspaces.register(&workspace.root).expect("register");
     let tasks = idle_tasks();
-    assert_eq!(
-        owned_interactions(&workspaces, &tasks, &owner(&descriptor)),
-        Ok(AgentInteractionSnapshot {
-            task_id: TASK.to_string(),
-            workspace_id: descriptor.workspace_id.as_str().to_string(),
-            sequence: 0,
-            questions: Vec::new(),
-            approvals: Vec::new(),
-        })
-    );
     assert!(answer_owned_question(
         &workspaces,
         &tasks,
@@ -412,25 +394,14 @@ fn a_task_that_has_not_started_reads_as_the_empty_sequence_zero_snapshot() {
 }
 
 #[test]
-fn a_task_in_a_nested_repository_is_read_and_answered_through_its_workspace() {
+fn a_task_in_a_nested_repository_is_answered_through_its_workspace() {
     let workspace = Workspace::create("nested");
     let repository = workspace.nested("pa-mcp-be");
     let workspaces = WorkspaceRegistry::new();
     let descriptor = workspaces.register(&workspace.root).expect("register");
     let turn = RunningTurn::start(&descriptor, &repository);
     turn.ask();
-
-    let snapshot =
-        owned_interactions(&workspaces, &turn.tasks, &owner(&descriptor)).expect("snapshot");
-    assert_eq!(snapshot.task_id, TASK);
-    assert_eq!(snapshot.workspace_id, descriptor.workspace_id.as_str());
-    assert!(snapshot.sequence >= 1);
-    assert_eq!(snapshot.questions.len(), 1);
-    assert_eq!(snapshot.questions[0].task_id, TASK);
-    assert_eq!(snapshot.questions[0].status, AgentQuestionStatus::Pending);
-    assert_eq!(snapshot.approvals.len(), 1);
-    assert_eq!(snapshot.approvals[0].task_id, TASK);
-    assert_eq!(snapshot.approvals[0].status, AgentApprovalStatus::Pending);
+    assert_requests_stay_pending(&turn);
 
     assert_eq!(
         answer_owned_question(
@@ -452,25 +423,23 @@ fn a_task_in_a_nested_repository_is_read_and_answered_through_its_workspace() {
         .map(|request| request.status),
         Ok(AgentApprovalStatus::Approved)
     );
-    let answered =
-        owned_interactions(&workspaces, &turn.tasks, &owner(&descriptor)).expect("snapshot");
-    assert!(answered.sequence > snapshot.sequence);
-    assert_eq!(answered.questions[0].status, AgentQuestionStatus::Answered);
-    assert_eq!(answered.approvals[0].status, AgentApprovalStatus::Approved);
+    assert_eq!(
+        turn.session.list(TASK)[0].status,
+        AgentQuestionStatus::Answered
+    );
+    assert_eq!(
+        turn.session.approvals().list(TASK)[0].status,
+        AgentApprovalStatus::Approved
+    );
 }
 
 #[test]
-fn a_task_at_the_workspace_root_is_read_and_answered() {
+fn a_task_at_the_workspace_root_is_answered() {
     let workspace = Workspace::create("root");
     let workspaces = WorkspaceRegistry::new();
     let descriptor = workspaces.register(&workspace.root).expect("register");
     let turn = RunningTurn::start(&descriptor, &workspace.root);
     turn.ask();
-    assert_eq!(
-        owned_interactions(&workspaces, &turn.tasks, &owner(&descriptor))
-            .map(|snapshot| (snapshot.questions.len(), snapshot.approvals.len())),
-        Ok((1, 1))
-    );
     assert_eq!(
         answer_owned_question(
             &workspaces,
@@ -484,7 +453,7 @@ fn a_task_at_the_workspace_root_is_read_and_answered() {
 }
 
 #[test]
-fn an_unregistered_workspace_cannot_read_or_answer_requests() {
+fn an_unregistered_workspace_cannot_answer_requests() {
     let workspace = Workspace::create("unregistered");
     let workspaces = WorkspaceRegistry::new();
     let descriptor = workspaces.register(&workspace.root).expect("register");
@@ -499,7 +468,7 @@ fn an_unregistered_workspace_cannot_read_or_answer_requests() {
 }
 
 #[test]
-fn a_replaced_workspace_generation_cannot_read_or_answer_requests() {
+fn a_replaced_workspace_generation_cannot_answer_requests() {
     let workspace = Workspace::create("replaced");
     let workspaces = WorkspaceRegistry::new();
     let original = workspaces.register(&workspace.root).expect("register");
@@ -517,7 +486,7 @@ fn a_replaced_workspace_generation_cannot_read_or_answer_requests() {
 }
 
 #[test]
-fn a_task_cannot_be_read_or_answered_through_another_workspace() {
+fn a_task_cannot_be_answered_through_another_workspace() {
     let owning = Workspace::create("owning");
     let foreign = Workspace::create("foreign");
     let workspaces = WorkspaceRegistry::new();
@@ -530,9 +499,14 @@ fn a_task_cannot_be_read_or_answered_through_another_workspace() {
     assert_every_command_is_rejected(&workspaces, &turn.tasks, &foreign_descriptor);
     assert_requests_stay_pending(&turn);
     assert_eq!(
-        owned_interactions(&workspaces, &turn.tasks, &owner(&owner_descriptor))
-            .map(|snapshot| snapshot.questions.len()),
-        Ok(1)
+        answer_owned_question(
+            &workspaces,
+            &turn.tasks,
+            &detached_journal(),
+            question_answer(&owner_descriptor)
+        )
+        .map(|request| request.status),
+        Ok(AgentQuestionStatus::Answered)
     );
 }
 
@@ -550,21 +524,6 @@ fn a_task_whose_repository_is_outside_the_workspace_root_is_rejected() {
 
 #[test]
 fn requests_identify_the_task_by_workspace_and_task_id_only() {
-    assert!(
-        serde_json::from_value::<InteractionOwner>(serde_json::json!({
-            "workspaceId": "workspace",
-            "taskId": TASK
-        }))
-        .is_ok()
-    );
-    assert!(
-        serde_json::from_value::<InteractionOwner>(serde_json::json!({
-            "workspaceId": "workspace",
-            "taskId": TASK,
-            "repositoryRoot": "/repo"
-        }))
-        .is_err()
-    );
     assert!(
         serde_json::from_value::<QuestionAnswerRequest>(serde_json::json!({
             "workspaceId": "workspace",

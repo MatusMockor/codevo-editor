@@ -14,12 +14,18 @@ export interface AgentThreadRequestGaps {
   readonly unsaved: boolean;
 }
 
+export interface AgentThreadRequestClosure {
+  readonly closed: readonly AgentRuntimeRequest[];
+  readonly listedTurnIds: ReadonlySet<string>;
+}
+
 export interface AgentThreadRuntimeRequests {
   readonly byTurn: AgentRuntimeRequestsByTurnId;
   readonly uncoveredTurnIds: ReadonlySet<string>;
   readonly coveredTurnIds: ReadonlySet<string>;
   readonly gaps: AgentThreadRequestGaps;
   readonly open: readonly AgentRuntimeRequest[];
+  readonly closure: AgentThreadRequestClosure;
 }
 
 interface Watched {
@@ -29,12 +35,14 @@ interface Watched {
   readonly covered: ReadonlySet<string>;
   readonly gaps: AgentThreadRequestGaps;
   readonly open: readonly AgentRuntimeRequest[];
+  readonly closed: readonly AgentRuntimeRequest[];
+  readonly listed: ReadonlySet<string>;
 }
 
 const TURN_SEPARATOR = "\u0001";
 const NO_REQUESTS_BY_TURN: AgentRuntimeRequestsByTurnId = new Map();
 const NO_TURN_IDS: ReadonlySet<string> = new Set();
-const NO_OPEN_REQUESTS: readonly AgentRuntimeRequest[] = Object.freeze([]);
+const NO_REQUESTS: readonly AgentRuntimeRequest[] = Object.freeze([]);
 const UNSAVED: AgentThreadRequestGaps = { incomplete: false, unsaved: true };
 const INCOMPLETE: AgentThreadRequestGaps = { incomplete: true, unsaved: false };
 const INCOMPLETE_AND_UNSAVED: AgentThreadRequestGaps = { incomplete: true, unsaved: true };
@@ -50,7 +58,9 @@ const NOTHING_WATCHED: Watched = {
   byTurn: NO_REQUESTS_BY_TURN,
   covered: NO_TURN_IDS,
   gaps: NO_AGENT_THREAD_REQUEST_GAPS,
-  open: NO_OPEN_REQUESTS,
+  open: NO_REQUESTS,
+  closed: NO_REQUESTS,
+  listed: NO_TURN_IDS,
 };
 
 export function useAgentThreadRuntimeRequests(
@@ -90,14 +100,17 @@ export function useAgentThreadRuntimeRequests(
   const byTurn = owned ? watched.byTurn : NO_REQUESTS_BY_TURN;
   const covered = owned ? watched.covered : NO_TURN_IDS;
   const gaps = owned ? watched.gaps : NO_AGENT_THREAD_REQUEST_GAPS;
-  const open = owned ? watched.open : NO_OPEN_REQUESTS;
+  const open = owned ? watched.open : NO_REQUESTS;
+  const closed = owned ? watched.closed : NO_REQUESTS;
+  const listedTurnIds = owned ? watched.listed : NO_TURN_IDS;
   const uncoveredTurnIds = useMemo(
     () => uncovered(signature === "" ? [] : signature.split(TURN_SEPARATOR), covered),
     [covered, signature],
   );
+  const closure = useMemo(() => ({ closed, listedTurnIds }), [closed, listedTurnIds]);
   return useMemo(
-    () => ({ byTurn, uncoveredTurnIds, coveredTurnIds: covered, gaps, open }),
-    [byTurn, covered, gaps, open, uncoveredTurnIds],
+    () => ({ byTurn, uncoveredTurnIds, coveredTurnIds: covered, gaps, open, closure }),
+    [byTurn, closure, covered, gaps, open, uncoveredTurnIds],
   );
 }
 
@@ -130,7 +143,9 @@ function observed(
         byTurn: NO_REQUESTS_BY_TURN,
         covered: NO_TURN_IDS,
         gaps: NO_AGENT_THREAD_REQUEST_GAPS,
-        open: NO_OPEN_REQUESTS,
+        open: NO_REQUESTS,
+        closed: NO_REQUESTS,
+        listed: NO_TURN_IDS,
       });
     case "observed": {
       const waiting = new Set(observation.pendingTurnIds);
@@ -142,6 +157,8 @@ function observed(
         covered,
         gaps: gapsOf(observation.state),
         open: openRequests(observation.state.requests, new Set(asked)),
+        closed: closedRequests(observation.state.requests),
+        listed: completelyListed(observation.state) ? covered : NO_TURN_IDS,
       });
     }
     default:
@@ -154,14 +171,18 @@ function settled(known: Watched | null, next: Watched): Watched {
   const byTurn = sharedMap(known.byTurn, next.byTurn);
   const covered = sameSet(known.covered, next.covered) ? known.covered : next.covered;
   const open = sameItems(known.open, next.open) ? known.open : next.open;
+  const closed = sameItems(known.closed, next.closed) ? known.closed : next.closed;
+  const listed = sameSet(known.listed, next.listed) ? known.listed : next.listed;
   if (
     byTurn === known.byTurn &&
     covered === known.covered &&
     next.gaps === known.gaps &&
-    open === known.open
+    open === known.open &&
+    closed === known.closed &&
+    listed === known.listed
   )
     return known;
-  return { ...next, byTurn, covered, open };
+  return { ...next, byTurn, covered, open, closed, listed };
 }
 
 function openRequests(
@@ -173,7 +194,18 @@ function openRequests(
       asked.has(request.turnId) &&
       (request.status === "pending" || request.status === "submitting"),
   );
-  return open.length === 0 ? NO_OPEN_REQUESTS : open;
+  return open.length === 0 ? NO_REQUESTS : open;
+}
+
+function closedRequests(requests: readonly AgentRuntimeRequest[]): readonly AgentRuntimeRequest[] {
+  const closed = requests.filter(
+    (request) => request.status !== "pending" && request.status !== "submitting",
+  );
+  return closed.length === 0 ? NO_REQUESTS : closed;
+}
+
+function completelyListed(state: AgentThreadRequestsState): boolean {
+  return !state.truncated && state.unreadable === 0;
 }
 
 function gapsOf(state: AgentThreadRequestsState): AgentThreadRequestGaps {

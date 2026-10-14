@@ -304,25 +304,6 @@ impl Delivery {
         }
         Err(InteractionError::Superseded)
     }
-
-    pub(super) fn settle<P: InteractionRunnerPort>(
-        self,
-        port: &P,
-    ) -> Result<RemoteRespondOutcome, InteractionError> {
-        self.settle_responded(port)
-            .map(|responded| responded.outcome)
-    }
-}
-
-pub(super) fn deliver<P: InteractionRunnerPort>(
-    port: &P,
-    runner: &str,
-    task: &str,
-    request_id: &str,
-    response: &RemoteRequestResponse,
-    now: Instant,
-) -> Delivery {
-    deliver_until(port, runner, task, (request_id, response), now, None)
 }
 
 pub(super) fn deliver_until<P: InteractionRunnerPort>(

@@ -10,6 +10,7 @@ import {
 import type { AgentThreadRequestFeed } from "../../../application/agentThreadRequestPorts";
 import { remoteAgentThreadRequestControl } from "../../../application/unifiedAgentThreadRequestFeed";
 import { useAgentThreadPendingRequests } from "../../../application/useAgentThreadPendingRequests";
+import type { AgentThreadRequestClosure } from "../../../application/useAgentThreadRuntimeRequests";
 import type { AgentRuntimeRequest } from "../../../domain/agentRuntimeRequest";
 import { AgentThreadRequestFeedContext } from "../agentThreadRequestFeedContext";
 import {
@@ -36,7 +37,10 @@ const NO_QUESTION_ATTACHMENTS: AgentComposerQuestionAttachmentTarget = {
   reason: AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
 };
 const NO_OPEN_REQUESTS: readonly AgentRuntimeRequest[] = Object.freeze([]);
-const NO_TURN_IDS: ReadonlySet<string> = new Set();
+const NO_CLOSURE: AgentThreadRequestClosure = Object.freeze({
+  closed: NO_OPEN_REQUESTS,
+  listedTurnIds: new Set<string>(),
+});
 
 export function AgentComposerInteractionSource({
   gateway,
@@ -55,7 +59,7 @@ export function AgentComposerInteractionSource({
     ledger: provided ?? fallback,
     ownerKey,
     open: owned?.requests.open ?? NO_OPEN_REQUESTS,
-    covered: owned?.requests.coveredTurnIds ?? NO_TURN_IDS,
+    closure: owned?.requests.closure ?? NO_CLOSURE,
     responder,
     reachable: owned?.reachable ?? false,
   });
@@ -66,9 +70,10 @@ export function AgentComposerInteractionSource({
     [attachmentKind, attachmentSubject],
   );
   const { items, respond } = pending;
+  const grant = owned?.remote === true ? "turn" : "session";
   const interaction = useMemo(
-    () => pickAgentComposerInteraction({ requests: items, attachments, respond }),
-    [attachments, items, respond],
+    () => pickAgentComposerInteraction({ requests: items, attachments, grant, respond }),
+    [attachments, grant, items, respond],
   );
   useLayoutEffect(() => {
     onChange(interaction);

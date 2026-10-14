@@ -39,6 +39,16 @@ impl RequestProjection {
         thread_id: &str,
         read: &mut ThreadRead<'_>,
     ) -> Result<(), StoreError> {
+        self.read_tracked_at(scope, thread_id, Instant::now(), read)
+    }
+
+    fn read_tracked_at(
+        &self,
+        scope: &HistoryScope,
+        thread_id: &str,
+        now: Instant,
+        read: &mut ThreadRead<'_>,
+    ) -> Result<(), StoreError> {
         let unserved = self.journal.unserved();
         let mark = unserved.mark();
         let result = self
@@ -50,7 +60,7 @@ impl RequestProjection {
             }
             return result;
         };
-        if unserved.failed(scope, thread_id, Instant::now()) {
+        if unserved.failed(scope, thread_id, now) {
             self.journal.request_rotation();
         }
         result
@@ -133,11 +143,18 @@ impl RequestProjection {
         }))
     }
 
-    pub fn probe_unserved(&self, interval: Duration) {
+    pub fn probe_next(&self, now: Instant, interval: Duration) -> bool {
         let unserved = self.journal.unserved();
-        let Some((scope, thread_id)) = unserved.due_probe(Instant::now(), interval) else {
-            return;
+        let Some((scope, thread_id)) = unserved.due_probe(now, interval) else {
+            return false;
         };
-        let _ = self.read_tracked(&scope, &thread_id, &mut |rows| rows.summary().map(drop));
+        let _ = self.read_tracked_at(&scope, &thread_id, now, &mut |rows| {
+            rows.summary().map(drop)
+        });
+        true
+    }
+
+    pub fn next_probe_in(&self, now: Instant, interval: Duration) -> Duration {
+        self.journal.unserved().next_probe_in(now, interval)
     }
 }

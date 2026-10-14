@@ -22,7 +22,6 @@ import { TauriAgentThreadSessionGateway } from "./infrastructure/tauriAgentThrea
 import { resolveTauriWorkspaceHome } from "./infrastructure/tauriHomeDirectory";
 import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
 import { BrowserAgentSidebarRailPreference } from "./infrastructure/browserAgentSidebarRailPreference";
-import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentThreadRequestFeed } from "./infrastructure/tauriAgentThreadRequestFeed";
 import { TauriRemoteAgentThreadRequestGateway } from "./infrastructure/tauriRemoteAgentThreadRequestGateway";
 import { createRemoteAgentThreadRequestFeed } from "./application/remoteAgentThreadRequestFeed";
@@ -146,7 +145,6 @@ export function createWorkbenchComposition() {
 
   const agentControllerGateways = {
     agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway(),
-    agentQuestionGateway: new TauriAgentQuestionGateway(),
     agentThreadRequestFeed,
     agentInlineImageGateway: new TauriAgentInlineImageGateway(),
     agentProviderGateway,

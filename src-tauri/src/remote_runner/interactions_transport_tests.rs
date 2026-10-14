@@ -88,15 +88,17 @@ fn real_transport_404_and_409_drive_fallback_and_not_answerable() {
         }
         (404, json!({"error": "not_found"}))
     });
-    let outcome = deliver(
+    let outcome = outcome_of(
+        deliver(
+            &lease,
+            "runner-a",
+            TASK,
+            QUESTION,
+            &choose("sqlite"),
+            Instant::now(),
+        ),
         &lease,
-        "runner-a",
-        TASK,
-        QUESTION,
-        &choose("sqlite"),
-        Instant::now(),
     )
-    .settle(&lease)
     .unwrap();
     assert_eq!(
         wire(&outcome),
@@ -135,39 +137,6 @@ fn real_transport_404_and_409_drive_fallback_and_not_answerable() {
 }
 
 #[test]
-fn read_finished_before_disconnect_and_reconnect_is_not_published() {
-    let (state, directory) = state();
-    let (first, first_listener) = connection("server-a", "runner-a");
-    state.install_connection(first);
-    let served_first = serve(first_listener, "runner-a", 2, |_| (200, live()));
-    let captured = admit_connection(&state, "server-a", "runner-a").unwrap();
-    let now = Instant::now();
-    let finished = read_under(&captured.clone(), "runner-a", TASK, now);
-    assert_eq!(finished.as_ref().map(|read| read.sequence), Ok(3));
-    state.disconnect("server-a", false).unwrap();
-    let (second, second_listener) = connection("server-a", "runner-a");
-    state.install_connection(second);
-    assert_eq!(
-        settle_read(&captured, finished).unwrap_err(),
-        InteractionError::Superseded
-    );
-    let served_second = serve(second_listener, "runner-a", 2, |_| {
-        (200, snapshot("answeredAndDecided"))
-    });
-    let current = admit_connection(&state, "server-a", "runner-a").unwrap();
-    let fresh = settle_read(
-        &current,
-        read_under(&current.clone(), "runner-a", TASK, now),
-    )
-    .unwrap();
-    assert_eq!(fresh.sequence, 6);
-    assert_eq!(served_first.join().expect("first runner").len(), 2);
-    assert_eq!(served_second.join().expect("second runner").len(), 2);
-    drop(state);
-    assert!(std::fs::remove_dir_all(directory).is_ok());
-}
-
-#[test]
 fn answer_finished_before_disconnect_and_reconnect_reports_uncertain_delivery() {
     let (state, directory) = state();
     let (first, first_listener) = connection("server-a", "runner-a");
@@ -194,7 +163,7 @@ fn answer_finished_before_disconnect_and_reconnect_reports_uncertain_delivery() 
     let (second, second_listener) = connection("server-a", "runner-a");
     state.install_connection(second);
     assert_eq!(
-        delivery.settle(&captured).unwrap_err(),
+        outcome_of(delivery, &captured).unwrap_err(),
         InteractionError::DeliveryUncertain
     );
     let served_first = served_first.join().expect("first runner");
@@ -241,7 +210,7 @@ fn answer_through_server_a_never_reaches_server_b() {
         now,
     );
     assert_eq!(
-        forged.settle(&through_a).unwrap_err(),
+        outcome_of(forged, &through_a).unwrap_err(),
         InteractionError::RunnerChanged
     );
     let delivery = deliver(
@@ -253,7 +222,7 @@ fn answer_through_server_a_never_reaches_server_b() {
         now,
     );
     assert_eq!(
-        delivery.settle(&through_a).unwrap_err(),
+        outcome_of(delivery, &through_a).unwrap_err(),
         InteractionError::TaskNotFound
     );
     assert_eq!(

@@ -2,6 +2,7 @@ import { createContext } from "react";
 import type { AgentThreadRequestDeliveryLedger } from "../../application/agentThreadRequestDeliveryLedger";
 import type { AgentThreadRequestScope } from "../../application/agentThreadRequestPorts";
 import type { AgentThreadRuntimeRequests } from "../../application/useAgentThreadRuntimeRequests";
+import type { AgentApprovalGrantScope } from "./agentApprovalPresenter";
 
 export interface AgentThreadRequestsScopeValue {
   readonly threadId: string;
@@ -26,3 +27,5 @@ export const AgentThreadRequestDeliveriesContext =
 
 export const AgentThreadRequestTurnsReportContext =
   createContext<AgentThreadRequestTurnsReport | null>(null);
+
+export const AgentApprovalGrantScopeContext = createContext<AgentApprovalGrantScope>("session");

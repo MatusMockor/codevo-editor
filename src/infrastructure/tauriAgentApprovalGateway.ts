@@ -25,7 +25,6 @@ export class TauriAgentApprovalGateway implements AgentApprovalGateway {
     requestId: string,
     decision: AgentApprovalDecision,
   ): Promise<AgentApprovalRequest> {
-    if (owner.kind === "remote") throw new Error("Remote approvals are unavailable.");
     const captured = agentLocalQuestionAuthority(owner);
     const id = agentApprovalId(requestId);
     const validated = parseAgentApprovalDecision(decision);

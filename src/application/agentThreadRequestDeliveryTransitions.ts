@@ -18,8 +18,15 @@ export interface AgentThreadRequestDeliveryStep {
   readonly confirmation: Promise<RemoteAgentThreadRequestConfirmation> | null;
 }
 
+export type AgentThreadRequestProjection =
+  | { readonly kind: "open"; readonly request: AgentRuntimeRequest }
+  | { readonly kind: "closed" }
+  | { readonly kind: "unknown" };
+
 const HOLD: AgentThreadRequestCardRelease = Object.freeze({ kind: "hold" });
 const RESOLVE: AgentThreadRequestCardRelease = Object.freeze({ kind: "resolve" });
+const CLOSED: AgentThreadRequestProjection = Object.freeze({ kind: "closed" });
+const UNKNOWN: AgentThreadRequestProjection = Object.freeze({ kind: "unknown" });
 
 export function deliveryAfterOutcome(
   outcome: AgentThreadRequestDelivery,
@@ -78,13 +85,34 @@ export function deliveryAfterReconfirmation(
 
 export function deliveryAfterProjection(
   record: AgentThreadRequestDeliveryRecord,
-  request: AgentRuntimeRequest | undefined,
-  covered: boolean,
+  projection: AgentThreadRequestProjection,
 ): AgentThreadRequestDeliveryStep | null {
-  if (request === undefined) {
-    if (!covered || record.kind === "sending") return null;
-    return step(null, RESOLVE);
+  switch (projection.kind) {
+    case "open":
+      return deliveryAfterOpenRequest(record, projection.request);
+    case "closed":
+      return record.kind === "sending" ? null : step(null, RESOLVE);
+    case "unknown":
+      return null;
+    default: {
+      const exhaustive: never = projection;
+      return exhaustive;
+    }
   }
+}
+
+export function agentThreadRequestProjection(
+  request: AgentRuntimeRequest | undefined,
+  closed: boolean,
+): AgentThreadRequestProjection {
+  if (request !== undefined) return { kind: "open", request };
+  return closed ? CLOSED : UNKNOWN;
+}
+
+function deliveryAfterOpenRequest(
+  record: AgentThreadRequestDeliveryRecord,
+  request: AgentRuntimeRequest,
+): AgentThreadRequestDeliveryStep | null {
   if (!superseded(record, request)) return null;
   return step(
     {

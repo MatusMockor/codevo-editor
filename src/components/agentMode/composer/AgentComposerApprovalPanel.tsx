@@ -27,7 +27,7 @@ export function AgentComposerApprovalPanel({
   const primary = view.actions.find((action) => action.tone === "primary") ?? null;
   const danger = view.actions.find((action) => action.tone === "danger") ?? null;
   const secondary = view.actions.filter((action) => action.tone === "secondary");
-  const error = sendError ?? interaction.error;
+  const error = interaction.error ?? sendError;
 
   useAgentComposerPanelFocus(rootRef);
 

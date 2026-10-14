@@ -1,6 +1,7 @@
 use super::abandonment::RotationPolicy;
 use super::journal::{RuntimeRequestJournal, TurnChangeObserver};
 use super::model::{JournalState, ThreadRequests};
+use super::probe::ProbeWorker;
 use super::projection::{ProjectionLimits, RequestProjection, TurnUpdate};
 use super::scopes::{HistoryScope, TurnAuthority};
 use super::store::ThreadSummary;
@@ -369,6 +370,7 @@ impl Emitter<'_> {
 pub struct RequestFeed {
     shared: Arc<FeedShared>,
     emitter: Mutex<Option<JoinHandle<()>>>,
+    _probe: Option<ProbeWorker>,
 }
 
 struct FeedObserver(Arc<FeedShared>);
@@ -425,30 +427,16 @@ fn rotate_when_due(
     FEED_IDLE_POLL.min(shared.limits.rotation.grace)
 }
 
-fn probe_unserved(
-    journal: &Arc<RuntimeRequestJournal>,
-    interval: Duration,
-    limits: ProjectionLimits,
-) {
-    let projection = RequestProjection::with_limits(Arc::clone(journal), limits);
-    let probed = catch_unwind(AssertUnwindSafe(|| projection.probe_unserved(interval)));
-    drop(probed);
-}
-
 fn run(
     shared: &FeedShared,
     journal: &Weak<RuntimeRequestJournal>,
     sink: &dyn ThreadRequestsSink,
     limits: ProjectionLimits,
 ) {
-    while let Some(wait) = journal.upgrade().map(|journal| {
-        probe_unserved(&journal, shared.limits.probe, limits);
-        let wait = rotate_when_due(shared, &journal, sink);
-        if journal.unserved().failing() == 0 {
-            return wait;
-        }
-        wait.min(shared.limits.probe)
-    }) {
+    while let Some(wait) = journal
+        .upgrade()
+        .map(|journal| rotate_when_due(shared, &journal, sink))
+    {
         let work = match shared.next(wait) {
             Next::Closed => break,
             Next::Idle => continue,
@@ -507,9 +495,14 @@ impl RequestFeed {
                     .ok()
             })
             .flatten();
+        let probe = emitter
+            .is_some()
+            .then(|| ProbeWorker::start(journal, limits.probe, projection))
+            .flatten();
         Self {
             shared,
             emitter: Mutex::new(emitter),
+            _probe: probe,
         }
     }
 

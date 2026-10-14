@@ -5,8 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentRuntimeRequest } from "../domain/agentRuntimeRequest";
 import { agentRuntimeRequestOf } from "../test/agentThreadRequestFeedFake";
 import { remoteAgentThreadRequestScopeOf } from "../test/remoteAgentThreadRequestGatewayFake";
+import type { AgentApprovalDecision } from "../domain/agentApproval";
 import {
-  AGENT_REMOTE_APPROVAL_READ_ONLY,
   localAgentThreadRequestResponder,
   remoteAgentThreadRequestResponder,
   type AgentThreadRequestResponder,
@@ -29,6 +29,7 @@ import {
   type AgentThreadPendingRequests,
   type AgentThreadPendingRequestsInput,
 } from "./useAgentThreadPendingRequests";
+import type { AgentThreadRequestClosure } from "./useAgentThreadRuntimeRequests";
 
 const TURN = "agt-turn-0001";
 const KEY = `${TURN}/req-0001`;
@@ -42,13 +43,22 @@ function question(version = 1): AgentRuntimeRequest {
   return agentRuntimeRequestOf("pendingQuestion", { turnId: TURN, version });
 }
 
+function approval(decisions: readonly AgentApprovalDecision[]): AgentRuntimeRequest {
+  const body = agentRuntimeRequestOf("pendingApproval").body;
+  return agentRuntimeRequestOf("pendingApproval", {
+    id: "req-0001",
+    turnId: TURN,
+    body: { ...body, decisions },
+  });
+}
+
 interface ControlFake extends RemoteAgentThreadRequestControl {
   readonly respond: ReturnType<typeof vi.fn<RemoteAgentThreadRequestControl["respond"]>>;
   readonly confirm: ReturnType<typeof vi.fn<RemoteAgentThreadRequestControl["confirm"]>>;
 }
 
-const COVERED: ReadonlySet<string> = new Set([TURN]);
-const UNCOVERED: ReadonlySet<string> = new Set();
+const LISTED: AgentThreadRequestClosure = { closed: [], listedTurnIds: new Set([TURN]) };
+const UNLISTED: AgentThreadRequestClosure = { closed: [], listedTurnIds: new Set() };
 
 function controlFake(): ControlFake {
   return {
@@ -95,7 +105,7 @@ describe("useAgentThreadPendingRequests", () => {
     act(() =>
       root.render(
         <Probe
-          covered={COVERED}
+          closure={LISTED}
           ledger={ledger}
           ownerKey="owner-a"
           open={[question()]}
@@ -115,11 +125,13 @@ describe("useAgentThreadPendingRequests", () => {
     return current().items[0];
   }
 
-  async function answer(): Promise<{ readonly settled: () => string }> {
+  async function answer(
+    reply: Parameters<AgentThreadPendingRequests["respond"]>[1] = ANSWER,
+  ): Promise<{ readonly settled: () => string }> {
     let outcome = "pending";
     await act(async () => {
       void current()
-        .respond(KEY, ANSWER)
+        .respond(KEY, reply)
         .then(
           () => {
             outcome = "resolved";
@@ -293,23 +305,69 @@ describe("useAgentThreadPendingRequests", () => {
     expect(first()?.state.kind).toBe("sending");
   });
 
-  it("disables answerable requests while the server is unreachable and shows non-live and remote approval requests read-only", () => {
+  it("disables answerable requests while the server is unreachable, shows non-live requests read-only and remote approvals answerable", () => {
     const responder = remoteAgentThreadRequestResponder(controlFake(), SCOPE);
-    render({ responder, reachable: false });
-    expect(first()?.state).toEqual({ kind: "disabled" });
+    const open = [
+      agentRuntimeRequestOf("submittingQuestionWithAnswers", { turnId: TURN }),
+      agentRuntimeRequestOf("pendingApproval", { turnId: TURN }),
+    ];
+    render({ responder, open, reachable: false });
+    expect(current().items.map((item) => item.state)).toEqual([
+      { kind: "readOnly", reason: AGENT_REQUEST_NOT_LIVE },
+      { kind: "disabled" },
+    ]);
 
-    render({
-      responder,
-      open: [
-        agentRuntimeRequestOf("submittingQuestionWithAnswers", { turnId: TURN }),
-        agentRuntimeRequestOf("pendingApproval", { turnId: TURN }),
-      ],
-    });
+    render({ responder, open });
 
     expect(current().items.map((item) => item.state)).toEqual([
       { kind: "readOnly", reason: AGENT_REQUEST_NOT_LIVE },
-      { kind: "readOnly", reason: AGENT_REMOTE_APPROVAL_READ_ONLY },
+      { kind: "answerable" },
     ]);
+  });
+
+  it.each<AgentApprovalDecision>(["allowOnce", "allowForSession", "deny"])(
+    "sends the offered remote decision %s exactly once through the feed",
+    async (decision) => {
+      const control = controlFake();
+      control.respond.mockResolvedValue({ kind: "answered" });
+      render({
+        responder: remoteAgentThreadRequestResponder(control, SCOPE),
+        open: [approval(["allowOnce", "allowForSession", "deny"])],
+      });
+
+      const sent = await answer({ kind: "approval", decision });
+
+      expect(control.respond.mock.calls).toEqual([
+        [SCOPE, TURN, "req-0001", { kind: "approval", decision }],
+      ]);
+      expect(first()?.state.kind).toBe("sending");
+      expect(sent.settled()).toBe("pending");
+    },
+  );
+
+  it("refuses a remote decision the request does not offer before sending it", async () => {
+    const control = controlFake();
+    render({
+      responder: remoteAgentThreadRequestResponder(control, SCOPE),
+      open: [approval(["allowOnce", "deny"])],
+    });
+
+    const sent = await answer({ kind: "approval", decision: "allowForSession" });
+
+    expect(control.respond).not.toHaveBeenCalled();
+    expect(sent.settled()).toBe(`rejected: ${AGENT_REQUEST_NOT_SENT}`);
+    expect(first()?.state.kind).toBe("answerable");
+    expect(first()?.error).toBe(AGENT_REQUEST_NOT_SENT);
+  });
+
+  it("refuses a remote reply whose kind does not match the request before sending it", async () => {
+    const control = controlFake();
+    render({ responder: remoteAgentThreadRequestResponder(control, SCOPE) });
+
+    const sent = await answer({ kind: "approval", decision: "deny" });
+
+    expect(control.respond).not.toHaveBeenCalled();
+    expect(sent.settled()).toBe(`rejected: ${AGENT_REQUEST_NOT_SENT}`);
   });
 
   it("answers local requests through the local commands and forgets deliveries of another owner", async () => {
@@ -398,17 +456,39 @@ describe("useAgentThreadPendingRequests", () => {
     const sent = await answer();
     expect(first()?.state.kind).toBe("sending");
 
-    render({ responder, open: [], covered: UNCOVERED });
+    render({ responder, open: [], closure: UNLISTED });
     await act(async () => Promise.resolve());
-    render({ responder, open: [question()], covered: UNCOVERED });
+    render({ responder, open: [question()], closure: UNLISTED });
     expect(first()?.state.kind).toBe("sending");
     expect(sent.settled()).toBe("pending");
 
-    render({ responder, open: [], covered: COVERED });
+    render({ responder, open: [], closure: LISTED });
     await act(async () => Promise.resolve());
     expect(sent.settled()).toBe("resolved");
     render({ responder });
     expect(first()?.state.kind).toBe("answerable");
+  });
+
+  it("clears a delivery lock on an explicit terminal record even when the turn was not read completely", async () => {
+    const control = controlFake();
+    control.respond.mockResolvedValue({ kind: "answered" });
+    const responder = remoteAgentThreadRequestResponder(control, SCOPE);
+    render({ responder });
+    const sent = await answer();
+
+    render({ responder, open: [], closure: UNLISTED });
+    await act(async () => Promise.resolve());
+    expect(sent.settled()).toBe("pending");
+
+    const resolved = agentRuntimeRequestOf("resolvedQuestion", {
+      id: "req-0001",
+      turnId: TURN,
+      version: 3,
+    });
+    render({ responder, open: [], closure: { closed: [resolved], listedTurnIds: new Set() } });
+    await act(async () => Promise.resolve());
+
+    expect(sent.settled()).toBe("resolved");
   });
 
   it("re-asks the feed about an abandoned uncertain delivery and re-enables the card once a later read shows it still pending", async () => {

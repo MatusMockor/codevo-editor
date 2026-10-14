@@ -1,7 +1,5 @@
 use super::{
-    commands::{blocking, OperationClass},
     interactions_ledger::{ContentDigest, InteractionLedger},
-    interactions_respond::{deliver, RemoteRequestResponse, RemoteRespondOutcome},
     interactions_wire::{
         parse_legacy_approvals, parse_legacy_questions, parse_snapshot, ApprovalInteraction,
         InteractionSnapshot, QuestionInteraction, WireError,
@@ -11,7 +9,7 @@ use super::{
     service::{ConnectionLease, RemoteRunnerState},
     types::{id, uuid},
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{cell::Cell, sync::Arc, time::Instant};
@@ -440,15 +438,6 @@ impl<'a, P: InteractionRunnerPort> Exchange<'a, P> {
     }
 }
 
-pub(super) fn read_under<P: InteractionRunnerPort>(
-    port: &P,
-    runner: &str,
-    task: &str,
-    now: Instant,
-) -> Result<RemoteInteractions, InteractionError> {
-    Exchange::open(port, runner, task, now)?.read()
-}
-
 pub(super) fn read_until<P: InteractionRunnerPort>(
     port: &P,
     runner: &str,
@@ -459,34 +448,6 @@ pub(super) fn read_until<P: InteractionRunnerPort>(
     Exchange::open(port, runner, task, now)?
         .until(deadline)
         .read()
-}
-
-pub(super) fn settle_read<P: InteractionRunnerPort>(
-    port: &P,
-    result: Result<RemoteInteractions, InteractionError>,
-) -> Result<RemoteInteractions, InteractionError> {
-    if !port.is_current() {
-        return Err(InteractionError::Superseded);
-    }
-    result
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RemoteInteractionsRequest {
-    server_id: String,
-    runner_id: String,
-    task_id: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RemoteRespondRequest {
-    server_id: String,
-    runner_id: String,
-    task_id: String,
-    request_id: String,
-    response: RemoteRequestResponse,
 }
 
 pub(super) fn admit_connection(
@@ -505,46 +466,6 @@ pub(super) fn admit_connection(
         return Err(InteractionError::RunnerChanged);
     }
     Ok(lease)
-}
-
-#[tauri::command]
-pub async fn get_remote_agent_interactions(
-    state: tauri::State<'_, RemoteRunnerState>,
-    request: RemoteInteractionsRequest,
-) -> Result<RemoteInteractions, String> {
-    let lease = admit_connection(state.inner(), &request.server_id, &request.runner_id)?;
-    let worker = lease.clone();
-    let result = blocking(OperationClass::Bulk, move || {
-        Ok(read_under(
-            &worker,
-            &request.runner_id,
-            &request.task_id,
-            Instant::now(),
-        ))
-    })
-    .await?;
-    Ok(settle_read(&lease, result)?)
-}
-
-#[tauri::command]
-pub async fn respond_remote_agent_request(
-    state: tauri::State<'_, RemoteRunnerState>,
-    request: RemoteRespondRequest,
-) -> Result<RemoteRespondOutcome, String> {
-    let lease = admit_connection(state.inner(), &request.server_id, &request.runner_id)?;
-    let worker = lease.clone();
-    let delivery = blocking(OperationClass::Control, move || {
-        Ok(deliver(
-            &worker,
-            &request.runner_id,
-            &request.task_id,
-            &request.request_id,
-            &request.response,
-            Instant::now(),
-        ))
-    })
-    .await?;
-    Ok(delivery.settle(&lease)?)
 }
 
 #[cfg(test)]

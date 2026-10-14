@@ -10,7 +10,11 @@ import type {
   AgentRuntimeQuestionBody,
   AgentRuntimeRequest,
 } from "../../../domain/agentRuntimeRequest";
-import { presentAgentApproval, type AgentApprovalView } from "../agentApprovalPresenter";
+import {
+  presentAgentApproval,
+  type AgentApprovalGrantScope,
+  type AgentApprovalView,
+} from "../agentApprovalPresenter";
 
 export const AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE =
   "Attachments can't be added to this answer. Describe the image in text instead.";
@@ -45,12 +49,12 @@ export type AgentComposerInteraction =
       readonly pendingLabel?: string | null;
       readonly error: string | null;
       answer(response: AgentQuestionResponse): Promise<void>;
-    }
-  | { readonly kind: "notice"; readonly key: string; readonly text: string };
+    };
 
 export interface AgentComposerInteractionInputs {
   readonly requests: readonly AgentThreadPendingRequest[];
   readonly attachments: AgentComposerQuestionAttachmentTarget;
+  readonly grant: AgentApprovalGrantScope;
   respond(key: string, reply: AgentThreadRequestReply): Promise<void>;
 }
 
@@ -104,7 +108,7 @@ function approvalInteraction(
 ): AgentComposerInteraction {
   const { request } = item;
   const controls = controlsOf(item.state);
-  const view = presentAgentApproval(approvalRequestOf(request));
+  const view = presentAgentApproval(approvalRequestOf(request), inputs.grant);
   return {
     kind: "approval",
     key: `approval:${request.turnId}:${request.id}`,

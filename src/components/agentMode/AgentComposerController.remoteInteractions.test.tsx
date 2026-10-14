@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { AGENT_REMOTE_APPROVAL_READ_ONLY } from "../../application/agentThreadRequestResponders";
 import {
   REMOTE_AGENT_THREAD_REQUEST_RESPOND_DEADLINE_MS,
   REMOTE_AGENT_THREAD_REQUEST_RESPOND_SETTLEMENT_MS,
@@ -296,7 +295,7 @@ describe("composer cards of a remote thread from the thread request projection",
     expect(gateway.respond).toHaveBeenCalledTimes(1);
   });
 
-  it("puts an answerable remote question before a read-only remote approval", async () => {
+  it("puts a pending remote approval before a pending remote question, as on local threads", async () => {
     gateway.record(TARGET, [
       agentRuntimeRequestOf("pendingApproval", { turnId: TURN }),
       question(),
@@ -304,10 +303,9 @@ describe("composer cards of a remote thread from the thread request projection",
 
     render(view());
 
-    await waitForReact(() => expect(host.textContent).toContain(PROMPT));
-    expect(composerApprovalPanel(host)).toBeNull();
-    act(() => chooseComposerOption(host, "Narrow"));
-    expect(composerButton(host, "Send answer")?.disabled).toBe(false);
+    await waitForReact(() => expect(composerApprovalPanel(host)).not.toBeNull());
+    expect(host.textContent).not.toContain(PROMPT);
+    expect(composerButton(host, "Approve")?.disabled).toBe(false);
   });
 
   it("keeps cards visible with disabled controls and no extra notice while the server is unreachable", async () => {
@@ -327,19 +325,6 @@ describe("composer cards of a remote thread from the thread request projection",
     render(view());
     act(() => chooseComposerOption(host, "Narrow"));
     expect(composerButton(host, "Send answer")?.disabled).toBe(false);
-  });
-
-  it("renders a remote approval card read-only with a truthful sentence", async () => {
-    gateway.record(TARGET, [agentRuntimeRequestOf("pendingApproval", { turnId: TURN })]);
-
-    render(view());
-
-    await waitForReact(() => expect(composerApprovalPanel(host)).not.toBeNull());
-    expect(host.textContent).toContain("Run the test suite");
-    expect(host.textContent).toContain(AGENT_REMOTE_APPROVAL_READ_ONLY);
-    expect(composerButton(host, "Approve")).toBeNull();
-    expect(composerButton(host, "Decline")).toBeNull();
-    expect(gateway.respond).not.toHaveBeenCalled();
   });
 
   it("describes the open thread, releases it on unmount and tells the feed when its server is back", async () => {

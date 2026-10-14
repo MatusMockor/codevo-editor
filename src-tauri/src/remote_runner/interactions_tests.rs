@@ -1,5 +1,6 @@
 use super::super::interactions_fake::*;
 use super::super::interactions_ledger::{APPROVALS_PROBE_INTERVAL, LEGACY_PROBE_INTERVAL};
+use super::super::interactions_respond::RemoteRequestResponse;
 use super::*;
 use serde_json::json;
 
@@ -821,30 +822,22 @@ fn connection_change_during_a_call_discards_the_response() {
 }
 
 #[test]
-fn result_that_outlives_its_connection_is_rejected_after_the_worker_finished() {
+fn answer_that_outlives_its_connection_is_rejected_after_the_worker_finished() {
     let now = Instant::now();
-    let reader = FakeRunner::replying(vec![Ok(live())]);
-    let finished = read_under(&reader, RUNNER, TASK, now);
-    assert_eq!(finished.as_ref().map(|read| read.sequence), Ok(3));
-    reader.current.set(false);
-    assert_eq!(
-        settle_read(&reader, finished).unwrap_err(),
-        InteractionError::Superseded
-    );
     let mut approved = legacy_approval("approved");
     approved["decision"] = "allowOnce".into();
     let answered = FakeRunner::replying(vec![Ok(live()), Ok(json!({"request": approved}))]);
     let delivery = deliver(&answered, RUNNER, TASK, APPROVAL, &decide("allowOnce"), now);
     answered.current.set(false);
     assert_eq!(
-        delivery.settle(&answered).unwrap_err(),
+        outcome_of(delivery, &answered).unwrap_err(),
         InteractionError::DeliveryUncertain
     );
     let refused = FakeRunner::replying(vec![Ok(live()), conflict(), Ok(live())]);
     let delivery = deliver(&refused, RUNNER, TASK, APPROVAL, &decide("deny"), now);
     refused.current.set(false);
     assert_eq!(
-        delivery.settle(&refused).unwrap_err(),
+        outcome_of(delivery, &refused).unwrap_err(),
         InteractionError::DeliveryUncertain
     );
     let settled = FakeRunner::replying(vec![Ok(snapshot("everySettleReasonOnQuestions"))]);
@@ -858,7 +851,7 @@ fn result_that_outlives_its_connection_is_rejected_after_the_worker_finished() {
     );
     settled.current.set(false);
     assert_eq!(
-        delivery.settle(&settled).unwrap_err(),
+        outcome_of(delivery, &settled).unwrap_err(),
         InteractionError::Superseded
     );
     assert_eq!(settled.calls().len(), 1);
@@ -866,7 +859,7 @@ fn result_that_outlives_its_connection_is_rejected_after_the_worker_finished() {
     let delivery = deliver(&invalid, RUNNER, TASK, QUESTION, &choose("oracle"), now);
     invalid.current.set(false);
     assert_eq!(
-        delivery.settle(&invalid).unwrap_err(),
+        outcome_of(delivery, &invalid).unwrap_err(),
         InteractionError::Superseded
     );
 }
@@ -943,21 +936,8 @@ fn outgoing_answer_text_is_blank_by_the_runner_definition() {
 }
 
 #[test]
-fn ipc_requests_are_closed() {
-    let read = json!({"serverId": "linux", "runnerId": RUNNER, "taskId": TASK});
-    assert!(serde_json::from_value::<RemoteInteractionsRequest>(read.clone()).is_ok());
-    let mut extra = read.clone();
-    extra["host"] = "foreign".into();
-    assert!(serde_json::from_value::<RemoteInteractionsRequest>(extra).is_err());
-    let respond = |response: Value| {
-        serde_json::from_value::<RemoteRespondRequest>(json!({
-            "serverId": "linux",
-            "runnerId": RUNNER,
-            "taskId": TASK,
-            "requestId": APPROVAL,
-            "response": response,
-        }))
-    };
+fn responses_are_closed() {
+    let respond = |response: Value| serde_json::from_value::<RemoteRequestResponse>(response);
     assert!(respond(json!({"kind": "approval", "decision": "deny"})).is_ok());
     assert!(respond(json!({"kind": "question", "answers": []})).is_ok());
     for invalid in [
@@ -974,15 +954,6 @@ fn ipc_requests_are_closed() {
     ] {
         assert!(respond(invalid.clone()).is_err(), "{invalid}");
     }
-    let mut extra = json!({
-        "serverId": "linux",
-        "runnerId": RUNNER,
-        "taskId": TASK,
-        "requestId": APPROVAL,
-        "response": {"kind": "approval", "decision": "deny"},
-    });
-    extra["url"] = "http://localhost".into();
-    assert!(serde_json::from_value::<RemoteRespondRequest>(extra).is_err());
 }
 
 #[test]

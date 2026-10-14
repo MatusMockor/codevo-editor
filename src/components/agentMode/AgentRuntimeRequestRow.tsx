@@ -52,6 +52,7 @@ import {
   type AgentRuntimeRequestGlyph,
   type AgentRuntimeRequestView,
 } from "./agentRuntimeRequestPresentation";
+import { AgentApprovalGrantScopeContext } from "./agentThreadRequestsScopeContext";
 import type { AgentTurnItem } from "./agentTurnProjection";
 
 type QuestionDetail = Extract<AgentRuntimeRequestDetailView, { readonly kind: "question" }>;
@@ -277,7 +278,8 @@ export const AgentRuntimeRequestRow = memo(function AgentRuntimeRequestRow({
   readonly request: ClosedAgentRuntimeRequest;
   readonly slot?: AgentTurnRequestSlot;
 }) {
-  const view = useMemo(() => presentAgentRuntimeRequest(request), [request]);
+  const grant = useContext(AgentApprovalGrantScopeContext);
+  const view = useMemo(() => presentAgentRuntimeRequest(request, grant), [grant, request]);
   const disclosure = useAgentToolDisclosure(JSON.stringify(["request", request.id]));
   const detailId = useId();
   const endingId = useId();

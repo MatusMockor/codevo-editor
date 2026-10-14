@@ -1,10 +1,10 @@
 use super::{
     interactions::{
-        read_under, settle_read, Dispatch, InteractionError, InteractionRunnerPort,
-        InteractionSource, RemoteInteractions,
+        read_until, Dispatch, InteractionError, InteractionRunnerPort, InteractionSource,
+        RemoteInteractions,
     },
     interactions_ledger::InteractionLedger,
-    interactions_respond::{deliver, RemoteRequestResponse, RemoteRespondOutcome},
+    interactions_respond::{deliver_until, Delivery, RemoteRequestResponse, RemoteRespondOutcome},
     interactions_wire::parse_snapshot,
     thread_requests_ipc::TurnDescriptor,
 };
@@ -254,7 +254,27 @@ pub(super) fn read_at(
     runner: &FakeRunner,
     now: Instant,
 ) -> Result<RemoteInteractions, InteractionError> {
-    settle_read(runner, read_under(runner, RUNNER, TASK, now))
+    read_until(runner, RUNNER, TASK, now, None)
+}
+
+pub(super) fn deliver<P: InteractionRunnerPort>(
+    port: &P,
+    runner: &str,
+    task: &str,
+    request_id: &str,
+    response: &RemoteRequestResponse,
+    now: Instant,
+) -> Delivery {
+    deliver_until(port, runner, task, (request_id, response), now, None)
+}
+
+pub(super) fn outcome_of<P: InteractionRunnerPort>(
+    delivery: Delivery,
+    port: &P,
+) -> Result<RemoteRespondOutcome, InteractionError> {
+    delivery
+        .settle_responded(port)
+        .map(|responded| responded.outcome)
 }
 
 pub(super) fn answer_at(
@@ -263,7 +283,10 @@ pub(super) fn answer_at(
     response: &RemoteRequestResponse,
     now: Instant,
 ) -> Result<RemoteRespondOutcome, InteractionError> {
-    deliver(runner, RUNNER, TASK, request_id, response, now).settle(runner)
+    outcome_of(
+        deliver(runner, RUNNER, TASK, request_id, response, now),
+        runner,
+    )
 }
 
 pub(super) fn answer(
