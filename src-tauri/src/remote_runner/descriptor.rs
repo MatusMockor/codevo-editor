@@ -67,6 +67,10 @@ struct Capabilities {
     mcp_servers: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     mcp_server_management: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    runtime_requests: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    interactive_approvals: Option<bool>,
 }
 
 fn optional_timeout<'de, D: serde::Deserializer<'de>>(
@@ -128,6 +132,8 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.command_catalog,
         caps.mcp_servers,
         caps.mcp_server_management,
+        caps.runtime_requests,
+        caps.interactive_approvals,
     );
     Ok(descriptor.runner_id)
 }
@@ -165,6 +171,35 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn interaction_capabilities_are_absent_on_old_runners_and_strict_when_present() {
+        let old = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true,"interactiveQuestions":true}});
+        assert_eq!(validate(old.clone()).unwrap(), "test");
+        for cap in ["runtimeRequests", "interactiveApprovals"] {
+            let mut value = old.clone();
+            for supported in [true, false] {
+                value["capabilities"][cap] = supported.into();
+                assert_eq!(validate(value.clone()).unwrap(), "test");
+            }
+            for invalid in [
+                Value::Null,
+                "true".into(),
+                1.into(),
+                serde_json::json!({}),
+                serde_json::json!([]),
+            ] {
+                value["capabilities"][cap] = invalid;
+                assert!(validate(value.clone()).is_err());
+            }
+        }
+        let mut both = old.clone();
+        both["capabilities"]["runtimeRequests"] = true.into();
+        both["capabilities"]["interactiveApprovals"] = true.into();
+        assert_eq!(validate(both.clone()).unwrap(), "test");
+        both["capabilities"]["runtimeRequestsV2"] = true.into();
+        assert!(validate(both).is_err());
+    }
+
     #[test]
     fn git_sync_and_port_preview_capabilities_are_optional_strict_booleans() {
         for cap in ["gitSync", "portPreview"] {

@@ -1,4 +1,5 @@
 use super::{transport::Session, Server};
+use crate::remote_runner::interactions_ledger::InteractionLedger;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
@@ -26,6 +27,7 @@ struct Owner {
     session: Mutex<Slot>,
     failures: AtomicU64,
     connect: Box<Connect>,
+    interactions: InteractionLedger,
 }
 impl ConnectionLease {
     pub(in crate::remote_runner) fn new(server: Server, session: Arc<Session>) -> Self {
@@ -50,6 +52,7 @@ impl ConnectionLease {
             }),
             failures: AtomicU64::new(0),
             connect,
+            interactions: InteractionLedger::default(),
         }))
     }
     pub(in crate::remote_runner) fn is_current(&self) -> bool {
@@ -60,6 +63,9 @@ impl ConnectionLease {
     }
     pub(in crate::remote_runner) fn server(&self) -> &Server {
         &self.0.server
+    }
+    pub(in crate::remote_runner) fn interaction_ledger(&self) -> &InteractionLedger {
+        &self.0.interactions
     }
     pub(in crate::remote_runner) fn session(&self) -> Result<Arc<Session>, String> {
         self.session_with_cancellation(|| false)

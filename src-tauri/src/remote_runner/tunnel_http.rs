@@ -617,6 +617,21 @@ mod tests {
     }
 
     #[test]
+    fn announced_token_count_is_pinned_below_the_runner_limit_of_sixteen() {
+        const RUNNER_TOKEN_LIMIT: usize = 16;
+        const DEFERRED_INTERACTION_TOKENS: [&str; 2] = ["runtimeRequests", "interactiveApprovals"];
+        let tokens: Vec<&str> = CLIENT_CAPABILITIES.split(',').collect();
+        let unique: std::collections::HashSet<&str> = tokens.iter().copied().collect();
+        assert_eq!(tokens.len(), 12);
+        assert_eq!(unique.len(), tokens.len());
+        assert!(tokens.len() <= RUNNER_TOKEN_LIMIT);
+        for token in DEFERRED_INTERACTION_TOKENS {
+            assert!(!tokens.contains(&token), "{token}");
+        }
+        assert!(tokens.len() + DEFERRED_INTERACTION_TOKENS.len() <= RUNNER_TOKEN_LIMIT);
+    }
+
+    #[test]
     fn history_search_accepts_maximum_encoded_unicode_with_bounded_path() {
         let query = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("q", &"界".repeat(256))

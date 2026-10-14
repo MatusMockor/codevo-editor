@@ -1,0 +1,3542 @@
+{
+  "schemaVersion": 1,
+  "remoteRunnerCapability": "runtimeRequests",
+  "remoteRunnerRoute": "/v1/tasks/{taskId}/interactions",
+  "taskRecordField": "interactionSequence",
+  "limits": {
+    "maxQuestions": 32,
+    "maxApprovals": 32
+  },
+  "settleReasons": [
+    "runnerRestarted",
+    "runnerStopped",
+    "turnEnded",
+    "taskCancelled",
+    "providerWithdrew",
+    "timedOut",
+    "unknown"
+  ],
+  "responseCapabilityTypes": [
+    "live",
+    "notResumable"
+  ],
+  "snapshots": [
+    {
+      "name": "empty",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 0,
+        "questions": [],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "livePendingQuestionAndApproval",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "pendingWithoutWaiter",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 1,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "answeredAndDecided",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 6,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "answered",
+            "answers": [
+              {
+                "questionId": "storage",
+                "optionIds": [
+                  "sqlite"
+                ],
+                "text": "Keep the existing data."
+              }
+            ],
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z"
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "approved",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "decision": "allowOnce",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z"
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000002",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "approved",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "decision": "allowForSession",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z"
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000003",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "denied",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "decision": "deny",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z"
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "everySettleReasonOnQuestions",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 12,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "runnerRestarted"
+            }
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000002",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "runnerStopped"
+            }
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000003",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded"
+            }
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000004",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "cancelled",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "taskCancelled"
+            }
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000005",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "providerWithdrew"
+            }
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000006",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "everySettleReasonOnApprovals",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 14,
+        "questions": [],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "expired",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "runnerRestarted"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000002",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "expired",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "runnerStopped"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000003",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "expired",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000004",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "cancelled",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "taskCancelled"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000005",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "cancelled",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "providerWithdrew"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000006",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "timedOut",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "timedOut"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000007",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "expired",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "legacyRowsWithoutTimesOrReason",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 0,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "answered",
+            "answers": [
+              {
+                "questionId": "storage",
+                "optionIds": [
+                  "sqlite"
+                ],
+                "text": "Keep the existing data."
+              }
+            ],
+            "createdAt": null,
+            "settledAt": null
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000002",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": null,
+            "settledAt": null,
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "denied",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "decision": "deny",
+            "createdAt": null,
+            "settledAt": null
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000002",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "timedOut",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": null,
+            "settledAt": null,
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "olderQuestionsEvicted",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 70,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "answered",
+            "answers": [
+              {
+                "questionId": "storage",
+                "optionIds": [
+                  "sqlite"
+                ],
+                "text": "Keep the existing data."
+              }
+            ],
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z"
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000002",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": true,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "settledApprovalsLeftOut",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 90,
+        "questions": [],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000002",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "expired",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded"
+            }
+          }
+        ],
+        "approvalsTruncated": true
+      }
+    }
+  ],
+  "rejectedSnapshots": [
+    {
+      "name": "unknownRootField",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false,
+        "cursor": 1
+      }
+    },
+    {
+      "name": "missingApprovalsTruncated",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "missingQuestionsTruncated",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "questionsTruncatedNotBoolean",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": "true",
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "questionsTruncatedNull",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": null,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "approvalsTruncatedNotBoolean",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": 0
+      }
+    },
+    {
+      "name": "negativeSequence",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": -1,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "fractionalSequence",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 1.5,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "sequenceAsString",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": "3",
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "sequenceBeyondSafeInteger",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 9007199254740992,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "taskIdNotUuid",
+      "value": {
+        "taskId": "task-1",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "questionsNotArray",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": {},
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "approvalsMissing",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "questionOfAnotherTask",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "approvalOfAnotherTask",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "1b2c3d4e-5f60-4a7b-8c9d-0e1f2a3b4c5d",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "unknownItemField",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            },
+            "resumable": true
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "unknownStatus",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "timedOut",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "unknownApprovalStatus",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "answered",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "createdAtMissing",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "settledAtMissing",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "createdAtNotIso",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13 09:00:00",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "createdAtAsNumber",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": 1791882000000,
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "pendingWithSettledAt",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "pendingWithoutCapability",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "pendingNotResumableWithKnownReason",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "runnerRestarted"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "unknownCapabilityType",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "resumable"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "liveWithReason",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "capabilityAsString",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": "live"
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "capabilityNull",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 3,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "pending",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "pending",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": null,
+            "responseCapability": null
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "notResumableWithoutReason",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "unknownSettleReason",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "clientDisconnected"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "settleReasonAsFreeText",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "The runner was restarted"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "notResumableWithExtraField",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded",
+              "detail": "exit 1"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "settledButLive",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "settledWithoutCapability",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z"
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "answeredWithCapability",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "answered",
+            "answers": [
+              {
+                "questionId": "storage",
+                "optionIds": [
+                  "sqlite"
+                ],
+                "text": "Keep the existing data."
+              }
+            ],
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "unknown"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "approvedWithCapability",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 2,
+        "questions": [],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "approved",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "decision": "allowOnce",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "live"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "duplicateQuestionIds",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 4,
+        "questions": [
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded"
+            }
+          },
+          {
+            "id": "a0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "claudeCode",
+            "questions": [
+              {
+                "id": "storage",
+                "header": "Storage",
+                "prompt": "Which database should we use?",
+                "options": [
+                  {
+                    "id": "sqlite",
+                    "label": "SQLite",
+                    "description": "Keep this runner self-contained."
+                  },
+                  {
+                    "id": "postgres",
+                    "label": "PostgreSQL",
+                    "description": ""
+                  }
+                ],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ],
+            "status": "expired",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded"
+            }
+          }
+        ],
+        "questionsTruncated": false,
+        "approvals": [],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "duplicateApprovalIds",
+      "value": {
+        "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+        "sequence": 4,
+        "questions": [],
+        "questionsTruncated": false,
+        "approvals": [
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "expired",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded"
+            }
+          },
+          {
+            "id": "b0000000-0000-4000-8000-000000000001",
+            "taskId": "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f",
+            "provider": "codex",
+            "kind": "command",
+            "title": "Run a command?",
+            "detail": "npm test",
+            "detailTruncated": false,
+            "facts": [
+              {
+                "label": "Directory",
+                "value": "/srv/project"
+              }
+            ],
+            "decisions": [
+              "allowOnce",
+              "allowForSession",
+              "deny"
+            ],
+            "status": "expired",
+            "expiresAt": "2026-10-13T09:10:00.000Z",
+            "createdAt": "2026-10-13T09:00:00.000Z",
+            "settledAt": "2026-10-13T09:05:00.000Z",
+            "responseCapability": {
+              "type": "notResumable",
+              "reason": "turnEnded"
+            }
+          }
+        ],
+        "approvalsTruncated": false
+      }
+    },
+    {
+      "name": "notAnObject",
+      "value": []
+    }
+  ]
+}

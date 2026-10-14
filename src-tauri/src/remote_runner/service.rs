@@ -498,6 +498,15 @@ impl RemoteRunnerState {
         Ok(value)
     }
 
+    #[cfg(test)]
+    pub(super) fn install_connection(&self, lease: ConnectionLease) {
+        let mut registry = self.0.registry.lock().unwrap_or_else(|e| e.into_inner());
+        let server = lease.server().clone();
+        registry.servers.retain(|known| known.id != server.id);
+        registry.connections.insert(server.id.clone(), lease);
+        registry.servers.push(server);
+    }
+
     pub(super) fn connection_lease(&self, server_id: &str) -> Result<ConnectionLease, String> {
         id(server_id)?;
         self.0
