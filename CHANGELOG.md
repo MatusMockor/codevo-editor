@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.122] - 2026-10-15
+
+### Changed
+
+- The MCP servers toolbar card is the search field itself, without a separate
+  box inside it. **Add server** fills the right side of the card behind a divider
+  and highlights as a whole on hover and while its menu is open.
+
 ## [0.2.0-beta.121] - 2026-10-14
 
 ### Changed
