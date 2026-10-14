@@ -15,6 +15,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "projection_unserved.rs"]
+mod unserved_page;
+
 pub const MAX_PAGE_BYTES: usize = 4 * 1024 * 1024;
 pub const PAGE_ENVELOPE_BYTES: usize = 1024;
 pub const MAX_PULL_TURNS: usize = 32;
@@ -315,14 +318,10 @@ impl RequestProjection {
     }
 
     pub fn journal_state(&self, scope: &HistoryScope, thread_id: &str) -> JournalState {
-        if self.lost_history(scope, thread_id) {
+        if self.history_incomplete(scope, thread_id) {
             return JournalState::Degraded;
         }
         self.journal.thread_state_in(scope, thread_id)
-    }
-
-    pub fn lost_history(&self, scope: &HistoryScope, thread_id: &str) -> bool {
-        self.journal.lost_history(scope, thread_id)
     }
 
     pub fn message(
@@ -354,7 +353,7 @@ impl RequestProjection {
             epoch: epoch.to_string(),
             journal: self.journal_state(scope, thread_id),
             requests,
-            truncated: summary.incomplete || self.lost_history(scope, thread_id),
+            truncated: summary.incomplete || self.history_incomplete(scope, thread_id),
             unreadable: summary.unreadable,
             reset,
         })
@@ -370,48 +369,47 @@ impl RequestProjection {
     ) -> Result<PageOutcome, ProjectionError> {
         let now = self.journal.now_epoch_ms();
         let mut outcome: Option<PageOutcome> = None;
-        self.journal
-            .read_thread(scope, thread_id, self.limits.read_budget, &mut |rows| {
-                let turns: Vec<TurnView<'_>> = turn_ids
-                    .iter()
-                    .map(|turn_id| self.view(scope, (thread_id, turn_id)))
-                    .collect();
-                let mut listed = Vec::with_capacity(turns.len());
-                for turn in &turns {
-                    listed.push(turn.listed(Some(&mut *rows), now)?);
-                }
-                let generation = generation(listed.iter().map(Vec::as_slice));
-                if continuation.is_some_and(|continuation| continuation.generation != generation)
-                {
-                    outcome = Some(PageOutcome::Stale);
-                    return Ok(());
-                }
-                let start = continuation
-                    .map(|continuation| continuation.position.clone())
-                    .unwrap_or_else(Position::start);
-                let mut builder = PageBuilder {
-                    rows: &mut *rows,
-                    turns: &turns,
-                    listed: &listed,
-                    now,
-                    budget: self.limits.record_budget(),
-                    records: Vec::new(),
-                    used: 0,
-                    incomplete: false,
-                };
-                let resume = builder.fill(&start)?;
-                let (requests, incomplete) = (builder.records, builder.incomplete);
-                let summary = rows.summary()?;
-                outcome = Some(PageOutcome::Read(PageRead {
-                    summary,
-                    requests,
-                    resume,
-                    generation,
-                    incomplete,
-                }));
-                Ok(())
-            })
-            .map_err(ProjectionError::Store)?;
+        self.read_tracked(scope, thread_id, &mut |rows| {
+            let turns: Vec<TurnView<'_>> = turn_ids
+                .iter()
+                .map(|turn_id| self.view(scope, (thread_id, turn_id)))
+                .collect();
+            let mut listed = Vec::with_capacity(turns.len());
+            for turn in &turns {
+                listed.push(turn.listed(Some(&mut *rows), now)?);
+            }
+            let generation = generation(listed.iter().map(Vec::as_slice));
+            if continuation.is_some_and(|continuation| continuation.generation != generation)
+            {
+                outcome = Some(PageOutcome::Stale);
+                return Ok(());
+            }
+            let start = continuation
+                .map(|continuation| continuation.position.clone())
+                .unwrap_or_else(Position::start);
+            let mut builder = PageBuilder {
+                rows: &mut *rows,
+                turns: &turns,
+                listed: &listed,
+                now,
+                budget: self.limits.record_budget(),
+                records: Vec::new(),
+                used: 0,
+                incomplete: false,
+            };
+            let resume = builder.fill(&start)?;
+            let (requests, incomplete) = (builder.records, builder.incomplete);
+            let summary = rows.summary()?;
+            outcome = Some(PageOutcome::Read(PageRead {
+                summary,
+                requests,
+                resume,
+                generation,
+                incomplete,
+            }));
+            Ok(())
+        })
+        .map_err(ProjectionError::Store)?;
         outcome.ok_or(ProjectionError::InvalidQuery)
     }
 
@@ -489,7 +487,7 @@ impl RequestProjection {
         }
         for _ in 0..PROJECTION_ATTEMPTS {
             let epoch = self.journal.epoch();
-            if let Some(page) = self.page_in(&epoch, scope, (thread_id, turn_ids), cursor)? {
+            if let Some(page) = self.page_or_live(&epoch, scope, (thread_id, turn_ids), cursor)? {
                 return Ok(page);
             }
             if cursor.is_some() {
@@ -513,10 +511,9 @@ impl RequestProjection {
             return unchanged;
         }
         let mut saved: Option<TurnUpdate> = None;
-        let read = self.journal.read_thread(
+        let read = self.read_tracked(
             &turn.scope,
             &turn.key.thread_id,
-            self.limits.read_budget,
             &mut |rows| {
                 let view = self.exact_view(turn);
                 let changed = changed_since(Some(&mut *rows), &view, bounds, now)?;

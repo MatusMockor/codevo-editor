@@ -11,6 +11,7 @@ mod projection_cursor;
 mod projection_overlay;
 pub mod scopes;
 pub mod store;
+pub mod unserved;
 mod wire;
 
 #[cfg(test)]

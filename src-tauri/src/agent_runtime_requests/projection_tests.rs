@@ -402,7 +402,7 @@ fn finished_turns_and_recovered_rows_are_served_after_a_restart() {
 }
 
 #[test]
-fn pull_fails_when_another_instance_holds_the_journal_or_the_thread_was_deleted() {
+fn pull_without_the_journal_lease_is_live_only_and_a_deleted_thread_still_fails() {
     let fixture = Fixture::new();
     let owner_boot = Boot::start(&fixture, "boot-0001");
     let turn = owner_boot.turn(THREAD, TURN, "workspace-1");
@@ -410,12 +410,15 @@ fn pull_fails_when_another_instance_holds_the_journal_or_the_thread_was_deleted(
     assert!(owner_boot.journal.flush(FLUSH));
     let other = Boot::start(&fixture, "boot-0002");
 
-    let refused = pull(&other, &[TURN], None);
+    let live_only = pull(&other, &[TURN], None).expect("a live-only page");
 
-    let Err(ProjectionError::Store(error)) = refused else {
-        panic!("another instance's rows were served");
-    };
-    assert_eq!(error.kind, StoreErrorKind::HeldByAnotherInstance);
+    let parts = live_only.message.parts();
+    assert_eq!(
+        (parts.journal, parts.truncated),
+        (JournalState::Degraded, true)
+    );
+    assert!(parts.requests.is_empty());
+    assert_eq!(live_only.next_cursor, None);
     assert_eq!(pull(&owner_boot, &[TURN], None).map(|_| ()), Ok(()));
 
     fixture.store.save(ROOT, &owner(), &thread(), 0).unwrap();
@@ -652,10 +655,13 @@ fn pull_waits_no_longer_than_its_budget_and_a_cold_claim_never_blocks_the_writer
 
     assert!(waited >= budget - Duration::from_millis(50), "{waited:?}");
     assert!(waited < budget + Duration::from_millis(700), "{waited:?}");
-    let Err(ProjectionError::Store(error)) = refused else {
-        panic!("the locked project was served");
-    };
-    assert_eq!(error.kind, StoreErrorKind::Busy);
+    let live_only = refused.expect("a live-only page");
+    let parts = live_only.message.parts();
+    assert_eq!(
+        (parts.journal, parts.truncated),
+        (JournalState::Degraded, true)
+    );
+    assert_eq!(boot.journal.unserved().failing(), 1);
     let (waited_again, _) = pull_cold();
     assert!(
         waited_again < budget + Duration::from_millis(700),
@@ -669,7 +675,9 @@ fn pull_waits_no_longer_than_its_budget_and_a_cold_claim_never_blocks_the_writer
 
     blocker.execute_batch("ROLLBACK;").expect("unlock");
     drop(blocker);
-    assert!(eventually(|| pull_cold().1.is_ok()));
+    assert!(eventually(|| {
+        pull_cold().1.is_ok() && boot.journal.unserved().failing() == 0
+    }));
 }
 
 #[test]

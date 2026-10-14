@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 
 #[derive(Default)]
-struct Sink {
-    messages: Mutex<Vec<ThreadRequests>>,
+pub(super) struct Sink {
+    pub(super) messages: Mutex<Vec<ThreadRequests>>,
     invalidations: Mutex<Vec<String>>,
     invalidated_at: Mutex<Vec<Instant>>,
     closed_gate: Mutex<bool>,
@@ -30,7 +30,7 @@ impl Sink {
         self.gate.notify_all();
     }
 
-    fn invalidations(&self) -> Vec<String> {
+    pub(super) fn invalidations(&self) -> Vec<String> {
         self.invalidations.lock().expect("invalidations").clone()
     }
 }
@@ -58,7 +58,7 @@ impl ThreadRequestsSink for Sink {
     }
 }
 
-fn described(request: &RuntimeRequest) -> String {
+pub(super) fn described(request: &RuntimeRequest) -> String {
     let parts = request.parts();
     let reason = parts
         .lifecycle
@@ -133,7 +133,7 @@ fn pull(boot: &Boot, turn_ids: &[&str]) -> ThreadRequests {
         .message
 }
 
-fn fast_rotation() -> FeedLimits {
+pub(super) fn fast_rotation() -> FeedLimits {
     FeedLimits {
         rotation: RotationPolicy {
             interval: Duration::from_millis(400),
@@ -144,7 +144,7 @@ fn fast_rotation() -> FeedLimits {
     }
 }
 
-fn feed(boot: &Boot, limits: FeedLimits) -> (Arc<Sink>, RequestFeed) {
+pub(super) fn feed(boot: &Boot, limits: FeedLimits) -> (Arc<Sink>, RequestFeed) {
     let sink = Arc::new(Sink::default());
     let feed = RequestFeed::start_with_limits(
         &boot.journal,
@@ -155,7 +155,7 @@ fn feed(boot: &Boot, limits: FeedLimits) -> (Arc<Sink>, RequestFeed) {
     (sink, feed)
 }
 
-fn settle(boot: &Boot, feed: &RequestFeed) {
+pub(super) fn settle(boot: &Boot, feed: &RequestFeed) {
     assert!(boot.journal.flush(FLUSH));
     assert!(feed.settle(FLUSH));
 }

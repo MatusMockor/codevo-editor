@@ -36,6 +36,7 @@ struct Need {
 struct Needs {
     turns: HashMap<TurnAuthority, Need>,
     overflowed_since: Option<Instant>,
+    requested_since: Option<Instant>,
     last_rotation: Option<Instant>,
     reconciled: HashMap<TurnAuthority, u64>,
     reconciled_order: VecDeque<TurnAuthority>,
@@ -51,6 +52,7 @@ impl Needs {
             .values()
             .map(|need| need.since)
             .chain(self.overflowed_since)
+            .chain(self.requested_since)
             .min()
     }
 
@@ -126,6 +128,10 @@ impl Abandonment {
         needs.turns.insert(turn.clone(), Need { since: now, revision });
     }
 
+    pub fn request(&self, now: Instant) {
+        self.locked().requested_since.get_or_insert(now);
+    }
+
     pub fn settle(&self, turn: &TurnAuthority) {
         let mut needs = self.locked();
         needs.turns.remove(turn);
@@ -165,6 +171,7 @@ impl Abandonment {
             needs.reconcile(turn, need.revision);
         }
         needs.overflowed_since = None;
+        needs.requested_since = None;
         needs.last_rotation = Some(now);
         while needs.reconciled_order.len() > policy.reconciled {
             let Some(oldest) = needs.reconciled_order.pop_front() else {

@@ -5,6 +5,7 @@ use crate::agent_questions::{
     AgentQuestion, AgentQuestionRequest, AgentQuestionSession, AgentQuestionStatus,
 };
 use crate::agent_runtime_requests::journal::{system_clock, RuntimeRequestJournal, TurnTracking};
+use crate::agent_runtime_requests::model::JournalState;
 use crate::agent_runtime_requests::projection::STALE_THREAD_REQUESTS_CURSOR_ERROR;
 use crate::agent_runtime_requests::store::RuntimeRequestStore;
 use serde_json::{json, Value};
@@ -311,18 +312,43 @@ fn malformed_queries_and_stale_cursors_are_errors() {
 }
 
 #[test]
-fn pull_is_an_error_while_another_instance_holds_the_projects_journal() {
-    let window = Window::open();
+fn pull_while_another_instance_holds_the_journal_serves_live_requests_and_keeps_authority() {
+    let mut window = Window::open();
     let project = Directory::create("project");
+    let foreign = Directory::create("foreign");
     window.workspaces.register(&project.root).expect("register");
     let other_instance = HistoryRuntimeRequestStore::new(window.history.root.clone());
-    let claimed = other_instance.claim_root(&scope_of(&project), "boot-0000", 0);
-    assert!(claimed.is_ok_and(|claim| claim.is_owned()));
+    for root in [&project, &foreign] {
+        let claimed = other_instance.claim_root(&scope_of(root), "boot-0000", 0);
+        assert!(claimed.is_ok_and(|claim| claim.is_owned()));
+    }
+    window.ask(&project, THREAD);
 
-    let refused = window.pull(&query(&project, THREAD, None));
+    let page = owned_thread_requests(
+        &window.workspaces,
+        &window.leases,
+        &window.projection,
+        &query(&project, THREAD, None),
+    )
+    .expect("a live-only page");
 
-    let error = refused.expect_err("another instance's rows were served");
-    assert!(error.contains("another running instance"), "{error}");
+    let parts = page.message.parts();
+    assert_eq!(
+        (parts.journal, parts.truncated),
+        (JournalState::Degraded, true)
+    );
+    assert_eq!(page.next_cursor, None);
+    assert_eq!(
+        window.pull(&query(&project, THREAD, None)),
+        Ok(vec!["question-1".to_string()])
+    );
+    assert_eq!(window.pull(&query(&foreign, THREAD, None)), unowned());
+    let mut foreign_owner = query(&project, THREAD, None);
+    foreign_owner.owner_id = scope_of(&foreign).owner_id;
+    assert_eq!(window.pull(&foreign_owner), unowned());
     drop(other_instance);
-    assert_eq!(window.pull(&query(&project, THREAD, None)), Ok(Vec::new()));
+    assert_eq!(
+        window.pull(&query(&project, THREAD, None)),
+        Ok(vec!["question-1".to_string()])
+    );
 }

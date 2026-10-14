@@ -1,5 +1,6 @@
 use super::health::{JournalHealth, JournalLedger, TurnFailure};
 use super::abandonment::{Abandonment, RotationPolicy};
+use super::unserved::UnservedScopes;
 use super::live::{
     DiscardedTurn, LiveTurn, LiveTurns, Observation, SeenRequest, TurnLiveness, MAX_ENDED_TURNS,
 };
@@ -43,6 +44,8 @@ pub trait TurnChangeObserver: Send + Sync {
     );
 
     fn thread_reset(&self, scope: &HistoryScope, thread_id: &str, workspace_id: &str);
+
+    fn thread_readable_again(&self, _scope: &HistoryScope, _thread_id: &str) {}
 }
 
 pub fn system_clock() -> JournalClock {
@@ -331,6 +334,7 @@ struct Shared {
     highest: AtomicU64,
     invalidations: AtomicU64,
     abandonment: Abandonment,
+    unserved: UnservedScopes,
     claims: Mutex<ClaimQueue>,
     claims_changed: Condvar,
 }
@@ -902,6 +906,7 @@ impl RuntimeRequestJournal {
             highest: AtomicU64::new(0),
             invalidations: AtomicU64::new(0),
             abandonment: Abandonment::default(),
+            unserved: UnservedScopes::default(),
             claims: Mutex::default(),
             claims_changed: Condvar::new(),
         });
@@ -998,6 +1003,21 @@ impl RuntimeRequestJournal {
 
     pub fn abandoned_turns(&self) -> usize {
         self.shared.abandonment.pending()
+    }
+
+    pub fn unserved(&self) -> &UnservedScopes {
+        &self.shared.unserved
+    }
+
+    pub fn reset_readable_thread(&self, scope: &HistoryScope, thread_id: &str) {
+        let Some(observer) = self.shared.observer.get() else {
+            return;
+        };
+        observer.thread_readable_again(scope, thread_id);
+    }
+
+    pub fn request_rotation(&self) {
+        self.shared.abandonment.request(Instant::now());
     }
 
     pub fn unreconciled_turns(&self) -> usize {

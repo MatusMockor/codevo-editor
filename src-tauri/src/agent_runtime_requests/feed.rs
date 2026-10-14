@@ -4,6 +4,7 @@ use super::model::{JournalState, ThreadRequests};
 use super::projection::{ProjectionLimits, RequestProjection, TurnUpdate};
 use super::scopes::{HistoryScope, TurnAuthority};
 use super::store::ThreadSummary;
+use super::unserved::UNSERVED_PROBE_INTERVAL;
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
@@ -54,6 +55,7 @@ pub struct FeedLimits {
     pub threads: usize,
     pub resets: usize,
     pub rotation: RotationPolicy,
+    pub probe: Duration,
 }
 
 impl Default for FeedLimits {
@@ -63,6 +65,7 @@ impl Default for FeedLimits {
             threads: MAX_FEED_THREADS,
             resets: MAX_FEED_RESETS,
             rotation: RotationPolicy::default(),
+            probe: UNSERVED_PROBE_INTERVAL,
         }
     }
 }
@@ -394,6 +397,12 @@ impl TurnChangeObserver for FeedObserver {
         }
         self.0.wake.notify_all();
     }
+
+    fn thread_readable_again(&self, scope: &HistoryScope, thread_id: &str) {
+        let key = (scope.clone(), thread_id.to_string());
+        self.0.locked().reset(key, None, self.0.limits);
+        self.0.wake.notify_all();
+    }
 }
 
 fn rotate_when_due(
@@ -416,16 +425,30 @@ fn rotate_when_due(
     FEED_IDLE_POLL.min(shared.limits.rotation.grace)
 }
 
+fn probe_unserved(
+    journal: &Arc<RuntimeRequestJournal>,
+    interval: Duration,
+    limits: ProjectionLimits,
+) {
+    let projection = RequestProjection::with_limits(Arc::clone(journal), limits);
+    let probed = catch_unwind(AssertUnwindSafe(|| projection.probe_unserved(interval)));
+    drop(probed);
+}
+
 fn run(
     shared: &FeedShared,
     journal: &Weak<RuntimeRequestJournal>,
     sink: &dyn ThreadRequestsSink,
     limits: ProjectionLimits,
 ) {
-    while let Some(wait) = journal
-        .upgrade()
-        .map(|journal| rotate_when_due(shared, &journal, sink))
-    {
+    while let Some(wait) = journal.upgrade().map(|journal| {
+        probe_unserved(&journal, shared.limits.probe, limits);
+        let wait = rotate_when_due(shared, &journal, sink);
+        if journal.unserved().failing() == 0 {
+            return wait;
+        }
+        wait.min(shared.limits.probe)
+    }) {
         let work = match shared.next(wait) {
             Next::Closed => break,
             Next::Idle => continue,

@@ -15,6 +15,7 @@ pub(super) struct PausingStore {
     pub(super) inner: HistoryRuntimeRequestStore,
     pub(super) after_first_entries: Mutex<Option<Hook>>,
     pub(super) panic_next_apply: std::sync::atomic::AtomicBool,
+    pub(super) fail_reads: std::sync::atomic::AtomicBool,
 }
 
 impl PausingStore {
@@ -23,6 +24,7 @@ impl PausingStore {
             inner: HistoryRuntimeRequestStore::new(fixture.base.clone()),
             after_first_entries: Mutex::new(None),
             panic_next_apply: std::sync::atomic::AtomicBool::new(false),
+            fail_reads: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -126,6 +128,12 @@ impl RuntimeRequestStore for PausingStore {
         deadline: Instant,
         read: &mut ThreadRead<'_>,
     ) -> Result<(), StoreError> {
+        if self.fail_reads.load(Ordering::SeqCst) {
+            return Err(StoreError::new(
+                StoreErrorKind::Unavailable,
+                "the request history cannot be read",
+            ));
+        }
         self.inner
             .read_thread(scope, thread_id, deadline, &mut |rows| {
                 read(&mut PausingRows {
@@ -288,8 +296,15 @@ fn claim_failures_are_kept_only_while_a_caller_waits_for_them() {
     );
 
     for root in roots {
-        let refused = projection.page(&scope_of(root), THREAD, &[TURN.to_string()], None);
-        assert!(refused.is_err());
+        let page = projection
+            .page(&scope_of(root), THREAD, &[TURN.to_string()], None)
+            .expect("a live-only page");
+        let parts = page.message.parts();
+        assert_eq!(
+            (parts.journal, parts.truncated),
+            (JournalState::Degraded, true)
+        );
+        assert_eq!(page.next_cursor, None);
     }
 
     std::thread::sleep(Duration::from_millis(1500));
