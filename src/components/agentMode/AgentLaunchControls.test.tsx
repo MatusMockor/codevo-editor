@@ -50,6 +50,7 @@ describe("AgentLaunchControls", () => {
       "claude-opus-5",
       "claude-sonnet-5-5",
       "claude-sonnet-5",
+      "claude-haiku-5-5",
     ]);
     expect(selectedOption("agent-launch-model")?.dataset.value).toBe("claude-opus-5");
 

@@ -70,6 +70,7 @@ describe("AgentModelPicker", () => {
       "claude-opus-5",
       "claude-sonnet-5-5",
       "claude-sonnet-5",
+      "claude-haiku-5-5",
     ]);
     expect(selectedOption()?.dataset.value).toBe("claude-sonnet-5");
     expect(selectedOption()?.parentElement?.classList).toContain(
@@ -80,12 +81,12 @@ describe("AgentModelPicker", () => {
       [...host.querySelectorAll(".agent-model-picker__description")].map((el) => el.textContent),
     ).toEqual(
       agentModelRows("claudeCode")
-        .slice(0, 5)
+        .slice(0, 6)
         .map((row) => row.hint),
     );
     expect(
       [...host.querySelectorAll(".agent-model-picker__kbd")].map((el) => el.textContent),
-    ).toEqual([1, 2, 3, 4, 5].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
+    ).toEqual([1, 2, 3, 4, 5, 6].map((digit) => `${agentPlatformModifier().glyph}${digit}`));
     expect(legacyToggle().textContent).toContain("Legacy models");
     expect(legacyToggle().textContent).toContain("Fable 5, Opus 4.8 and 5 more");
   });
@@ -205,7 +206,7 @@ describe("AgentModelPicker", () => {
 
     key("Escape");
     expect(search().value).toBe("");
-    expect(optionValues()).toHaveLength(5);
+    expect(optionValues()).toHaveLength(6);
     expect(host.querySelector('[role="dialog"]')).not.toBeNull();
 
     key("Escape");
@@ -238,7 +239,7 @@ describe("AgentModelPicker", () => {
     render(CLAUDE, onSelect);
     open();
     type("claude");
-    expect(optionValues()).toHaveLength(12);
+    expect(optionValues()).toHaveLength(13);
 
     key("0", { metaKey: true });
     expect(onSelect).not.toHaveBeenCalled();
@@ -273,7 +274,7 @@ describe("AgentModelPicker", () => {
     expect(host.querySelector('[role="status"]')?.textContent).toContain("No favorite models yet");
 
     act(() => railItem("claudeCode").click());
-    expect(optionValues()).toHaveLength(5);
+    expect(optionValues()).toHaveLength(6);
   });
 
   it("closes on an outside pointer press and on a click of the chosen row", () => {
@@ -469,7 +470,7 @@ describe("AgentModelPicker", () => {
     );
     open();
 
-    expect(optionValues()).toHaveLength(5);
+    expect(optionValues()).toHaveLength(6);
     expect(activeOption()).toBe("claude-sonnet-5-5");
 
     key("Enter");
@@ -538,6 +539,7 @@ describe("AgentModelPicker", () => {
       "claude-opus-5",
       "claude-sonnet-5-5",
       "claude-sonnet-5",
+      "claude-haiku-5-5",
       "claude-fable-5",
       "claude-opus-4-8",
       "claude-opus-4-7",

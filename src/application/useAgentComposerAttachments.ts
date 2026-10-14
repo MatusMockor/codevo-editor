@@ -21,7 +21,13 @@ import {
   type AgentImageShrinkRefusal,
   type AgentImageSurfacePort,
 } from "../domain/agentImageShrink";
-import type { AgentAttachmentGateway, StagedAgentAttachment } from "./agentAttachmentPorts";
+import type { AgentAttachmentFileSourcePort } from "./agentAttachmentFileSourcePort";
+import { intakeAgentAttachmentFileSource } from "./agentAttachmentFileSourceIntake";
+import {
+  AgentAttachmentRefusalError,
+  type AgentAttachmentGateway,
+  type StagedAgentAttachment,
+} from "./agentAttachmentPorts";
 import {
   issueAgentAttachmentCarry,
   redeemAgentAttachmentCarry,
@@ -91,7 +97,14 @@ export type AgentAttachmentSource =
       readonly mime: string;
       readonly bytes: ArrayBuffer;
     }
-  | { readonly kind: "path"; readonly path: string };
+  | { readonly kind: "path"; readonly path: string }
+  | {
+      readonly kind: "fileSource";
+      readonly path: string;
+      readonly fileSource: AgentAttachmentFileSourcePort;
+    };
+
+export type AgentAttachmentDraftBacking = "memory" | "nativeFile";
 
 export type AgentAttachmentDraftState = "staging" | "ready" | "failed";
 
@@ -112,6 +125,7 @@ export interface AgentComposerAttachmentDraft {
   readonly notice: string | null;
   readonly missing: boolean;
   readonly promptLineBytesMax: number;
+  readonly backing?: AgentAttachmentDraftBacking;
 }
 
 export interface AgentComposerTurnAttachments {
@@ -574,6 +588,9 @@ async function intakeAgentAttachmentSource(
     context.setRefusal(admission.reason);
     return "refused-count";
   }
+  if (rawSource.kind === "fileSource") {
+    return intakeAgentAttachmentFileSource(context, owner, rawSource);
+  }
   const duplicate = duplicatePathDraft(context, rawSource);
   if (duplicate !== null) {
     context.setRefusal(agentAttachmentDuplicateRefusal(duplicate.name));
@@ -804,7 +821,12 @@ function settleStaged(
     const settled = stagedDraft(pending, staged.value, kind);
     const retainedBytes = context
       .retainedDrafts()
-      .filter((draft) => draft.draftId !== settled.draftId && draft.kind !== "reference")
+      .filter(
+        (draft) =>
+          draft.draftId !== settled.draftId &&
+          draft.kind !== "reference" &&
+          draft.backing !== "nativeFile",
+      )
       .reduce((sum, draft) => sum + draft.bytes, 0);
     if (retainedBytes + settled.bytes > MAX_RETAINED_DRAFT_BYTES) {
       refuseStaged(context, settled, DRAFT_STORAGE_FULL);
@@ -816,6 +838,10 @@ function settleStaged(
       return;
     }
     settleDraft(context, pending, settled, source);
+    return;
+  }
+  if (staged.error instanceof AgentAttachmentRefusalError) {
+    refuseStaged(context, pending, staged.error.message);
     return;
   }
   context.deps().reportError(AGENT_TASKS_SOURCE, staged.error);

@@ -9,10 +9,14 @@ import {
   type RemoteAddProjectFolderAction,
   type RemoteAddProjectFolderFailure,
   type RemoteAddProjectFolderState,
+  type RemoteRunnerFolderProjectSupport,
 } from "./remoteAddProjectFolder";
 import type { RemoteAddProjectServerProject } from "./remoteAddProjectMachine";
 import { matchingCloneProjectKey } from "./remoteAddProjectPendingClone";
-import type { RemoteProjectRegistrationGateway } from "./remoteProjectRegistrationGateway";
+import type {
+  RemoteProjectRegistrationGateway,
+  RemoteProjectRegistrationRunner,
+} from "./remoteProjectRegistrationGateway";
 
 export const REMOTE_PROJECT_FOLDER_ADOPTION_GRACE_MS = 10_000;
 
@@ -57,6 +61,7 @@ type FolderFlow = Readonly<{
   owner: RemoteProjectFolderOwner | null;
   folder: RemoteAddProjectFolderState;
   adoption: FolderAdoption | null;
+  described: number;
 }>;
 
 type Outcome<T> =
@@ -82,6 +87,7 @@ export function useRemoteProjectFolderRegistration(
   });
   const mounted = useRef(false);
   const counter = useRef(0);
+  const reads = useRef(0);
   const pending = useRef<Readonly<{ owner: RemoteProjectFolderOwner; submission: number }> | null>(
     null,
   );
@@ -117,7 +123,7 @@ export function useRemoteProjectFolderRegistration(
         setFlow((current) => {
           if (current.owner !== owner || current.adoption !== adoption) return current;
           return {
-            owner,
+            ...current,
             adoption: null,
             folder: reduceRemoteAddProjectFolder(current.folder, {
               kind: "submitFailed",
@@ -131,6 +137,19 @@ export function useRemoteProjectFolderRegistration(
     );
     return () => clearTimeout(timer);
   }, [owner, adoption, selectionIdentity, serverProjects]);
+
+  useEffect(() => {
+    if (owner === null) return;
+    const gateway = owner.registrationGateway;
+    if (gateway === null) return;
+    reads.current += 1;
+    const read = reads.current;
+    void identified(gateway).then((runner) => {
+      if (!runner.ok) return;
+      if (!mounted.current || latest.current.options.owner !== owner) return;
+      setFlow((current) => describedFlow(current, owner, read, runner.value.folderProjects));
+    });
+  }, [owner]);
 
   function holds(captured: RemoteProjectFolderOwner): boolean {
     return mounted.current && latest.current.options.owner === captured;
@@ -170,14 +189,15 @@ export function useRemoteProjectFolderRegistration(
         fail({ kind: "runnerUnreachable" });
         return;
       }
-      const runner = await settled(gateway.identifyRunner(), () => ({
-        kind: "runnerUnreachable",
-      }));
+      reads.current += 1;
+      const read = reads.current;
+      const runner = await identified(gateway);
       if (!holds(captured)) return;
       if (!runner.ok) {
         fail(runner.failure);
         return;
       }
+      setFlow((current) => describedFlow(current, captured, read, runner.value.folderProjects));
       const result = await settled(gateway.registerProject(input), remoteProjectFolderFailure);
       if (!holds(captured)) return;
       if (!result.ok) {
@@ -191,7 +211,7 @@ export function useRemoteProjectFolderRegistration(
       }
       const waiting: FolderAdoption = {
         submission,
-        runnerId: runner.value,
+        runnerId: runner.value.runnerId,
         projectId: registration.project.id,
         selectionIdentity: identity,
         deadline: Date.now() + REMOTE_PROJECT_FOLDER_ADOPTION_GRACE_MS,
@@ -230,7 +250,30 @@ export function useRemoteProjectFolderRegistration(
 }
 
 function freshFlow(owner: RemoteProjectFolderOwner | null): FolderFlow {
-  return { owner, folder: INITIAL_REMOTE_ADD_PROJECT_FOLDER, adoption: null };
+  return { owner, folder: INITIAL_REMOTE_ADD_PROJECT_FOLDER, adoption: null, described: 0 };
+}
+
+function describedFlow(
+  current: FolderFlow,
+  captured: RemoteProjectFolderOwner,
+  read: number,
+  folderProjects: RemoteRunnerFolderProjectSupport,
+): FolderFlow {
+  if (current.owner !== captured || current.described >= read) return current;
+  return {
+    ...current,
+    described: read,
+    folder: reduceRemoteAddProjectFolder(current.folder, {
+      kind: "runnerDescribed",
+      folderProjects,
+    }),
+  };
+}
+
+function identified(
+  gateway: RemoteProjectRegistrationGateway,
+): Promise<Outcome<RemoteProjectRegistrationRunner>> {
+  return settled(gateway.identifyRunner(), () => ({ kind: "runnerUnreachable" }));
 }
 
 async function settled<T>(

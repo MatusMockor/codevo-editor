@@ -76,12 +76,49 @@ fn contract_pins_schema_capability_and_error_codes() {
     assert_eq!(contract["schemaVersion"], 1);
     assert_eq!(contract["capability"], "gitSync");
     let codes = contract["errorCodes"].as_array().expect("error codes");
-    assert_eq!(codes.len(), 17);
+    assert_eq!(codes.len(), 18);
     for code in codes {
         let parsed: GitErrorCode = serde_json::from_value(code.clone()).expect("known code");
         assert_eq!(&serde_json::to_value(parsed).unwrap(), code);
     }
     assert!(serde_json::from_value::<GitErrorCode>(json!("invalid_input")).is_err());
+}
+
+#[test]
+fn not_repository_code_round_trips_and_near_misses_stay_unknown() {
+    assert!(contract()["errorCodes"]
+        .as_array()
+        .expect("error codes")
+        .contains(&json!("git_not_repository")));
+    let parsed: GitErrorCode =
+        serde_json::from_value(json!("git_not_repository")).expect("known code");
+    assert_eq!(parsed, GitErrorCode::GitNotRepository);
+    assert_eq!(
+        serde_json::to_value(parsed).unwrap(),
+        json!("git_not_repository")
+    );
+    assert_eq!(
+        serde_json::to_value(parse_error_body(json!({ "error": "git_not_repository" })).unwrap())
+            .unwrap(),
+        json!({ "error": "git_not_repository" })
+    );
+    for unknown in [
+        "git_not_a_repository",
+        "not_repository",
+        "GIT_NOT_REPOSITORY",
+        "git_not_repository ",
+        "gitNotRepository",
+    ] {
+        assert!(
+            serde_json::from_value::<GitErrorCode>(json!(unknown)).is_err(),
+            "{unknown}"
+        );
+        assert!(
+            parse_error_body(json!({ "error": unknown })).is_err(),
+            "{unknown}"
+        );
+    }
+    assert!(parse_error_body(json!({ "error": "git_not_repository", "kind": "folder" })).is_err());
 }
 
 #[test]

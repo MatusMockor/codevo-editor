@@ -3,6 +3,11 @@ import type { AgentAttachment } from "../domain/agentAttachment";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { RemoteRunnerGateway, RemoteRunnerServer } from "../domain/remoteRunner";
+import {
+  isRemoteFolderProject,
+  remoteProjectKindOf,
+  type RemoteProjectKind,
+} from "../domain/remoteProjectKind";
 import { remoteRunnerErrorMessage } from "../domain/remoteRunnerErrors";
 import {
   isRemoteRunnerReachable,
@@ -26,7 +31,9 @@ import {
 import { useRemoteAgentSteer } from "./useRemoteAgentSteer";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
+import { remoteProjectIsolationPreview } from "./remoteFolderProjectLaunch";
 import { agentDraftDispatchKey, agentThreadDispatchKey } from "./agentDispatchKeys";
+import { refuseUnknownAttachmentDownload } from "./remoteAttachmentDownload";
 import { useRemoteAgentAttachments } from "./useRemoteAgentAttachments";
 import { useRemoteAttachmentHistory } from "./useRemoteAttachmentHistory";
 import type { RemoteAgentMetadataRepository } from "./remoteAgentMetadata";
@@ -196,7 +203,13 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const projectTargets = useMemo(() => {
     const result = new Map<
       string,
-      { serverId: string; runnerId: string; projectId: string; connected: boolean }
+      {
+        serverId: string;
+        runnerId: string;
+        projectId: string;
+        projectKind?: RemoteProjectKind;
+        connected: boolean;
+      }
     >();
     for (const snapshot of inventory.snapshots) {
       if (snapshot.descriptor === null) continue;
@@ -207,6 +220,9 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
             serverId: snapshot.serverId,
             runnerId: snapshot.descriptor.runnerId,
             projectId: project.id,
+            ...(isRemoteFolderProject(project)
+              ? { projectKind: remoteProjectKindOf(project) }
+              : {}),
             connected:
               snapshot.connected &&
               servers.some((server) => server.id === snapshot.serverId && server.connected),
@@ -353,6 +369,12 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     valid,
     publish: inventory.publishTask,
     report,
+    projectKind: (target) => {
+      const current = projectTargets.get(
+        remoteAgentProjectKey(target.serverId, target.runnerId, target.projectId),
+      );
+      return current === undefined ? null : remoteProjectKindOf({ kind: current.projectKind });
+    },
     resolveAttachments: remoteAttachments.resolve,
   });
   const pendingMessages = useRemotePendingMessages({
@@ -523,6 +545,9 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
                   ? "in-place"
                   : "worktree",
                 leaseToken: null,
+                ...(isRemoteFolderProject(project)
+                  ? { remoteProjectKind: remoteProjectKindOf(project) }
+                  : {}),
               };
             }),
       ),
@@ -568,6 +593,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
   const agents: AgentThreadsSurface = {
     ...local,
     ...(remoteMode ? remoteAccountUsage : {}),
+    accountUsageSource: remoteMode ? "remote" : "local",
     remoteGit: remoteShip.access,
     remoteCommandCatalog,
     historySearch,
@@ -616,6 +642,12 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     revealAttachment: async (threadId, attachmentId) => {
       if (isRemoteAgentIdentity(threadId)) await remoteAttachments.reveal(threadId, attachmentId);
       else await local.revealAttachment(threadId, attachmentId);
+    },
+    downloadAttachment: (threadId, attachmentId) => {
+      if (!isRemoteAgentIdentity(threadId)) return local.downloadAttachment(threadId, attachmentId);
+      const workspaceId = remoteById.get(threadId)?.thread.owner.rootKey;
+      if (workspaceId === undefined) return refuseUnknownAttachmentDownload();
+      return remoteAttachments.download({ workspaceId, threadId, attachmentId });
     },
     history:
       selectedThreadId !== null && isRemoteAgentIdentity(selectedThreadId)
@@ -688,22 +720,10 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
     lastUsedLaunch: (key) => (isRemoteAgentIdentity(key) ? null : local.lastUsedLaunch(key)),
     isolationPreview: (root, key) =>
       isRemoteAgentIdentity(key ?? root)
-        ? {
-            repositoryRoot: root,
-            repositoryStatus: { kind: "ready" },
-            recommended: projects.some(
-              (project) =>
-                project.rootKey === (key ?? root) && project.isolationPolicy === "in-place",
-            )
-              ? { kind: "in-place" }
-              : { kind: "worktree", reason: "policy" },
-            inPlaceGuard: { kind: "safe" },
-            inPlaceAllowed: projects.some(
-              (project) =>
-                project.rootKey === (key ?? root) && project.isolationPolicy === "in-place",
-            ),
-            confirmationKey: null,
-          }
+        ? remoteProjectIsolationPreview(
+            root,
+            projects.find((project) => project.rootKey === (key ?? root)),
+          )
         : local.isolationPreview(root, key),
     refreshIsolationStatus: async (root, key) => {
       if (!isRemoteAgentIdentity(key ?? root)) return local.refreshIsolationStatus(root, key);

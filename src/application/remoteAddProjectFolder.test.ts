@@ -11,6 +11,8 @@ import {
 import { remoteProjectFolderFailure } from "./useRemoteProjectFolderRegistration";
 
 const PATH = "/srv/repos/billing";
+const UNKNOWN = { folderProjects: "unknown" } as const;
+const SUPPORTED = { folderProjects: "supported" } as const;
 
 function run(...actions: RemoteAddProjectFolderAction[]): RemoteAddProjectFolderState {
   return actions.reduce(reduceRemoteAddProjectFolder, INITIAL_REMOTE_ADD_PROJECT_FOLDER);
@@ -22,19 +24,23 @@ function submitting(submission = 1): RemoteAddProjectFolderState {
 
 describe("server folder reducer", () => {
   it("starts browsing from the listing root", () => {
-    expect(INITIAL_REMOTE_ADD_PROJECT_FOLDER).toEqual({ phase: "browsing", path: null });
+    expect(INITIAL_REMOTE_ADD_PROJECT_FOLDER).toEqual({
+      phase: "browsing",
+      path: null,
+      folderProjects: "unknown",
+    });
   });
 
   it("names the chosen folder after its last segment and is ready to submit", () => {
     const state = run({ kind: "chooseFolder", path: PATH });
-    expect(state).toEqual({ phase: "ready", path: PATH, name: "billing" });
+    expect(state).toEqual({ ...UNKNOWN, phase: "ready", path: PATH, name: "billing" });
     expect(remoteAddProjectFolderInput(state)).toEqual({ path: PATH, name: "billing" });
     expect(remoteAddProjectFolderNameError(state)).toBeNull();
   });
 
   it("asks for a name when the folder name yields nothing usable", () => {
     const state = run({ kind: "chooseFolder", path: "/srv/repos/..." });
-    expect(state).toEqual({ phase: "naming", path: "/srv/repos/...", name: "" });
+    expect(state).toEqual({ ...UNKNOWN, phase: "naming", path: "/srv/repos/...", name: "" });
     expect(remoteAddProjectFolderInput(state)).toBeNull();
     expect(remoteAddProjectFolderNameError(state)).toBe("invalid");
   });
@@ -49,16 +55,16 @@ describe("server folder reducer", () => {
   it("validates the name live and bounds it", () => {
     const chosen = run({ kind: "chooseFolder", path: PATH });
     const invalid = reduceRemoteAddProjectFolder(chosen, { kind: "setName", value: "my.project" });
-    expect(invalid).toEqual({ phase: "naming", path: PATH, name: "my.project" });
+    expect(invalid).toEqual({ ...UNKNOWN, phase: "naming", path: PATH, name: "my.project" });
     const valid = reduceRemoteAddProjectFolder(invalid, { kind: "setName", value: "my-project" });
-    expect(valid).toEqual({ phase: "ready", path: PATH, name: "my-project" });
+    expect(valid).toEqual({ ...UNKNOWN, phase: "ready", path: PATH, name: "my-project" });
     const long = reduceRemoteAddProjectFolder(valid, { kind: "setName", value: "a".repeat(90) });
-    expect(long).toEqual({ phase: "ready", path: PATH, name: "a".repeat(64) });
+    expect(long).toEqual({ ...UNKNOWN, phase: "ready", path: PATH, name: "a".repeat(64) });
   });
 
   it("returns to the browser at the chosen folder", () => {
     const state = run({ kind: "chooseFolder", path: PATH }, { kind: "back" });
-    expect(state).toEqual({ phase: "browsing", path: PATH });
+    expect(state).toEqual({ ...UNKNOWN, phase: "browsing", path: PATH });
   });
 
   it("ignores a submit while the name is invalid or nothing is chosen", () => {
@@ -72,7 +78,13 @@ describe("server folder reducer", () => {
 
   it("ignores a second submit, edits and Back while one is in flight", () => {
     const first = submitting(1);
-    expect(first).toEqual({ phase: "submitting", path: PATH, name: "billing", submission: 1 });
+    expect(first).toEqual({
+      ...UNKNOWN,
+      phase: "submitting",
+      path: PATH,
+      name: "billing",
+      submission: 1,
+    });
     for (const action of [
       { kind: "submitStarted", submission: 2 },
       { kind: "setName", value: "other" },
@@ -89,7 +101,7 @@ describe("server folder reducer", () => {
       submission: 1,
       reason,
     });
-    expect(state).toEqual({ phase: "rejected", path: PATH, name: "billing", reason });
+    expect(state).toEqual({ ...UNKNOWN, phase: "rejected", path: PATH, name: "billing", reason });
   });
 
   it("puts a taken name on the name field and blocks a resubmit until it changes", () => {
@@ -104,7 +116,7 @@ describe("server folder reducer", () => {
       taken,
     );
     const renamed = reduceRemoteAddProjectFolder(taken, { kind: "setName", value: "billing-2" });
-    expect(renamed).toEqual({ phase: "ready", path: PATH, name: "billing-2" });
+    expect(renamed).toEqual({ ...UNKNOWN, phase: "ready", path: PATH, name: "billing-2" });
   });
 
   it.each(["not_git_root", "limit_reached", "not_allowed"] as const)(
@@ -118,7 +130,13 @@ describe("server folder reducer", () => {
       expect(remoteAddProjectFolderNameError(rejected)).toBeNull();
       expect(
         reduceRemoteAddProjectFolder(rejected, { kind: "submitStarted", submission: 2 }),
-      ).toEqual({ phase: "submitting", path: PATH, name: "billing", submission: 2 });
+      ).toEqual({
+        ...UNKNOWN,
+        phase: "submitting",
+        path: PATH,
+        name: "billing",
+        submission: 2,
+      });
     },
   );
 
@@ -129,6 +147,7 @@ describe("server folder reducer", () => {
       failure: { kind: "runnerOutdated" },
     });
     expect(failed).toEqual({
+      ...UNKNOWN,
       phase: "failed",
       path: PATH,
       name: "billing",
@@ -136,6 +155,7 @@ describe("server folder reducer", () => {
     });
     expect(remoteAddProjectFolderInput(failed)).toEqual({ path: PATH, name: "billing" });
     expect(reduceRemoteAddProjectFolder(failed, { kind: "back" })).toEqual({
+      ...UNKNOWN,
       phase: "browsing",
       path: PATH,
     });
@@ -158,6 +178,109 @@ describe("server folder reducer", () => {
         reason: "not_allowed",
       }),
     ).toBe(ready);
+  });
+});
+
+describe("server folder runner support", () => {
+  const described: RemoteAddProjectFolderAction = {
+    kind: "runnerDescribed",
+    folderProjects: "supported",
+  };
+
+  it.each(["supported", "unsupported"] as const)(
+    "records a runner whose folder projects are %s while browsing",
+    (folderProjects) => {
+      expect(run({ kind: "runnerDescribed", folderProjects })).toEqual({
+        phase: "browsing",
+        path: null,
+        folderProjects,
+      });
+    },
+  );
+
+  it("returns the same state when the runner answers the same again", () => {
+    const state = run(described);
+    expect(reduceRemoteAddProjectFolder(state, described)).toBe(state);
+    expect(INITIAL_REMOTE_ADD_PROJECT_FOLDER).toEqual({
+      ...UNKNOWN,
+      phase: "browsing",
+      path: null,
+    });
+  });
+
+  it("replaces an earlier answer with a later one", () => {
+    const state = run(described, { kind: "runnerDescribed", folderProjects: "unsupported" });
+    expect(state).toEqual({ phase: "browsing", path: null, folderProjects: "unsupported" });
+  });
+
+  it("carries the answer through choosing, naming, going back and submitting", () => {
+    const ready = run(described, { kind: "chooseFolder", path: PATH });
+    expect(ready).toEqual({ ...SUPPORTED, phase: "ready", path: PATH, name: "billing" });
+    const naming = reduceRemoteAddProjectFolder(ready, { kind: "setName", value: "-x" });
+    expect(naming).toEqual({ ...SUPPORTED, phase: "naming", path: PATH, name: "-x" });
+    expect(reduceRemoteAddProjectFolder(naming, { kind: "back" })).toEqual({
+      ...SUPPORTED,
+      phase: "browsing",
+      path: PATH,
+    });
+    expect(reduceRemoteAddProjectFolder(ready, { kind: "submitStarted", submission: 1 })).toEqual({
+      ...SUPPORTED,
+      phase: "submitting",
+      path: PATH,
+      name: "billing",
+      submission: 1,
+    });
+  });
+
+  it("records an answer that arrives after the folder was chosen or submitted", () => {
+    const ready = run({ kind: "chooseFolder", path: PATH });
+    expect(reduceRemoteAddProjectFolder(ready, described)).toEqual({
+      ...SUPPORTED,
+      phase: "ready",
+      path: PATH,
+      name: "billing",
+    });
+    expect(reduceRemoteAddProjectFolder(submitting(4), described)).toEqual({
+      ...SUPPORTED,
+      phase: "submitting",
+      path: PATH,
+      name: "billing",
+      submission: 4,
+    });
+  });
+
+  it("keeps the answer on a rejection, a failure and the edit that follows", () => {
+    const pending = reduceRemoteAddProjectFolder(submitting(), described);
+    const rejected = reduceRemoteAddProjectFolder(pending, {
+      kind: "submitRejected",
+      submission: 1,
+      reason: "not_git_root",
+    });
+    expect(rejected).toEqual({
+      ...SUPPORTED,
+      phase: "rejected",
+      path: PATH,
+      name: "billing",
+      reason: "not_git_root",
+    });
+    expect(reduceRemoteAddProjectFolder(rejected, { kind: "setName", value: "other" })).toEqual({
+      ...SUPPORTED,
+      phase: "ready",
+      path: PATH,
+      name: "other",
+    });
+    const failed = reduceRemoteAddProjectFolder(pending, {
+      kind: "submitFailed",
+      submission: 1,
+      failure: { kind: "unknown" },
+    });
+    expect(failed).toEqual({
+      ...SUPPORTED,
+      phase: "failed",
+      path: PATH,
+      name: "billing",
+      failure: { kind: "unknown" },
+    });
   });
 });
 

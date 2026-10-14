@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, Folder, ImageIcon, ImageOff, Link2 } from "lucide-react";
 import type { AgentAttachmentImageState } from "../../application/useAgentAttachmentImages";
 import type { AgentImageMime } from "../../domain/agentAttachment";
+import { AgentTurnAttachmentFile } from "./AgentTurnAttachmentFile";
 import {
   AGENT_ATTACHMENT_DECODE_FAILED_REASON,
   AGENT_ATTACHMENT_LOADING_LABEL,
@@ -9,6 +10,7 @@ import {
   AGENT_ATTACHMENT_UNAVAILABLE_LABEL,
   AGENT_ATTACHMENT_UNRESOLVABLE_REASON,
   agentAttachmentImageIsResolvable,
+  formatAgentAttachmentBytes,
   type AgentTurnAttachmentGlyph,
   type AgentTurnAttachmentImageView,
   type AgentTurnAttachmentView,
@@ -101,7 +103,15 @@ function AgentTurnAttachment({
 }) {
   switch (attachment.kind) {
     case "chip":
-      return <AgentAttachmentChip glyph={attachment.glyph} name={attachment.name} />;
+      return (
+        <AgentAttachmentChip
+          bytes={attachment.bytes}
+          glyph={attachment.glyph}
+          name={attachment.name}
+        />
+      );
+    case "remoteFile":
+      return <AgentTurnAttachmentFile attachment={attachment} />;
     case "folder":
       return (
         <AgentAttachmentChip description={attachment.path} glyph="folder" name={attachment.name} />
@@ -210,14 +220,17 @@ function unavailableReason(
 }
 
 function AgentAttachmentChip({
+  bytes,
   description = null,
   glyph,
   name,
 }: {
+  readonly bytes?: number;
   readonly description?: string | null;
   readonly glyph: AgentAttachmentChipGlyph;
   readonly name: string;
 }) {
+  const size = bytes === undefined ? "" : formatAgentAttachmentBytes(bytes);
   return (
     <span
       className="agent-attachments__chip"
@@ -226,6 +239,7 @@ function AgentAttachmentChip({
     >
       <AgentAttachmentGlyph glyph={glyph} />
       <span className="agent-attachments__name">{name}</span>
+      {size !== "" && <span className="agent-attachments__size agent-num">{size}</span>}
       {description !== null && <span className="agent-visually-hidden">{description}</span>}
     </span>
   );

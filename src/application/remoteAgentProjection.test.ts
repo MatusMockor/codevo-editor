@@ -111,6 +111,78 @@ describe("remote original thread projection", () => {
     expect(second[0]!.repositoryLabel).toBe("Renamed");
     expect(second[0]!.thread).toBe(first[0]!.thread);
   });
+  it("carries the project kind for a folder project only", () => {
+    const folderTask: RemoteRunnerTask = { ...root, id: "notes-root", projectId: "notes" };
+    const views = projectRemoteAgentThreads({
+      ...input([root, child, folderTask]),
+      projects: [
+        { id: "project", name: "Project", kind: "repository" },
+        { id: "notes", name: "Notes", kind: "folder" },
+      ],
+    });
+    const byProject = new Map(views.map((view) => [view.execution?.projectId, view.execution]));
+    expect(byProject.get("notes")).toMatchObject({ projectId: "notes", projectKind: "folder" });
+    expect(byProject.get("project")).toMatchObject({ projectId: "project" });
+    expect("projectKind" in (byProject.get("project") ?? {})).toBe(false);
+    const legacy = projectRemoteAgentThreads(input())[0]!;
+    expect("projectKind" in (legacy.execution ?? {})).toBe(false);
+    const unlisted = projectRemoteAgentThreads({ ...input([folderTask]) })[0]!;
+    expect("projectKind" in (unlisted.execution ?? {})).toBe(false);
+  });
+  it("marks a conversation whose project the inventory no longer lists", () => {
+    const cache = new RemoteAgentProjection();
+    const folder = (): RemoteAgentProjectionInput => ({
+      ...input(structuredClone([root, child])),
+      projects: [{ id: "project", name: "Project", kind: "folder" }],
+    });
+    const omitted = (): RemoteAgentProjectionInput => ({
+      ...input(structuredClone([root, child])),
+      projects: [{ id: "other", name: "Other" }],
+    });
+    const listed = cache.project(folder());
+    expect(listed[0]!.execution).toMatchObject({ projectKind: "folder" });
+    expect("projectListing" in (listed[0]!.execution ?? {})).toBe(false);
+    const unlisted = cache.project(omitted());
+    expect(unlisted[0]).not.toBe(listed[0]);
+    expect(unlisted[0]!.execution).toMatchObject({ projectListing: "unlisted" });
+    expect("projectKind" in (unlisted[0]!.execution ?? {})).toBe(false);
+    expect(unlisted[0]!.thread).toBe(listed[0]!.thread);
+    expect(cache.project(omitted())).toBe(unlisted);
+    const relisted = cache.project(input(structuredClone([root, child])));
+    expect("projectListing" in (relisted[0]!.execution ?? {})).toBe(false);
+    expect("projectKind" in (relisted[0]!.execution ?? {})).toBe(false);
+  });
+  it("keeps a folder project's view stable and republishes it when the kind changes", () => {
+    const cache = new RemoteAgentProjection();
+    const folder = (): RemoteAgentProjectionInput => ({
+      ...input(structuredClone([root, child])),
+      projects: [{ id: "project", name: "Project", kind: "folder" }],
+    });
+    const first = cache.project(folder());
+    expect(first[0]!.execution).toMatchObject({ projectKind: "folder" });
+    expect(cache.project(folder())).toBe(first);
+    const repository = cache.project(input());
+    expect(repository[0]).not.toBe(first[0]);
+    expect("projectKind" in (repository[0]!.execution ?? {})).toBe(false);
+    expect(repository[0]!.thread).toBe(first[0]!.thread);
+  });
+  it("does not leak a folder kind across server A to B to A", () => {
+    const cache = new RemoteAgentProjection();
+    const onServer = (
+      serverId: string,
+      kind: "folder" | "repository" | undefined,
+    ): RemoteAgentProjectionInput => ({
+      ...input(),
+      serverId,
+      projects: [{ id: "project", name: "Project", ...(kind === undefined ? {} : { kind }) }],
+    });
+    const kindOf = (value: RemoteAgentProjectionInput) =>
+      cache.project(value)[0]!.execution?.projectKind ?? null;
+    expect(kindOf(onServer("a", "folder"))).toBe("folder");
+    expect(kindOf(onServer("b", undefined))).toBeNull();
+    expect(kindOf(onServer("a", "folder"))).toBe("folder");
+    expect(kindOf(onServer("b", "repository"))).toBeNull();
+  });
   it("does not reuse removed or different-owner history and isolates speculative views", () => {
     const cache = new RemoteAgentProjection();
     const first = cache.project(input());

@@ -45,6 +45,11 @@ import type { AgentExternalHistoryState } from "./AgentImportedHistory";
 import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { useAgentAttachmentLightbox } from "./useAgentAttachmentLightbox";
 import { useAgentTurnAttachmentImagePort } from "./useAgentTurnAttachmentImages";
+import {
+  AgentTurnAttachmentFilesContext,
+  useAgentTurnAttachmentFilePort,
+} from "./agentTurnAttachmentFiles";
+import type { AgentAttachmentDownloadsSurface } from "./useAgentAttachmentDownloads";
 import { useAgentInlineImageLightbox } from "./useAgentInlineImageLightbox";
 import { useAgentThreadInlineImages } from "./useAgentThreadInlineImages";
 import type { AgentProseContext } from "./AgentAssistantText";
@@ -142,6 +147,7 @@ export interface AgentThreadSessionProps {
   readonly attachmentImages?: AgentAttachmentImagesSurface | null;
   readonly inlineImages?: AgentInlineImagesSurface | null;
   readonly onRevealAttachment?: (threadId: string, attachmentId: string) => void;
+  readonly attachmentDownloads?: AgentAttachmentDownloadsSurface | null;
   readonly onRetryExternalHistory?: () => void;
   readonly turnLog?: AgentTurnLogFactsSource | null;
   onReviewInDiff(threadId: string): void;
@@ -210,6 +216,7 @@ function AgentThreadSessionBody({
   onResumeDeferredFollowUps,
   onSendDeferredFollowUpNow,
   onRevealAttachment,
+  attachmentDownloads = null,
   onStopBackground,
   sessionTaskControls = null,
   onStopSessionTask,
@@ -275,6 +282,7 @@ function AgentThreadSessionBody({
     onRevealAttachment ?? null,
     attachmentOwner,
   );
+  const attachmentFilePort = useAgentTurnAttachmentFilePort(attachmentDownloads, threadId);
   const lightbox = useAgentAttachmentLightbox(attachmentImagePort, attachmentOwner);
   const attachmentImageViewer = lightbox.images;
   const threadInlineImages = useAgentThreadInlineImages(
@@ -698,9 +706,11 @@ function AgentThreadSessionBody({
 
   return (
     <AgentCodeColorizerContext.Provider value={colorizer}>
-      <AgentAgentsDock agents={agents} running={running}>
-        {session}
-      </AgentAgentsDock>
+      <AgentTurnAttachmentFilesContext.Provider value={attachmentFilePort}>
+        <AgentAgentsDock agents={agents} running={running}>
+          {session}
+        </AgentAgentsDock>
+      </AgentTurnAttachmentFilesContext.Provider>
     </AgentCodeColorizerContext.Provider>
   );
 }

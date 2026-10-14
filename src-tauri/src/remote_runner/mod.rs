@@ -9,6 +9,15 @@ mod mcp_servers;
 pub use mcp_servers::*;
 mod mcp_server_manage;
 pub use mcp_server_manage::*;
+mod attachment_download;
+mod attachment_download_sink;
+mod attachment_file_wire;
+#[cfg(all(test, unix))]
+mod attachment_test_support;
+mod attachment_transfers;
+mod attachment_upload;
+mod attachment_upload_feed;
+mod attachment_watch;
 mod attachments;
 mod commands;
 mod continuation;
@@ -30,6 +39,9 @@ mod service;
 mod transport;
 mod types;
 
+pub use attachment_download::*;
+pub use attachment_transfers::AttachmentTransferState;
+pub use attachment_upload::*;
 pub use attachments::*;
 pub use commands::*;
 pub use continuation::*;

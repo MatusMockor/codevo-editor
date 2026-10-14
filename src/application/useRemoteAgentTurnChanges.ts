@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isTerminalAgentTurnStatus } from "../domain/agentThread";
+import { isRemoteFolderProject } from "../domain/remoteProjectKind";
 import type { RemoteRunnerGateway, RemoteRunnerTask } from "../domain/remoteRunner";
 import type { AgentThreadView } from "./agentThreadPorts";
 import {
@@ -30,6 +31,12 @@ interface Lease {
   readonly identity: string;
 }
 
+function repositoryProjectIds(snapshot: RemoteAgentInventorySnapshot): string[] {
+  return snapshot.projects
+    .filter((project) => !isRemoteFolderProject(project))
+    .map((project) => project.id);
+}
+
 /** Resolves a historical projected turn to its own server task, never the latest task. */
 export function useRemoteAgentTurnChanges(input: RemoteAgentTurnChangesInput) {
   const indices = useMemo(() => {
@@ -44,7 +51,7 @@ export function useRemoteAgentTurnChanges(input: RemoteAgentTurnChangesInput) {
       result.set(snapshot.serverId, {
         snapshot,
         tasks,
-        projects: new Set(snapshot.projects.map((project) => project.id)),
+        projects: new Set(repositoryProjectIds(snapshot)),
       });
     }
     return result;
@@ -59,7 +66,7 @@ export function useRemoteAgentTurnChanges(input: RemoteAgentTurnChangesInput) {
               snapshot.connected,
               snapshot.descriptor?.runnerId,
               snapshot.descriptor?.capabilities.turnChanges === true,
-              snapshot.projects.map((project) => project.id).sort(),
+              repositoryProjectIds(snapshot).sort(),
             ]),
           )
           .sort(),

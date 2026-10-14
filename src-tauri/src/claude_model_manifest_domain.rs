@@ -413,6 +413,29 @@ mod tests {
     }
 
     #[test]
+    fn bundles_haiku_5_5_under_its_live_catalog_id() {
+        let catalog = parse_manifest(BUNDLE).unwrap();
+        let haiku = catalog.resolve_model("claude-haiku-5-5").unwrap();
+        assert_eq!(
+            haiku.description.as_deref(),
+            Some("For high-volume, latency-sensitive tasks such as classification, extraction, and routing.")
+        );
+        assert_eq!(haiku.release_date.as_deref(), Some("2026-10-07"));
+        assert_eq!(haiku.min_version.as_deref(), Some("2.1.293"));
+        assert_eq!(haiku.default_effort, "medium");
+        assert_eq!(
+            haiku.efforts,
+            ["low", "medium", "high", "xhigh", "max", "ultrathink"]
+        );
+        assert!(haiku.context_windows.is_empty());
+        assert!(!haiku.thinking_mode);
+        assert!(!haiku.runtime_ids.iter().any(|id| id == "haiku"));
+        let legacy = catalog.resolve_model("claude-haiku-4-5").unwrap();
+        assert_eq!(legacy.choice, "claude-haiku-4-5");
+        assert!(legacy.runtime_ids.iter().any(|id| id == "haiku"));
+    }
+
+    #[test]
     fn rejects_bad_envelopes_and_limits() {
         assert!(parse_manifest(&vec![b' '; MAX_MANIFEST_BYTES + 1]).is_err());
         assert!(!timestamp("2026-02-30T00:00:00Z"));

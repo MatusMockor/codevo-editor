@@ -51,6 +51,7 @@ import {
   agentThreadAcceptsQueuedMessage,
   agentThreadIsSteerable,
 } from "../../application/agentTurnAdmission";
+import type { AgentExecutionTarget } from "../../domain/agentLaunch";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { useAgentComposerRepositoryInteraction } from "./useAgentComposerRepositoryInteraction";
 import {
@@ -113,6 +114,9 @@ import {
 export const NOT_REPOSITORY_COMPOSER_CAPTION = "Not a Git repository · Local checkout only";
 export const NOT_REPOSITORY_WORKTREE_ONLY_CAPTION =
   "This folder is not a Git repository, so it cannot run in an isolated worktree. Choose a repository from the checkout menu.";
+export const NOT_REPOSITORY_SERVER_CAPTION = "Not a Git repository · Runs in the server folder";
+export const NOT_REPOSITORY_SERVER_WORKTREE_ONLY_CAPTION =
+  "This server folder is not a Git repository, so it cannot run in an isolated worktree. Update the server runner to run in the server folder.";
 
 export type AgentComposerSurface = Pick<
   AgentThreadsSurface,
@@ -805,7 +809,11 @@ export function useAgentComposerControllerState({
     dispatching,
     guard,
     isolation,
-    isolationReason: isolationStatusCaption(preview, isolation, worktreeOnly),
+    isolationReason: isolationStatusCaption(
+      preview,
+      isolation,
+      notRepositoryCaption(remoteExecution ? "server" : "local", worktreeOnly),
+    ),
     launch: composerLaunch,
     launchProvider: agentCliKind,
     mode: composerMode,
@@ -825,9 +833,16 @@ export function useAgentComposerControllerState({
     target: composerTargetView(composerProjects, target),
     worktreeAvailable,
     worktreeOnly,
-    worktreeOnlyReason,
+    worktreeOnlyReason:
+      remoteExecution && notRepository && worktreeOnly
+        ? NOT_REPOSITORY_SERVER_WORKTREE_ONLY_CAPTION
+        : worktreeOnlyReason,
     worktreeBase,
     remoteGit,
+    remoteProjectKind:
+      selectedThread === null
+        ? composerProject?.remoteProjectKind
+        : selectedThread.execution?.projectKind,
     commandCatalogProject: remoteComposerCommandCatalogProject(
       agents.remoteCommandCatalog,
       composerProjectRootKey,
@@ -861,10 +876,18 @@ function steerKeptThePrompt(outcome: AgentSteerOutcome): boolean {
   return outcome === "kept";
 }
 
+function notRepositoryCaption(location: AgentExecutionTarget, worktreeOnly: boolean): string {
+  if (location === "server")
+    return worktreeOnly
+      ? NOT_REPOSITORY_SERVER_WORKTREE_ONLY_CAPTION
+      : NOT_REPOSITORY_SERVER_CAPTION;
+  return worktreeOnly ? NOT_REPOSITORY_WORKTREE_ONLY_CAPTION : NOT_REPOSITORY_COMPOSER_CAPTION;
+}
+
 function isolationStatusCaption(
   preview: ReturnType<AgentComposerSurface["isolationPreview"]> | null,
   isolation: AgentTaskIsolation,
-  worktreeOnly: boolean,
+  notRepositoryReason: string,
 ): string | null {
   if (preview === null) return null;
   if (preview.repositoryStatus === undefined) {
@@ -877,7 +900,7 @@ function isolationStatusCaption(
     case "unavailable":
       return preview.repositoryStatus.message;
     case "notRepository":
-      return worktreeOnly ? NOT_REPOSITORY_WORKTREE_ONLY_CAPTION : NOT_REPOSITORY_COMPOSER_CAPTION;
+      return notRepositoryReason;
     case "ready":
       return recommendedIsolationCaption(preview.recommended, isolation);
   }

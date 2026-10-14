@@ -31,6 +31,7 @@ export interface WorkbenchSettingsModel {
   readonly workspaceSettings: WorkspaceSettings;
   readonly workspaceTrust: WorkspaceTrustState | null;
   readonly agents?: {
+    readonly accountUsageSource?: "local" | "remote";
     readonly providerSignIn: AgentProviderSignInSurface;
     readonly agentProjects?: { readonly projects: readonly AgentProjectDescriptor[] };
     readonly threads?: ReadonlyArray<AgentThreadView>;

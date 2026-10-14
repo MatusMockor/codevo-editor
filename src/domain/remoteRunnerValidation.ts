@@ -38,6 +38,7 @@ import {
   isRemoteProjectRegistration,
   isRemoteProjectRegistrationPath,
 } from "./remoteProjectRegistration";
+import { isRemoteProjectKind } from "./remoteProjectKind";
 import { parseAgentSubagentLifecycle } from "@codevo/agent-events";
 import { isRemoteRunnerInstructionSnapshot } from "./remoteRunnerInstructions";
 import { parseAgentLaunchOptions } from "./agentLaunch";
@@ -46,6 +47,10 @@ import { agentCliKindOfRemoteRunnerProvider } from "./remoteRunnerProvider";
 import { SPEECH_LANGUAGES } from "./speechDictation";
 import { isSpeechPcmBase64 } from "./speechPcm";
 import { isSpeechTranscriptText } from "./speechTranscription";
+import {
+  isRemoteRunnerFileAttachment,
+  remoteRunnerFileAttachmentChecks,
+} from "./remoteRunnerFileAttachment";
 import type * as R from "./remoteRunner";
 
 type Check = (value: unknown) => boolean;
@@ -316,7 +321,7 @@ const attachmentFields: Readonly<Record<string, Check>> = {
   sha256: (v) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v),
   createdAt: timestamp,
 };
-const attachment: Check = (value) =>
+const legacyAttachment: Check = (value) =>
   object({
     ...attachmentFields,
     mediaType: choice("image/png", "image/jpeg"),
@@ -328,6 +333,7 @@ const attachment: Check = (value) =>
     mediaType: choice("text/plain"),
     bytes: integer(1, 5 * 1024 * 1024),
   })(value);
+const attachment: Check = (value) => legacyAttachment(value) || isRemoteRunnerFileAttachment(value);
 const page = (item: Check) =>
   object({ items: array(item, 50), nextCursor: (v) => v === null || integer(0)(v) });
 const voidResponse: Check = (v) => v === null || v === undefined;
@@ -453,6 +459,8 @@ export const remoteRunnerChecks = {
         eventBackwardPaging: optional(boolean),
         runtimeRequests: optional(boolean),
         interactiveApprovals: optional(boolean),
+        fileAttachments: optional(boolean),
+        folderProjects: optional(boolean),
       }),
     }),
   },
@@ -507,7 +515,12 @@ export const remoteRunnerChecks = {
   },
   listProjects: {
     request: object(serverRequest),
-    response: object({ items: array(object({ id: identifier, name: text(256) }), 1000) }),
+    response: object({
+      items: array(
+        object({ id: identifier, name: text(256), kind: optional(isRemoteProjectKind) }),
+        1000,
+      ),
+    }),
   },
   cloneProject: {
     request: object({
@@ -675,8 +688,9 @@ export const remoteRunnerChecks = {
         v.length % 4 === 0 &&
         /^[A-Za-z0-9+/]+={0,2}$/.test(v),
     }),
-    response: object({ attachment, created: boolean }),
+    response: object({ attachment: legacyAttachment, created: boolean }),
   },
+  ...remoteRunnerFileAttachmentChecks,
 } as const;
 
 export function validateRemoteRunnerValue(

@@ -151,6 +151,23 @@ describe("remote surface composition", () => {
     expect(port.capabilities).toHaveBeenLastCalledWith(expect.objectContaining({ taskId: "next" }));
     expect(current?.scope.taskId).toBe("next");
   });
+  it("publishes a folder project's missing history as declared, with no failure message", async () => {
+    const port = gateway();
+    const folderCapabilities = { files: true, history: false, terminal: true };
+    vi.mocked(port.capabilities).mockResolvedValue(folderCapabilities);
+    const folderThread = {
+      ...remoteThread,
+      execution: { ...remoteThread.execution, projectKind: "folder" as const },
+    };
+    render(context(port), "remote:server:runner:project", folderThread);
+    expect(current?.message).toBe("Loading server panels…");
+    await act(async () => Promise.resolve());
+    expect(port.capabilities).toHaveBeenCalledTimes(1);
+    expect(current?.gateway).toBe(port);
+    expect(current?.capabilities).toEqual(folderCapabilities);
+    expect(current?.message).toBeNull();
+    expect(port.history).not.toHaveBeenCalled();
+  });
   it("does not reuse capabilities when an endpoint is replaced under the same server ID", async () => {
     const port = gateway();
     vi.mocked(port.capabilities)

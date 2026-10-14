@@ -20,6 +20,27 @@ describe("agentWorkspaceLocation", () => {
     expect(agentPreviousWorktreeLabel(null)).toBe("Previous worktree");
   });
 
+  it("calls the in-place choice of a server folder project Server folder", () => {
+    expect(agentCheckoutLabel("serverCheckout", "folder")).toBe("Server folder");
+    expect(agentCheckoutLabel("serverCheckout", "repository")).toBe("Server checkout");
+    expect(agentCheckoutLabel("serverCheckout", undefined)).toBe("Server checkout");
+    expect(agentCheckoutLabel("localCheckout", "folder")).toBe("Local checkout");
+    expect(agentCheckoutLabel("newWorktree", "folder")).toBe("New worktree");
+    expect(agentCheckoutLabel("worktree", "folder")).toBe("Worktree");
+    expect(agentCheckoutLabel("previousWorktree", "folder")).toBe("Previous worktree");
+    const inPlace = agentThreadLocation({
+      isolation: "in-place",
+      worktreePath: null,
+      repositoryRoot: "remote:server:runner:notes",
+      serverName: "build-box",
+      branch: null,
+    });
+    expect(inPlace.checkout).toBe("serverCheckout");
+    expect(agentLocationTokenText(inPlace, "folder")).toBe("build-box · Server folder");
+    expect(agentLocationTokenText(inPlace, "repository")).toBe("build-box · Server checkout");
+    expect(agentLocationTokenText(inPlace)).toBe("build-box · Server checkout");
+  });
+
   it("names the machine only by server name", () => {
     expect(agentMachineLabel(THIS_COMPUTER)).toBe("This computer");
     expect(agentMachineLabel({ kind: "server", name: "build-box" })).toBe("build-box");

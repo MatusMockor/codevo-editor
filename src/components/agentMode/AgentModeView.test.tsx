@@ -4345,6 +4345,7 @@ function surface(overrides: Partial<AgentModeViewProps["agents"]>): AgentModeVie
     attachments: composerAttachmentsSurfaceFixture(),
     attachmentImages: attachmentImagesSurfaceFixture(),
     revealAttachment: async () => undefined,
+    downloadAttachment: async () => "cancelled",
     threads: [],
     repositories: [repository(ROOT, ""), repository(NESTED, "packages/api")],
     orphanedWorktrees: [],

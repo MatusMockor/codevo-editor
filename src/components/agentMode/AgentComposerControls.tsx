@@ -6,6 +6,7 @@ import {
   type AgentCheckoutKind,
   type AgentMachine,
 } from "../../domain/agentWorkspaceLocation";
+import type { RemoteProjectKind } from "../../domain/remoteProjectKind";
 import {
   agentComposerCheckoutChoice,
   agentComposerRepositoryOptions,
@@ -99,8 +100,10 @@ export function AgentComposerLockedMachine({ machine }: { readonly machine: Agen
 
 export function AgentComposerLockedCheckout({
   checkout,
+  projectKind,
 }: {
   readonly checkout: AgentCheckoutKind;
+  readonly projectKind?: RemoteProjectKind;
 }) {
   return (
     <span className="agent-composer__lock">
@@ -108,7 +111,7 @@ export function AgentComposerLockedCheckout({
         <CheckoutGlyph checkout={checkout} size={12} />
       </span>
       <span className="agent-visually-hidden">Checkout:</span>
-      {agentCheckoutLabel(checkout)}
+      {agentCheckoutLabel(checkout, projectKind)}
     </span>
   );
 }

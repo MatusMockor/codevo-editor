@@ -6,6 +6,9 @@ import { AgentAttachmentLightbox } from "./AgentAttachmentLightbox";
 import { useAgentComposerPreview } from "./useAgentComposerPreview";
 import { formatAgentAttachmentBytes } from "./agentTurnAttachmentPresentation";
 
+export const AGENT_COMPOSER_ATTACHMENT_SAVING_LABEL = "Saving…";
+export const AGENT_COMPOSER_FILE_CHECKING_LABEL = "Checking…";
+
 export interface AgentComposerAttachmentsProps {
   readonly drafts: ReadonlyArray<AgentComposerAttachmentDraft>;
   readonly refusal: string | null;
@@ -169,9 +172,14 @@ function AgentComposerAttachmentDetail({
     return <span className="agent-composer-attachment__notice">{draft.notice}</span>;
   }
   if (draft.state === "staging") {
-    return <span className="agent-composer-attachment__size">Saving…</span>;
+    return (
+      <span className="agent-composer-attachment__size">
+        {agentComposerAttachmentStagingLabel(draft)}
+      </span>
+    );
   }
   if (isFolder(draft)) return null;
+  if (isNativeFile(draft) && draft.bytes === 0) return null;
   return (
     <span className="agent-composer-attachment__size agent-num">
       {formatAgentAttachmentBytes(draft.bytes)}
@@ -187,6 +195,15 @@ function AgentComposerAttachmentGlyph({ draft }: { readonly draft: AgentComposer
   if (isFolder(draft)) return <Folder aria-hidden="true" size={size} />;
   if (draft.kind === "reference") return <Link2 aria-hidden="true" size={size} />;
   return <FileText aria-hidden="true" size={size} />;
+}
+
+function agentComposerAttachmentStagingLabel(draft: AgentComposerAttachmentDraft): string {
+  if (isNativeFile(draft)) return AGENT_COMPOSER_FILE_CHECKING_LABEL;
+  return AGENT_COMPOSER_ATTACHMENT_SAVING_LABEL;
+}
+
+function isNativeFile(draft: AgentComposerAttachmentDraft): boolean {
+  return draft.kind === "file" && draft.backing === "nativeFile";
 }
 
 function isFolder(draft: AgentComposerAttachmentDraft): boolean {

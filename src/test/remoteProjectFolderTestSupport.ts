@@ -6,6 +6,7 @@ import type {
   RemoteProjectRegistration,
   RemoteProjectRegistrationInput,
 } from "../domain/remoteProjectRegistration";
+import type { RemoteRunnerFolderProjectSupport } from "../application/remoteAddProjectFolder";
 import { remoteAgentProjectKey } from "../application/remoteAgentProjection";
 import type { RemoteProjectRegistrationGateway } from "../application/remoteProjectRegistrationGateway";
 import type { RemoteAddProjectServerProject } from "../application/useRemoteAddProject";
@@ -54,6 +55,7 @@ type Settlement = Readonly<{
 export type FolderHarnessOptions = Readonly<{
   directory?: boolean;
   registration?: boolean;
+  folderProjects?: RemoteRunnerFolderProjectSupport;
   projects?: readonly RemoteAddProjectServerProject[];
   projectsAfterRefresh?: readonly RemoteAddProjectServerProject[];
   strict?: boolean;
@@ -83,7 +85,12 @@ export function mountFolderHarness(options: FolderHarnessOptions = {}) {
         pending.push({ resolve, reject });
       }),
   );
-  const identifyRunner = vi.fn(() => Promise.resolve(FOLDER_RUNNER));
+  const identifyRunner = vi.fn<RemoteProjectRegistrationGateway["identifyRunner"]>(() =>
+    Promise.resolve({
+      runnerId: FOLDER_RUNNER,
+      folderProjects: options.folderProjects ?? "unsupported",
+    }),
+  );
   const listDirectoryEntries = vi.fn<DirectoryListingGateway["listDirectoryEntries"]>(({ path }) =>
     folderListing(path),
   );

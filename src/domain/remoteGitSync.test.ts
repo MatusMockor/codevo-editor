@@ -96,6 +96,28 @@ describe("remote git error copy", () => {
       expect(message).not.toMatch(/git_|fatal:|stderr/u);
     }
   });
+
+  it("says a folder project is not a Git repository", () => {
+    expect(REMOTE_GIT_ERROR_CODES).toContain("git_not_repository");
+    expect(remoteGitErrorMessage("git_not_repository")).toBe(
+      "This server project is not a Git repository.",
+    );
+    expect(
+      parseRemoteGitAdmission({ error: "git_not_repository" }, isRemoteGitCommitResult),
+    ).toEqual({ kind: "refused", error: "git_not_repository" });
+  });
+
+  it.each([
+    "git_not_a_repository",
+    "not_repository",
+    "GIT_NOT_REPOSITORY",
+    "git_not_repository ",
+    "gitNotRepository",
+  ])("keeps the near miss %s outside the closed error codes", (error) => {
+    expect(() => parseRemoteGitAdmission({ error }, isRemoteGitCommitResult)).toThrow(
+      REMOTE_GIT_INVALID_RESPONSE,
+    );
+  });
 });
 
 describe("remote compare URL", () => {

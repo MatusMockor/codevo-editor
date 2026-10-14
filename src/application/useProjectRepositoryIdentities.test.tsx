@@ -8,6 +8,7 @@ import { agentProjectGroups } from "../components/agentMode/agentModePresentatio
 import { projectFixture } from "../components/agentMode/agentThreadsSurfaceTestFixtures";
 import { LOCAL_REPOSITORY_IDENTITY_LOOKUP_TIMEOUT_MS } from "./projectRepositoryIdentityDiscovery";
 import { RemoteRepositoryIdentityCoordinator } from "./remoteRepositoryIdentityCoordinator";
+import { repositoryIdentityCandidates } from "./repositoryIdentityCandidates";
 import { REPOSITORY_IDENTITY_RETRY_DELAYS_MS } from "./repositoryIdentityRetry";
 import {
   deferred,
@@ -583,6 +584,51 @@ describe("repository identity discovery", () => {
     await settle();
     expect([...result.current.values()]).toEqual([EDITOR]);
     expect(local.discover).toHaveBeenCalledTimes(3);
+  });
+
+  it("asks nothing for a folder project and drops a repository identity when its kind changes", async () => {
+    const NO_LINKS = new Map<string, string>();
+    const held = deferred<string | null>();
+    const recorded = recordingRemoteIdentityGateway((_, call) =>
+      call === 2 ? held.promise : Promise.resolve(EDITOR),
+    );
+    const sibling = { ...remoteProject, rootKey: "remote:linux:runner:sibling" };
+    const asFolder = { ...remoteProject, remoteProjectKind: "folder" as const };
+    const asRepository = { ...remoteProject, remoteProjectKind: "repository" as const };
+    const { result, rerender } = renderHook(
+      ({ projects }) =>
+        useProjectRepositoryIdentities(
+          repositoryIdentityCandidates(projects, NO_LINKS),
+          null,
+          recorded.gateway,
+        ),
+      { initialProps: { projects: [asFolder, sibling] } },
+    );
+    await settle();
+    expect(recorded.requests.map((request) => request.projectId)).toEqual(["sibling"]);
+    expect([...result.current.keys()]).toEqual([sibling.rootKey]);
+
+    rerender({ projects: [asRepository, sibling] });
+    await settle();
+    expect(recorded.requests.map((request) => request.projectId)).toEqual(["sibling", "project"]);
+    expect(result.current.has(remoteProject.rootKey)).toBe(false);
+
+    rerender({ projects: [asFolder, sibling] });
+    await act(async () => {
+      held.resolve("github.com/acme/stale");
+    });
+    await settle();
+    expect([...result.current.entries()]).toEqual([[sibling.rootKey, EDITOR]]);
+
+    rerender({ projects: [asRepository, sibling] });
+    await settle();
+    expect(recorded.requests.map((request) => request.projectId)).toEqual([
+      "sibling",
+      "project",
+      "project",
+    ]);
+    expect(result.current.get(remoteProject.rootKey)).toBe(EDITOR);
+    expect(result.current.get(sibling.rootKey)).toBe(EDITOR);
   });
 
   it("discovers every remote project without exceeding the runner two-request limit", async () => {

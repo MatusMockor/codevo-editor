@@ -72,7 +72,7 @@ function creationFixture(
     remoteFolder: {
       open: false,
       directoryGateway: null,
-      folder: { phase: "browsing", path: null },
+      folder: { phase: "browsing", path: null, folderProjects: "unknown" },
       chooseFolder: vi.fn(),
       setName: vi.fn(),
       back: vi.fn(),

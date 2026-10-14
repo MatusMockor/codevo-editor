@@ -3,6 +3,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
+import type { AgentRemoteSurface } from "./agentRemoteSurface";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import { AgentSurfaceEmptyState, type AgentSurfaceEmptyStateProps } from "./AgentSurfaceEmptyState";
 import { AGENT_SURFACE_HOTKEYS } from "./agentSurfaceHotkeys";
@@ -13,6 +15,7 @@ import {
   SURFACE_FILES_UNTRUSTED_DESCRIPTION,
   SURFACE_NO_PROJECT_REASON,
   SURFACE_REMOTE_CAPABILITIES_DESCRIPTION,
+  SURFACE_REMOTE_NOT_REPOSITORY_REASON,
   SURFACE_REMOTE_NO_PROJECT_DESCRIPTION,
 } from "./agentSurfacePolicy";
 import { surfaceRepositoryScope, surfaceThreadView } from "./agentSurfaceTestFixtures";
@@ -133,6 +136,60 @@ describe("AgentSurfaceEmptyState", () => {
     expect(onChooseSurface.mock.calls).toEqual([["diff"]]);
   });
 
+  it("disables Diff for a folder project with the reason and keeps its other server panels", () => {
+    const onChooseSurface = vi.fn();
+    render({
+      thread: remoteThread("folder"),
+      remoteSurface: remoteSurface({ files: true, history: false, terminal: true }),
+      onChooseSurface,
+    });
+    expect(cardLabels()).toEqual(["Terminal", "Files", "Diff"]);
+    const diff = host.querySelector<HTMLButtonElement>('[aria-label="Open Diff surface"]');
+    expect(diff?.disabled).toBe(true);
+    expect(diff?.getAttribute("aria-describedby")).toBe("agent-surface-card-diff");
+    expect(host.querySelector("#agent-surface-card-diff")?.textContent).toBe(
+      SURFACE_REMOTE_NOT_REPOSITORY_REASON,
+    );
+    expect(host.querySelectorAll(".agent-surface-card__reason")).toHaveLength(1);
+    expect(host.querySelector('[role="status"]')?.textContent).toBe(
+      "Server History is not available.",
+    );
+    expect(host.textContent).not.toContain("Check the server connection");
+    act(() => {
+      diff?.click();
+      for (const key of ["d", "g", "h", "f"])
+        host
+          .querySelector('[role="group"]')
+          ?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+    });
+    expect(onChooseSurface.mock.calls).toEqual([["files"]]);
+  });
+
+  it.each([undefined, "repository"] as const)(
+    "keeps Diff open for a repository project of kind %s and states a missing History truthfully",
+    (kind) => {
+      const onChooseSurface = vi.fn();
+      render({
+        thread: remoteThread(kind),
+        remoteSurface: remoteSurface({ files: true, history: false, terminal: true }),
+        onChooseSurface,
+      });
+      expect(cardLabels()).toEqual(["Terminal", "Files", "Diff"]);
+      expect(host.querySelectorAll(".agent-surface-card__reason")).toHaveLength(0);
+      expect(host.querySelector('[aria-label="Open History surface"]')).toBeNull();
+      expect(host.querySelector('[role="status"]')?.textContent).toBe(
+        "Server History is not available.",
+      );
+      act(() => {
+        for (const key of ["h", "d"])
+          host
+            .querySelector('[role="group"]')
+            ?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      });
+      expect(onChooseSurface.mock.calls).toEqual([["diff"]]);
+    },
+  );
+
   it("does not offer local tools or project changes for a server draft", () => {
     const onChooseSurface = vi.fn();
     render({ thread: null, remote: true, onChooseSurface });
@@ -158,6 +215,12 @@ describe("AgentSurfaceEmptyState", () => {
       ),
     ).toEqual(["Terminal", "Files", "Diff", "Git", "Scripts", "Pull request", "History"]);
   });
+
+  function cardLabels(): (string | null)[] {
+    return Array.from(host.querySelectorAll(".agent-surface-card__label")).map(
+      (node) => node.textContent,
+    );
+  }
 
   function filesDescription(): string {
     return (
@@ -209,6 +272,33 @@ function cssRule(source: string, selector: string): string {
   const end = source.indexOf("}", bodyStart);
   expect(end).toBeGreaterThan(bodyStart);
   return source.slice(bodyStart + 1, end);
+}
+
+function remoteThread(projectKind: "folder" | "repository" | undefined) {
+  return {
+    ...surfaceThreadView(),
+    execution: {
+      kind: "remote" as const,
+      serverId: "server",
+      runnerId: "runner",
+      projectId: "project",
+      ...(projectKind === undefined ? {} : { projectKind }),
+      conversationId: "conversation",
+      latestTaskId: "task",
+      resume: null,
+      reachability: REMOTE_RUNNER_REACHABLE,
+    },
+  };
+}
+
+function remoteSurface(capabilities: AgentRemoteSurface["capabilities"]): AgentRemoteSurface {
+  return {
+    paneKey: "remote-thread:conversation",
+    scope: { serverId: "server", runnerId: "runner", projectId: "project", taskId: "task" },
+    gateway: {} as NonNullable<AgentRemoteSurface["gateway"]>,
+    capabilities,
+    message: null,
+  };
 }
 
 function defaultProps(): AgentSurfaceEmptyStateProps {

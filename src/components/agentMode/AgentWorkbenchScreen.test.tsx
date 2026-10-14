@@ -1825,16 +1825,17 @@ describe("AgentWorkbenchScreen", () => {
       expect(option, "Missing Linux server option").toBeDefined();
       act(() => option?.click());
     }
-    const projectSelect = () =>
-      host.querySelector<HTMLSelectElement>('[aria-label="Choose server project"] select');
+    const projectButton = () =>
+      host.querySelector<HTMLButtonElement>(
+        '[aria-label="Choose server project"] button[data-project-root-key="remote:linux:runner:project"]',
+      );
     await waitForReact(() =>
-      expect(projectSelect() !== null || prompt().disabled === false).toBe(true),
+      expect(projectButton() !== null || prompt().disabled === false).toBe(true),
     );
-    const select = projectSelect();
-    if (select !== null) {
+    const project = projectButton();
+    if (project !== null) {
       act(() => {
-        select.value = "remote:linux:runner:project";
-        select.dispatchEvent(new Event("change", { bubbles: true }));
+        project.click();
       });
     }
     await waitForReact(() => expect(prompt().disabled).toBe(false));
@@ -2131,6 +2132,7 @@ function threadsSurface(root: string, worktreePath: string | null): AgentThreads
     attachments: composerAttachmentsSurfaceFixture(),
     attachmentImages: attachmentImagesSurfaceFixture(),
     revealAttachment: async () => undefined,
+    downloadAttachment: async () => "cancelled",
     threads: [threadView(root, worktreePath)],
     repositories: [
       { mapping: { rootRelativePath: "" }, repositoryRoot: root, repositoryRelativePath: "" },

@@ -4,6 +4,7 @@ mod agent_command_catalog;
 mod agent_command_catalog_domain;
 mod agent_command_catalog_protocol;
 mod agent_command_catalog_service;
+mod agent_file_source;
 mod agent_mcp_server_login_protocol;
 mod agent_mcp_server_login_registry;
 mod agent_mcp_server_manage;

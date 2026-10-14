@@ -201,13 +201,12 @@ describe("agent workbench remote clone adoption", () => {
     expect(draft).not.toBeNull();
     typeInto(draft!, "Draft kept while I visit the other project");
     click(host.querySelector('button[aria-label="Close clone draft"]')!);
-    const chooser = host.querySelector<HTMLSelectElement>(
-      'section[aria-label="Choose server project"] select',
+    const chooser = host.querySelector<HTMLButtonElement>(
+      'section[aria-label="Choose server project"] button[data-project-root-key="remote:linux:runner:project"]',
     );
     expect(chooser).not.toBeNull();
     act(() => {
-      chooser!.value = "remote:linux:runner:project";
-      chooser!.dispatchEvent(new Event("change", { bubbles: true }));
+      chooser!.click();
     });
     await waitForReact(() =>
       expect(host.querySelector('section[aria-label="Choose server project"]')).toBeNull(),

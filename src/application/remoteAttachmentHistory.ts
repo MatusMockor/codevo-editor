@@ -14,7 +14,13 @@ import type { AgentAttachmentOwner } from "./useAgentComposerAttachments";
 
 export type RemoteAttachmentLoadFailure = "notStored" | "loadFailed" | "unsupported" | "limit";
 export type RemoteAttachmentUnavailableReason =
-  "notConnected" | "notLoaded" | "foreign" | "readFailed" | "busy" | RemoteAttachmentLoadFailure;
+  | "notConnected"
+  | "notLoaded"
+  | "foreign"
+  | "readFailed"
+  | "busy"
+  | "notImage"
+  | RemoteAttachmentLoadFailure;
 export type RemoteAttachmentRecovery = "whenReady" | "afterReconnect" | "never";
 
 export function remoteAttachmentUnavailableMessage(
@@ -28,17 +34,19 @@ export function remoteAttachmentUnavailableMessage(
     case "foreign":
       return "This image does not belong to this conversation.";
     case "notStored":
-      return "The server no longer stores this image.";
+      return "The server no longer stores this attachment.";
     case "loadFailed":
-      return "The server could not provide this image's details. Reconnect the server to try again.";
+      return "The server could not provide this attachment's details. Reconnect the server to try again.";
     case "readFailed":
       return "The server could not send this image. Reopen the conversation to try again.";
     case "busy":
       return "The server is busy. Reopen the conversation to try again.";
     case "unsupported":
-      return "This server cannot provide image previews.";
+      return "This server cannot provide this attachment.";
     case "limit":
-      return "Too many server images are open. Reconnect the server to view more.";
+      return "Too many server attachments are open. Reconnect the server to view more.";
+    case "notImage":
+      return "This attachment has no preview. Download it to open it.";
     default:
       return unreachable(reason);
   }
@@ -59,6 +67,7 @@ export function remoteAttachmentRecovery(
       return "afterReconnect";
     case "foreign":
     case "unsupported":
+    case "notImage":
       return "never";
     default:
       return unreachable(reason);
@@ -88,7 +97,7 @@ export function remoteAttachmentLoadRetriesQuietly(error: unknown): boolean {
   return error.reason === "busy" || remoteAttachmentRecovery(error.reason) === "whenReady";
 }
 
-interface StoredEntry {
+export interface RemoteAttachmentStoredEntry {
   readonly kind: "stored";
   readonly threads: Set<string>;
   readonly owner: AgentAttachmentOwner;
@@ -105,6 +114,7 @@ interface FailedEntry {
   readonly serverId: string;
   readonly runnerId: string;
 }
+type StoredEntry = RemoteAttachmentStoredEntry;
 type Entry = StoredEntry | FailedEntry;
 export type RemoteAttachmentRegistry = Map<string, Entry>;
 
@@ -174,7 +184,7 @@ export async function loadRemoteTaskAttachments(
 ): Promise<RemoteTaskAttachments> {
   const parts = task.parts.filter((part) => part.type === "attachment");
   if (parts.length === 0) return NO_ATTACHMENTS;
-  if (parts.length > MAX_REMOTE_TASK_ATTACHMENTS) throw new Error("Too many server images.");
+  if (parts.length > MAX_REMOTE_TASK_ATTACHMENTS) throw new Error("Too many server attachments.");
   const gateway = authority.gateway;
   if (gateway === null) throw new RemoteAttachmentUnavailableError("notConnected");
   const threadId = remoteAgentThreadKey(serverId, task.runnerId, task.conversationId ?? task.id);
@@ -225,8 +235,10 @@ export function remoteAttachmentImageMime(
   request: StoredAgentAttachmentRequest,
 ): AgentImageMime | null {
   const entry = registry.get(keyOf(request.workspaceId, request.attachmentId));
-  if (entry?.kind !== "stored" || entry.attachment.mediaType === "text/plain") return null;
-  return entry.attachment.mediaType;
+  if (entry?.kind !== "stored") return null;
+  const attachment = entry.attachment;
+  if (attachment.kind === "file" || attachment.mediaType === "text/plain") return null;
+  return attachment.mediaType;
 }
 
 export async function readRemoteAttachment(
@@ -234,12 +246,13 @@ export async function readRemoteAttachment(
   request: StoredAgentAttachmentRequest,
   authority: RemoteAttachmentReadAuthority,
 ): Promise<ArrayBuffer> {
-  const entry = readableEntry(registry, request, authority);
+  const entry = readableRemoteAttachment(registry, request, authority);
+  if (entry.attachment.kind === "file") throw new RemoteAttachmentUnavailableError("notImage");
   const gateway = authority.gateway;
   if (gateway?.readAttachment === undefined)
     throw new RemoteAttachmentUnavailableError("unsupported");
   const content = await requestContent(gateway, entry);
-  if (readableEntry(registry, request, authority) !== entry)
+  if (readableRemoteAttachment(registry, request, authority) !== entry)
     throw new RemoteAttachmentUnavailableError("notLoaded");
   if (
     content.mediaType !== entry.attachment.mediaType ||
@@ -309,7 +322,7 @@ function reviseFailure(
 
 function assertLoadAuthority(context: LoadContext): void {
   if (!context.authority.isGatewayCurrent(context.gateway))
-    throw new Error("The image owner changed.");
+    throw new Error("The attachment owner changed.");
   if (!context.authority.ownerIsCurrent(context.owner))
     throw new RemoteAttachmentUnavailableError("notConnected");
 }
@@ -394,7 +407,7 @@ function reconcile(settled: Entry, fetched: Entry): Entry | null {
   if (settled.kind === "failed") return keepsSettledFailure(settled, fetched) ? settled : null;
   if (fetched.kind === "failed") return settled;
   if (!sameMetadata(settled.attachment, fetched.attachment))
-    throw new Error("Server image metadata changed.");
+    throw new Error("Server attachment metadata changed.");
   return settled;
 }
 
@@ -451,7 +464,7 @@ function isOwnMetadata(
   return (
     attachment.runnerId === context.task.runnerId &&
     attachment.id === attachmentId &&
-    attachment.bytes <= MAX_BYTES &&
+    (attachment.kind === "file" || attachment.bytes <= MAX_BYTES) &&
     attachment.bytes >= 1
   );
 }
@@ -496,7 +509,7 @@ function isNotFound(error: unknown): boolean {
   return isRemoteRunnerRequestRejectedError(error) && error.message === NOT_FOUND_MESSAGE;
 }
 
-function readableEntry(
+export function readableRemoteAttachment(
   registry: RemoteAttachmentRegistry,
   request: StoredAgentAttachmentRequest,
   authority: RemoteAttachmentReadAuthority,
@@ -519,7 +532,7 @@ function projectAttachment(entry: StoredEntry, serverId: string): AgentAttachmen
   const image = entry.attachment;
   const attachmentId = remoteAttachmentDisplayId(image.id);
   const remote = { serverId, attachmentId: image.id };
-  if (image.mediaType === "text/plain")
+  if (image.kind === "file" || image.mediaType === "text/plain")
     return { kind: "file", attachmentId, name: image.name, bytes: image.bytes, remote };
   return {
     kind: "image",
@@ -538,6 +551,7 @@ function sameMetadata(left: RemoteRunnerAttachment, right: RemoteRunnerAttachmen
     left.id === right.id &&
     left.runnerId === right.runnerId &&
     left.name === right.name &&
+    left.kind === right.kind &&
     left.mediaType === right.mediaType &&
     left.bytes === right.bytes &&
     left.sha256 === right.sha256 &&

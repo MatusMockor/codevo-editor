@@ -327,8 +327,14 @@ describe("agent workbench draft follows its repository across the Run on picker"
 
     expect(chooser()).not.toBeNull();
     expect(
-      [...(chooser()?.querySelectorAll("option") ?? [])].map((option) => option.textContent),
-    ).toEqual(["Choose a project…", "app"]);
+      [
+        ...(chooser()?.querySelectorAll<HTMLButtonElement>("button[data-project-root-key]") ?? []),
+      ].map((row) => [
+        row.dataset.projectRootKey,
+        row.querySelector("strong")?.textContent ?? null,
+        row.querySelector("small")?.textContent ?? null,
+      ]),
+    ).toEqual([["remote:linux:runner:unrelated-namesake", "app", null]]);
     expect(agentComposerDraftStore.snapshot()).toEqual([[LOCAL_DRAFT, PROMPT]]);
 
     await runOn("Linux server", "This computer");

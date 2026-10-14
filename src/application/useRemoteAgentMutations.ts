@@ -8,6 +8,7 @@ import type {
 } from "./agentThreadPorts";
 import type {
   RemoteRunnerGateway,
+  RemoteRunnerIsolation,
   RemoteRunnerPart,
   RemoteRunnerProvider,
   RemoteRunnerTask,
@@ -18,14 +19,22 @@ import {
 } from "../domain/remoteRunnerErrors";
 import { agentLaunchWithoutBrowser, serializeAgentLaunchOptions } from "../domain/agentLaunch";
 import { isRemoteStartBase, type RemoteStartBase } from "../domain/remoteGitSyncWire";
+import { remoteProjectKindOf, type RemoteProjectKind } from "../domain/remoteProjectKind";
 import { remoteRunnerEchoesLaunch } from "../domain/remoteRunnerLaunchEcho";
 import { notifyAgentThreadIdentified } from "./agentThreadIdentification";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
+import {
+  remoteProjectLaunchRefusal,
+  remoteProjectLaunchRefusalMessage,
+  type RemoteProjectLaunchRefusal,
+  type RemoteProjectListing,
+} from "./remoteFolderProjectLaunch";
 
 export interface RemoteAgentMutationTarget {
   readonly serverId: string;
   readonly runnerId: string;
   readonly projectId: string;
+  readonly projectKind?: RemoteProjectKind;
   readonly conversationId?: string;
   readonly latestTaskId?: string;
 }
@@ -35,6 +44,7 @@ interface Options {
   valid(owner: object): boolean;
   publish(serverId: string, task: RemoteRunnerTask): void;
   report(message: string): void;
+  projectKind?(target: RemoteAgentMutationTarget): RemoteProjectKind | null;
   resolveAttachments?(
     request: AgentTurnAttachmentRequest,
     serverId: string,
@@ -83,6 +93,7 @@ function key(target: RemoteAgentMutationTarget): string {
     target.runnerId,
     target.projectId,
     target.conversationId ?? null,
+    remoteProjectKindOf({ kind: target.projectKind }),
   ]);
 }
 function identifyStartedThread(
@@ -201,9 +212,31 @@ export function useRemoteAgentMutations(options: Options) {
       serializeAgentLaunchOptions(launch),
       request.attachments ?? [],
       request.attachmentOwner ?? null,
+      remoteProjectKindOf({ kind: target.projectKind }),
     ]);
     let command = pending.current.get(targetKey);
     let dispatched = false;
+    const listing = (): RemoteProjectListing => {
+      if (latest.current.projectKind === undefined) return "unread";
+      return latest.current.projectKind(target) ?? "unlisted";
+    };
+    const launchRefusal = (
+      isolation: RemoteRunnerIsolation,
+      base: RemoteStartBase | undefined,
+    ): RemoteProjectLaunchRefusal | null =>
+      remoteProjectLaunchRefusal({
+        captured: target.projectKind,
+        current: listing(),
+        isolation,
+        base,
+      });
+    const refuseLaunch = (
+      isolation: RemoteRunnerIsolation,
+      base: RemoteStartBase | undefined,
+    ): void => {
+      const refusal = launchRefusal(isolation, base);
+      if (refusal !== null) throw new Error(remoteProjectLaunchRefusalMessage(refusal));
+    };
     const abandonMismatch = (reason: string, remoteState: string): null => {
       pending.current.delete(targetKey);
       options.report(`${reason} ${remoteState}`);
@@ -232,10 +265,12 @@ export function useRemoteAgentMutations(options: Options) {
         if (requestedBase !== undefined && (continuation || !isRemoteStartBase(requestedBase)))
           throw new Error("Choose a valid starting point for the server conversation.");
         if (!continuation) {
+          refuseLaunch(isolation, requestedBase);
           const descriptor = await gateway.getRunner({ serverId: target.serverId });
           if (!valid()) return null;
           if (descriptor.runnerId !== target.runnerId)
             throw new Error("The remote runner changed. Reconnect before starting.");
+          refuseLaunch(isolation, requestedBase);
           sendIsolation = descriptor.capabilities.taskIsolation === true;
           if (isolation === "in-place" && !sendIsolation)
             throw new Error("Update the server runner to use the server checkout.");
@@ -303,6 +338,7 @@ export function useRemoteAgentMutations(options: Options) {
         };
       }
       if (!valid()) return null;
+      if (!continuation) refuseLaunch(command.isolation, command.base);
       pending.current.set(targetKey, command);
       dispatched = true;
       let task: RemoteRunnerTask;
@@ -360,6 +396,14 @@ export function useRemoteAgentMutations(options: Options) {
         command.draftId = task.id;
         if (!knownDraftId) identifyStartedThread(request, target, task.id, options.report);
         if (task.status === "draft") {
+          const refusal = launchRefusal(command.isolation, command.base);
+          if (refusal !== null)
+            return abandonMismatch(
+              remoteProjectLaunchRefusalMessage(refusal),
+              knownDraftId === undefined
+                ? REMOTE_UNSTARTED_DRAFT_NOTICE
+                : REMOTE_POSSIBLY_RUNNING_NOTICE,
+            );
           task = await gateway.startTask({
             serverId: target.serverId,
             taskId: task.id,

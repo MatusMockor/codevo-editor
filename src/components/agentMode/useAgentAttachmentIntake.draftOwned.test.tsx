@@ -90,6 +90,8 @@ describe("attachment intake owned by its draft", () => {
   let intake: ReturnType<typeof useAgentAttachmentIntake> | null;
   let picked: Deferred<ReadonlyArray<string>>;
   let imageReads: Map<string, Deferred<ArrayBuffer>>;
+  let fileStages: Map<string, Error>;
+  let stagedFiles: string[];
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -102,6 +104,20 @@ describe("attachment intake owned by its draft", () => {
     intake = null;
     picked = deferred();
     imageReads = new Map();
+    fileStages = new Map();
+    stagedFiles = [];
+    machines.server.gateway.stageAgentAttachmentFile = async ({ path, fileSource }) => {
+      const staged = await fileSource.stage(path);
+      return {
+        attachmentId: staged.sourceId,
+        name: staged.name,
+        mime: null,
+        bytes: staged.bytes,
+        width: null,
+        height: null,
+        promptLineBytesMax: 0,
+      };
+    };
   });
 
   afterEach(() => {
@@ -132,6 +148,15 @@ describe("attachment intake owned by its draft", () => {
       dispatching: scene.dispatching ?? false,
       picker: () => picked.promise,
       readImagePath: (path) => imageRead(path).promise,
+      fileSource: {
+        stage: async (path) => {
+          stagedFiles.push(path);
+          const failure = fileStages.get(path);
+          if (failure !== undefined) return Promise.reject(failure);
+          return { sourceId: `source-${stagedFiles.length}`, name: "staged.bin", bytes: 16 };
+        },
+        release: async () => undefined,
+      },
     });
     useLayoutEffect(() => {
       const origin = scene.carriedFrom;
@@ -294,7 +319,7 @@ describe("attachment intake owned by its draft", () => {
   it("refuses a folder dropped on a server draft and still attaches the images around it", async () => {
     const folder = "/Users/x/Documents/codevo s.r.o./invoices";
     show(SERVER);
-    failImageRead(folder, new AgentAttachmentFolderSourceError());
+    fileStages.set(folder, new AgentAttachmentFolderSourceError());
     imageRead("/Users/dev/one.png").resolve(new ArrayBuffer(4));
     imageRead("/Users/dev/two.png").resolve(new ArrayBuffer(4));
 
@@ -302,17 +327,94 @@ describe("attachment intake owned by its draft", () => {
     await settle(() => expect(serverDraft()).toEqual(["one.png:ready", "two.png:ready"]));
 
     expect(machines.server.scope(SERVER_KEY).refusal).toBe(AGENT_ATTACHMENT_REMOTE_FOLDER_REFUSAL);
-    expect([...imageReads.keys()]).toEqual([folder, "/Users/dev/one.png", "/Users/dev/two.png"]);
+    expect([...imageReads.keys()]).toEqual(["/Users/dev/one.png", "/Users/dev/two.png"]);
+    expect(stagedFiles).toEqual([folder]);
     expect(localDraft()).toEqual([]);
     expect(machines.server.gateway.inspectAgentAttachmentCandidate).not.toHaveBeenCalled();
   });
 
-  it("reports an unreadable server path through the refusal and keeps reading the rest", async () => {
+  it("stages a non-image server path as a native file and never reads it as an image", async () => {
     show(SERVER);
-    failImageRead("/Users/dev/notes.txt", new Error("Choose a PNG, JPEG, GIF or WebP image."));
+
+    await act(() => hook().drop(["/Users/dev/spec.pdf"]));
+    await settle(() => expect(serverDraft()).toEqual(["staged.bin:ready"]));
+
+    expect(machines.server.scope(SERVER_KEY).drafts).toMatchObject([
+      { kind: "file", path: null, bytes: 16, backing: "nativeFile" },
+    ]);
+    expect(machines.server.scope(SERVER_KEY).refusal).toBeNull();
+    expect(stagedFiles).toEqual(["/Users/dev/spec.pdf"]);
+    expect(imageReads.size).toBe(0);
+  });
+
+  it("turns a staged server file into a path reference when the draft returns to this computer", async () => {
+    show(SERVER);
+    await act(() => hook().drop(["/Users/dev/spec.pdf"]));
+    await settle(() => expect(serverDraft()).toEqual(["staged.bin:ready"]));
+
+    show(BACK_LOCAL);
+    await settle(() =>
+      expect(machines.local.scope(LOCAL_KEY).drafts).toMatchObject([
+        { kind: "reference", path: "/Users/dev/spec.pdf", state: "ready" },
+      ]),
+    );
+
+    expect(serverDraft()).toEqual([]);
+    expect(machines.server.released).toEqual(["source-1"]);
+    expect(stagedFiles).toEqual(["/Users/dev/spec.pdf"]);
+  });
+
+  it("stages a carried server file again for the server draft it moved to", async () => {
+    const moved: Scene = {
+      machine: "server",
+      draftKey: "thread-on-server",
+      target: SERVER_ROOT,
+      serverId: "server",
+      carriedFrom: { machine: "server", draftKey: SERVER_KEY },
+    };
+    show(SERVER);
+    await act(() => hook().drop(["/Users/dev/spec.pdf"]));
+    await settle(() => expect(serverDraft()).toEqual(["staged.bin:ready"]));
+
+    show(moved);
+    await settle(() =>
+      expect(machines.server.scope("thread-on-server").drafts).toMatchObject([
+        { kind: "file", state: "ready", path: null, backing: "nativeFile" },
+      ]),
+    );
+
+    expect(serverDraft()).toEqual([]);
+    expect(machines.server.released).toEqual(["source-1"]);
+    expect(stagedFiles).toEqual(["/Users/dev/spec.pdf", "/Users/dev/spec.pdf"]);
+  });
+
+  it("fails a carried server file visibly when the destination refuses it", async () => {
+    const moved: Scene = {
+      machine: "server",
+      draftKey: "thread-on-server",
+      target: SERVER_ROOT,
+      serverId: "server",
+      carriedFrom: { machine: "server", draftKey: SERVER_KEY },
+    };
+    show(SERVER);
+    await act(() => hook().drop(["/Users/dev/spec.pdf"]));
+    await settle(() => expect(serverDraft()).toEqual(["staged.bin:ready"]));
+    fileStages.set("/Users/dev/spec.pdf", new Error("The file could not be read."));
+
+    show(moved);
+    await settle(() =>
+      expect(machines.server.scope("thread-on-server").drafts).toMatchObject([
+        { state: "failed", failure: "The file could not be read." },
+      ]),
+    );
+  });
+
+  it("reports an unreadable server image through the refusal and keeps reading the rest", async () => {
+    show(SERVER);
+    failImageRead("/Users/dev/corrupt.png", new Error("Choose a PNG, JPEG, GIF or WebP image."));
     imageRead("/Users/dev/two.png").resolve(new ArrayBuffer(4));
 
-    await act(() => hook().drop(["/Users/dev/notes.txt", "/Users/dev/two.png"]));
+    await act(() => hook().drop(["/Users/dev/corrupt.png", "/Users/dev/two.png"]));
     await settle(() => expect(serverDraft()).toEqual(["two.png:ready"]));
 
     expect(machines.server.scope(SERVER_KEY).refusal).toBe(
@@ -323,11 +425,11 @@ describe("attachment intake owned by its draft", () => {
   it("reports every distinct failure of one server drop together and still attaches the rest", async () => {
     const folder = "/Users/x/Documents/codevo s.r.o./invoices";
     show(SERVER);
-    failImageRead(folder, new AgentAttachmentFolderSourceError());
-    failImageRead("/Users/dev/notes.txt", new Error(UNREADABLE_IMAGE));
+    fileStages.set(folder, new AgentAttachmentFolderSourceError());
+    failImageRead("/Users/dev/corrupt.png", new Error(UNREADABLE_IMAGE));
     imageRead("/Users/dev/one.png").resolve(new ArrayBuffer(4));
 
-    await act(() => hook().drop([folder, "/Users/dev/notes.txt", "/Users/dev/one.png"]));
+    await act(() => hook().drop([folder, "/Users/dev/corrupt.png", "/Users/dev/one.png"]));
     await settle(() => expect(serverDraft()).toEqual(["one.png:ready"]));
 
     expect(machines.server.scope(SERVER_KEY).refusal).toBe(
@@ -338,15 +440,15 @@ describe("attachment intake owned by its draft", () => {
   it("names a repeated server drop failure once and keeps the first three distinct ones", async () => {
     const folders = ["/Users/dev/first", "/Users/dev/second"];
     show(SERVER);
-    for (const folder of folders) failImageRead(folder, new AgentAttachmentFolderSourceError());
-    failImageRead("/Users/dev/notes.txt", new Error(UNREADABLE_IMAGE));
+    for (const folder of folders) fileStages.set(folder, new AgentAttachmentFolderSourceError());
+    failImageRead("/Users/dev/corrupt.png", new Error(UNREADABLE_IMAGE));
     failImageRead("/Users/dev/huge.png", new Error("Image is larger than 50 MiB."));
     failImageRead("/Users/dev/gone.png", new Error("The image is no longer there."));
 
     await act(() =>
       hook().drop([
         folders[0],
-        "/Users/dev/notes.txt",
+        "/Users/dev/corrupt.png",
         folders[1],
         "/Users/dev/huge.png",
         "/Users/dev/gone.png",
@@ -361,10 +463,10 @@ describe("attachment intake owned by its draft", () => {
 
   it("keeps the failures of a server drop to itself once the user navigated away", async () => {
     show(SERVER);
-    failImageRead("/Users/dev/notes.txt", new Error(UNREADABLE_IMAGE));
+    failImageRead("/Users/dev/corrupt.png", new Error(UNREADABLE_IMAGE));
     let dropping: Promise<void> = Promise.resolve();
     act(() => {
-      dropping = hook().drop(["/Users/dev/notes.txt", "/Users/dev/one.png"]);
+      dropping = hook().drop(["/Users/dev/corrupt.png", "/Users/dev/one.png"]);
     });
     await act(async () => undefined);
     expect(imageReads.has("/Users/dev/one.png")).toBe(true);

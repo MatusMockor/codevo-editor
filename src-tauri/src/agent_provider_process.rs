@@ -41,6 +41,8 @@ mod interactive_probe;
 use interactive_probe::InteractiveProbe;
 #[path = "agent_provider_command_catalog_plan.rs"]
 pub(crate) mod command_catalog_plan;
+#[path = "agent_provider_limit_reset_plan.rs"]
+pub(crate) mod limit_reset_plan;
 #[path = "agent_provider_mcp_manage_plan.rs"]
 pub(crate) mod mcp_manage_plan;
 #[path = "agent_provider_mcp_servers_plan.rs"]

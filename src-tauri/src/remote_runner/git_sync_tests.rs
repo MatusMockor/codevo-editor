@@ -1,5 +1,6 @@
 use super::super::git_sync_wire::{
-    operation_route, refusable_route, refusal_error, refused, GitErrorCode, StartBase, StartBody,
+    not_repository_error, operation_route, refusable_route, refusal_error, refused,
+    repository_read_route, GitErrorCode, StartBase, StartBody, GIT_NOT_REPOSITORY,
 };
 use super::super::types::{Server, StartRequest};
 use super::*;
@@ -318,6 +319,60 @@ fn admission_refusals_become_typed_responses_for_mutations_only() {
 }
 
 #[test]
+fn not_repository_refusals_surface_as_the_closed_error_on_every_git_route() {
+    assert_eq!(
+        GIT_NOT_REPOSITORY,
+        "This server project is not a Git repository."
+    );
+    for name in [
+        "projectFetch",
+        "projectUpdate",
+        "threadCommit",
+        "threadPushThreadBranch",
+        "threadPushBaseBranch",
+    ] {
+        assert_eq!(
+            executed(
+                fixture("editorGitRequest", name),
+                Err(refusal("git_not_repository"))
+            ),
+            Ok(json!({ "error": "git_not_repository" })),
+            "{name}"
+        );
+    }
+    for name in ["projectBranches", "projectStatus", "threadStatus"] {
+        assert_eq!(
+            executed(
+                fixture("editorGitRequest", name),
+                Err(refusal("git_not_repository"))
+            ),
+            Err(GIT_NOT_REPOSITORY.into()),
+            "{name}"
+        );
+        assert_eq!(
+            executed(fixture("editorGitRequest", name), Err(refusal("git_dirty"))),
+            Err(INVALID_RESPONSE.into()),
+            "{name}"
+        );
+        assert_eq!(
+            executed(
+                fixture("editorGitRequest", name),
+                Err("Runner request failed (HTTP 409).".into())
+            ),
+            Err("Runner request failed (HTTP 409).".into()),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        executed(
+            fixture("editorGitRequest", "operation"),
+            Err(refusal("git_not_repository"))
+        ),
+        Err(INVALID_RESPONSE.into())
+    );
+}
+
+#[test]
 fn every_refusal_code_round_trips_through_the_transport_error() {
     for case in contract()["sections"]["errorBody"]["accepted"]
         .as_array()
@@ -342,6 +397,26 @@ fn every_refusal_code_round_trips_through_the_transport_error() {
     assert!(refusal_error(b"not json").is_none());
     assert!(refused("Runner request failed (HTTP 409).").is_none());
     assert!(refused("Runner refused the Git operation: invalid_input").is_none());
+    assert_eq!(
+        refused(&refusal("git_not_repository")),
+        Some(GitErrorCode::GitNotRepository)
+    );
+    assert!(refused("Runner refused the Git operation: git_not_a_repository").is_none());
+    assert!(refusal_error(b"{\"error\":\"git_not_a_repository\"}").is_none());
+    assert_eq!(
+        not_repository_error(b"{\"error\":\"git_not_repository\"}"),
+        Some(refusal("git_not_repository"))
+    );
+    for other in [
+        "{\"error\":\"git_dirty\"}",
+        "{\"error\":\"conflict\"}",
+        "{\"error\":\"busy\"}",
+        "{\"error\":\"git_not_a_repository\"}",
+        "{\"error\":\"git_not_repository\",\"kind\":\"folder\"}",
+        "not json",
+    ] {
+        assert!(not_repository_error(other.as_bytes()).is_none(), "{other}");
+    }
 }
 
 #[test]
@@ -389,6 +464,28 @@ fn transport_routes_are_recognised_exactly() {
         "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/steer",
     ] {
         assert!(!refusable_route(path), "{path}");
+    }
+    for path in [
+        "/v1/projects/storefront/git/branches",
+        "/v1/projects/storefront/git/status",
+        "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/git/status",
+    ] {
+        assert!(repository_read_route(path), "{path}");
+        assert!(!refusable_route(path), "{path}");
+    }
+    for path in [
+        "/v1/projects/storefront/git/fetch",
+        "/v1/projects/storefront/git/update",
+        "/v1/projects/store front/git/status",
+        "/v1/projects/storefront/git/status/x",
+        "/v1/projects/storefront/status",
+        "/v1/tasks/not-a-task/git/status",
+        "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/git/branches",
+        "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/git/commit",
+        "/v1/tasks/7389088c-29b8-4cec-9a15-e825e1fb2f66/files",
+        "/v1/git-operations/5f0c1d2e-3a4b-4c5d-9e6f-7a8b9c0d1e2f",
+    ] {
+        assert!(!repository_read_route(path), "{path}");
     }
     assert!(operation_route(&format!("/v1/git-operations/{OPERATION}")));
     assert!(!operation_route("/v1/git-operations/x"));

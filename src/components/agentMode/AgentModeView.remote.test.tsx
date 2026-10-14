@@ -186,18 +186,20 @@ describe("original agent workbench with remote execution", () => {
         )!,
       );
       await waitForReact(() =>
-        expect(host.querySelector('[aria-label="Choose server project"] select')).not.toBeNull(),
+        expect(
+          host.querySelector('[aria-label="Choose server project"] button[data-project-root-key]'),
+        ).not.toBeNull(),
       );
       expect(host.textContent).not.toContain("No Git repository");
       expect(host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")?.disabled).toBe(
         true,
       );
-      const select = host.querySelector<HTMLSelectElement>(
-        '[aria-label="Choose server project"] select',
+      const project = host.querySelector<HTMLButtonElement>(
+        '[aria-label="Choose server project"] button[data-project-root-key="remote:linux:runner:project"]',
       )!;
+      expect(project).not.toBeNull();
       act(() => {
-        select.value = "remote:linux:runner:project";
-        select.dispatchEvent(new Event("change", { bubbles: true }));
+        project.click();
       });
       await waitForReact(() =>
         expect(host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")?.disabled).toBe(

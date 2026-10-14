@@ -43,6 +43,7 @@ import type {
 import type { AgentLaunchOptions } from "./agentLaunch";
 import type { RemoteStartBase } from "./remoteGitSyncWire";
 import type { SpeechLanguage } from "./speechDictation";
+import type { RemoteProjectKind } from "./remoteProjectKind";
 
 /** Closed editor-facing runner protocol. Credentials and server paths stay native. */
 export type RemoteRunnerIsolation = "in-place" | "worktree";
@@ -92,9 +93,11 @@ export type RemoteRunnerDescriptor = Readonly<{
     eventBackwardPaging?: boolean;
     runtimeRequests?: boolean;
     interactiveApprovals?: boolean;
+    fileAttachments?: boolean;
+    folderProjects?: boolean;
   }>;
 }>;
-export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
+export type RemoteRunnerProject = Readonly<{ id: string; name: string; kind?: RemoteProjectKind }>;
 export type RemoteRunnerCloneRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;
@@ -106,10 +109,11 @@ export type RemoteRunnerCloneRequest = RemoteRunnerServerRequest &
 export type RemoteRunnerCloneJobRequest = RemoteRunnerServerRequest & Readonly<{ cloneId: string }>;
 export type RemoteRunnerRegisterProjectRequest = RemoteRunnerServerRequest &
   RemoteProjectRegistrationInput;
+export type RemoteRunnerCloneJobProject = Readonly<{ id: string; name: string }>;
 export type RemoteRunnerCloneJob = Readonly<{
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
-  project: RemoteRunnerProject | null;
+  project: RemoteRunnerCloneJobProject | null;
   error: string | null;
 }>;
 export type RemoteRunnerTaskStatus =
@@ -185,15 +189,21 @@ export type RemoteRunnerAttachment = Readonly<{
   id: string;
   runnerId: string;
   name: string;
-  mediaType: "image/png" | "image/jpeg" | "text/plain";
   bytes: number;
   sha256: string;
   createdAt: string;
 }> &
   (
-    | Readonly<{ mediaType: "image/png" | "image/jpeg"; width: number; height: number }>
-    | Readonly<{ mediaType: "text/plain"; width?: never; height?: never }>
+    | Readonly<{
+        kind?: never;
+        mediaType: "image/png" | "image/jpeg";
+        width: number;
+        height: number;
+      }>
+    | Readonly<{ kind?: never; mediaType: "text/plain"; width?: never; height?: never }>
+    | Readonly<{ kind: "file"; mediaType: string; width?: never; height?: never }>
   );
+export type RemoteRunnerFileAttachment = Extract<RemoteRunnerAttachment, { kind: "file" }>;
 export type RemoteRunnerCreateTaskRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;
@@ -213,6 +223,11 @@ export type RemoteRunnerUploadRequest = RemoteRunnerServerRequest &
 
 export type RemoteRunnerAttachmentRequest = RemoteRunnerServerRequest &
   Readonly<{ attachmentId: string }>;
+export type RemoteRunnerUploadFileRequest = RemoteRunnerAttachmentRequest &
+  Readonly<{ sourceId: string; name: string }>;
+export type RemoteRunnerDownloadAttachmentRequest = RemoteRunnerAttachmentRequest &
+  Readonly<{ name: string; bytes: number; sha256: string }>;
+export type RemoteRunnerAttachmentDownload = Readonly<{ status: "saved" | "cancelled" }>;
 export type RemoteRunnerAttachmentContent = Readonly<{
   base64: string;
   mediaType: "image/png" | "image/jpeg" | "text/plain";
@@ -341,6 +356,13 @@ export interface RemoteRunnerGateway {
   getTaskFileDiff?(request: RemoteRunnerTaskFileDiffRequest): Promise<RemoteRunnerTaskFileDiff>;
   getAttachment?(request: RemoteRunnerAttachmentRequest): Promise<RemoteRunnerAttachment>;
   readAttachment?(request: RemoteRunnerAttachmentRequest): Promise<RemoteRunnerAttachmentContent>;
+  uploadAttachmentFile?(
+    request: RemoteRunnerUploadFileRequest,
+  ): Promise<Readonly<{ attachment: RemoteRunnerAttachment; created: boolean }>>;
+  cancelAttachmentUpload?(request: RemoteRunnerAttachmentRequest): Promise<void>;
+  downloadAttachment?(
+    request: RemoteRunnerDownloadAttachmentRequest,
+  ): Promise<RemoteRunnerAttachmentDownload>;
   listServers(): Promise<readonly RemoteRunnerServer[]>;
   connectServer(request: RemoteRunnerServerInput): Promise<RemoteRunnerServer>;
   disconnectServer(request: RemoteRunnerServerRequest): Promise<void>;

@@ -187,6 +187,47 @@ mod tests {
     }
 
     #[test]
+    fn folder_registration_keeps_the_closed_shape_and_rejects_kind() {
+        for created in [true, false] {
+            let value = json!({"status":"registered","project":{"id":"notes","name":"notes"},"created":created});
+            let accepted = validate_registration(value.clone()).unwrap();
+            assert_eq!(accepted, value);
+            let mut keys: Vec<&str> = accepted
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            keys.sort_unstable();
+            assert_eq!(keys, ["created", "project", "status"]);
+            let mut project_keys: Vec<&str> = accepted["project"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            project_keys.sort_unstable();
+            assert_eq!(project_keys, ["id", "name"]);
+        }
+        let base =
+            json!({"status":"registered","project":{"id":"notes","name":"notes"},"created":true});
+        for kind in [json!("folder"), json!("repository"), Value::Null] {
+            let mut on_project = base.clone();
+            on_project["project"]["kind"] = kind.clone();
+            let mut on_response = base.clone();
+            on_response["kind"] = kind.clone();
+            let mut on_rejection = json!({"status":"rejected","reason":"not_git_root"});
+            on_rejection["kind"] = kind;
+            for value in [on_project, on_response, on_rejection] {
+                assert_eq!(
+                    validate_registration(value).unwrap_err(),
+                    "Invalid project registration response"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn response_rejects_unknown_missing_extra_and_invalid_fields() {
         let base = json!({"status":"registered","project":{"id":"repo","name":"Repository"},"created":true});
         let mut invalid = vec![

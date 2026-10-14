@@ -512,6 +512,26 @@ describe("P3 conversation sheets", () => {
     );
   });
 
+  it("keeps a file chip inside its box for long names and long failure reasons", () => {
+    const chip = ".agent-composer-attachment--chip";
+    const failed = `${chip}[data-agent-attachment-state="failed"]`;
+    expect(declaredValue(COMPOSER, `${chip} > svg`, "flex")).toBe("none");
+    expect(declaredValue(CONVERSATION, ".agent-attachments__chip > svg", "flex")).toBe("none");
+    expect(declaredValue(COMPOSER, ".agent-composer-attachment__name", "text-overflow")).toBe(
+      "ellipsis",
+    );
+    for (const line of [".agent-composer-attachment__size", ".agent-composer-attachment__notice"]) {
+      expect(declaredValue(COMPOSER, line, "white-space")).toBe("nowrap");
+      expect(declaredValue(COMPOSER, line, "text-overflow")).toBe("ellipsis");
+    }
+    expect(declaredValue(COMPOSER, chip, "height")).toBe("32px");
+    expect(declaredValue(COMPOSER, failed, "height")).toBe("auto");
+    expect(declaredValue(COMPOSER, failed, "min-height")).toBe("32px");
+    expect(declaredValue(COMPOSER, ".agent-composer-attachment__failure", "overflow-wrap")).toBe(
+      "anywhere",
+    );
+  });
+
   it("draws the work fold as the t3code fold row", () => {
     expect(declaredValue(WORK_ROWS, ".agent-work__summary", "box-shadow")).toBe(
       "var(--cv-edge-bottom-hair)",
@@ -589,6 +609,31 @@ describe("P3 conversation sheets", () => {
       "var(--cv-ring-hair-strong)",
     );
     expect(declaredValue(CONVERSATION, ".agent-attachments__image", "object-fit")).toBe("cover");
+  });
+
+  it("draws the file download control as a fixed quiet icon button inside its chip", () => {
+    const control = ".agent-attachments__download";
+    expect(declaredValue(CONVERSATION, control, "width")).toBe("20px");
+    expect(declaredValue(CONVERSATION, control, "height")).toBe("20px");
+    expect(declaredValue(CONVERSATION, control, "flex")).toBe("none");
+    expect(declaredValue(CONVERSATION, control, "border-radius")).toBe("var(--cv-r-sm)");
+    expect(declaredValue(CONVERSATION, control, "color")).toBe("var(--cv-fg-muted)");
+    expect(declaredValue(CONVERSATION, `${control}:focus-visible`, "background")).toBe(
+      declaredValue(CONVERSATION, ".agent-prompt__queue-action:focus-visible", "background"),
+    );
+    expect(declaredValue(CONVERSATION, `${control}:focus-visible`, "color")).toBe(
+      declaredValue(CONVERSATION, ".agent-prompt__queue-action:focus-visible", "color"),
+    );
+    expect(declaredValue(CONVERSATION, `${control}[aria-disabled="true"]`, "cursor")).toBe(
+      "progress",
+    );
+    expect(declaredValue(CONVERSATION, ".agent-attachments__size", "flex")).toBe("none");
+    expect(declaredValue(CONVERSATION, ".agent-attachments__size", "color")).toBe(
+      "var(--cv-fg-subtle)",
+    );
+    expect(declaredValue(CONVERSATION, ".agent-attachments__name", "text-overflow")).toBe(
+      "ellipsis",
+    );
   });
 
   it("floats the image preview on the scrim with the close chip above the corner", () => {

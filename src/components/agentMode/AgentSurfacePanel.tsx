@@ -35,6 +35,7 @@ import type { AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import {
   isRemoteAgentSurfaceThread,
   isRemoteGitShipThread,
+  remoteThreadProjectKind,
   type AgentSurfaceScope,
 } from "./agentSurfacePolicy";
 import {
@@ -148,6 +149,7 @@ export function AgentSurfacePanel({
     threadPresent: thread !== null,
     remoteCapabilities: remoteSurfaceCapabilities(remoteSurface),
     remoteGit: isRemoteGitShipThread(thread),
+    remoteProjectKind: remoteThreadProjectKind(thread),
     unavailable: unavailable !== null,
     hidden,
   };

@@ -1,4 +1,5 @@
 import type { AgentTaskIsolation } from "./agentTask";
+import { isRemoteFolderProject, type RemoteProjectKind } from "./remoteProjectKind";
 
 export type AgentMachine =
   { readonly kind: "thisComputer" } | { readonly kind: "server"; readonly name: string };
@@ -34,12 +35,15 @@ const FALLBACK_SERVER_NAME = "Server";
 const MAX_LABEL_CHARS = 200;
 const SEPARATOR = " · ";
 
-export function agentCheckoutLabel(checkout: AgentCheckoutKind): string {
+export function agentCheckoutLabel(
+  checkout: AgentCheckoutKind,
+  projectKind?: RemoteProjectKind,
+): string {
   switch (checkout) {
     case "localCheckout":
       return "Local checkout";
     case "serverCheckout":
-      return "Server checkout";
+      return isRemoteFolderProject({ kind: projectKind }) ? "Server folder" : "Server checkout";
     case "newWorktree":
       return "New worktree";
     case "worktree":
@@ -87,10 +91,13 @@ export function agentThreadLocation(input: AgentThreadLocationInput): AgentWorks
   };
 }
 
-export function agentLocationTokenText(location: AgentWorkspaceLocation): string {
+export function agentLocationTokenText(
+  location: AgentWorkspaceLocation,
+  projectKind?: RemoteProjectKind,
+): string {
   const parts: string[] = [];
   if (location.machine.kind === "server") parts.push(agentMachineLabel(location.machine));
-  parts.push(agentCheckoutLabel(location.checkout));
+  parts.push(agentCheckoutLabel(location.checkout, projectKind));
   if (location.branch !== null) parts.push(location.branch);
   return parts.join(SEPARATOR);
 }

@@ -20,14 +20,20 @@ mod tunnel_http;
 mod tunnel_process;
 #[path = "tunnel_stall.rs"]
 mod tunnel_stall;
+#[path = "tunnel_transfer.rs"]
+mod tunnel_transfer;
 #[cfg(all(test, unix))]
 pub(in crate::remote_runner) use tunnel_stall::StallPolicy;
+pub(in crate::remote_runner) use tunnel_transfer::{
+    DownloadFeed, Failure, Reply, Transfer, TransferPolicy, UploadFeed, UploadHead,
+};
 
 /// An exact connection owner. Secrets and local endpoints never cross IPC.
 pub(in crate::remote_runner) struct Session {
     process: Mutex<Option<tunnel_process::TunnelProcess>>,
     closed: AtomicBool,
     dispatch: tunnel_dispatch::Dispatch,
+    client: reqwest::Client,
     token: String,
     forwards: ForwardSet,
 }
@@ -46,7 +52,8 @@ impl Session {
         Self {
             process: Mutex::new(Some(process)),
             closed: AtomicBool::new(false),
-            dispatch: tunnel_dispatch::Dispatch::new(client, "test-only".into(), policy),
+            dispatch: tunnel_dispatch::Dispatch::new(client.clone(), "test-only".into(), policy),
+            client,
             token: "test-only".into(),
             forwards: ForwardSet::new(ForwardDestination::new("fixture", "localhost", "test", 22)),
         }
@@ -74,10 +81,11 @@ impl Session {
             process: Mutex::new(Some(process)),
             closed: AtomicBool::new(false),
             dispatch: tunnel_dispatch::Dispatch::new(
-                client,
+                client.clone(),
                 token.clone(),
                 tunnel_stall::StallPolicy::DEFAULT,
             ),
+            client,
             token,
             forwards: ForwardSet::new(ForwardDestination::new(
                 &server.id,
@@ -272,6 +280,65 @@ impl Session {
             return Err("Runner connection changed during request.".into());
         }
         result
+    }
+
+    fn access(&self, server: &Server) -> Result<tunnel_transfer::Access, String> {
+        if !self.is_alive() {
+            return Err("Runner connection is closed. Reconnect the server.".into());
+        }
+        Ok(tunnel_transfer::Access {
+            client: self.client.clone(),
+            token: self.token.clone(),
+            expected: server.runner_id.clone(),
+            authority: self.dispatch.authority(),
+        })
+    }
+
+    pub(in crate::remote_runner) fn upload(
+        &self,
+        server: &Server,
+        head: UploadHead,
+        policy: TransferPolicy,
+        deadline: std::time::Instant,
+        cancel: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(UploadFeed, Transfer<'_, Reply>), String> {
+        let access = self.access(server)?;
+        Ok(tunnel_transfer::upload(
+            self, access, head, policy, deadline, cancel,
+        ))
+    }
+
+    pub(in crate::remote_runner) fn is_open(&self) -> bool {
+        !self.closed.load(Ordering::Acquire) && !self.dispatch.is_stalled()
+    }
+
+    pub(in crate::remote_runner) fn revocation(&self) -> Revocation {
+        Revocation(self.dispatch.authority())
+    }
+
+    pub(in crate::remote_runner) fn download(
+        &self,
+        server: &Server,
+        path: String,
+        limit: u64,
+        policy: TransferPolicy,
+        deadline: std::time::Instant,
+    ) -> Result<(DownloadFeed, Transfer<'_, ()>), String> {
+        let access = self.access(server)?;
+        Ok(tunnel_transfer::download(
+            self, access, path, limit, policy, deadline,
+        ))
+    }
+}
+
+pub(in crate::remote_runner) struct Revocation(tunnel_dispatch::Authority);
+
+impl Revocation {
+    pub(in crate::remote_runner) async fn revoked(&mut self) -> String {
+        if let Err(reason) = self.0.ended() {
+            return reason;
+        }
+        self.0.revoked().await
     }
 }
 impl Drop for Session {

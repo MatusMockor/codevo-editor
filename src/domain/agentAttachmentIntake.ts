@@ -99,6 +99,10 @@ export function classifyAgentAttachmentCandidate(
   return { kind: "path" };
 }
 
+export function isAgentImageSourcePath(path: string): boolean {
+  return EXTENSION_IMAGE_MIMES.has(fileExtension(path));
+}
+
 export function planAgentAttachmentIntake(
   candidate: AgentAttachmentCandidate,
 ): AgentAttachmentIntakePlan {

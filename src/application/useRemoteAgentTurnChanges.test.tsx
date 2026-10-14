@@ -26,6 +26,9 @@ const task: RemoteRunnerTask = {
 };
 const latest = { ...task, id: "latest", sequence: 2, conversationId: "old", parentTaskId: "old" };
 const projects = [{ id: "project", name: "Project" }];
+const folderProjects = [{ id: "project", name: "Project", kind: "folder" as const }];
+const repositoryProjects = [{ id: "project", name: "Project", kind: "repository" as const }];
+const docsFolder = { id: "docs", name: "Docs", kind: "folder" as const };
 const summary: AgentTurnChangeSummary = {
   turnId: "old",
   state: "ready",
@@ -149,6 +152,7 @@ describe("historical server turn changes", () => {
     "foreign-conversation",
     "running",
     "missing-task",
+    "folder-project",
   ])("refuses %s without a latest-task fallback", async (scenario) => {
     const h = await harness();
     try {
@@ -163,6 +167,7 @@ describe("historical server turn changes", () => {
             }
           : {}),
         ...(scenario === "disconnected" ? { connected: false } : {}),
+        ...(scenario === "folder-project" ? { projects: folderProjects } : {}),
         tasks:
           scenario === "missing-task"
             ? [latest]
@@ -183,7 +188,7 @@ describe("historical server turn changes", () => {
       await h.dispose();
     }
   });
-  it.each(["owner", "gateway", "runner", "task"])(
+  it.each(["owner", "gateway", "runner", "task", "kind"])(
     "drops late responses across %s A-B-A transitions",
     async (scenario) => {
       const h = await harness();
@@ -204,7 +209,9 @@ describe("historical server turn changes", () => {
                 ...h.snapshot,
                 ...(scenario === "runner"
                   ? { descriptor: { ...h.snapshot.descriptor!, runnerId: "other" } }
-                  : { tasks: [latest] }),
+                  : {}),
+                ...(scenario === "task" ? { tasks: [latest] } : {}),
+                ...(scenario === "kind" ? { projects: folderProjects } : {}),
               },
             ],
           });
@@ -243,6 +250,45 @@ describe("historical server turn changes", () => {
   );
 });
 
+it("keeps a repository project readable beside a folder project on the same runner", async () => {
+  const h = await harness();
+  try {
+    const original = h.surface().getTurnChangesRevision(h.threadId);
+    await h.update({ snapshots: [{ ...h.snapshot, projects: repositoryProjects }] });
+    expect(h.surface().getTurnChangesRevision(h.threadId)).toBe(original);
+    await h.update({ snapshots: [{ ...h.snapshot, projects: [...projects, docsFolder] }] });
+    expect(h.surface().getTurnChangesRevision(h.threadId)).toBe(original);
+    expect(await h.surface().getTurnChanges(h.threadId, "old")).toEqual(summary);
+    expect(await h.surface().getTurnFileDiff(h.threadId, "old", "src/a.ts")).toEqual(diff);
+    expect(h.getTurnChanges).toHaveBeenCalledTimes(1);
+    expect(h.getTurnFileDiff).toHaveBeenCalledTimes(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("hides a folder project's turns without a request and rejects a late file body", async () => {
+  const h = await harness();
+  const pending = deferred<AgentTurnFileDiff>();
+  h.getTurnFileDiff.mockReturnValueOnce(pending.promise);
+  try {
+    await h.surface().getTurnChanges(h.threadId, "old");
+    const work = h.surface().getTurnFileDiff(h.threadId, "old", "src/a.ts");
+    const rejected = expect(work).rejects.toThrow();
+    await vi.waitFor(() => expect(h.getTurnFileDiff).toHaveBeenCalledTimes(1));
+    await h.update({ snapshots: [{ ...h.snapshot, projects: folderProjects }] });
+    pending.resolve(diff);
+    await rejected;
+    const hidden = await h.surface().getTurnChanges(h.threadId, "old");
+    expect(hidden).toMatchObject({ state: "unsupported", reason: "notApplicable", files: [] });
+    await expect(h.surface().getTurnFileDiff(h.threadId, "old", "src/a.ts")).rejects.toThrow();
+    expect(h.getTurnChanges).toHaveBeenCalledTimes(1);
+    expect(h.getTurnFileDiff).toHaveBeenCalledTimes(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
 it("keeps display revision stable for equivalent fresh snapshots and transcript changes", async () => {
   const h = await harness();
   try {
@@ -271,7 +317,16 @@ it("keeps display revision stable for equivalent fresh snapshots and transcript 
     await h.dispose();
   }
 });
-it.each(["disconnect", "capability", "runner", "project", "task", "duplicate-task", "revocation"])(
+it.each([
+  "disconnect",
+  "capability",
+  "runner",
+  "project",
+  "kind",
+  "task",
+  "duplicate-task",
+  "revocation",
+])(
   "invalidates displayed changes for %s and does not reuse A's epoch after A-B-A",
   async (scenario) => {
     const h = await harness();
@@ -296,6 +351,7 @@ it.each(["disconnect", "capability", "runner", "project", "task", "duplicate-tas
                 ? { descriptor: { ...h.snapshot.descriptor!, runnerId: "replacement" } }
                 : {}),
               ...(scenario === "project" ? { projects: [] } : {}),
+              ...(scenario === "kind" ? { projects: folderProjects } : {}),
               ...(scenario === "duplicate-task"
                 ? { tasks: [task, latest, { ...task, status: "running" as const }] }
                 : {}),

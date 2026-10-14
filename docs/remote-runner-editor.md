@@ -56,15 +56,28 @@ folder name uses letters, digits, underscores and hyphens, starts with a letter 
 digit, and is at most 64 characters. Omitting the branch uses the repository's
 default branch.
 
-A Git repository that is already on the server's disk is registered without
-cloning. While a server is selected, the **Add project** palette offers **Existing
-folder on server** next to **Open server project** and **Clone repository**. It
-browses the server's folders, uses the repository's top-level folder, asks for a
-project name with the same grammar as the folder name above and adds it. The runner
-refuses a folder that is not the root of a Git repository, a name another project
-already uses, a folder it may not add and any project past its limit; each refusal
-is shown in the dialog. A runner that predates this route reports that it must be
-updated. Registering a folder does not use one of the clone slots.
+A folder that is already on the server's disk is registered without cloning. While
+a server is selected, the **Add project** palette offers **Existing folder on
+server** next to **Open server project** and **Clone repository**. It browses the
+server's folders, uses the chosen folder, asks for a project name with the same
+grammar as the folder name above and adds it. For a Git repository, choose the
+repository's top-level folder. The runner refuses a folder inside a Git repository
+that is not its top-level folder, a name another project already uses, a folder it
+may not add and any project past its limit; each refusal is shown in the dialog. A
+runner that predates this route reports that it must be updated. Registering a
+folder does not use one of the clone slots.
+
+A folder that is not a Git repository at all can be added as a folder project. This
+requires a runner that advertises the `folderProjects` capability:
+
+- Conversations in a folder project run directly in the registered folder.
+- Worktrees, branches, diffs, commit and push are unavailable in a folder project.
+- The editor cannot tell whether the chosen folder is a repository before the
+  runner answers. When the runner advertises `folderProjects`, the dialog says
+  before adding what a folder that is not a repository will be limited to.
+- A runner without `folderProjects` refuses every folder that is not a
+  repository's top-level folder, plain folders included, and the dialog then asks
+  for the repository's top-level folder. Update the runner to add a plain folder.
 
 While a server is the selected execution environment, **Add project** in the rail
 and the button on the empty remote thread open the server add-project dialog. Its
@@ -160,8 +173,9 @@ server. Apply file registry changes using the runner's deployment workflow,
 including a service restart when required. The editor selects server project IDs
 and names rather than accepting arbitrary server paths.
 
-The runner prepares a separate Git worktree for a new conversation. Follow-up
-turns reuse that conversation's worktree. A server
+In a Git repository project the runner prepares a separate Git worktree for a new
+conversation. Follow-up turns reuse that conversation's worktree. A folder project
+has no worktrees: its conversations run directly in the registered folder. A server
 checkout is independent of the currently opened local checkout, including any
 uncommitted local edits. Cloning does not synchronize local uncommitted files.
 

@@ -1,6 +1,8 @@
 import { X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent } from "react";
 import type { AgentThreadUndoNotification } from "../../application/useAgentThreadUndo";
+import { Button } from "../../ui/foundation/Button";
+import { IconButton } from "../../ui/foundation/IconButton";
 
 export const AGENT_THREAD_UNDO_BUSY_TITLE = "Finishing the previous undo";
 
@@ -69,26 +71,26 @@ function AgentThreadUndoOffer({
         onPointerLeave={() => setHovered(false)}
         ref={element}
       >
-        <span>{notification.message}</span>
-        <span className="agent-notice__spacer" />
-        <button
-          aria-busy={notification.busy}
-          className="agent-linkbutton"
-          disabled={notification.busy}
-          onClick={onUndo}
-          title={notification.busy ? AGENT_THREAD_UNDO_BUSY_TITLE : undefined}
-          type="button"
-        >
-          Undo
-        </button>
-        <button
-          aria-label="Dismiss undo notice"
-          className="agent-linkbutton"
-          onClick={onDismiss}
-          type="button"
-        >
-          <X aria-hidden="true" size={12} />
-        </button>
+        <span className="agent-notice__message">{notification.message}</span>
+        <div className="agent-notice__actions">
+          <Button
+            aria-busy={notification.busy}
+            disabled={notification.busy}
+            onClick={onUndo}
+            size="sm"
+            title={notification.busy ? AGENT_THREAD_UNDO_BUSY_TITLE : undefined}
+            variant="ghost"
+          >
+            Undo
+          </Button>
+          <IconButton
+            icon={<X aria-hidden="true" size={14} />}
+            label="Dismiss undo notice"
+            onClick={onDismiss}
+            size="xs"
+            title="Dismiss"
+          />
+        </div>
       </div>
     </div>
   );

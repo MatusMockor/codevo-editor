@@ -2,6 +2,8 @@
 mod agent_attachment_commands;
 #[path = "agent_cli_discovery_commands.rs"]
 mod agent_cli_discovery_commands;
+#[path = "agent_file_source_commands.rs"]
+mod agent_file_source_commands;
 #[path = "agent_image_source_commands.rs"]
 mod agent_image_source_commands;
 #[path = "agent_inline_image_commands.rs"]
@@ -28,6 +30,8 @@ mod agent_thread_store_commands;
 mod agent_turn_log_commands;
 #[path = "app_update_check_commands.rs"]
 mod app_update_check_commands;
+#[path = "codex_limit_reset_commands.rs"]
+mod codex_limit_reset_commands;
 #[path = "directory_listing_commands.rs"]
 mod directory_listing_commands;
 #[path = "git_integration_commands.rs"]

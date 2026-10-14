@@ -1,6 +1,7 @@
 import { ChevronDown, Folder, FolderGit, FolderGit2, History, Settings2 } from "lucide-react";
 import type { KeyboardEvent } from "react";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
+import type { RemoteProjectKind } from "../../domain/remoteProjectKind";
 import {
   agentCheckoutLabel,
   agentPreviousWorktreeLabel,
@@ -16,6 +17,7 @@ export interface AgentEnvironmentCheckoutPickerProps {
   readonly checkout: AgentCheckoutKind;
   readonly isolation: AgentTaskIsolation;
   readonly remote: boolean;
+  readonly projectKind?: RemoteProjectKind;
   readonly worktreeAvailable: boolean;
   readonly worktreeOnly: boolean;
   readonly previousWorktree?: AgentComposerPreviousWorktreeChoice | null;
@@ -32,12 +34,13 @@ export function AgentEnvironmentCheckoutPicker({
   onOpenEnvironmentSettings,
   onRefreshIsolation,
   previousWorktree = null,
+  projectKind,
   remote,
   worktreeAvailable,
   worktreeOnly,
 }: AgentEnvironmentCheckoutPickerProps) {
   const previousSelected = previousWorktree?.selected ?? false;
-  const label = agentCheckoutLabel(checkout);
+  const label = agentCheckoutLabel(checkout, projectKind);
   const pickIsolation = (next: AgentTaskIsolation): void => {
     if (next === isolation && !previousSelected) return;
     onIsolationChange(next);
@@ -80,7 +83,7 @@ export function AgentEnvironmentCheckoutPicker({
         icon={<Folder size={14} />}
         onSelect={() => pickIsolation("in-place")}
       >
-        {agentCheckoutLabel(remote ? "serverCheckout" : "localCheckout")}
+        {agentCheckoutLabel(remote ? "serverCheckout" : "localCheckout", projectKind)}
       </MenuRadioItem>
       {worktreeAvailable || worktreeOnly ? (
         <MenuRadioItem

@@ -1,5 +1,6 @@
 import { agentThreadAttention, agentThreadUnread } from "../domain/agentThread";
 import { describe, expect, it } from "vitest";
+import { REMOTE_RUNNER_REACHABLE } from "../domain/remoteRunnerReachability";
 import { utf8ByteLength } from "@codevo/agent-events";
 import { MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES, type AgentShipState } from "../domain/agentShip";
 import { UNTITLED_AGENT_THREAD_TITLE, type AgentThread } from "../domain/agentThread";
@@ -17,6 +18,7 @@ import {
   NO_REMOTE_REASON,
   PRIMARY_DETACHED_REASON,
   PRIMARY_DIRTY_REASON,
+  REMOTE_PROJECT_NOT_REPOSITORY_REASON,
   SHIP_STATUS_UNAVAILABLE_REASON,
   SHIP_STEP_RUNNING_REASON,
   WORKTREE_GONE_REASON,
@@ -140,6 +142,60 @@ describe("commitAvailability", () => {
 
     expect(blockedReason(commitAvailability(clean, clean.ship))).toBe(NOTHING_TO_COMMIT_REASON);
     expect(commitAvailability(dirty, dirty.ship)).toEqual({ kind: "available" });
+  });
+});
+
+describe("ship availability in a server folder project", () => {
+  const execution = {
+    kind: "remote",
+    serverId: "server",
+    runnerId: "runner",
+    projectId: "project",
+    conversationId: "conversation",
+    latestTaskId: "task",
+    resume: null,
+    reachability: REMOTE_RUNNER_REACHABLE,
+    gitShip: true,
+  } as const;
+  const loaded = idle(shipStatus());
+  const merged: AgentShipState = {
+    kind: "integrated",
+    status: shipStatus(),
+    mergeSha: MERGE_SHA,
+    intoBranch: "main",
+  };
+  const blocked = { kind: "blocked", reason: REMOTE_PROJECT_NOT_REPOSITORY_REASON };
+
+  it("blocks every step with the not-a-repository reason, ahead of any other gate", () => {
+    expect(REMOTE_PROJECT_NOT_REPOSITORY_REASON).toBe(
+      "This server project is not a Git repository.",
+    );
+    const folder = { execution: { ...execution, projectKind: "folder" as const } };
+    for (const overrides of [folder, { ...folder, lifecycle: "running" as const }]) {
+      expect(commitAvailability(threadView(loaded, overrides), loaded)).toEqual(blocked);
+      expect(pushAvailability(threadView(loaded, overrides), loaded)).toEqual(blocked);
+      expect(integrateAvailability(threadView(loaded, overrides), loaded, "merge")).toEqual(
+        blocked,
+      );
+      expect(removeAvailability(threadView(merged, overrides), merged)).toEqual(blocked);
+    }
+  });
+
+  it("leaves a repository project and a runner without kinds unchanged", () => {
+    for (const overrides of [
+      { execution },
+      { execution: { ...execution, projectKind: "repository" as const } },
+    ]) {
+      expect(commitAvailability(threadView(loaded, overrides), loaded)).toEqual({
+        kind: "available",
+      });
+      expect(pushAvailability(threadView(loaded, overrides), loaded)).toEqual({
+        kind: "available",
+      });
+      expect(
+        commitAvailability(threadView(loaded, { ...overrides, lifecycle: "running" }), loaded),
+      ).toEqual({ kind: "blocked", reason: AGENT_STILL_RUNNING_REASON });
+    }
   });
 });
 

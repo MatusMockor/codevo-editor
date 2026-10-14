@@ -139,6 +139,7 @@ import {
   isRemoteAgentSurfaceThread,
 } from "./agentSurfacePolicy";
 import { useScopedAgentNotice } from "./useScopedAgentNotice";
+import { useAgentAttachmentDownloads } from "./useAgentAttachmentDownloads";
 import { useAgentLocalFileLinks } from "./useAgentLocalFileLinks";
 import { useAgentRemoteFileLinks } from "./useAgentRemoteFileLinks";
 import { useAgentSessionImport } from "./useAgentSessionImport";
@@ -923,6 +924,10 @@ function LocalAgentModeView({
     },
     [revealAgentAttachment],
   );
+  const attachmentDownloads = useAgentAttachmentDownloads({
+    download: agents.downloadAttachment,
+    reportNotice: setLocalNotice,
+  });
 
   const navigationCommands = navigation.commands;
   const surfaceBlocked = surface.surfaceBlocked;
@@ -1296,10 +1301,10 @@ function LocalAgentModeView({
                     selectedServerId !== null &&
                     composer.target === null ? (
                     <AgentRemoteDraftProjectChooser
+                      key={selectedServerId}
                       projects={composerProjects}
                       cloneRunning={remoteAddCloneRunning}
                       onAddProject={openRemoteAddProject}
-                      onOpenSettings={onOpenEnvironmentSettings}
                       onSelect={(project) => {
                         const live = projects.find(
                           (candidate) =>
@@ -1366,6 +1371,7 @@ function LocalAgentModeView({
                       attachmentImages={agents.attachmentImages}
                       inlineImages={agents.inlineImages}
                       onRevealAttachment={revealAttachment}
+                      attachmentDownloads={attachmentDownloads}
                       findBar={
                         find.open ? (
                           <AgentThreadFindBar

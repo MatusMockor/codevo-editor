@@ -32,6 +32,8 @@ impl StallPolicy {
 struct Uploads {
     bytes: usize,
     until: Option<Instant>,
+    tails: Vec<(u64, Instant)>,
+    next: u64,
 }
 
 pub(super) struct Evidence {
@@ -40,6 +42,7 @@ pub(super) struct Evidence {
     inbound: AtomicU64,
     suspected: AtomicU64,
     uploads: Mutex<Uploads>,
+    revised: tokio::sync::Notify,
 }
 
 impl Evidence {
@@ -50,6 +53,7 @@ impl Evidence {
             inbound: AtomicU64::new(0),
             suspected: AtomicU64::new(0),
             uploads: Mutex::default(),
+            revised: tokio::sync::Notify::new(),
         }
     }
 
@@ -57,7 +61,7 @@ impl Evidence {
         self.record_inbound_at(Instant::now());
     }
 
-    fn record_inbound_at(&self, at: Instant) {
+    pub(super) fn record_inbound_at(&self, at: Instant) {
         self.inbound.fetch_max(self.stamp(at), Ordering::AcqRel);
     }
 
@@ -92,6 +96,28 @@ impl Evidence {
 
     pub(super) fn suspended(&self, now: Instant) -> Option<Instant> {
         self.uploads().until.filter(|until| now < *until)
+    }
+
+    pub(super) fn held(&self, now: Instant) -> Option<Instant> {
+        let tail = self.uploads().tails.iter().map(|(_, until)| *until).max();
+        tail.filter(|until| now < *until)
+    }
+
+    pub(super) fn hold(&self, until: Instant) -> TailGuard<'_> {
+        let mut uploads = self.uploads();
+        let serial = uploads.next;
+        uploads.next = serial.wrapping_add(1);
+        uploads.tails.push((serial, until));
+        drop(uploads);
+        self.revised.notify_one();
+        TailGuard {
+            evidence: self,
+            serial,
+        }
+    }
+
+    pub(super) async fn revised(&self) {
+        self.revised.notified().await;
     }
 
     pub(super) fn upload(&self, bytes: usize, now: Instant) -> Option<UploadGuard<'_>> {
@@ -130,10 +156,26 @@ impl Drop for UploadGuard<'_> {
     }
 }
 
+pub(super) struct TailGuard<'a> {
+    evidence: &'a Evidence,
+    serial: u64,
+}
+
+impl Drop for TailGuard<'_> {
+    fn drop(&mut self) {
+        self.evidence
+            .uploads()
+            .tails
+            .retain(|(serial, _)| *serial != self.serial);
+        self.evidence.revised.notify_one();
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Load {
     Idle,
     Suspended(Instant),
+    Held(Instant),
     Waiting,
 }
 
@@ -178,6 +220,9 @@ impl StallDetector {
         if !probing {
             self.probed = None;
         }
+        if let Load::Held(until) = load {
+            return self.rest(Some(until));
+        }
         let unanswered = self
             .suspected
             .filter(|at| inbound.is_none_or(|seen| seen < *at));
@@ -187,7 +232,7 @@ impl StallDetector {
         }
         match load {
             Load::Idle => return self.rest(None),
-            Load::Suspended(until) => return self.rest(Some(until)),
+            Load::Suspended(until) | Load::Held(until) => return self.rest(Some(until)),
             Load::Waiting => {}
         }
         let since = *self.since.get_or_insert(now);
@@ -638,6 +683,191 @@ mod tests {
             Some(at(start, 34_000))
         );
         drop(later);
+    }
+
+    fn waiting(evidence: &Evidence, now: Instant) -> Load {
+        evidence.held(now).map_or(Load::Waiting, Load::Held)
+    }
+
+    #[test]
+    fn a_transfer_tail_holds_the_watch_exactly_until_its_deadline() {
+        let evidence = Evidence::new(POLICY);
+        let start = Instant::now();
+        let mut detector = StallDetector::new(POLICY);
+        assert_eq!(
+            detector.step(start, waiting(&evidence, start), None, false),
+            Step::Wake(at(start, 3_000))
+        );
+        let tail = evidence.hold(at(start, 256_000));
+        assert_eq!(evidence.suspended(start), None);
+        for milliseconds in [1_000, 15_000, 35_000, 120_000, 255_999] {
+            let now = at(start, milliseconds);
+            assert_eq!(evidence.held(now), Some(at(start, 256_000)));
+            assert_eq!(
+                detector.step(now, waiting(&evidence, now), None, false),
+                Step::Rest(Some(at(start, 256_000))),
+                "{milliseconds}"
+            );
+        }
+        let expired = at(start, 256_000);
+        assert_eq!(evidence.held(expired), None);
+        assert_eq!(
+            detector.step(expired, waiting(&evidence, expired), None, false),
+            Step::Wake(at(start, 259_000))
+        );
+        assert_eq!(
+            detector.step(at(start, 259_000), Load::Waiting, None, false),
+            Step::Probe(at(start, 271_000))
+        );
+        assert_eq!(
+            detector.step(at(start, 271_000), Load::Waiting, None, true),
+            Step::Stalled
+        );
+        drop(tail);
+    }
+
+    #[test]
+    fn a_released_tail_restores_the_ordinary_watch_at_once() {
+        let evidence = Evidence::new(POLICY);
+        let start = Instant::now();
+        let mut detector = StallDetector::new(POLICY);
+        let tail = evidence.hold(at(start, 256_000));
+        assert_eq!(
+            detector.step(start, waiting(&evidence, start), None, false),
+            Step::Rest(Some(at(start, 256_000)))
+        );
+        drop(tail);
+        let released = at(start, 10_000);
+        assert_eq!(evidence.held(released), None);
+        assert_eq!(
+            detector.step(released, waiting(&evidence, released), None, false),
+            Step::Wake(at(start, 13_000))
+        );
+        assert_eq!(
+            detector.step(at(start, 13_000), Load::Waiting, None, false),
+            Step::Probe(at(start, 25_000))
+        );
+        assert_eq!(
+            detector.step(at(start, 25_000), Load::Waiting, None, true),
+            Step::Stalled
+        );
+    }
+
+    #[test]
+    fn a_tail_hold_outranks_suspicion_until_it_ends() {
+        let evidence = Evidence::new(POLICY);
+        let start = Instant::now();
+        let mut detector = StallDetector::new(POLICY);
+        let tail = evidence.hold(at(start, 256_000));
+        evidence.suspect(start, at(start, 26_000));
+        assert_eq!(evidence.suspected(), Some(at(start, 26_000)));
+        for (milliseconds, probing) in [
+            (26_000, false),
+            (38_000, true),
+            (38_100, false),
+            (120_000, true),
+            (255_999, false),
+        ] {
+            let now = at(start, milliseconds);
+            detector.suspect(evidence.suspected());
+            assert_eq!(
+                detector.step(now, waiting(&evidence, now), evidence.inbound(), probing),
+                Step::Rest(Some(at(start, 256_000))),
+                "{milliseconds}"
+            );
+            assert_eq!(
+                detector.step(now, Load::Held(at(start, 256_000)), None, probing),
+                Step::Rest(Some(at(start, 256_000))),
+                "{milliseconds}"
+            );
+        }
+        drop(tail);
+    }
+
+    #[test]
+    fn suspicion_recorded_during_a_tail_hold_is_judged_once_the_hold_ends() {
+        let evidence = Evidence::new(POLICY);
+        let start = Instant::now();
+        let mut detector = StallDetector::new(POLICY);
+        let tail = evidence.hold(at(start, 256_000));
+        evidence.suspect(start, at(start, 26_000));
+        detector.suspect(evidence.suspected());
+        let held = at(start, 200_000);
+        assert_eq!(
+            detector.step(held, waiting(&evidence, held), None, false),
+            Step::Rest(Some(at(start, 256_000)))
+        );
+        let ended = at(start, 256_000);
+        for load in [Load::Idle, Load::Waiting] {
+            let mut detector = StallDetector::new(POLICY);
+            detector.suspect(evidence.suspected());
+            assert_eq!(evidence.held(ended), None);
+            assert_eq!(
+                detector.step(ended, load, None, false),
+                Step::Probe(at(start, 268_000))
+            );
+            assert_eq!(
+                detector.step(at(start, 267_999), load, None, true),
+                Step::Probe(at(start, 268_000))
+            );
+            assert_eq!(
+                detector.step(at(start, 268_000), load, None, true),
+                Step::Stalled
+            );
+        }
+        let mut answered = StallDetector::new(POLICY);
+        answered.suspect(evidence.suspected());
+        evidence.record_inbound_at(at(start, 257_000));
+        assert_eq!(
+            answered.step(at(start, 257_000), Load::Idle, evidence.inbound(), true),
+            Step::Rest(None)
+        );
+        drop(tail);
+    }
+
+    #[test]
+    fn the_ordinary_upload_grace_still_yields_to_suspicion() {
+        let evidence = Evidence::new(POLICY);
+        let start = Instant::now();
+        let mut detector = StallDetector::new(POLICY);
+        let heavy = evidence.upload(8 * 1024 * 1024, start);
+        let grace = evidence.suspended(start).expect("a heavy upload is graced");
+        assert_eq!(grace, at(start, 20_000));
+        assert_eq!(evidence.held(start), None);
+        evidence.suspect(start, at(start, 5_000));
+        detector.suspect(evidence.suspected());
+        assert_eq!(
+            detector.step(at(start, 5_000), Load::Suspended(grace), None, false),
+            Step::Probe(at(start, 17_000))
+        );
+        assert_eq!(
+            detector.step(at(start, 17_000), Load::Suspended(grace), None, true),
+            Step::Stalled
+        );
+        drop(heavy);
+    }
+
+    #[test]
+    fn concurrent_tails_last_until_the_latest_and_release_on_unwind() {
+        let evidence = Evidence::new(POLICY);
+        let start = Instant::now();
+        let short = evidence.hold(at(start, 60_000));
+        let long = evidence.hold(at(start, 200_000));
+        let heavy = evidence.upload(HEAVY_UPLOAD_BYTES, start);
+        assert_eq!(evidence.held(start), Some(at(start, 200_000)));
+        assert_eq!(evidence.suspended(start), Some(at(start, 4_000)));
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _held = long;
+            panic!("transfer failed");
+        }));
+        assert!(unwound.is_err());
+        assert_eq!(evidence.held(start), Some(at(start, 60_000)));
+        assert_eq!(evidence.held(at(start, 60_000)), None);
+        drop(short);
+        assert_eq!(evidence.held(start), None);
+        assert_eq!(evidence.suspended(start), Some(at(start, 4_000)));
+        drop(heavy);
+        assert_eq!(evidence.suspended(start), None);
     }
 
     #[test]

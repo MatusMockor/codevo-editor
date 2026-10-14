@@ -9,6 +9,7 @@ import { parseAgentMcpServers } from "../domain/agentMcpServers";
 import type * as R from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import { agentCliKindOfRemoteRunnerProvider } from "../domain/remoteRunnerProvider";
+import { REMOTE_FILE_UPLOAD_MISMATCH_ERROR } from "../domain/remoteRunnerFileAttachment";
 import { validateRemoteRunnerValue } from "../domain/remoteRunnerValidation";
 import { assertRemoteRunnerBackwardPage } from "../domain/remoteRunnerBackwardPage";
 import { watchRemoteRunnerInventory } from "./watchRemoteRunnerInventory";
@@ -74,6 +75,9 @@ export const REMOTE_RUNNER_COMMANDS = {
   getAttachment: "remote_runner_get_attachment",
   readAttachment: "remote_runner_read_attachment",
   uploadAttachment: "remote_runner_upload_attachment",
+  uploadAttachmentFile: "remote_runner_upload_attachment_file",
+  cancelAttachmentUpload: "remote_runner_cancel_attachment_upload",
+  downloadAttachment: "remote_runner_download_attachment",
 } as const;
 
 /** Tokens and transport ownership never cross this IPC boundary. */
@@ -326,5 +330,22 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   uploadAttachment(request: R.RemoteRunnerUploadRequest) {
     return this.call("uploadAttachment", request);
+  }
+  async uploadAttachmentFile(request: R.RemoteRunnerUploadFileRequest) {
+    const response = await this.call("uploadAttachmentFile", request);
+    const stored = response.attachment;
+    if (
+      stored.kind !== "file" ||
+      stored.id !== request.attachmentId ||
+      stored.name !== request.name
+    )
+      throw new Error(REMOTE_FILE_UPLOAD_MISMATCH_ERROR);
+    return response;
+  }
+  async cancelAttachmentUpload(request: R.RemoteRunnerAttachmentRequest) {
+    await this.exchange("cancelAttachmentUpload", request);
+  }
+  downloadAttachment(request: R.RemoteRunnerDownloadAttachmentRequest) {
+    return this.call("downloadAttachment", request);
   }
 }

@@ -116,6 +116,8 @@ pub fn run() {
         })
         .manage(Mutex::new(SmartModeService::new()))
         .manage(crate::remote_runner::InventoryStreamState::default())
+        .manage(crate::remote_runner::AttachmentTransferState::default())
+        .manage(Arc::new(crate::agent_file_source::FileSources::default()))
         .manage(startup_metrics)
         .manage(startup_window_reveal::StartupWindowReveal::default())
         .manage(NativeCloseListenerState::default())
@@ -155,6 +157,7 @@ pub fn run() {
             crate::claude_model_manifest::initialize(app.handle().clone(), app.path().app_data_dir()?);
             app.manage(crate::remote_runner::RemoteRunnerState::new(app.path().app_data_dir()?)?);
             app.manage(Arc::new(crate::agent_turn_changes::AgentTurnChangesStore::new(app.path().app_data_dir()?)));
+            app.manage(Arc::new(codex_limit_reset_commands::store::LimitResetStore::new(app.path().app_data_dir()?)));
             let trust_path = app.path().app_config_dir()?.join("workspace-trust.json");
             let trust_service = WorkspaceTrustService::load(trust_path)?;
             app.manage(Mutex::new(trust_service));
@@ -352,6 +355,9 @@ pub fn run() {
             crate::remote_runner::remote_runner_list_events,
             crate::remote_runner::remote_runner_get_diff,
             crate::remote_runner::remote_runner_upload_attachment,
+            crate::remote_runner::remote_runner_upload_attachment_file,
+            crate::remote_runner::remote_runner_cancel_attachment_upload,
+            crate::remote_runner::remote_runner_download_attachment,
             crate::remote_runner::remote_runner_get_attachment,
             crate::remote_runner::remote_runner_read_attachment,
             crate::remote_runner::resolve_remote_agent_artifact,
@@ -657,6 +663,8 @@ pub fn run() {
             agent_attachment_commands::inspect_agent_attachment_candidate,
             agent_attachment_commands::read_agent_attachment_candidate,
             agent_image_source_commands::read_agent_attachment_image_source,
+            agent_file_source_commands::stage_agent_attachment_file_source,
+            agent_file_source_commands::release_agent_attachment_file_source,
             agent_attachment_commands::claim_agent_attachments,
             agent_attachment_commands::release_agent_attachment,
             agent_output_artifact_commands::resolve_agent_output_artifact,
@@ -714,6 +722,9 @@ pub fn run() {
             agent_provider_commands::check_agent_provider_updates,
             agent_provider_commands::update_agent_provider,
             agent_provider_usage_commands::read_agent_provider_usage,
+            codex_limit_reset_commands::read_codex_limit_resets,
+            codex_limit_reset_commands::prepare_codex_limit_reset,
+            codex_limit_reset_commands::consume_codex_limit_reset,
             agent_provider_sign_in_commands::start_agent_provider_sign_in,
             git_integration_commands::get_git_ship_status,
             git_integration_commands::push_git_branch_upstream,

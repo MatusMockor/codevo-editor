@@ -3,6 +3,7 @@ import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
 import { codexUnavailableModelNotice } from "./codexLaunchPresentation";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
+import type { RemoteProjectKind } from "../../domain/remoteProjectKind";
 import {
   useCallback,
   useMemo,
@@ -16,6 +17,7 @@ import {
   type ReactNode,
 } from "react";
 import { Paperclip } from "lucide-react";
+import type { AgentAttachmentFileSourcePort } from "../../application/agentAttachmentFileSourcePort";
 import type { AgentComposerAttachmentsSurface } from "../../application/useAgentComposerAttachments";
 import {
   useAgentModelFavorites,
@@ -51,7 +53,6 @@ import {
   AGENT_ATTACHMENT_DROP_UNAVAILABLE,
   agentClipboardFiles,
   openAgentAttachmentPicker,
-  openAgentImageAttachmentPicker,
   subscribeAgentAttachmentDragDrop,
   type AgentComposerDragDropSubscribe,
   type AgentComposerFilePicker,
@@ -140,6 +141,7 @@ export interface AgentComposerProps {
   readonly attachmentTargetKey?: string | null;
   readonly attachmentPicker?: AgentComposerFilePicker;
   readonly attachmentImageReader?: (path: string) => Promise<ArrayBuffer>;
+  readonly attachmentFileSource?: AgentAttachmentFileSourcePort;
   readonly attachmentDragDrop?: AgentComposerDragDropSubscribe;
   readonly compactionOffer?: AgentContextCompactionOffer | null;
   readonly modelFavoritesPersistence?: AgentModelFavoritesPersistence | null;
@@ -167,6 +169,7 @@ export interface AgentComposerProps {
   onPromptChange(prompt: string): void;
   onIsolationChange(isolation: AgentTaskIsolation): void;
   readonly remoteGit?: RemoteComposerGit | null;
+  readonly remoteProjectKind?: RemoteProjectKind;
   readonly worktreeBase?: AgentWorktreeBase;
   onWorktreeBaseChange?(base: AgentWorktreeBase): void;
   onRefreshIsolation?(): void;
@@ -201,10 +204,9 @@ export function AgentComposer({
   attachments = null,
   queuedEdit = null,
   attachmentTargetKey = null,
-  attachmentPicker = executionServerId === null
-    ? openAgentAttachmentPicker
-    : openAgentImageAttachmentPicker,
+  attachmentPicker = openAgentAttachmentPicker,
   attachmentImageReader,
+  attachmentFileSource,
   attachmentDragDrop = subscribeAgentAttachmentDragDrop,
   compactionOffer = null,
   dispatching,
@@ -217,6 +219,7 @@ export function AgentComposer({
   onIsolationChange,
   worktreeBase = HEAD_WORKTREE_BASE,
   remoteGit = null,
+  remoteProjectKind,
   onWorktreeBaseChange = ignoreWorktreeBase,
   onRefreshIsolation,
   onLaunchChange,
@@ -377,6 +380,7 @@ export function AgentComposer({
     dispatching,
     picker: attachmentPicker,
     readImagePath: attachmentImageReader,
+    fileSource: attachmentFileSource,
   });
   const attachmentsEnabled = attachments !== null && attachmentTargetKey !== null;
   const dropPaths = (paths: ReadonlyArray<string>): void => {
@@ -910,6 +914,7 @@ export function AgentComposer({
           onSelectRepository={onSelectRepository}
           previousWorktree={followUp ? null : previousWorktree}
           remote={executionTarget === "server"}
+          remoteProjectKind={remoteProjectKind}
           target={target}
           threadLocation={threadLocation}
           worktreeAvailable={worktreeAvailable}

@@ -420,20 +420,27 @@ describe("project display names across agent mode surfaces", () => {
     act(() => server?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     await waitForReact(() =>
       expect(
-        host.querySelectorAll('section[aria-label="Choose server project"] option'),
-      ).toHaveLength(4),
+        host.querySelectorAll(
+          'section[aria-label="Choose server project"] button[data-project-root-key]',
+        ),
+      ).toHaveLength(3),
     );
 
-    const options = [
-      ...host.querySelectorAll<HTMLOptionElement>(
-        'section[aria-label="Choose server project"] option',
+    const rows = [
+      ...host.querySelectorAll<HTMLButtonElement>(
+        'section[aria-label="Choose server project"] button[data-project-root-key]',
       ),
     ];
-    expect(options.map((option) => [option.value, option.text])).toEqual([
-      ["", "Choose a project…"],
-      ["remote:linux:runner:codevo-editor", "Flagship"],
-      ["remote:linux:runner:docs", "Handbook · remote:linux:runner:docs"],
-      ["remote:linux:runner:docs-copy", "Handbook · remote:linux:runner:docs-copy"],
+    expect(
+      rows.map((row) => [
+        row.dataset.projectRootKey,
+        row.querySelector("strong")?.textContent ?? null,
+        row.querySelector("small")?.textContent ?? null,
+      ]),
+    ).toEqual([
+      ["remote:linux:runner:codevo-editor", "Flagship", null],
+      ["remote:linux:runner:docs", "Handbook", "remote:linux:runner:docs"],
+      ["remote:linux:runner:docs-copy", "Handbook", "remote:linux:runner:docs-copy"],
     ]);
   });
 });

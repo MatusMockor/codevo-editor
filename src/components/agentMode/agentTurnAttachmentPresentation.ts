@@ -22,6 +22,8 @@ export const AGENT_ATTACHMENT_LOADING_LABEL = "Loading image";
 export const AGENT_ATTACHMENT_UNRESOLVABLE_REASON = "The image reference is not valid.";
 export const AGENT_ATTACHMENT_NO_IMAGES_REASON = "Images cannot be shown here.";
 export const AGENT_ATTACHMENT_DECODE_FAILED_REASON = "The image bytes could not be decoded.";
+export const AGENT_ATTACHMENT_DOWNLOAD_TITLE = "Download";
+export const AGENT_ATTACHMENT_DOWNLOADING_TITLE = "Downloading…";
 export const AGENT_LIGHTBOX_VIEWPORT_WIDTH_FRACTION = 92;
 export const AGENT_LIGHTBOX_VIEWPORT_HEIGHT_FRACTION = 86;
 
@@ -42,6 +44,14 @@ export type AgentTurnAttachmentView =
       readonly key: string;
       readonly name: string;
       readonly glyph: AgentTurnAttachmentGlyph;
+      readonly bytes?: number;
+    }
+  | {
+      readonly kind: "remoteFile";
+      readonly key: string;
+      readonly name: string;
+      readonly attachmentId: string;
+      readonly bytes: number;
     }
   | {
       readonly kind: "folder";
@@ -54,6 +64,15 @@ export type AgentTurnAttachmentImageView = Extract<
   AgentTurnAttachmentView,
   { readonly kind: "image" }
 >;
+
+export type AgentTurnAttachmentRemoteFileView = Extract<
+  AgentTurnAttachmentView,
+  { readonly kind: "remoteFile" }
+>;
+
+export function agentAttachmentDownloadLabel(name: string): string {
+  return `Download ${name}`;
+}
 
 export function agentTurnAttachmentViews(
   attachments: ReadonlyArray<AgentAttachment> | undefined,
@@ -144,12 +163,7 @@ function turnAttachmentView(
         height: attachment.height,
       };
     case "file":
-      return {
-        kind: "chip",
-        key: attachment.attachmentId,
-        name: attachment.name,
-        glyph: "file",
-      };
+      return fileAttachmentView(attachment);
     case "reference":
       return agentReferenceAttachmentView(
         `reference-${index}-${attachment.path}`,
@@ -159,6 +173,26 @@ function turnAttachmentView(
     default:
       return unsupportedAttachment(attachment);
   }
+}
+
+function fileAttachmentView(
+  attachment: Extract<AgentAttachment, { readonly kind: "file" }>,
+): AgentTurnAttachmentView {
+  if (attachment.remote === undefined) {
+    return {
+      kind: "chip",
+      key: attachment.attachmentId,
+      name: attachment.name,
+      glyph: "file",
+    };
+  }
+  return {
+    kind: "remoteFile",
+    key: attachment.attachmentId,
+    name: attachment.name,
+    attachmentId: attachment.attachmentId,
+    bytes: attachment.bytes,
+  };
 }
 
 export function agentReferenceAttachmentView(

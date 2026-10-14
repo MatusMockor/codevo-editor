@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createCloneComposerAttachments } from "./cloneComposerAttachments";
+import {
+  CLONE_REMOTE_PASTE_REFUSAL,
+  createCloneComposerAttachments,
+} from "./cloneComposerAttachments";
 import type { AgentComposerAttachmentsSurface } from "./useAgentComposerAttachments";
 
 const source = (name = "notes.txt") => ({
@@ -43,11 +46,56 @@ describe("deferred clone attachments", () => {
     expect([...new Uint8Array(received!)]).toEqual([1, 2]);
     expect(coordinator.forClone("b", "local").drafts).toHaveLength(1);
   });
+  it("holds a native file source for a pending server clone and hands it over untouched", async () => {
+    const coordinator = createCloneComposerAttachments();
+    const fileSource = { stage: vi.fn(), release: vi.fn() };
+    const picked = { kind: "fileSource" as const, path: "/Users/dev/photo.heic", fileSource };
+    await coordinator.forClone("remote", "remote").add("remote", [picked]);
+    expect(coordinator.forClone("remote", "remote").refusal).toBeNull();
+    expect(coordinator.forClone("remote", "remote").drafts).toMatchObject([
+      { kind: "file", name: "photo.heic", mime: null, path: null, backing: "nativeFile" },
+    ]);
+    expect(fileSource.stage).not.toHaveBeenCalled();
+    const received: unknown[] = [];
+    const target = targetFixture();
+    const get = () => ({
+      ...target.get(),
+      captureIntake:
+        () => async (sources: Parameters<AgentComposerAttachmentsSurface["add"]>[1]) => {
+          received.push(...sources);
+          return Promise.reject(new Error("Update this server to attach files."));
+        },
+    });
+    expect(await coordinator.transfer("remote", "project", get, () => true)).toBe(false);
+    expect(received).toEqual([picked]);
+    expect(coordinator.forClone("remote", "remote").refusal).toBe(
+      "Update this server to attach files.",
+    );
+  });
+  it("tells a pending server clone truthfully that files can still be picked or dropped", async () => {
+    const coordinator = createCloneComposerAttachments();
+    await coordinator.forClone("remote", "remote").add("remote", [source("notes.txt")]);
+    expect(coordinator.forClone("remote", "remote").drafts).toEqual([]);
+    expect(coordinator.forClone("remote", "remote").refusal).toBe(
+      "Only images can be pasted while the project is cloning. Use the file picker or drag and drop for other files.",
+    );
+    expect(CLONE_REMOTE_PASTE_REFUSAL).not.toMatch(/Only images can be attached/);
+  });
+  it("refuses a native file source for a clone on this computer", async () => {
+    const coordinator = createCloneComposerAttachments();
+    const fileSource = { stage: vi.fn(), release: vi.fn() };
+    await coordinator
+      .forClone("local", "local")
+      .add("local", [{ kind: "fileSource", path: "/Users/dev/report.pdf", fileSource }]);
+    expect(coordinator.forClone("local", "local").drafts).toEqual([]);
+    expect(coordinator.forClone("local", "local").refusal).toBe("Path is not attachable.");
+  });
   it("rejects stale intake, wrong project, non-image remote sources, and excessive count", async () => {
     const coordinator = createCloneComposerAttachments();
     const remote = coordinator.forClone("remote", "remote");
     await remote.add("remote", [source(), { kind: "path", path: "/tmp/image.png" }]);
     expect(coordinator.forClone("remote", "remote").drafts).toHaveLength(0);
+    expect(coordinator.forClone("remote", "remote").refusal).toBe(CLONE_REMOTE_PASTE_REFUSAL);
     const local = coordinator.forClone("local", "local");
     await local.add("foreign", [source()]);
     await local.captureIntake!("local", () => false)!([source()]);

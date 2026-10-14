@@ -84,6 +84,21 @@
       "thinkingMode": false
     },
     {
+      "choice": "claude-haiku-5-5",
+      "label": "Claude Haiku 5.5",
+      "runtimeIds": ["haiku-5.5", "claude-haiku-5.5", "claude-haiku-5-5"],
+      "description": "For high-volume, latency-sensitive tasks such as classification, extraction, and routing.",
+      "releaseDate": "2026-10-07",
+      "status": "current",
+      "minVersion": "2.1.293",
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultrathink"],
+      "defaultEffort": "medium",
+      "contextWindows": [],
+      "defaultContext": null,
+      "fastMode": false,
+      "thinkingMode": false
+    },
+    {
       "choice": "claude-fable-5",
       "label": "Claude Fable 5",
       "runtimeIds": ["claude-fable-5"],

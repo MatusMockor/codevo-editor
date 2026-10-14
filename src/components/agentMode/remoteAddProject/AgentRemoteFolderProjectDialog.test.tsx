@@ -5,12 +5,15 @@ import {
   BILLING_KEY,
   BILLING_PATH,
   FOLDER_RUNNER,
+  FOLDER_SERVER,
   mountFolderHarness,
   OTHER_ROW,
   REGISTERED,
   type FolderHarness,
   type FolderHarnessOptions,
 } from "../../../test/remoteProjectFolderTestSupport";
+import type { RemoteRunnerFolderProjectSupport } from "../../../application/remoteAddProjectFolder";
+import type { RemoteProjectRegistrationRunner } from "../../../application/remoteProjectRegistrationGateway";
 import { REMOTE_PROJECT_FOLDER_ADOPTION_GRACE_MS } from "../../../application/useRemoteProjectFolderRegistration";
 import { AgentRemoteFolderProjectDialog } from "./AgentRemoteFolderProjectDialog";
 
@@ -19,6 +22,12 @@ const BROWSER = 'section[aria-label="Choose folder on server"]';
 const FORM_DIALOG = 'section[aria-label="Add existing folder on server"]';
 const NAME_RULE =
   "Use letters or digits first, then letters, digits, hyphen or underscore, up to 64 characters.";
+const FOLDER_HINT =
+  "If this folder is not a Git repository, threads run directly in it, without worktrees, branches, diffs, commit or push.";
+const OLD_NOT_GIT_ROOT =
+  "This folder is not the root of a Git repository. Choose the repository's top-level folder.";
+const NESTED_NOT_GIT_ROOT =
+  "This folder is inside a Git repository. Choose the repository's top-level folder.";
 
 describe("AgentRemoteFolderProjectDialog", () => {
   let harness: FolderHarness;
@@ -101,12 +110,37 @@ describe("AgentRemoteFolderProjectDialog", () => {
     return all(".agent-remote-add-project__error").map((node) => node.textContent ?? "");
   }
 
-  async function openBrowser(): Promise<void> {
-    await harness.openFor();
+  function hints(): string[] {
+    return all(".agent-remote-add-project__note").map((node) => node.textContent ?? "");
   }
 
-  async function openForm(folder = "billing"): Promise<void> {
-    await openBrowser();
+  function folderIcon(): string {
+    const icons = harness.host.querySelectorAll(".agent-remote-add-project__repo > svg");
+    expect(icons).toHaveLength(1);
+    return icons[0]?.getAttribute("class") ?? "";
+  }
+
+  function deferRunnerReads() {
+    const answers: Array<(runner: RemoteProjectRegistrationRunner) => void> = [];
+    harness.identifyRunner.mockImplementation(
+      () =>
+        new Promise<RemoteProjectRegistrationRunner>((resolve) => {
+          answers.push(resolve);
+        }),
+    );
+    return async (index: number, folderProjects: RemoteRunnerFolderProjectSupport) => {
+      expect(answers[index], `runner read ${index}`).toBeDefined();
+      await act(async () => answers[index]?.({ runnerId: FOLDER_RUNNER, folderProjects }));
+      await harness.settled();
+    };
+  }
+
+  async function openBrowser(serverId: string = FOLDER_SERVER): Promise<void> {
+    await harness.openFor(serverId);
+  }
+
+  async function openForm(folder = "billing", serverId: string = FOLDER_SERVER): Promise<void> {
+    await openBrowser(serverId);
     await click(option("repos"));
     await click(option(folder));
     await click(one(".agent-add-project__add"));
@@ -282,10 +316,7 @@ describe("AgentRemoteFolderProjectDialog", () => {
   });
 
   it.each([
-    [
-      "not_git_root",
-      "This folder is not the root of a Git repository. Choose the repository's top-level folder.",
-    ],
+    ["not_git_root", OLD_NOT_GIT_ROOT],
     ["limit_reached", "This server already has the maximum number of projects."],
     ["not_allowed", "This folder cannot be added as a project."],
   ] as const)("explains the %s rejection and allows another try", async (reason, message) => {
@@ -296,6 +327,127 @@ describe("AgentRemoteFolderProjectDialog", () => {
     expect(primary().textContent).toBe("Add project");
     expect(primary().disabled).toBe(false);
     expect(harness.selectProject).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["not_git_root", NESTED_NOT_GIT_ROOT],
+    ["limit_reached", "This server already has the maximum number of projects."],
+    ["not_allowed", "This folder cannot be added as a project."],
+  ] as const)(
+    "explains the %s rejection on a runner with folder projects and allows another try",
+    async (reason, message) => {
+      await submitted({ folderProjects: "supported" });
+      await harness.settle({ status: "rejected", reason });
+      expect(one('[role="alert"]').textContent).toBe(message);
+      expect(errors()).toEqual([message]);
+      expect(hints()).toEqual([FOLDER_HINT]);
+      expect(primary().disabled).toBe(false);
+      expect(harness.selectProject).not.toHaveBeenCalled();
+    },
+  );
+
+  it("registers a plain folder on a runner with folder projects and selects it", async () => {
+    await submitted({ folderProjects: "supported" });
+    expect(hints()).toEqual([FOLDER_HINT]);
+    await harness.settle(REGISTERED);
+    expect(harness.selectProject).toHaveBeenCalledExactlyOnceWith(BILLING_KEY);
+    expect(harness.host.querySelector(FORM_DIALOG)).toBeNull();
+  });
+
+  it("shows the folder project hint and a neutral folder icon on a runner with folder projects", async () => {
+    await mount({ folderProjects: "supported" });
+    await openBrowser();
+    expect(one(BROWSER).textContent).not.toContain(FOLDER_HINT);
+    await click(option("repos"));
+    await click(option("billing"));
+    await click(one(".agent-add-project__add"));
+    expect(hints()).toEqual([FOLDER_HINT]);
+    expect(folderIcon()).toContain("lucide-folder");
+    expect(folderIcon()).not.toContain("git");
+    expect(errors()).toEqual([]);
+    expect(harness.host.querySelector('[role="alert"]')).toBeNull();
+
+    await typeName("my.project");
+    expect(hints()).toEqual([FOLDER_HINT]);
+    expect(errors()).toEqual([NAME_RULE]);
+    await click(one('button[aria-label="Go back"]'));
+    expect(one(BROWSER).textContent).not.toContain(FOLDER_HINT);
+  });
+
+  it("shows no hint and the Git folder icon on a runner without folder projects", async () => {
+    await mount();
+    await openForm();
+    expect(hints()).toEqual([]);
+    expect(one(FORM_DIALOG).textContent).not.toContain("not a Git repository");
+    expect(folderIcon()).toContain("lucide-folder-git-2");
+    await click(primary());
+    await harness.settle({ status: "rejected", reason: "not_git_root" });
+    expect(hints()).toEqual([]);
+    expect(folderIcon()).toContain("lucide-folder-git-2");
+  });
+
+  it("holds the hint back until the runner has answered", async () => {
+    await mount();
+    const answer = deferRunnerReads();
+    await openForm();
+    expect(hints()).toEqual([]);
+    expect(folderIcon()).toContain("lucide-folder-git-2");
+    expect(primary().disabled).toBe(false);
+    await answer(0, "supported");
+    expect(hints()).toEqual([FOLDER_HINT]);
+    expect(folderIcon()).not.toContain("git");
+    expect(nameInput().value).toBe("billing");
+  });
+
+  it("shows no hint when the runner could not be read, then follows the submission's answer", async () => {
+    await mount({ folderProjects: "supported" });
+    harness.identifyRunner.mockRejectedValueOnce(new Error("Runner request failed (HTTP 503)."));
+    await openForm();
+    expect(hints()).toEqual([]);
+    expect(errors()).toEqual([]);
+    await click(primary());
+    expect(hints()).toEqual([FOLDER_HINT]);
+    await harness.settle({ status: "rejected", reason: "not_git_root" });
+    expect(one('[role="alert"]').textContent).toBe(NESTED_NOT_GIT_ROOT);
+  });
+
+  it("never shows one server's folder project support for another server or a later opening", async () => {
+    await mount();
+    const answer = deferRunnerReads();
+    await openBrowser("server-a");
+    await openForm("billing", "server-b");
+    await answer(0, "supported");
+    expect(hints()).toEqual([]);
+    expect(folderIcon()).toContain("lucide-folder-git-2");
+    await answer(1, "unsupported");
+    expect(hints()).toEqual([]);
+
+    await openForm("billing", "server-a");
+    expect(hints()).toEqual([]);
+    await answer(2, "supported");
+    expect(hints()).toEqual([FOLDER_HINT]);
+
+    await openForm("billing", "server-b");
+    expect(hints()).toEqual([]);
+    expect(folderIcon()).toContain("lucide-folder-git-2");
+    await answer(3, "unsupported");
+    await click(primary());
+    await answer(4, "unsupported");
+    await harness.settle({ status: "rejected", reason: "not_git_root" });
+    expect(one('[role="alert"]').textContent).toBe(OLD_NOT_GIT_ROOT);
+    expect(hints()).toEqual([]);
+
+    await openForm("billing", "server-a");
+    expect(hints()).toEqual([]);
+    expect(harness.host.querySelector('[role="alert"]')).toBeNull();
+    await click(primary());
+    await answer(6, "supported");
+    expect(hints()).toEqual([FOLDER_HINT]);
+    await answer(5, "unsupported");
+    expect(hints()).toEqual([FOLDER_HINT]);
+    await harness.settle({ status: "rejected", reason: "not_git_root" });
+    expect(one('[role="alert"]').textContent).toBe(NESTED_NOT_GIT_ROOT);
+    expect(harness.registerProject).toHaveBeenCalledTimes(2);
   });
 
   it("puts a taken name on the name field until it changes", async () => {

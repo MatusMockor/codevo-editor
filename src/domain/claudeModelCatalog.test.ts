@@ -21,7 +21,7 @@ const manifest = (patch: Record<string, unknown> = {}) => ({
 
 describe("Claude model manifest", () => {
   it("validates the shared bundle into a deeply immutable snapshot", () => {
-    expect(BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode).toHaveLength(12);
+    expect(BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode).toHaveLength(13);
     const parsed = parseClaudeModelManifest(manifest());
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed.claudeCode)).toBe(true);
@@ -234,6 +234,32 @@ describe("Claude model manifest schema", () => {
       (entry) => entry.choice === "claude-haiku-4-5",
     );
     expect(haiku?.description).toBe("The fastest model with near-frontier intelligence.");
+  });
+
+  it("bundles Claude Haiku 5.5 under its live catalog id with the official copy", () => {
+    const haiku = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find(
+      (entry) => entry.choice === "claude-haiku-5-5",
+    );
+    expect(haiku).toMatchObject({
+      label: "Claude Haiku 5.5",
+      description:
+        "For high-volume, latency-sensitive tasks such as classification, extraction, and routing.",
+      releaseDate: "2026-10-07",
+      status: "current",
+      minVersion: "2.1.293",
+      efforts: ["low", "medium", "high", "xhigh", "max", "ultrathink"],
+      defaultEffort: "medium",
+      contextWindows: [],
+      defaultContext: null,
+      fastMode: false,
+      thinkingMode: false,
+    });
+    expect(haiku?.runtimeIds).toEqual(["haiku-5.5", "claude-haiku-5.5", "claude-haiku-5-5"]);
+    const legacyHaiku = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find(
+      (entry) => entry.choice === "claude-haiku-4-5",
+    );
+    expect(legacyHaiku?.runtimeIds).toContain("haiku");
+    expect(legacyHaiku?.status).toBe("legacy");
   });
 
   it("falls back to the bundled description for a live model and to none otherwise", () => {

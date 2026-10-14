@@ -33,6 +33,7 @@ import {
   type DraftCoordinator,
   type DraftStore,
 } from "./agentAttachmentDraftStore";
+import { stageCarriedFileSourceDraft } from "./agentAttachmentFileSourceIntake";
 import {
   describeAgentAttachmentSource,
   type DescribedAgentAttachmentSource,
@@ -133,6 +134,12 @@ async function stageCarriedDraft(
 ): Promise<void> {
   const { pending } = carried;
   const owner = pending.owner;
+  const origin = carried.source;
+  if (origin.kind === "fileSource" && context.gateway.stageAgentAttachmentFile !== undefined) {
+    const refusal = await stageCarriedFileSourceDraft(context, pending, origin);
+    if (refusal !== null) failCarriedDraft(context, pending, refusal);
+    return;
+  }
   const resolved = await attempt(() => agentAttachmentCarryIntakeSource(carried.source));
   if (!context.ownerIsCurrent(owner)) return;
   if (!resolved.ok) {

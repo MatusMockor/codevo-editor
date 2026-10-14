@@ -8,11 +8,17 @@ import type { AgentLaunchOptions } from "../domain/agentLaunch";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import {
+  REMOTE_FOLDER_BASE_UNAVAILABLE,
+  REMOTE_FOLDER_NEEDS_IN_PLACE,
+  REMOTE_PROJECT_KIND_CHANGED,
+} from "./remoteFolderProjectLaunch";
+import {
   REMOTE_CONVERSATION_BUSY_NOTICE,
   REMOTE_ORIGIN_BASE_NEEDS_WORKTREE,
   REMOTE_ORIGIN_BASE_UNSUPPORTED,
   REMOTE_START_OBSERVER_FAILED_NOTICE,
   REMOTE_STOP_UNAPPLIED_NOTICE,
+  REMOTE_UNSTARTED_DRAFT_NOTICE,
   useRemoteAgentMutations,
 } from "./useRemoteAgentMutations";
 const target = { serverId: "s", runnerId: "r", projectId: "p" };
@@ -75,6 +81,7 @@ afterEach(() => {
 async function render(
   gw = gateway(),
   resolveAttachments?: Parameters<typeof useRemoteAgentMutations>[0]["resolveAttachments"],
+  projectKind?: Parameters<typeof useRemoteAgentMutations>[0]["projectKind"],
 ) {
   const root = createRoot(document.createElement("div"));
   const publish = vi.fn();
@@ -89,6 +96,7 @@ async function render(
       publish,
       report,
       resolveAttachments,
+      projectKind,
     });
     return null;
   }
@@ -1173,5 +1181,367 @@ describe("remote agent start identification", () => {
     });
     expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", task());
     expect(h.report).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("server folder project launches", () => {
+  const folderTarget = { ...target, projectKind: "folder" } as const;
+  const inPlace: AgentThreadStartRequest = { ...request, isolation: "in-place" };
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+  function folderGateway() {
+    const gw = gateway();
+    gw.getRunner.mockResolvedValue({
+      runnerId: "r",
+      capabilities: { instructionSync: true, taskIsolation: true, gitSync: true },
+    });
+    gw.createTask.mockResolvedValue({
+      task: task({ isolation: "in-place", status: "draft", projectId: undefined }),
+      created: true,
+    });
+    gw.startTask.mockResolvedValue(task({ isolation: "in-place" }));
+    return gw;
+  }
+  function listedKind(initial: "folder" | "repository" | null) {
+    const listed = { kind: initial };
+    return { listed, projectKind: () => listed.kind };
+  }
+
+  it("never drafts a worktree task and lets the corrected in-place send through", async () => {
+    const { projectKind } = listedKind("folder");
+    const h = await render(folderGateway(), undefined, projectKind);
+    await act(async () => {
+      expect(await h.current().start(request, folderTarget)).toBeNull();
+    });
+    expect(h.gw.getRunner).not.toHaveBeenCalled();
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_FOLDER_NEEDS_IN_PLACE);
+
+    await act(async () => {
+      expect(await h.current().start(inPlace, folderTarget)).toEqual(
+        task({ isolation: "in-place" }),
+      );
+    });
+    expect(h.gw.createTask).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ isolation: "in-place" }),
+    );
+    expect(h.gw.startTask).toHaveBeenCalledExactlyOnceWith({
+      serverId: "s",
+      taskId: "t",
+      projectId: "p",
+    });
+    expect(h.report).toHaveBeenCalledTimes(1);
+    expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", task({ isolation: "in-place" }));
+  });
+
+  it.each([{ kind: "checkout-head" }, { kind: "origin-branch", branch: "main" }] as const)(
+    "refuses the $kind start base before any runner call",
+    async (base) => {
+      const { projectKind } = listedKind("folder");
+      const h = await render(folderGateway(), undefined, projectKind);
+      await act(async () => {
+        expect(await h.current().start(inPlace, folderTarget, undefined, base)).toBeNull();
+      });
+      expect(h.gw.getRunner).not.toHaveBeenCalled();
+      expect(h.gw.createTask).not.toHaveBeenCalled();
+      expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_FOLDER_BASE_UNAVAILABLE);
+    },
+  );
+
+  it("refuses a folder launch even when nothing reports the listed kind", async () => {
+    const h = await render(folderGateway());
+    await act(async () => {
+      expect(await h.current().start(request, folderTarget)).toBeNull();
+    });
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_FOLDER_NEEDS_IN_PLACE);
+  });
+
+  it("fails closed when the project becomes a folder while the runner is being read", async () => {
+    const { listed, projectKind } = listedKind("repository");
+    const gw = folderGateway();
+    const runner = deferred<unknown>();
+    gw.getRunner.mockReturnValueOnce(runner.promise);
+    const h = await render(gw, undefined, projectKind);
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start(request, target);
+    });
+    await vi.waitFor(() => expect(gw.getRunner).toHaveBeenCalledTimes(1));
+    listed.kind = "folder";
+    await act(async () => {
+      runner.resolve({
+        runnerId: "r",
+        capabilities: { instructionSync: true, taskIsolation: true, gitSync: true },
+      });
+      expect(await starting).toBeNull();
+    });
+    expect(gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_PROJECT_KIND_CHANGED);
+  });
+
+  it("never starts a worktree draft on a project that became a folder meanwhile", async () => {
+    const { listed, projectKind } = listedKind("repository");
+    const gw = folderGateway();
+    const created = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    gw.createTask.mockReturnValueOnce(created.promise);
+    const h = await render(gw, undefined, projectKind);
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start(request, target);
+    });
+    await vi.waitFor(() => expect(gw.createTask).toHaveBeenCalledTimes(1));
+    listed.kind = "folder";
+    await act(async () => {
+      created.resolve({ task: task({ status: "draft", projectId: undefined }), created: true });
+      expect(await starting).toBeNull();
+    });
+    expect(gw.startTask).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(
+      `${REMOTE_PROJECT_KIND_CHANGED} ${REMOTE_UNSTARTED_DRAFT_NOTICE}`,
+    );
+
+    await act(async () => {
+      expect(await h.current().start(inPlace, folderTarget)).toEqual(
+        task({ isolation: "in-place" }),
+      );
+    });
+    expect(gw.createTask.mock.calls[1]![0].idempotencyKey).not.toBe(
+      gw.createTask.mock.calls[0]![0].idempotencyKey,
+    );
+    expect(gw.createTask.mock.calls[1]![0]).toMatchObject({ isolation: "in-place" });
+  });
+
+  it("refuses the retry when the kind flipped after a failed attempt", async () => {
+    const { listed, projectKind } = listedKind("repository");
+    const gw = folderGateway();
+    gw.createTask.mockResolvedValue({
+      task: task({ status: "draft", projectId: undefined }),
+      created: true,
+    });
+    gw.startTask.mockRejectedValueOnce(new Error("disconnected"));
+    const h = await render(gw, undefined, projectKind);
+    await act(async () => {
+      expect(await h.current().start(request, target)).toBeNull();
+    });
+    expect(gw.createTask).toHaveBeenCalledTimes(1);
+    expect(gw.startTask).toHaveBeenCalledTimes(1);
+    expect(h.report).toHaveBeenLastCalledWith(expect.stringContaining("Retry the same message"));
+
+    listed.kind = "folder";
+    await act(async () => {
+      expect(await h.current().start(request, target)).toBeNull();
+    });
+    expect(h.report).toHaveBeenLastCalledWith(expect.stringContaining(REMOTE_PROJECT_KIND_CHANGED));
+    await act(async () => {
+      expect(await h.current().start(request, folderTarget)).toBeNull();
+    });
+    expect(h.report).toHaveBeenLastCalledWith(REMOTE_FOLDER_NEEDS_IN_PLACE);
+    expect(gw.createTask).toHaveBeenCalledTimes(1);
+    expect(gw.startTask).toHaveBeenCalledTimes(1);
+    expect(h.publish).not.toHaveBeenCalled();
+  });
+
+  it("refuses a folder target whose project is listed as a repository again", async () => {
+    const { projectKind } = listedKind("repository");
+    const h = await render(folderGateway(), undefined, projectKind);
+    await act(async () => {
+      expect(await h.current().start(inPlace, folderTarget)).toBeNull();
+    });
+    expect(h.gw.createTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_PROJECT_KIND_CHANGED);
+  });
+
+  it.each([
+    { reader: "a reader that lists it as a repository", projectKind: () => "repository" as const },
+    { reader: "no inventory reader", projectKind: undefined },
+  ])("leaves a repository project with $reader unchanged", async ({ projectKind }) => {
+    const gw = gateway();
+    gw.getRunner.mockResolvedValue({
+      runnerId: "r",
+      capabilities: { instructionSync: true, taskIsolation: true, gitSync: true },
+    });
+    gw.startTask.mockRejectedValueOnce(new Error("disconnected"));
+    const h = await render(gw, undefined, projectKind);
+    const base = { kind: "origin-branch", branch: "main" } as const;
+    await act(async () => {
+      expect(await h.current().start(request, target, undefined, base)).toBeNull();
+    });
+    await act(async () => {
+      expect(
+        await h.current().start(request, { ...target, projectKind: "repository" }, undefined, base),
+      ).toEqual(task());
+    });
+    expect(gw.createTask).toHaveBeenCalledTimes(2);
+    expect(gw.createTask.mock.calls[1]![0].idempotencyKey).toBe(
+      gw.createTask.mock.calls[0]![0].idempotencyKey,
+    );
+    expect(gw.createTask.mock.calls[0]![0]).toMatchObject({ isolation: "worktree" });
+    expect(gw.startTask).toHaveBeenLastCalledWith({
+      serverId: "s",
+      taskId: "t",
+      projectId: "p",
+      base,
+    });
+    expect(h.publish).toHaveBeenCalledExactlyOnceWith("s", task());
+  });
+
+  it.each([
+    { project: "repository", captured: target, send: request },
+    { project: "folder", captured: folderTarget, send: inPlace },
+  ] as const)(
+    "refuses a $project project the inventory no longer lists before any runner call",
+    async ({ captured, send }) => {
+      const { projectKind } = listedKind(null);
+      const h = await render(folderGateway(), undefined, projectKind);
+      await act(async () => {
+        expect(await h.current().start(send, captured)).toBeNull();
+      });
+      expect(h.gw.getRunner).not.toHaveBeenCalled();
+      expect(h.gw.createTask).not.toHaveBeenCalled();
+      expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_PROJECT_KIND_CHANGED);
+    },
+  );
+
+  it.each([
+    { project: "repository", captured: target, send: request, kind: "repository" },
+    { project: "folder", captured: folderTarget, send: inPlace, kind: "folder" },
+  ] as const)(
+    "drafts nothing when a $project project is dropped while the runner is being read",
+    async ({ captured, send, kind }) => {
+      const { listed, projectKind } = listedKind(kind);
+      const gw = folderGateway();
+      const runner = deferred<unknown>();
+      gw.getRunner.mockReturnValueOnce(runner.promise);
+      const h = await render(gw, undefined, projectKind);
+      let starting!: Promise<RemoteRunnerTask | null>;
+      await act(async () => {
+        starting = h.current().start(send, captured);
+      });
+      await vi.waitFor(() => expect(gw.getRunner).toHaveBeenCalledTimes(1));
+      listed.kind = null;
+      await act(async () => {
+        runner.resolve({
+          runnerId: "r",
+          capabilities: { instructionSync: true, taskIsolation: true, gitSync: true },
+        });
+        expect(await starting).toBeNull();
+      });
+      expect(gw.createTask).not.toHaveBeenCalled();
+      expect(gw.startTask).not.toHaveBeenCalled();
+      expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_PROJECT_KIND_CHANGED);
+    },
+  );
+
+  it("drafts nothing when the project is dropped while instructions are collected", async () => {
+    const { listed, projectKind } = listedKind("repository");
+    const gw = synchronizingGateway();
+    const collected = deferred<ReturnType<typeof instructionSnapshot>>();
+    gw.collectInstructions.mockReturnValueOnce(collected.promise);
+    const h = await render(gw, undefined, projectKind);
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start(claudeRequest, target);
+    });
+    await vi.waitFor(() => expect(gw.collectInstructions).toHaveBeenCalledTimes(1));
+    listed.kind = null;
+    await act(async () => {
+      collected.resolve(instructionSnapshot("first"));
+      expect(await starting).toBeNull();
+    });
+    expect(gw.createTask).not.toHaveBeenCalled();
+    expect(gw.startTask).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(REMOTE_PROJECT_KIND_CHANGED);
+
+    listed.kind = "repository";
+    await act(async () => {
+      expect(await h.current().start(claudeRequest, target)).not.toBeNull();
+    });
+    expect(gw.createTask).toHaveBeenCalledTimes(1);
+    expect(gw.startTask).toHaveBeenCalledTimes(1);
+    expect(h.report).toHaveBeenCalledTimes(1);
+  });
+
+  it("never starts a draft on a project that was dropped meanwhile and does not wedge", async () => {
+    const { listed, projectKind } = listedKind("repository");
+    const gw = folderGateway();
+    const created = deferred<{ task: RemoteRunnerTask; created: boolean }>();
+    gw.createTask.mockReturnValueOnce(created.promise);
+    gw.createTask.mockResolvedValue({
+      task: task({ status: "draft", projectId: undefined }),
+      created: true,
+    });
+    gw.startTask.mockResolvedValue(task());
+    const h = await render(gw, undefined, projectKind);
+    let starting!: Promise<RemoteRunnerTask | null>;
+    await act(async () => {
+      starting = h.current().start(request, target);
+    });
+    await vi.waitFor(() => expect(gw.createTask).toHaveBeenCalledTimes(1));
+    listed.kind = null;
+    await act(async () => {
+      created.resolve({ task: task({ status: "draft", projectId: undefined }), created: true });
+      expect(await starting).toBeNull();
+    });
+    expect(gw.startTask).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.report).toHaveBeenCalledExactlyOnceWith(
+      `${REMOTE_PROJECT_KIND_CHANGED} ${REMOTE_UNSTARTED_DRAFT_NOTICE}`,
+    );
+
+    await act(async () => {
+      expect(await h.current().start(request, target)).toBeNull();
+    });
+    expect(gw.createTask).toHaveBeenCalledTimes(1);
+    expect(h.report).toHaveBeenLastCalledWith(REMOTE_PROJECT_KIND_CHANGED);
+
+    listed.kind = "repository";
+    await act(async () => {
+      expect(await h.current().start(request, target)).toEqual(task());
+    });
+    expect(gw.createTask).toHaveBeenCalledTimes(2);
+    expect(gw.createTask.mock.calls[1]![0].idempotencyKey).not.toBe(
+      gw.createTask.mock.calls[0]![0].idempotencyKey,
+    );
+    expect(gw.startTask).toHaveBeenCalledExactlyOnceWith({
+      serverId: "s",
+      taskId: "t",
+      projectId: "p",
+    });
+  });
+
+  it("continues a folder conversation without the launch guard", async () => {
+    const { projectKind } = listedKind("folder");
+    const gw = folderGateway();
+    gw.getTask.mockResolvedValue(task({ isolation: "in-place", status: "succeeded" }));
+    gw.continueTask.mockResolvedValue({
+      task: task({
+        id: "child",
+        sequence: 2,
+        parentTaskId: "t",
+        conversationId: "t",
+        isolation: "in-place",
+      }),
+      created: true,
+    });
+    const h = await render(gw, undefined, projectKind);
+    await act(async () => {
+      expect(
+        await h
+          .current()
+          .followUp(
+            { prompt: "hello", launch: request.launch, threadId: "display" },
+            { ...folderTarget, conversationId: "t", latestTaskId: "t" },
+          ),
+      ).not.toBeNull();
+    });
+    expect(gw.continueTask).toHaveBeenCalledTimes(1);
+    expect(h.report).not.toHaveBeenCalled();
   });
 });
