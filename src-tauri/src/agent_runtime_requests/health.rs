@@ -1,6 +1,6 @@
 use super::model::JournalState;
 use super::observed::ObservedTurn;
-use super::scopes::TurnAuthority;
+use super::scopes::{HistoryScope, TurnAuthority};
 use super::store::{ApplyReport, StoreError, StoreErrorKind};
 use std::collections::HashMap;
 
@@ -206,6 +206,20 @@ impl JournalLedger {
                     .unresolved
                     .keys()
                     .any(|turn| turn.key.thread_id == thread_id),
+        )
+    }
+
+    pub(super) fn has_failure(&self, key: &TurnAuthority) -> bool {
+        self.unresolved.contains_key(key)
+    }
+
+    pub(super) fn thread_state_in(&self, scope: &HistoryScope, thread_id: &str) -> JournalState {
+        state_of(
+            self.is_degraded_everywhere()
+                || self.unresolved.keys().any(|turn| {
+                    turn.key.thread_id == thread_id
+                        && (&turn.scope == scope || turn.scope.root_key.is_empty())
+                }),
         )
     }
 

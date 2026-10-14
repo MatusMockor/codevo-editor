@@ -7,6 +7,7 @@ mod migration;
 mod pages;
 mod runtime_request_reads;
 mod runtime_request_store;
+mod runtime_request_thread_rows;
 mod runtime_request_turn_states;
 pub(crate) mod runtime_requests;
 pub(crate) use catalog::{FoundImport, ThreadPage};

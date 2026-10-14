@@ -67,6 +67,7 @@ impl JournaledTurn {
             }),
             Some(tracking),
         );
+        journal.share_sequence(turn.tasks.interaction_sequence());
         Self {
             workspace,
             history,

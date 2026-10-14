@@ -449,6 +449,11 @@ struct ListedRequest<'a> {
     id: &'a str,
     kind: RequestKind,
     listing: Listing<'a>,
+    revision: Option<u64>,
+}
+
+fn revision_of(observation: &TurnObservation, revision: Option<u64>) -> i64 {
+    integer(revision.unwrap_or(observation.revision))
 }
 
 impl Reconciliation<'_> {
@@ -520,7 +525,7 @@ impl Reconciliation<'_> {
             key: &self.observation.key,
             request_id: request.id,
             from,
-            version: integer(self.observation.turn.sequence),
+            version: revision_of(self.observation, request.revision),
             at: integer(self.observation.observed_at_epoch_ms),
         };
         let advanced = advance(self.transaction, &step, &closing)?;
@@ -620,7 +625,7 @@ fn insert(
                 .and_then(|closing| closing.reason)
                 .map(|reason| name(&reason)),
             reconciliation.run_id,
-            integer(observation.turn.sequence),
+            revision_of(observation, request.revision),
             reg_index,
             format,
             body.unwrap_or_default(),
@@ -725,7 +730,7 @@ fn close_predecessor_rows(
             key: &observation.key,
             request_id,
             from,
-            version: integer(observation.turn.sequence),
+            version: integer(observation.revision),
             at: integer(observation.observed_at_epoch_ms),
         };
         if advance(transaction, &step, &closing)?.is_taken() {
@@ -813,6 +818,7 @@ pub(super) fn apply_snapshot(
             id: &request.id,
             kind: request.body.kind(),
             listing: Listing::observed(&request.state),
+            revision: request.revision,
         };
         reconciliation.reconcile(row, &listed_request)?;
     }
@@ -828,6 +834,7 @@ pub(super) fn apply_snapshot(
             id: &request.id,
             kind: request.kind,
             listing: Listing::digested(request.state),
+            revision: request.revision,
         };
         reconciliation.reconcile(row, &listed_request)?;
     }
@@ -846,7 +853,7 @@ pub(super) fn apply_snapshot(
             key,
             request_id,
             from,
-            version,
+            version: integer(observation.revision),
             at,
         };
         if advance(&transaction, &step, &closing)?.is_taken() {

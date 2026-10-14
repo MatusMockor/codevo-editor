@@ -1,4 +1,4 @@
-use super::super::super::runtime_request_store::{LeaseWait, Patience, RootLease};
+use super::super::super::runtime_request_store::{Patience, RootLease};
 use super::*;
 use crate::agent_runtime_requests::store::StoreError;
 use std::path::{Path, PathBuf};
@@ -480,7 +480,7 @@ fn same_owner_copy_with_an_older_schema_swapped_in_during_an_open_is_never_writt
     let mut swapped = false;
 
     let opened = store.open_bound(scope, Patience::Snapshot, &mut |connection| {
-        let checked = store.require_bound(scope, LeaseWait::Blocking, connection);
+        let checked = store.require_bound(scope, connection);
         if !swapped {
             swapped = true;
             fs::rename(&own, &moved).expect("move the history directory away");
@@ -520,7 +520,7 @@ fn connection_opened_on_a_swapped_database_file_is_refused_even_after_the_origin
             fs::rename(&database, &planted).expect("move the planted database out");
             fs::rename(&kept, &database).expect("restore the original database");
         }
-        let checked = store.require_bound(scope, LeaseWait::Blocking, connection);
+        let checked = store.require_bound(scope, connection);
         if step == 0 {
             fs::rename(&database, &kept).expect("keep the original database");
             fs::copy(older.directory.join("history.sqlite3"), &database)

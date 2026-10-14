@@ -170,7 +170,7 @@ pub fn run() {
             app.manage(Arc::new(
                 agent_history_commands::agent_history_store::AgentHistoryStore::new(app.path().app_data_dir()?),
             ));
-            app.manage(Arc::new(
+            let request_journal = Arc::new(
                 crate::agent_runtime_requests::journal::RuntimeRequestJournal::start(
                     Arc::new(
                         agent_history_commands::agent_history_store::runtime_requests::HistoryRuntimeRequestStore::new(
@@ -180,7 +180,17 @@ pub fn run() {
                     crate::agent_runtime_requests::journal::new_run_id(),
                     crate::agent_runtime_requests::journal::system_clock(),
                 ),
+            );
+            app.manage(crate::agent_runtime_requests::feed::RequestFeed::start(
+                &request_journal,
+                Arc::new(agent_task_commands::runtime_requests::AppHandleThreadRequestsSink(
+                    app.handle().clone(),
+                )),
             ));
+            app.manage(Arc::new(
+                crate::agent_runtime_requests::projection::RequestProjection::new(Arc::clone(&request_journal)),
+            ));
+            app.manage(Arc::clone(&request_journal));
             app.manage(Arc::new(
                 agent_turn_log_commands::agent_turn_log::AgentTurnLogStore::new(
                     app.path().app_data_dir()?,
@@ -251,13 +261,15 @@ pub fn run() {
             app.manage(Arc::new(
                 git_integration_commands::IntegrationLocks::default(),
             ));
-            app.manage(agent_task_supervisor::AgentTaskRegistry::new(
+            let agent_tasks = agent_task_supervisor::AgentTaskRegistry::new(
                 agent_task_admission,
                 Arc::new(agent_task_spawner::StdAgentProcessSpawner),
                 Arc::new(agent_task_commands::AppHandleAgentTaskEventSink::new(
                     app.handle().clone(),
                 )),
-            ));
+            );
+            request_journal.share_sequence(agent_tasks.interaction_sequence());
+            app.manage(agent_tasks);
             #[cfg(not(test))]
             app.manage(
                 vscode_process_task_commands::VscodeProcessTaskCommandService::new(
@@ -655,6 +667,7 @@ pub fn run() {
             agent_task_commands::questions::get_agent_interactions,
             agent_task_commands::questions::answer_agent_question,
             agent_task_commands::questions::answer_agent_approval,
+            agent_task_commands::runtime_requests::get_agent_thread_requests,
             agent_task_commands::stop_agent_task,
             agent_task_commands::stop_agent_tasks_for_root,
             agent_task_commands::claude_session_composition::interrupt_agent_task,

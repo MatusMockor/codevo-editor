@@ -85,6 +85,8 @@ pub(crate) mod codex_task_composition;
 pub(crate) mod output_delivery;
 #[path = "agent_question_commands.rs"]
 pub(crate) mod questions;
+#[path = "agent_runtime_request_commands.rs"]
+pub(crate) mod runtime_requests;
 
 pub(crate) const MAX_AGENT_TASK_WORKSPACE_ID_BYTES: usize = 1024;
 pub(crate) const MAX_AGENT_TASK_PATH_BYTES: usize = 4096;

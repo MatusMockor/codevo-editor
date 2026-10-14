@@ -1,6 +1,6 @@
 use super::store::TurnKey;
 use crate::agent_task_admission::AgentTaskHistoryScope;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -70,8 +70,8 @@ impl std::error::Error for TurnIdentityConflict {}
 
 #[derive(Default)]
 struct Turns {
-    live: HashSet<TurnAuthority>,
-    retired: HashSet<TurnAuthority>,
+    live: HashMap<TurnAuthority, u64>,
+    retired: HashMap<TurnAuthority, u64>,
     retirement_order: VecDeque<TurnAuthority>,
     issued: u64,
 }
@@ -79,8 +79,8 @@ struct Turns {
 impl Turns {
     fn remembers(&self, key: &TurnKey) -> bool {
         self.live
-            .iter()
-            .chain(self.retired.iter())
+            .keys()
+            .chain(self.retired.keys())
             .any(|turn| &turn.key == key)
     }
 }
@@ -123,16 +123,16 @@ impl TurnTracker {
             key,
             incarnation: turns.issued,
         };
-        turns.live.insert(authority.clone());
+        turns.live.insert(authority.clone(), 0);
         Ok(authority)
     }
 
     pub fn retire(&self, turn: &TurnAuthority) -> Vec<HistoryScope> {
         let mut turns = self.locked();
-        if !turns.live.remove(turn) {
+        let Some(pushed) = turns.live.remove(turn) else {
             return Vec::new();
-        }
-        turns.retired.insert(turn.clone());
+        };
+        turns.retired.insert(turn.clone(), pushed);
         turns.retirement_order.push_back(turn.clone());
         let mut forgotten_roots = Vec::new();
         while turns.retired.len() > self.retired_capacity {
@@ -150,22 +150,59 @@ impl TurnTracker {
     pub fn forget(&self, turn: &TurnAuthority) {
         let mut turns = self.locked();
         turns.live.remove(turn);
-        if turns.retired.remove(turn) {
+        if turns.retired.remove(turn).is_some() {
             turns.retirement_order.retain(|candidate| candidate != turn);
         }
     }
 
+    pub fn is_live(&self, turn: &TurnAuthority) -> bool {
+        self.locked().live.contains_key(turn)
+    }
+
     pub fn is_known(&self, turn: &TurnAuthority) -> bool {
         let turns = self.locked();
-        turns.live.contains(turn) || turns.retired.contains(turn)
+        turns.live.contains_key(turn) || turns.retired.contains_key(turn)
+    }
+
+    pub fn has_successor(&self, turn: &TurnAuthority) -> bool {
+        let turns = self.locked();
+        turns
+            .live
+            .keys()
+            .chain(turns.retired.keys())
+            .any(|known| {
+                known.scope == turn.scope
+                    && known.key == turn.key
+                    && known.incarnation > turn.incarnation
+            })
+    }
+
+    pub fn pushed_through(&self, turn: &TurnAuthority) -> Option<u64> {
+        let turns = self.locked();
+        turns
+            .live
+            .get(turn)
+            .or_else(|| turns.retired.get(turn))
+            .copied()
+    }
+
+    pub fn mark_pushed(&self, turn: &TurnAuthority, version: u64) {
+        let mut turns = self.locked();
+        let known = match turns.live.get_mut(turn) {
+            Some(known) => Some(known),
+            None => turns.retired.get_mut(turn),
+        };
+        if let Some(known) = known {
+            *known = (*known).max(version);
+        }
     }
 
     pub fn known_turns(&self, scope: &HistoryScope) -> Vec<TurnKey> {
         let turns = self.locked();
         turns
             .live
-            .iter()
-            .chain(turns.retired.iter())
+            .keys()
+            .chain(turns.retired.keys())
             .filter(|turn| &turn.scope == scope)
             .map(|turn| turn.key.clone())
             .collect()

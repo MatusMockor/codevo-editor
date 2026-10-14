@@ -73,17 +73,26 @@ impl Boot {
     }
 
     fn start_with(fixture: &Fixture, run_id: &str, limits: JournalLimits) -> Self {
+        let store = Arc::new(HistoryRuntimeRequestStore::new(fixture.base.clone()));
+        Self::start_over(store, run_id, limits)
+    }
+
+    fn start_over(
+        store: Arc<dyn crate::agent_runtime_requests::store::RuntimeRequestStore>,
+        run_id: &str,
+        limits: JournalLimits,
+    ) -> Self {
         let ticks = AtomicU64::new(1_760_000_000_000);
         let clock: JournalClock = Arc::new(move || ticks.fetch_add(1, Ordering::SeqCst));
-        Self {
-            journal: Arc::new(RuntimeRequestJournal::start_with_limits(
-                Arc::new(HistoryRuntimeRequestStore::new(fixture.base.clone())),
-                run_id.to_string(),
-                clock,
-                limits,
-            )),
-            sequence: Arc::new(AtomicU64::new(0)),
-        }
+        let journal = Arc::new(RuntimeRequestJournal::start_with_limits(
+            store,
+            run_id.to_string(),
+            clock,
+            limits,
+        ));
+        let sequence = Arc::new(AtomicU64::new(0));
+        assert!(journal.share_sequence(Arc::clone(&sequence)));
+        Self { journal, sequence }
     }
 
     fn next_version(&self) -> u64 {
@@ -1209,7 +1218,15 @@ fn boot_identity_is_a_wire_identifier_and_differs_between_boots() {
     assert_eq!(Boot::start(&fixture, &first).journal.run_id(), first);
 }
 
+#[path = "feed_tests.rs"]
+mod feed;
 #[path = "journal_loss_tests.rs"]
 mod loss;
+#[path = "projection_tests.rs"]
+mod projection;
+#[path = "projection_race_tests.rs"]
+mod projection_race;
 #[path = "journal_reuse_tests.rs"]
 mod reuse;
+#[path = "rotation_tests.rs"]
+mod rotation;

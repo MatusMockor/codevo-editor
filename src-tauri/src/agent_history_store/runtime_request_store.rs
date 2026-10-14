@@ -1,16 +1,17 @@
 use super::connection::{self, DATABASE_FILE_NAME};
+use super::runtime_request_thread_rows::{self, UndecodableRows};
 use super::runtime_requests;
 use crate::agent_runtime_requests::scopes::HistoryScope;
 use crate::agent_runtime_requests::store::{
     AnswerIntent, ApplyReport, IntentReceipt, IntentSettle, RecoveryReport, RootClaim,
-    RuntimeRequestStore, StoreError, StoreErrorKind, StoredRequests, TurnKey, TurnObservation,
-    MAX_JOURNALED_ROOTS,
+    RuntimeRequestStore, StoreError, StoreErrorKind, StoredRequests, ThreadRead, TurnKey,
+    TurnObservation, MAX_JOURNALED_ROOTS,
 };
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 const SNAPSHOT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -192,13 +193,8 @@ fn lease_lost() -> StoreError {
 
 #[derive(Default)]
 struct RootCell {
+    claiming: Mutex<()>,
     lease: Mutex<Option<RootLease>>,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum LeaseWait {
-    Blocking,
-    Never,
 }
 
 #[derive(Clone, Copy)]
@@ -208,16 +204,9 @@ pub(super) enum Patience {
 }
 
 impl Patience {
-    fn first_wait(self) -> LeaseWait {
+    fn busy(self, snapshot: Duration) -> Result<Duration, StoreError> {
         match self {
-            Self::Snapshot => LeaseWait::Blocking,
-            Self::Until(_) => LeaseWait::Never,
-        }
-    }
-
-    fn busy(self) -> Result<Duration, StoreError> {
-        match self {
-            Self::Snapshot => Ok(SNAPSHOT_BUSY_TIMEOUT),
+            Self::Snapshot => Ok(snapshot),
             Self::Until(deadline) => remaining(deadline),
         }
     }
@@ -229,32 +218,26 @@ impl RootCell {
     fn locked(&self) -> MutexGuard<'_, Option<RootLease>> {
         self.lease.lock().unwrap_or_else(PoisonError::into_inner)
     }
-
-    fn observed(&self, wait: LeaseWait) -> Result<MutexGuard<'_, Option<RootLease>>, StoreError> {
-        if matches!(wait, LeaseWait::Blocking) {
-            return Ok(self.locked());
-        }
-        match self.lease.try_lock() {
-            Ok(lease) => Ok(lease),
-            Err(TryLockError::Poisoned(poisoned)) => Ok(poisoned.into_inner()),
-            Err(TryLockError::WouldBlock) => Err(StoreError::new(
-                StoreErrorKind::Busy,
-                "the request journal of this project is still being claimed",
-            )),
-        }
-    }
 }
 
 pub(crate) struct HistoryRuntimeRequestStore {
     base_dir: PathBuf,
+    snapshot_busy: Duration,
     roots: Mutex<HashMap<String, Arc<RootCell>>>,
+    undecodable: UndecodableRows,
 }
 
 impl HistoryRuntimeRequestStore {
     pub(crate) fn new(base_dir: PathBuf) -> Self {
+        Self::with_snapshot_busy_timeout(base_dir, SNAPSHOT_BUSY_TIMEOUT)
+    }
+
+    pub(crate) fn with_snapshot_busy_timeout(base_dir: PathBuf, snapshot_busy: Duration) -> Self {
         Self {
             base_dir,
+            snapshot_busy,
             roots: Mutex::default(),
+            undecodable: UndecodableRows::default(),
         }
     }
 
@@ -269,7 +252,7 @@ impl HistoryRuntimeRequestStore {
             &self.base_dir,
             &scope.root_key,
             &scope.owner_id,
-            SNAPSHOT_BUSY_TIMEOUT,
+            self.snapshot_busy,
         )
         .map_err(unavailable)
     }
@@ -285,7 +268,7 @@ impl HistoryRuntimeRequestStore {
             &self.base_dir,
             &scope.root_key,
             &scope.owner_id,
-            patience.busy()?,
+            patience.busy(self.snapshot_busy)?,
         )
         .map_err(unavailable);
         check(opened.as_ref().ok())?;
@@ -296,7 +279,7 @@ impl HistoryRuntimeRequestStore {
         check(Some(&connection))?;
         validated?;
         connection
-            .busy_timeout(patience.busy()?)
+            .busy_timeout(patience.busy(self.snapshot_busy)?)
             .map_err(runtime_requests::store_error)?;
         Ok(connection)
     }
@@ -307,14 +290,11 @@ impl HistoryRuntimeRequestStore {
         patience: Patience,
         operation: impl FnOnce(&mut Connection) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        let mut wait = patience.first_wait();
         let mut connection = self.open_bound(scope, patience, &mut |connection| {
-            let checked = self.require_bound(scope, wait, connection);
-            wait = LeaseWait::Blocking;
-            checked
+            self.require_bound(scope, connection)
         })?;
         let outcome = operation(&mut connection);
-        self.require_bound(scope, LeaseWait::Blocking, Some(&connection))?;
+        self.require_bound(scope, Some(&connection))?;
         outcome
     }
 
@@ -344,13 +324,12 @@ impl HistoryRuntimeRequestStore {
     pub(super) fn require_bound(
         &self,
         scope: &HistoryScope,
-        wait: LeaseWait,
         connection: Option<&Connection>,
     ) -> Result<(), StoreError> {
         let Some(cell) = self.known_root(scope) else {
             return Err(not_claimed());
         };
-        let mut lease = cell.observed(wait)?;
+        let mut lease = cell.locked();
         let Some(lease) = lease.as_mut() else {
             return Err(not_claimed());
         };
@@ -397,20 +376,16 @@ impl HistoryRuntimeRequestStore {
         run: (&str, u64),
     ) -> Result<RootClaim, StoreError> {
         let cell = self.root(scope)?;
-        let mut lease = cell.locked();
-        let directory = self.directory(scope);
-        if let Some(held) = lease.as_mut() {
-            return held
-                .guards(&directory)
-                .then_some(RootClaim::AlreadyOwned)
-                .ok_or_else(lease_lost);
+        let _claiming = cell.claiming.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.already_claimed(scope)? {
+            return Ok(RootClaim::AlreadyOwned);
         }
-        let Some(mut acquired) = RootLease::acquire(&directory)? else {
+        let Some(mut acquired) = RootLease::acquire(&self.directory(scope))? else {
             return Ok(RootClaim::HeldByAnotherInstance);
         };
         let recovered = self.recover_under(scope, &mut acquired, prepared, run);
         if acquired.lost || recovered.is_ok() {
-            *lease = Some(acquired);
+            *cell.locked() = Some(acquired);
         }
         recovered.map(RootClaim::Acquired)
     }
@@ -499,6 +474,34 @@ impl RuntimeRequestStore for HistoryRuntimeRequestStore {
     ) -> Result<u64, StoreError> {
         self.guarded(scope, Patience::Snapshot, |connection| {
             runtime_requests::retain_turn_states(connection, run_id, known_turns)
+        })
+    }
+
+    fn holds_root(&self, scope: &HistoryScope) -> Result<bool, StoreError> {
+        let Some(cell) = self.known_root(scope) else {
+            return Ok(false);
+        };
+        let mut lease = cell.locked();
+        let Some(lease) = lease.as_mut() else {
+            return Ok(false);
+        };
+        lease.check(None, &self.directory(scope)).map(|()| true)
+    }
+
+    fn read_thread(
+        &self,
+        scope: &HistoryScope,
+        thread_id: &str,
+        deadline: Instant,
+        read: &mut ThreadRead<'_>,
+    ) -> Result<(), StoreError> {
+        self.guarded(scope, Patience::Until(deadline), |connection| {
+            runtime_request_thread_rows::read_thread(
+                connection,
+                (&scope.root_key, thread_id),
+                &self.undecodable,
+                read,
+            )
         })
     }
 }

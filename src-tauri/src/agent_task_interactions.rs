@@ -21,6 +21,10 @@ impl AgentInteractionLeases {
         self.sequence.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    pub(super) fn sequence_source(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.sequence)
+    }
+
     fn issue(&mut self, task_id: &str) -> AgentInteractionLease {
         self.superseded_by_task
             .retain(|_, lease| lease.strong_count() > 0);

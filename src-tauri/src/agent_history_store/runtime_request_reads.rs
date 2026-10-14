@@ -142,6 +142,28 @@ struct Candidate {
     bytes: usize,
 }
 
+pub(super) fn load_request(
+    connection: &Connection,
+    thread_id: &str,
+    turn_id: &str,
+    request_id: &str,
+) -> Result<Option<RuntimeRequest>, StoreError> {
+    let row: Option<Option<StoredRow>> = stored(
+        connection
+            .query_row(
+                &format!(
+                    "SELECT {} FROM runtime_requests
+                     WHERE thread_id=?1 AND turn_id=?2 AND request_id=?3",
+                    StoredRow::COLUMNS
+                ),
+                params![thread_id, turn_id, request_id],
+                |row| Ok(StoredRow::read(row).ok()),
+            )
+            .optional(),
+    )?;
+    Ok(row.flatten().and_then(StoredRow::decode))
+}
+
 impl Candidate {
     fn read(row: &Row<'_>) -> rusqlite::Result<Self> {
         let bytes: i64 = row.get(2)?;
@@ -157,20 +179,7 @@ impl Candidate {
         connection: &Connection,
         thread_id: &str,
     ) -> Result<Option<RuntimeRequest>, StoreError> {
-        let row: Option<Option<StoredRow>> = stored(
-            connection
-                .query_row(
-                    &format!(
-                        "SELECT {} FROM runtime_requests
-                         WHERE thread_id=?1 AND turn_id=?2 AND request_id=?3",
-                        StoredRow::COLUMNS
-                    ),
-                    params![thread_id, self.turn_id, self.request_id],
-                    |row| Ok(StoredRow::read(row).ok()),
-                )
-                .optional(),
-        )?;
-        Ok(row.flatten().and_then(StoredRow::decode))
+        load_request(connection, thread_id, &self.turn_id, &self.request_id)
     }
 }
 

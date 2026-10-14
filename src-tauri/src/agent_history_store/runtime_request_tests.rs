@@ -187,6 +187,7 @@ fn question(id: &str, state: ObservedState) -> ObservedRequest {
         provider: RequestProvider::Codex,
         body: question_body("Anything else to consider?"),
         state,
+        revision: None,
     }
 }
 
@@ -206,6 +207,7 @@ fn approval(id: &str, state: ObservedState) -> ObservedRequest {
             ],
         },
         state,
+        revision: None,
     }
 }
 
@@ -249,6 +251,7 @@ fn snapshot_of(
     TurnObservation {
         key: key(turn_id),
         incarnation: INCARNATION,
+        revision: sequence,
         first_observed_at_epoch_ms: at,
         observed_at_epoch_ms: at,
         turn: ObservedTurn {
@@ -971,3 +974,5 @@ mod retention_and_ownership;
 mod reuse_and_leases;
 #[path = "runtime_request_size_tests.rs"]
 mod sizes;
+#[path = "runtime_request_thread_rows_tests.rs"]
+mod thread_rows;

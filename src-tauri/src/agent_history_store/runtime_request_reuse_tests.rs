@@ -316,6 +316,7 @@ fn digest_closes_saved_requests_and_counts_the_registrations_it_cannot_place() {
             id: "question-2".to_string(),
             kind: RequestKind::Question,
             state: DigestedState::Resolved,
+            revision: None,
         }
     );
 

@@ -1,4 +1,4 @@
-use super::model::{RequestResolution, RuntimeRequest};
+use super::model::{RequestKind, RequestResolution, RequestStatus, RuntimeRequest};
 use super::observed::ObservedTurn;
 use super::scopes::HistoryScope;
 use std::fmt;
@@ -24,6 +24,7 @@ pub struct TurnKey {
 pub struct TurnObservation {
     pub key: TurnKey,
     pub incarnation: u64,
+    pub revision: u64,
     pub first_observed_at_epoch_ms: u64,
     pub observed_at_epoch_ms: u64,
     pub turn: ObservedTurn,
@@ -106,6 +107,37 @@ pub struct StoredRequests {
     pub unreadable: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ThreadSummary {
+    pub deleted: bool,
+    pub incomplete: bool,
+    pub unreadable: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredEntry {
+    pub request_id: String,
+    pub kind: RequestKind,
+    pub status: RequestStatus,
+    pub order: u64,
+    pub version: u64,
+    pub bytes: usize,
+}
+
+pub trait ThreadRows {
+    fn summary(&mut self) -> Result<ThreadSummary, StoreError>;
+
+    fn entries(&mut self, turn_id: &str) -> Result<Vec<StoredEntry>, StoreError>;
+
+    fn load(
+        &mut self,
+        turn_id: &str,
+        request_id: &str,
+    ) -> Result<Option<RuntimeRequest>, StoreError>;
+}
+
+pub type ThreadRead<'a> = dyn FnMut(&mut dyn ThreadRows) -> Result<(), StoreError> + 'a;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreErrorKind {
     Busy,
@@ -186,4 +218,14 @@ pub trait RuntimeRequestStore: Send + Sync {
         run_id: &str,
         known_turns: &[TurnKey],
     ) -> Result<u64, StoreError>;
+
+    fn holds_root(&self, scope: &HistoryScope) -> Result<bool, StoreError>;
+
+    fn read_thread(
+        &self,
+        scope: &HistoryScope,
+        thread_id: &str,
+        deadline: Instant,
+        read: &mut ThreadRead<'_>,
+    ) -> Result<(), StoreError>;
 }

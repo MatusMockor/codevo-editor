@@ -28,6 +28,9 @@ impl AgentTaskRegistry {
     pub fn next_interaction_sequence(&self) -> u64 {
         self.shared.state().interaction_leases.next_sequence()
     }
+    pub fn interaction_sequence(&self) -> Arc<std::sync::atomic::AtomicU64> {
+        self.shared.state().interaction_leases.sequence_source()
+    }
     pub(super) fn listed_session(
         &self,
         task_id: &str,

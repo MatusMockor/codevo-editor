@@ -313,6 +313,7 @@ fn journaled_runtime_requests_add_no_keys_for_any_shipped_reader() {
                 &TurnObservation {
                     key: key.clone(),
                     incarnation: 1,
+                    revision: 1,
                     first_observed_at_epoch_ms: 1_760_000_000_000,
                     observed_at_epoch_ms: 1_760_000_000_000,
                     turn: ObservedTurn {
@@ -332,6 +333,7 @@ fn journaled_runtime_requests_add_no_keys_for_any_shipped_reader() {
                                 ],
                             },
                             state: ObservedState::Pending,
+                            revision: None,
                         }],
                         digested: Vec::new(),
                         rejected: Vec::new(),

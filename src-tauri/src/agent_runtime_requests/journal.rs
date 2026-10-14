@@ -1,4 +1,8 @@
 use super::health::{JournalHealth, JournalLedger, TurnFailure};
+use super::abandonment::{Abandonment, RotationPolicy};
+use super::live::{
+    DiscardedTurn, LiveTurn, LiveTurns, Observation, SeenRequest, TurnLiveness, MAX_ENDED_TURNS,
+};
 use super::model::{JournalState, RequestResolution};
 use super::observed::{observe_snapshot, retained_bytes, ObservedTurn};
 use super::scopes::{
@@ -7,13 +11,15 @@ use super::scopes::{
 use crate::agent_task_admission::AgentTaskHistoryScope;
 use super::store::{
     AnswerIntent, IntentReceipt, IntentSettle, IntentSettlement, RootClaim, RuntimeRequestStore,
-    StoreError, StoreErrorKind, StoredRequests, TurnKey, TurnObservation,
+    MAX_JOURNALED_ROOTS,
+    StoreError, StoreErrorKind, StoredRequests, ThreadRead, TurnKey, TurnObservation,
 };
 use crate::agent_questions::interactions::AgentInteractionSnapshot;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -27,6 +33,17 @@ const WRITE_RETRY_BACKOFF: Duration = Duration::from_millis(200);
 const UNSCOPED_SINCE_SEQUENCE: u64 = u64::MAX;
 
 pub type JournalClock = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+pub trait TurnChangeObserver: Send + Sync {
+    fn turn_changed(
+        &self,
+        turn: &TurnAuthority,
+        workspace_id: Option<&str>,
+        pushed_through: Option<u64>,
+    );
+
+    fn thread_reset(&self, scope: &HistoryScope, thread_id: &str, workspace_id: &str);
+}
 
 pub fn system_clock() -> JournalClock {
     Arc::new(|| {
@@ -63,6 +80,7 @@ pub struct JournalLimits {
     pub retry_backoff: Duration,
     pub answer_budget: Duration,
     pub retired_turns: usize,
+    pub ended_turns: usize,
 }
 
 impl Default for JournalLimits {
@@ -75,26 +93,34 @@ impl Default for JournalLimits {
             retry_backoff: WRITE_RETRY_BACKOFF,
             answer_budget: ANSWER_INTENT_BUDGET,
             retired_turns: MAX_RETIRED_TURNS,
+            ended_turns: MAX_ENDED_TURNS,
         }
     }
 }
 
 enum SnapshotContent {
-    Raw(AgentInteractionSnapshot),
+    Raw(Arc<AgentInteractionSnapshot>),
     Observed(ObservedTurn),
 }
 
+type SeenRequests = Arc<HashMap<String, SeenRequest>>;
+
 impl SnapshotContent {
-    fn into_observed(self) -> ObservedTurn {
+    fn into_observed(self, seen: Option<&SeenRequests>) -> ObservedTurn {
         match self {
-            Self::Raw(snapshot) => observe_snapshot(snapshot),
             Self::Observed(turn) => turn,
+            Self::Raw(snapshot) => observe_snapshot(Arc::unwrap_or_clone(snapshot)).revised(|id| {
+                seen.and_then(|seen| seen.get(id))
+                    .map(|request| request.changed_at_sequence)
+            }),
         }
     }
 }
 
 struct QueuedSnapshot {
     content: SnapshotContent,
+    seen: Option<SeenRequests>,
+    revision: u64,
     sequence: u64,
     bytes: usize,
     digest: bool,
@@ -106,7 +132,7 @@ struct QueuedSnapshot {
 
 impl QueuedSnapshot {
     fn into_digest(self) -> Self {
-        let turn = self.content.into_observed().into_digest();
+        let turn = self.content.into_observed(self.seen.as_ref()).into_digest();
         Self {
             bytes: turn.digest_bytes(),
             digest: true,
@@ -299,6 +325,59 @@ struct Shared {
     work: Condvar,
     settled: Condvar,
     ledger: Mutex<JournalLedger>,
+    live: LiveTurns,
+    observer: OnceLock<Arc<dyn TurnChangeObserver>>,
+    sequence: OnceLock<Arc<AtomicU64>>,
+    highest: AtomicU64,
+    invalidations: AtomicU64,
+    abandonment: Abandonment,
+    claims: Mutex<ClaimQueue>,
+    claims_changed: Condvar,
+}
+
+#[derive(Default)]
+struct ClaimQueue {
+    pending: VecDeque<HistoryScope>,
+    claiming: Option<HistoryScope>,
+    failures: HashMap<HistoryScope, StoreError>,
+    waiters: HashMap<HistoryScope, usize>,
+    closed: bool,
+}
+
+struct ClaimWaiter<'a> {
+    shared: &'a Shared,
+    scope: HistoryScope,
+}
+
+impl<'a> ClaimWaiter<'a> {
+    fn enter(shared: &'a Shared, scope: &HistoryScope) -> Self {
+        *shared.claims().waiters.entry(scope.clone()).or_default() += 1;
+        Self {
+            shared,
+            scope: scope.clone(),
+        }
+    }
+}
+
+impl Drop for ClaimWaiter<'_> {
+    fn drop(&mut self) {
+        let mut claims = self.shared.claims();
+        let remaining = claims.waiters.get_mut(&self.scope).map(|waiting| {
+            *waiting = waiting.saturating_sub(1);
+            *waiting
+        });
+        if remaining.is_some_and(|waiting| waiting > 0) {
+            return;
+        }
+        claims.waiters.remove(&self.scope);
+        claims.failures.remove(&self.scope);
+    }
+}
+
+impl ClaimQueue {
+    fn is_claiming(&self, scope: &HistoryScope) -> bool {
+        self.claiming.as_ref() == Some(scope) || self.pending.contains(scope)
+    }
 }
 
 struct WriterExit<'a>(&'a Shared);
@@ -317,6 +396,133 @@ impl Shared {
 
     fn ledger(&self) -> MutexGuard<'_, JournalLedger> {
         self.ledger.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn changed(&self, turn: &TurnAuthority, workspace_id: Option<&str>) {
+        let Some(observer) = self.observer.get() else {
+            return;
+        };
+        observer.turn_changed(turn, workspace_id, self.tracker.pushed_through(turn));
+    }
+
+    fn liveness(&self, turn: &TurnAuthority) -> TurnLiveness {
+        if self.tracker.is_live(turn) {
+            return TurnLiveness::Live;
+        }
+        if self.tracker.is_known(turn) {
+            return TurnLiveness::Ended;
+        }
+        TurnLiveness::Forgotten
+    }
+
+    fn claims(&self) -> MutexGuard<'_, ClaimQueue> {
+        self.claims.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn run_claims(&self) {
+        let mut claims = self.claims();
+        loop {
+            if claims.closed {
+                return;
+            }
+            let Some(scope) = claims.pending.pop_front() else {
+                claims = self
+                    .claims_changed
+                    .wait(claims)
+                    .unwrap_or_else(PoisonError::into_inner);
+                continue;
+            };
+            claims.claiming = Some(scope.clone());
+            drop(claims);
+            let claimed = catch_unwind(AssertUnwindSafe(|| self.claim(&scope))).unwrap_or_else(
+                |_| {
+                    Err(StoreError::new(
+                        StoreErrorKind::Unavailable,
+                        "claiming the request journal panicked",
+                    ))
+                },
+            );
+            claims = self.claims();
+            claims.claiming = None;
+            let failure = claimed
+                .err()
+                .filter(|_| claims.waiters.contains_key(&scope));
+            if let Some(error) = failure {
+                claims.failures.insert(scope, error);
+            }
+            self.claims_changed.notify_all();
+        }
+    }
+
+    fn ensure_claimed(&self, scope: &HistoryScope, deadline: Instant) -> Result<(), StoreError> {
+        if self.store.holds_root(scope)? {
+            return Ok(());
+        }
+        let busy = || {
+            StoreError::new(
+                StoreErrorKind::Busy,
+                "the request journal of this project is still being claimed",
+            )
+        };
+        let _waiter = ClaimWaiter::enter(self, scope);
+        let mut claims = self.claims();
+        if claims.closed {
+            return Err(StoreError::new(
+                StoreErrorKind::Unavailable,
+                "the request journal is shutting down",
+            ));
+        }
+        claims.failures.remove(scope);
+        if !claims.is_claiming(scope) && claims.pending.len() >= MAX_JOURNALED_ROOTS {
+            return Err(busy());
+        }
+        if !claims.is_claiming(scope) {
+            claims.pending.push_back(scope.clone());
+        }
+        self.claims_changed.notify_all();
+        loop {
+            if let Some(error) = claims.failures.get(scope).cloned() {
+                return Err(error);
+            }
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|_| claims.is_claiming(scope));
+            let Some(remaining) = remaining else {
+                break;
+            };
+            claims = self
+                .claims_changed
+                .wait_timeout(claims, remaining)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+        drop(claims);
+        if self.store.holds_root(scope)? {
+            return Ok(());
+        }
+        Err(busy())
+    }
+
+    fn note_sequence(&self, sequence: u64) {
+        self.highest.fetch_max(sequence, Ordering::SeqCst);
+    }
+
+    fn next_revision(&self) -> u64 {
+        let Some(shared) = self.sequence.get() else {
+            return self.highest.load(Ordering::SeqCst).max(1);
+        };
+        let revision = shared.fetch_add(1, Ordering::SeqCst) + 1;
+        self.note_sequence(revision);
+        revision
+    }
+
+    fn reset_discarded(&self, discarded: Vec<DiscardedTurn>) {
+        let Some(observer) = self.observer.get() else {
+            return;
+        };
+        for DiscardedTurn { turn, workspace_id } in discarded {
+            observer.thread_reset(&turn.scope, &turn.key.thread_id, &workspace_id);
+        }
     }
 
     fn claim(&self, scope: &HistoryScope) -> Result<(), StoreError> {
@@ -346,13 +552,16 @@ impl Shared {
         Some(failed)
     }
 
-    fn write(&self, key: &TurnAuthority, queued: QueuedSnapshot) -> Option<QueuedSnapshot> {
+    fn write(&self, key: &TurnAuthority, queued: QueuedSnapshot) -> (Option<QueuedSnapshot>, bool) {
         if let Err(error) = self.claim(&key.scope) {
             self.ledger().write_failed(key, &error, queued.sequence);
-            return self.retry_of(queued, &error);
+            return (self.retry_of(queued, &error), true);
         }
+        let was_failing = self.ledger().has_failure(key);
         let QueuedSnapshot {
             content,
+            seen,
+            revision,
             sequence,
             bytes,
             digest,
@@ -364,9 +573,10 @@ impl Shared {
         let observation = TurnObservation {
             key: key.key.clone(),
             incarnation: key.incarnation,
+            revision,
             first_observed_at_epoch_ms,
             observed_at_epoch_ms,
-            turn: content.into_observed(),
+            turn: content.into_observed(seen.as_ref()),
         };
         let applied = self
             .store
@@ -375,13 +585,24 @@ impl Shared {
             Ok(report) => {
                 self.ledger()
                     .snapshot_applied(key, &report, &observation.turn);
-                return None;
+                if !report.superseded {
+                    self.live.applied(key, observation.turn.sequence);
+                }
+                let notable = was_failing
+                    || report.superseded
+                    || report.transitions > 0
+                    || report.lost_answers > 0
+                    || report.skipped > 0
+                    || report.pruned > 0;
+                return (None, notable);
             }
             Err(error) => error,
         };
         self.ledger().write_failed(key, &error, sequence);
         let failed = QueuedSnapshot {
             content: SnapshotContent::Observed(observation.turn),
+            seen: None,
+            revision,
             sequence,
             bytes,
             digest,
@@ -390,7 +611,7 @@ impl Shared {
             attempts,
             not_before: None,
         };
-        self.retry_of(failed, &error)
+        (self.retry_of(failed, &error), true)
     }
 
     fn enqueue_known(&self, key: &TurnAuthority, queued: QueuedSnapshot) -> Option<Enqueued> {
@@ -451,10 +672,13 @@ impl Shared {
     fn write_job(&self, key: TurnAuthority, queued: QueuedSnapshot) {
         let sequence = queued.sequence;
         let written = catch_unwind(AssertUnwindSafe(|| self.write(&key, queued)));
-        let retry = written.unwrap_or_else(|_| {
+        let (retry, notable) = written.unwrap_or_else(|_| {
             self.ledger().writer_panicked(&key, sequence);
-            None
+            (None, true)
         });
+        if notable {
+            self.changed(&key, None);
+        }
         let retried = {
             let mut queue = self.queue();
             let retried = retry.is_some_and(|retry| {
@@ -506,6 +730,9 @@ impl TurnTracking {
 impl Drop for TurnTracking {
     fn drop(&mut self) {
         let forgotten_roots = self.shared.tracker.retire(&self.turn);
+        let discarded = self.shared.live.end(&self.turn);
+        self.shared.changed(&self.turn, None);
+        self.shared.reset_discarded(discarded);
         if forgotten_roots.is_empty() {
             return;
         }
@@ -613,9 +840,11 @@ impl AnswerAttempt {
         self.shared
             .ledger()
             .answer_unsaved(&self.key, since_sequence);
+        self.shared.changed(&self.key, None);
     }
 
     pub fn settle(self, settlement: IntentSettlement, version: u64) {
+        self.shared.note_sequence(version);
         let AttemptState::Recorded(recorded) = &self.state else {
             return;
         };
@@ -637,6 +866,7 @@ impl AnswerAttempt {
         if let Err(error) = settled {
             self.shared.ledger().write_failed(&self.key, &error, version);
         }
+        self.shared.changed(&self.key, None);
     }
 }
 
@@ -666,7 +896,22 @@ impl RuntimeRequestJournal {
             work: Condvar::new(),
             settled: Condvar::new(),
             ledger: Mutex::default(),
+            live: LiveTurns::with_ended_capacity(limits.ended_turns),
+            observer: OnceLock::new(),
+            sequence: OnceLock::new(),
+            highest: AtomicU64::new(0),
+            invalidations: AtomicU64::new(0),
+            abandonment: Abandonment::default(),
+            claims: Mutex::default(),
+            claims_changed: Condvar::new(),
         });
+        let claims_shared = Arc::clone(&shared);
+        let claimer = std::thread::Builder::new()
+            .name("agent-request-claims".into())
+            .spawn(move || claims_shared.run_claims());
+        if claimer.is_err() {
+            shared.claims().closed = true;
+        }
         let writer_shared = Arc::clone(&shared);
         let writer = std::thread::Builder::new()
             .name("agent-request-journal".into())
@@ -715,6 +960,130 @@ impl RuntimeRequestJournal {
 
     pub fn forget_refused_start(&self, turn: &TurnAuthority) {
         self.shared.tracker.forget(turn);
+        self.shared.live.forget(turn);
+    }
+
+    pub fn observe_changes(&self, observer: Arc<dyn TurnChangeObserver>) -> bool {
+        self.shared.observer.set(observer).is_ok()
+    }
+
+    pub fn share_sequence(&self, sequence: Arc<AtomicU64>) -> bool {
+        sequence.fetch_max(self.shared.highest.load(Ordering::SeqCst), Ordering::SeqCst);
+        self.shared.sequence.set(sequence).is_ok()
+    }
+
+    pub fn remembered_claim_results(&self) -> usize {
+        self.shared.claims().failures.len()
+    }
+
+    pub fn epoch(&self) -> String {
+        let invalidations = self.shared.invalidations.load(Ordering::SeqCst);
+        if invalidations == 0 {
+            return self.shared.run_id.clone();
+        }
+        format!("{}.{invalidations}", self.shared.run_id)
+    }
+
+    pub fn invalidate_epoch(&self) {
+        self.shared.invalidations.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn note_abandoned(&self, turn: &TurnAuthority, revision: u64) {
+        self.shared.abandonment.note(turn, revision, Instant::now());
+    }
+
+    pub fn reconciled_turns(&self) -> usize {
+        self.shared.abandonment.reconciled()
+    }
+
+    pub fn abandoned_turns(&self) -> usize {
+        self.shared.abandonment.pending()
+    }
+
+    pub fn unreconciled_turns(&self) -> usize {
+        self.shared.abandonment.unreconciled()
+    }
+
+    pub fn lost_history(&self, scope: &HistoryScope, thread_id: &str) -> bool {
+        self.shared.abandonment.lost_history(scope, thread_id)
+    }
+
+    pub fn rotation_due_at(&self, policy: RotationPolicy) -> Option<Instant> {
+        for turn in self.shared.abandonment.noted() {
+            if self.is_obsolete(&turn) {
+                self.shared.abandonment.settle(&turn);
+            }
+        }
+        self.shared.abandonment.due_at(policy)
+    }
+
+    pub fn rotate_epoch(&self, policy: RotationPolicy) -> String {
+        self.invalidate_epoch();
+        self.shared.abandonment.rotated(Instant::now(), policy);
+        self.epoch()
+    }
+
+    pub fn is_obsolete(&self, turn: &TurnAuthority) -> bool {
+        let newer_live = self
+            .shared
+            .live
+            .latest(&turn.scope, &turn.key)
+            .is_some_and(|latest| latest.incarnation > turn.incarnation);
+        newer_live || self.shared.tracker.has_successor(turn)
+    }
+
+    pub fn latest_turn(&self, scope: &HistoryScope, key: &TurnKey) -> TurnAuthority {
+        self.shared
+            .live
+            .latest(scope, key)
+            .unwrap_or_else(|| TurnAuthority {
+                scope: scope.clone(),
+                key: key.clone(),
+                incarnation: 0,
+            })
+    }
+
+    pub fn pushed_through(&self, turn: &TurnAuthority) -> Option<u64> {
+        self.shared.tracker.pushed_through(turn)
+    }
+
+    pub fn mark_pushed(&self, turn: &TurnAuthority, version: u64) {
+        self.shared.tracker.mark_pushed(turn, version);
+    }
+
+    pub fn thread_state_in(&self, scope: &HistoryScope, thread_id: &str) -> JournalState {
+        self.shared.ledger().thread_state_in(scope, thread_id)
+    }
+
+    pub fn now_epoch_ms(&self) -> u64 {
+        (self.shared.clock)()
+    }
+
+    pub fn live_turn(&self, turn: &TurnAuthority) -> Option<LiveTurn> {
+        self.shared.live.of(turn)
+    }
+
+    pub fn find_live_turn(&self, scope: &HistoryScope, key: &TurnKey) -> Option<LiveTurn> {
+        let turn = self.shared.live.latest(scope, key)?;
+        self.shared.live.of(&turn)
+    }
+
+    pub fn live_turns(&self) -> usize {
+        self.shared.live.count()
+    }
+
+    pub fn read_thread(
+        &self,
+        scope: &HistoryScope,
+        thread_id: &str,
+        budget: Duration,
+        read: &mut ThreadRead<'_>,
+    ) -> Result<(), StoreError> {
+        let deadline = Instant::now() + budget;
+        self.shared.ensure_claimed(scope, deadline)?;
+        self.shared
+            .store
+            .read_thread(scope, thread_id, deadline, read)
     }
 
     pub fn observe(
@@ -733,11 +1102,33 @@ impl RuntimeRequestJournal {
         if self.shared.queue().closed {
             return;
         }
+        self.shared.note_sequence(sequence);
         let observed_at_epoch_ms = (self.shared.clock)();
+        let snapshot = Arc::new(snapshot);
+        let workspace_id = snapshot.workspace_id.clone();
+        let Observation {
+            changed,
+            finished,
+            revision,
+            seen,
+            discarded,
+        } = self.shared.live.observe(
+            &key,
+            &snapshot,
+            observed_at_epoch_ms,
+            || self.shared.liveness(&key),
+            &|| self.shared.next_revision(),
+        );
+        self.shared.reset_discarded(discarded);
+        if finished {
+            self.shared.abandonment.settle(&key);
+        }
         let queued = QueuedSnapshot {
             bytes: retained_bytes(&snapshot),
             digest: false,
             content: SnapshotContent::Raw(snapshot),
+            seen,
+            revision: revision.unwrap_or_else(|| self.shared.next_revision()),
             sequence,
             first_observed_at_epoch_ms: observed_at_epoch_ms,
             observed_at_epoch_ms,
@@ -746,13 +1137,18 @@ impl RuntimeRequestJournal {
         };
         let Some(enqueued) = self.shared.enqueue_known(&key, queued) else {
             self.shared.ledger().snapshot_late(&key);
+            self.shared.changed(&key, Some(&workspace_id));
             return;
         };
-        if matches!(enqueued, Enqueued::Digested | Enqueued::Dropped) {
+        let dropped = matches!(enqueued, Enqueued::Digested | Enqueued::Dropped);
+        if dropped {
             self.shared.ledger().snapshot_dropped(&key, sequence);
         }
         self.shared.work.notify_all();
         self.shared.settled.notify_all();
+        if changed || dropped {
+            self.shared.changed(&key, Some(&workspace_id));
+        }
     }
 
     pub fn begin_answer(
@@ -770,12 +1166,14 @@ impl RuntimeRequestJournal {
             return self.unjournaled_answer(key);
         };
         let version = next_version();
+        self.shared.note_sequence(version);
         let timing = IntentTiming {
             version,
             deadline,
             drained,
         };
         let state = self.record(&key, target.request_id, target.resolution, timing);
+        self.shared.changed(&key, None);
         AnswerAttempt {
             shared: Arc::clone(&self.shared),
             key,
@@ -913,6 +1311,8 @@ struct IntentTiming {
 
 impl Drop for RuntimeRequestJournal {
     fn drop(&mut self) {
+        self.shared.claims().closed = true;
+        self.shared.claims_changed.notify_all();
         self.shared.queue().closed = true;
         self.shared.work.notify_all();
         let writer = self

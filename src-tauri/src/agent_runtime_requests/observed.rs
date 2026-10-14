@@ -45,6 +45,7 @@ pub struct ObservedRequest {
     pub provider: RequestProvider,
     pub body: RequestBody,
     pub state: ObservedState,
+    pub revision: Option<u64>,
 }
 
 impl ObservedRequest {
@@ -78,6 +79,7 @@ pub fn observe_question(request: AgentQuestionRequest) -> Result<ObservedRequest
             questions: request.questions,
         },
         state,
+        revision: None,
     }
     .validated()
 }
@@ -111,6 +113,7 @@ pub fn observe_approval(request: AgentApprovalRequest) -> Result<ObservedRequest
             decisions: request.decisions,
         },
         state,
+        revision: None,
     }
     .validated()
 }
@@ -130,12 +133,14 @@ pub struct DigestedRequest {
     pub id: String,
     pub kind: RequestKind,
     pub state: DigestedState,
+    pub revision: Option<u64>,
 }
 
 impl ObservedRequest {
     fn digested(self) -> DigestedRequest {
         DigestedRequest {
             kind: self.body.kind(),
+            revision: self.revision,
             id: self.id,
             state: match self.state {
                 ObservedState::Pending => DigestedState::Pending,
@@ -166,6 +171,13 @@ impl ObservedTurn {
             digested,
             rejected: self.rejected,
         }
+    }
+
+    pub fn revised(mut self, revision_of: impl Fn(&str) -> Option<u64>) -> Self {
+        for request in &mut self.requests {
+            request.revision = revision_of(&request.id);
+        }
+        self
     }
 
     pub fn digest_bytes(&self) -> usize {
