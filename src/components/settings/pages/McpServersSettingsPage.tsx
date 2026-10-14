@@ -1,24 +1,15 @@
 import { RefreshCw } from "lucide-react";
-import { useEffect, useMemo } from "react";
-import { agentMcpServersSnapshot } from "../../../application/agentMcpServersStore";
-import type { AgentMcpServersSurface } from "../../../application/agentMcpServersSurface";
-import { useAgentMcpServerManagementSupport } from "../../../application/useAgentMcpServerManagement";
+import { useMemo } from "react";
 import {
   useAgentMcpServersState,
   useAgentMcpServersTarget,
 } from "../../../application/useAgentMcpServers";
-import type { AgentMcpServer } from "../../../domain/agentMcpServers";
-import type { AgentCliKind } from "../../../domain/agentTask";
 import { IconButton } from "../../../ui/foundation/IconButton";
 import { useNowMs } from "../../../ui/foundation/useNowMs";
-import { AgentProviderGlyph } from "../../agentMode/AgentProviderGlyph";
-import { agentProviderLabel } from "../../agentMode/agentSidebarPresentation";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
 import { SettingsSelect } from "../primitives/SettingsSelect";
 import type { SettingsEnvironment, SettingsPageProps } from "../settingsPageProps";
 import { useSettingsRowTarget } from "../settingsTargetContext";
-import { McpAddServer } from "./McpAddServer";
-import { McpServerList } from "./McpServerList";
 import {
   selectedMcpProjectKey,
   type McpProjectNote,
@@ -26,25 +17,18 @@ import {
 } from "./mcpProjectOptions";
 import {
   MCP_NO_PROJECT_NOTICE,
-  MCP_PROVIDERS,
   MCP_REFRESH_LABEL,
-  MCP_TRUNCATED_NOTICE,
   MCP_UNAVAILABLE_NOTICE,
-  mcpAddServerLead,
   mcpCheckNotice,
-  mcpCheckedLabel,
-  mcpProviderSummary,
-  type McpProjectPlace,
-  type McpProviderSummary,
 } from "./mcpServersPresentation";
 import {
   useMcpServerProjectsLoad,
   useMcpServersProject,
   type McpServersProject,
 } from "./useMcpServersProject";
+import { McpServerGroups } from "./McpServerGroups";
 import "./mcpServersSettings.css";
 
-const NO_SERVERS: ReadonlyArray<AgentMcpServer> = [];
 const NO_NOTES: ReadonlyArray<McpProjectNote> = [];
 
 export function McpServersSettingsPage({ env }: SettingsPageProps) {
@@ -101,17 +85,14 @@ function McpServersContent({ env }: { readonly env: SettingsEnvironment }) {
       return (
         <>
           <McpProjectSection project={project} selected={selection.option} />
-          {MCP_PROVIDERS.map((provider) => (
-            <McpProviderGroup
-              key={`${provider}:${selection.option.key}`}
-              nowMs={nowMs}
-              onCopy={env.onCopyInstallCommand}
-              place={selection.option.project.kind}
-              projectKey={selection.option.key}
-              provider={provider}
-              surface={surface}
-            />
-          ))}
+          <McpServerGroups
+            key={selection.option.key}
+            nowMs={nowMs}
+            onCopy={env.onCopyInstallCommand}
+            place={selection.option.project.kind}
+            projectKey={selection.option.key}
+            surface={surface}
+          />
         </>
       );
     default: {
@@ -197,109 +178,5 @@ function McpProjectSection({
         <McpProjectNotes className="settings-row__description" notes={project.notes} />
       </div>
     </SettingsSectionHeading>
-  );
-}
-
-function McpProviderGroup({
-  nowMs,
-  onCopy,
-  place,
-  projectKey,
-  provider,
-  surface,
-}: {
-  readonly nowMs: number;
-  readonly place: McpProjectPlace;
-  readonly projectKey: string;
-  readonly provider: AgentCliKind;
-  readonly surface: AgentMcpServersSurface;
-  onCopy(command: string): void;
-}) {
-  const store = surface.store;
-  const target = useAgentMcpServersTarget(projectKey, provider);
-  const state = useAgentMcpServersState(store, target);
-  const support = useAgentMcpServerManagementSupport(surface, target);
-  const management = support === "supported" ? surface.management : null;
-  useEffect(() => {
-    if (target === null) return;
-    if (store.state(target).kind !== "idle") return;
-    store.refresh(target);
-  }, [store, target]);
-  const snapshot = agentMcpServersSnapshot(state);
-  const servers = snapshot?.result.servers ?? NO_SERVERS;
-  const names = useMemo(() => servers.map((server) => server.name), [servers]);
-  const summary = mcpProviderSummary(state, provider);
-  return (
-    <SettingsSectionHeading
-      actions={
-        snapshot === null ? undefined : (
-          <>
-            <span className="settings-section__note">
-              {mcpCheckedLabel(snapshot.checkedAtMs, nowMs)}
-            </span>
-            {management === null || target === null ? null : (
-              <McpAddServer
-                configuredNames={names}
-                management={management}
-                provider={provider}
-                target={target}
-              />
-            )}
-          </>
-        )
-      }
-      bare
-      title={agentProviderLabel(provider)}
-    >
-      <div
-        aria-busy={state.kind === "loading"}
-        className="settings-group"
-        data-mcp-provider={provider}
-      >
-        <McpProviderSummaryRow
-          hintCommand={management === null ? summary.hintCommand : null}
-          place={place}
-          provider={provider}
-          summary={summary}
-        />
-        <McpServerList
-          management={management}
-          onCopy={onCopy}
-          place={place}
-          provider={provider}
-          servers={servers}
-          target={target}
-        />
-        {snapshot?.result.truncated === true ? (
-          <p className="settings-empty">{MCP_TRUNCATED_NOTICE}</p>
-        ) : null}
-      </div>
-    </SettingsSectionHeading>
-  );
-}
-
-function McpProviderSummaryRow({
-  hintCommand,
-  place,
-  provider,
-  summary,
-}: {
-  readonly hintCommand: string | null;
-  readonly place: McpProjectPlace;
-  readonly provider: AgentCliKind;
-  readonly summary: McpProviderSummary;
-}) {
-  return (
-    <div className="settings-row" data-layout="stacked">
-      <span className="settings-mcp-summary" data-tone={summary.tone}>
-        <AgentProviderGlyph decorative kind={provider} />
-        <span role={summary.tone === "problem" ? "alert" : "status"}>{summary.text}</span>
-      </span>
-      {hintCommand === null ? null : (
-        <p className="settings-row__description">
-          {mcpAddServerLead(place)} <code>{hintCommand}</code>, then check again.
-        </p>
-      )}
-    </div>
   );
 }

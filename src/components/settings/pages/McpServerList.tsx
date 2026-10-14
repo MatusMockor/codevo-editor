@@ -1,14 +1,13 @@
 import { Puzzle } from "lucide-react";
-import { useId, useMemo } from "react";
+import { useId } from "react";
 import type { AgentMcpServerManagementStore } from "../../../application/agentMcpServerManagementStore";
-import type { AgentMcpServer } from "../../../domain/agentMcpServers";
 import type { AgentMcpServersTarget } from "../../../domain/agentMcpServersTarget";
 import type { AgentCliKind } from "../../../domain/agentTask";
 import { McpServerRow, type McpServerTitleTag } from "./McpServerRow";
 import {
   MCP_FROM_PLUGINS_TITLE,
   mcpFromPluginsNote,
-  mcpServerLayout,
+  type McpServerLayout,
   type McpPluginSection,
   type McpServerEntry,
 } from "./mcpServerGroupsPresentation";
@@ -18,16 +17,14 @@ export interface McpServerListProps {
   readonly management: AgentMcpServerManagementStore | null;
   readonly place: McpProjectPlace;
   readonly provider: AgentCliKind;
-  readonly servers: ReadonlyArray<AgentMcpServer>;
+  readonly layout: McpServerLayout;
   readonly target: AgentMcpServersTarget | null;
   onCopy(command: string): void;
 }
 
-type RowContext = Omit<McpServerListProps, "servers">;
+type RowContext = Omit<McpServerListProps, "layout">;
 
-export function McpServerList({ servers, ...context }: McpServerListProps) {
-  const provider = context.provider;
-  const layout = useMemo(() => mcpServerLayout(provider, servers), [provider, servers]);
+export function McpServerList({ layout, ...context }: McpServerListProps) {
   const headingId = `${useId()}-plugins`;
   return (
     <>

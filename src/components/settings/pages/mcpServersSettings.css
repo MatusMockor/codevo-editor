@@ -1,3 +1,35 @@
+.settings-mcp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--cv-space-4);
+}
+
+.settings-mcp-search {
+  position: relative;
+  flex: 1 1 220px;
+}
+
+.settings-mcp-search > svg {
+  position: absolute;
+  top: 7px;
+  left: 10px;
+  color: var(--cv-fg-subtle);
+  pointer-events: none;
+}
+
+.settings-mcp-search .settings-input {
+  padding-left: 30px;
+}
+
+.settings-mcp-toolbar__add {
+  display: inline-flex;
+  align-items: center;
+  color: var(--cv-fg-muted);
+  font-size: var(--cv-t-xs);
+  gap: var(--cv-space-3);
+}
+
 .settings-mcp-project__location {
   overflow-wrap: anywhere;
 }

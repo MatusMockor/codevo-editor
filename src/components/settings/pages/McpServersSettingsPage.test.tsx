@@ -249,6 +249,128 @@ describe("McpServersSettingsPage", () => {
     );
   });
 
+  it("filters rows across providers and plugin groups and restores them with Escape", async () => {
+    show();
+    await answerBoth(
+      APP,
+      agentMcpServersFixture("claudeCode", [
+        { name: "Café-files", scope: "project" },
+        { name: "plugin:cloudflare:docs", scope: "plugin", transport: "http" },
+        { name: "plugin:miro:boards", scope: "plugin", transport: "http" },
+      ]),
+      codexPair,
+    );
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search MCP servers"]');
+    expect(input?.type).toBe("search");
+    expect(input?.placeholder).toBe("Search MCP servers");
+    if (input === null) return;
+    const original = [...host.querySelectorAll<HTMLElement>("[data-mcp-server]")].map(
+      (row) => row.dataset.mcpServer,
+    );
+    const typeQuery = (query: string): void => {
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          input,
+          query,
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    typeQuery("CAFE");
+    expect(serverNames("claudeCode")).toEqual(["Café-files"]);
+    expect(host.querySelector('[data-mcp-provider="codex"]')).toBeNull();
+    expect(host.querySelector(".settings-mcp-plugins")).toBeNull();
+    typeQuery("cloudflare");
+    expect(serverNames("claudeCode")).toEqual(["plugin:cloudflare:docs"]);
+    expect(labelledGroups("claudeCode")).toEqual([
+      ["From plugins", 1],
+      ["cloudflare", 1],
+    ]);
+    typeQuery("HTTP");
+    expect(serverNames("claudeCode")).toEqual(["plugin:cloudflare:docs", "plugin:miro:boards"]);
+    expect(serverNames("codex")).toEqual(["codex_apps"]);
+    typeQuery('missing "server"');
+    expect(host.querySelectorAll("[data-mcp-server]")).toHaveLength(0);
+    expect(host.querySelectorAll("[data-mcp-provider]")).toHaveLength(0);
+    expect(host.textContent).toContain('No MCP servers match "missing "server""');
+    const escaped = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      input.focus();
+      input.dispatchEvent(escaped);
+    });
+    expect(escaped.defaultPrevented).toBe(true);
+    expect(input.value).toBe("");
+    expect(document.activeElement).toBe(input);
+    expect(
+      [...host.querySelectorAll<HTMLElement>("[data-mcp-server]")].map(
+        (row) => row.dataset.mcpServer,
+      ),
+    ).toEqual(original);
+    expect(host.textContent).not.toContain("No MCP servers match");
+    expect(gateway.requests()).toHaveLength(2);
+  });
+
+  it.each([
+    ["FAILED", "problem", "Failed"],
+    ["MCP LOGIN", "needs-login", "claude mcp login -- 'needs-login'"],
+    ["To sign in, run", "needs-login", "To sign in, run"],
+  ])("keeps rows whose displayed status or sign-in hint matches %s", async (query, name, text) => {
+    show();
+    await answerBoth(
+      APP,
+      agentMcpServersFixture("claudeCode", [
+        { name: "problem", status: "failed" },
+        { name: "needs-login", status: "needsAuth", transport: "http" },
+        { name: "ready", status: "connected" },
+      ]),
+      agentMcpServersFixture("codex", []),
+    );
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search MCP servers"]');
+    expect(input).not.toBeNull();
+    act(() => {
+      if (input === null) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, query);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(serverNames("claudeCode")).toEqual([name]);
+    expect(serverRow("claudeCode", name).textContent).toContain(text);
+    expect(host.textContent).not.toContain("No MCP servers match");
+  });
+
+  it("keeps discovery notices while searching and waits for complete results before claiming no matches", async () => {
+    show();
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search MCP servers"]');
+    expect(input).not.toBeNull();
+    act(() => {
+      if (input === null) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "missing",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(summary("claudeCode")).toBe("Checking MCP servers…");
+    expect(host.textContent).not.toContain("No MCP servers match");
+    await answer(request(APP, "claudeCode"), wireContract.errors.unavailable);
+    await answer(request(APP, "codex"), codexPair);
+    expect(group("claudeCode").querySelector('[role="alert"]')?.textContent).toBe(
+      mcpErrorMessage("unavailable", "claudeCode"),
+    );
+    expect(host.textContent).not.toContain("No MCP servers match");
+    act(() => refreshButton()?.click());
+    await answerBoth(APP, claudeTruncated, codexPair);
+    expect(group("claudeCode").textContent).toContain("Some servers are not shown.");
+    expect(host.textContent).not.toContain("No MCP servers match");
+    act(() => refreshButton()?.click());
+    await answerBoth();
+    expect(host.textContent).toContain('No MCP servers match "missing"');
+    expect(host.querySelectorAll("[data-mcp-provider]")).toHaveLength(0);
+  });
+
   it("lists servers needing attention first with worded statuses and known details only", async () => {
     show();
     await answerBoth();

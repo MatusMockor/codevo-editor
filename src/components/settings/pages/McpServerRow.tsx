@@ -25,11 +25,7 @@ import type {
   AgentMcpServerConfigScope,
   AgentMcpServerLoginMode,
 } from "../../../domain/agentMcpServerManagement";
-import {
-  agentMcpServerSignInCommand,
-  type AgentMcpServer,
-  type AgentMcpServerStatus,
-} from "../../../domain/agentMcpServers";
+import type { AgentMcpServer, AgentMcpServerStatus } from "../../../domain/agentMcpServers";
 import type { AgentMcpServersTarget } from "../../../domain/agentMcpServersTarget";
 import type { AgentCliKind } from "../../../domain/agentTask";
 import { Button } from "../../../ui/foundation/Button";
@@ -43,6 +39,7 @@ import {
 } from "./mcpServerManagementPresentation";
 import {
   mcpCopySignInLabel,
+  mcpServerSignInHintCommand,
   mcpServerStatusLabel,
   mcpServerStatusTone,
   mcpSignInLead,
@@ -88,7 +85,11 @@ export function McpServerRow({
   const activity = useAgentMcpServerActivity(management, target, server.name);
   const rowRef = useRef<HTMLDivElement | null>(null);
   useRowFocusRecovery(rowRef, activity.kind);
-  const signInCommand = actions.signIn ? null : agentMcpServerSignInCommand(provider, server);
+  const signInCommand = mcpServerSignInHintCommand(
+    provider,
+    server,
+    controls === null ? "unsupported" : "supported",
+  );
   const StatusIcon = statusIcon(server.status);
   const idle = activity.kind === "idle";
   const [full, setFull] = useState(false);

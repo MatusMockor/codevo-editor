@@ -278,8 +278,8 @@ describe("McpServersSettingsPage management", () => {
       expect(button(row(name), `Sign in to ${name}`)).toBeNull();
       expect(button(row(name), `More actions for ${name}`)).toBeNull();
     }
-    expect(button(section("claudeCode"), "Add Claude Code MCP server")).toBeNull();
-    expect(button(section("codex"), "Add Codex MCP server")).toBeNull();
+    expect(button(host, "Add Claude Code MCP server")).toBeNull();
+    expect(button(host, "Add Codex MCP server")).toBeNull();
     expect(host.querySelector("[data-mcp-activity]")).toBeNull();
   });
 
@@ -287,11 +287,11 @@ describe("McpServersSettingsPage management", () => {
     management.supported = "unsupported";
     await showServers([], []);
     expect(section("claudeCode").textContent).toContain("claude mcp add");
-    expect(button(section("claudeCode"), "Add Claude Code MCP server")).toBeNull();
+    expect(button(host, "Add Claude Code MCP server")).toBeNull();
     management.supported = "supported";
     show();
     expect(section("claudeCode").textContent).not.toContain("claude mcp add");
-    expect(button(section("claudeCode"), "Add Claude Code MCP server")).not.toBeNull();
+    expect(button(host, "Add Claude Code MCP server")).not.toBeNull();
   });
 
   it("replaces the hint with a Sign in button where the policy allows signing in", async () => {
@@ -662,13 +662,63 @@ describe("McpServersSettingsPage management", () => {
     expect(section("claudeCode").querySelector('[data-mcp-server="linear"]')).toBeNull();
   });
 
+  it("searches fallback command hints and excludes hints hidden by built-in sign-in", async () => {
+    await showServers([linear, { name: "fallback", status: "needsAuth", transport: "stdio" }], []);
+    expect(row("linear").querySelector(".settings-mcp-signin")).toBeNull();
+    expect(row("fallback").querySelector(".settings-mcp-signin")?.textContent).toContain(
+      "mcp login",
+    );
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search MCP servers"]');
+    expect(input).not.toBeNull();
+    act(() => {
+      if (input === null) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "mcp login",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(
+      [...host.querySelectorAll<HTMLElement>("[data-mcp-server]")].map(
+        (element) => element.dataset.mcpServer,
+      ),
+    ).toEqual(["fallback"]);
+    expect(row("fallback").querySelector("code")?.textContent).toBe(
+      "claude mcp login -- 'fallback'",
+    );
+  });
+
+  it("keeps add controls and duplicate-name validation available with no search matches", async () => {
+    await showServers();
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search MCP servers"]');
+    expect(input).not.toBeNull();
+    act(() => {
+      if (input === null) return;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+        input,
+        "no-match",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(host.querySelectorAll("[data-mcp-server]")).toHaveLength(0);
+    expect(host.textContent).toContain('No MCP servers match "no-match"');
+    expect(button(host, "Add Codex MCP server")).not.toBeNull();
+    pressButton(host, "Add Claude Code MCP server");
+    const form = present(dialog());
+    type(form, "Name", "sentry");
+    expect(texts(form, "alert")).toEqual(["A server with this name is already configured."]);
+    pressButton(form, "Cancel");
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(button(host, "Add Claude Code MCP server"));
+  });
+
   it("adds a Claude server with a type, a scope, and inline validation", async () => {
     await showServers();
-    const add = button(section("claudeCode"), "Add Claude Code MCP server");
+    const add = button(host, "Add Claude Code MCP server");
     expect(add?.textContent).toBe("Add server");
     expect(section("claudeCode").textContent).toContain("Checked");
     add?.focus();
-    pressButton(section("claudeCode"), "Add Claude Code MCP server");
+    pressButton(host, "Add Claude Code MCP server");
     const form = present(dialog());
     expect(form.textContent).toContain("Add Claude Code MCP server");
     expect([...form.querySelectorAll('[role="radio"]')].map((node) => node.textContent)).toEqual([
@@ -731,9 +781,7 @@ describe("McpServersSettingsPage management", () => {
     management.changes.latest()?.resolve();
     await settle();
     expect(dialog()).toBeNull();
-    expect(document.activeElement).toBe(
-      button(section("claudeCode"), "Add Claude Code MCP server"),
-    );
+    expect(document.activeElement).toBe(button(host, "Add Claude Code MCP server"));
     await answer(
       "claudeCode",
       agentMcpServersFixture("claudeCode", [sentry, { name: "docs2", scope: "user" }]),
@@ -744,7 +792,7 @@ describe("McpServersSettingsPage management", () => {
 
   it("adds a Codex server for all projects without SSE or a scope choice", async () => {
     await showServers();
-    pressButton(section("codex"), "Add Codex MCP server");
+    pressButton(host, "Add Codex MCP server");
     const form = present(dialog());
     expect([...form.querySelectorAll('[role="radio"]')].map((node) => node.textContent)).toEqual([
       "HTTP",
@@ -770,12 +818,12 @@ describe("McpServersSettingsPage management", () => {
 
   it("closes the add dialog without changing anything and forgets a failure", async () => {
     await showServers();
-    pressButton(section("claudeCode"), "Add Claude Code MCP server");
+    pressButton(host, "Add Claude Code MCP server");
     press(present(dialog()), "Escape");
     expect(dialog()).toBeNull();
     expect(management.changes.calls).toEqual([]);
 
-    pressButton(section("claudeCode"), "Add Claude Code MCP server");
+    pressButton(host, "Add Claude Code MCP server");
     type(present(dialog()), "Name", "docs");
     type(present(dialog()), "URL", "https://docs.example.com/mcp");
     pressButton(present(dialog()), "Add server");
@@ -789,7 +837,7 @@ describe("McpServersSettingsPage management", () => {
       surface.management.activity(present(localAgentMcpServersTarget(APP, "claudeCode")), "docs"),
     ).toEqual({ kind: "idle" });
 
-    pressButton(section("claudeCode"), "Add Claude Code MCP server");
+    pressButton(host, "Add Claude Code MCP server");
     expect(field(present(dialog()), "Name")?.value).toBe("");
     expect(texts(present(dialog()), "alert")).toEqual([]);
   });
@@ -838,7 +886,7 @@ describe("McpServersSettingsPage management", () => {
 
   it("discards an open add draft when the project changes", async () => {
     await showBothProjects();
-    pressButton(section("claudeCode"), "Add Claude Code MCP server");
+    pressButton(host, "Add Claude Code MCP server");
     type(present(dialog()), "Name", "docs");
     type(present(dialog()), "URL", "https://docs.example.com/mcp");
     expect(button(present(dialog()), "Add server")?.disabled).toBe(false);
@@ -847,7 +895,7 @@ describe("McpServersSettingsPage management", () => {
     expect(dialog()).toBeNull();
     expect(management.changes.calls).toEqual([]);
 
-    pressButton(section("claudeCode"), "Add Claude Code MCP server");
+    pressButton(host, "Add Claude Code MCP server");
     expect(field(present(dialog()), "Name")?.value).toBe("");
     expect(field(present(dialog()), "URL")?.value).toBe("");
     expect(button(present(dialog()), "Add server")?.disabled).toBe(true);
@@ -937,7 +985,7 @@ describe("McpServersSettingsPage management", () => {
     expect(button(row("linear"), "Sign in to linear")).not.toBeNull();
     expect(management.starts.calls).toEqual([]);
 
-    pressButton(section("claudeCode"), "Add Claude Code MCP server");
+    pressButton(host, "Add Claude Code MCP server");
     type(present(dialog()), "Name", "docs");
     type(present(dialog()), "URL", "https://docs.example.com/mcp");
     pressButton(present(dialog()), "Add server");

@@ -1,9 +1,12 @@
+import type { AgentMcpServerManagementSupport } from "../../../application/agentMcpServerManagementGateway";
 import type {
   AgentMcpServersSnapshot,
   AgentMcpServersState,
 } from "../../../application/agentMcpServersStore";
+import { agentMcpServerActions } from "../../../domain/agentMcpServerActions";
 import {
   agentMcpProviderProgram,
+  agentMcpServerSignInCommand,
   type AgentMcpServer,
   type AgentMcpServerScope,
   type AgentMcpServerStatus,
@@ -64,6 +67,15 @@ export function mcpSignInLead(place: McpProjectPlace): string {
       return unreachable;
     }
   }
+}
+
+export function mcpServerSignInHintCommand(
+  provider: AgentCliKind,
+  server: AgentMcpServer,
+  management: AgentMcpServerManagementSupport,
+): string | null {
+  if (management === "supported" && agentMcpServerActions(provider, server).signIn) return null;
+  return agentMcpServerSignInCommand(provider, server);
 }
 
 export function mcpAddServerLead(place: McpProjectPlace): string {

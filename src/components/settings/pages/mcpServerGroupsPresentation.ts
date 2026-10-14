@@ -2,11 +2,16 @@ import type { AgentMcpServerManagementSupport } from "../../../application/agent
 import { agentMcpServerOrigin } from "../../../domain/agentMcpServerOrigin";
 import type { AgentMcpServer } from "../../../domain/agentMcpServers";
 import type { AgentCliKind } from "../../../domain/agentTask";
+import { agentProviderLabel } from "../../agentMode/agentSidebarPresentation";
 import {
   compareMcpNames,
   mcpPluginServerSecondaryText,
   mcpServerSecondaryText,
+  mcpServerSignInHintCommand,
+  mcpServerStatusLabel,
+  mcpSignInLead,
   orderedMcpServers,
+  type McpProjectPlace,
 } from "./mcpServersPresentation";
 
 export const MCP_FROM_PLUGINS_TITLE = "From plugins";
@@ -27,6 +32,11 @@ export interface McpPluginSection {
 export interface McpServerLayout {
   readonly own: ReadonlyArray<McpServerEntry>;
   readonly plugins: ReadonlyArray<McpPluginSection>;
+}
+
+export interface McpServerSearchContext {
+  readonly place: McpProjectPlace;
+  readonly management: AgentMcpServerManagementSupport;
 }
 
 const UNKNOWN_PLUGIN_KEY = "unnamed";
@@ -71,6 +81,47 @@ export function mcpServerLayout(
     }
   }
   return { own, plugins: pluginSections(named, unnamed) };
+}
+
+export function filterMcpServerLayout(
+  provider: AgentCliKind,
+  layout: McpServerLayout,
+  query: string,
+  context: McpServerSearchContext,
+): McpServerLayout {
+  const normalizedQuery = normalizeMcpSearchText(query.trim());
+  if (normalizedQuery === "") return layout;
+  const providerLabel = agentProviderLabel(provider);
+  const matches = (entry: McpServerEntry, labels: ReadonlyArray<string>): boolean => {
+    const command = mcpServerSignInHintCommand(provider, entry.server, context.management);
+    return [
+      entry.server.name,
+      entry.title,
+      entry.secondary,
+      entry.server.detail,
+      mcpServerStatusLabel(entry.server.status),
+      command === null ? null : `${mcpSignInLead(context.place)} ${command}`,
+      ...labels,
+    ].some((field) => field !== null && normalizeMcpSearchText(field).includes(normalizedQuery));
+  };
+  return {
+    own: layout.own.filter((entry) => matches(entry, [providerLabel])),
+    plugins: layout.plugins.flatMap((section) => {
+      const entries = section.entries.filter((entry) =>
+        matches(entry, [providerLabel, MCP_FROM_PLUGINS_TITLE, section.label]),
+      );
+      if (entries.length === 0) return [];
+      return [{ ...section, entries }];
+    }),
+  };
+}
+
+export function mcpServerLayoutHasEntries(layout: McpServerLayout): boolean {
+  return layout.own.length > 0 || layout.plugins.length > 0;
+}
+
+function normalizeMcpSearchText(value: string): string {
+  return value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 }
 
 function pluginEntries(
