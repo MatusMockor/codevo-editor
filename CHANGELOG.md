@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.121] - 2026-10-14
+
+### Changed
+
+- Settings > MCP servers puts the search field and a single **Add server** button
+  in one toolbar. The button opens a menu with Claude Code and Codex, and a card
+  with **Clear search** appears when nothing matches.
+
 ## [0.2.0-beta.120] - 2026-10-14
 
 ### Added
