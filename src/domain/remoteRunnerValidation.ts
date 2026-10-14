@@ -224,6 +224,8 @@ const taskShape = object({
   isolation: optional(choice("in-place", "worktree")),
   parts,
   createdAt: timestamp,
+  interactionSequence: optional(integer(0)),
+  awaiting: optional(choice("approval")),
 });
 const task: Check = (v) => taskShape(v) && launchProviderMatches(v);
 const pendingMessage: Check = (value) => {
@@ -449,6 +451,8 @@ export const remoteRunnerChecks = {
         portPreview: optional(boolean),
         speechTranscription: optional(boolean),
         eventBackwardPaging: optional(boolean),
+        runtimeRequests: optional(boolean),
+        interactiveApprovals: optional(boolean),
       }),
     }),
   },

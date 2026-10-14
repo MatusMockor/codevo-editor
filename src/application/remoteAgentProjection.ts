@@ -21,7 +21,7 @@ import type {
   RemoteRunnerTask,
   RemoteRunnerTaskResume,
 } from "../domain/remoteRunner";
-import type { AgentThreadView } from "./agentThreadPorts";
+import type { AgentThreadView, RemoteAgentThreadRequestFacts } from "./agentThreadPorts";
 import { stabilizeRemoteAgentViews } from "./remoteAgentProjectionStability";
 import type { AgentAttachment } from "../domain/agentAttachment";
 import {
@@ -75,6 +75,8 @@ export interface RemoteAgentProjectionInput {
   readonly pendingMessagesSupported?: boolean;
   readonly taskSteeringSupported?: boolean;
   readonly portPreviewSupported?: boolean;
+  readonly runtimeRequestsSupported?: boolean;
+  readonly interactiveApprovalsSupported?: boolean;
   readonly serverId: string;
   readonly runnerId: string;
   readonly projects: readonly RemoteRunnerProject[];
@@ -371,7 +373,26 @@ function projectConversation(
       ...(input.reachabilityDetail === undefined
         ? {}
         : { reachabilityDetail: input.reachabilityDetail }),
+      requests: requestFacts(input, tasks),
     },
+  };
+}
+
+function requestFacts(
+  input: RemoteAgentProjectionInput,
+  tasks: readonly RemoteRunnerTask[],
+): RemoteAgentThreadRequestFacts {
+  const sequences: [string, number][] = [];
+  const awaitingApproval: string[] = [];
+  for (const task of tasks) {
+    if (task.interactionSequence !== undefined) sequences.push([task.id, task.interactionSequence]);
+    if (task.awaiting === "approval") awaitingApproval.push(task.id);
+  }
+  return {
+    source: input.runtimeRequestsSupported === true ? "snapshot" : "legacy",
+    approvals: input.interactiveApprovalsSupported === true,
+    sequences: Object.fromEntries(sequences),
+    awaitingApproval,
   };
 }
 

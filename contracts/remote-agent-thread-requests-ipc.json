@@ -1,0 +1,2407 @@
+{
+  "schemaVersion": 1,
+  "description": "Valid cases carry a complete value. Invalid cases name a valid base case of the same section; replace the top-level keys listed in patch, then remove the top-level keys listed in omit. Every invalid case breaks exactly one rule of its section.",
+  "commands": {
+    "list": "get_remote_agent_thread_requests",
+    "respond": "respond_remote_agent_thread_request"
+  },
+  "responseKinds": ["question", "approval"],
+  "decisions": ["allowOnce", "allowForSession", "deny"],
+  "outcomes": ["answered", "notAnswerable", "deliveryUncertain"],
+  "limits": {
+    "serverIdBytes": 64,
+    "runnerIdBytes": 128,
+    "idBytes": 128,
+    "turnsPerRequest": 32,
+    "cursorChars": 256,
+    "answersPerResponse": 4,
+    "optionIdsPerAnswer": 12,
+    "answerTextBytes": 8192,
+    "requestsPerMessage": 64
+  },
+  "listRequests": {
+    "description": "Request of get_remote_agent_thread_requests. serverId is 1 to serverIdBytes characters of A-Z, a-z, 0-9, underscore and hyphen, starting with a letter or digit. runnerId is 1 to runnerIdBytes UTF-8 bytes without control characters. threadId and every turnId are runner UUIDs: lowercase, version 4. turns holds at most turnsPerRequest entries with distinct turnIds and may be empty. startedAtEpochMs is a safe integer of at least 0. interactionSequence is null or a safe integer of at least 0. cursor is null or 1 to cursorChars characters of A-Z, a-z, 0-9, underscore, period, colon and hyphen. No other key is accepted at any level.",
+    "valid": [
+      {
+        "name": "singleRunningTurn",
+        "description": "First page for one running turn with a known sequence.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ],
+          "cursor": null
+        }
+      },
+      {
+        "name": "turnsWithAndWithoutSequence",
+        "description": "Finished turn without a sequence next to a running turn.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [
+            {
+              "turnId": "3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a",
+              "startedAtEpochMs": 1760000000000,
+              "interactionSequence": null,
+              "terminal": true
+            },
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ],
+          "cursor": null
+        }
+      },
+      {
+        "name": "sequenceZero",
+        "description": "Running turn whose sequence is zero.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 0,
+              "terminal": false
+            }
+          ],
+          "cursor": null
+        }
+      },
+      {
+        "name": "continuationPage",
+        "description": "Continuation with the cursor of the previous page.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [
+            {
+              "turnId": "00000000-0000-4000-8000-000000000001",
+              "startedAtEpochMs": 1760000000000,
+              "interactionSequence": 0,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000002",
+              "startedAtEpochMs": 1760000001000,
+              "interactionSequence": 1,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000003",
+              "startedAtEpochMs": 1760000002000,
+              "interactionSequence": 2,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000004",
+              "startedAtEpochMs": 1760000003000,
+              "interactionSequence": 3,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000005",
+              "startedAtEpochMs": 1760000004000,
+              "interactionSequence": 4,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000006",
+              "startedAtEpochMs": 1760000005000,
+              "interactionSequence": 5,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000007",
+              "startedAtEpochMs": 1760000006000,
+              "interactionSequence": 6,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000008",
+              "startedAtEpochMs": 1760000007000,
+              "interactionSequence": 7,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000009",
+              "startedAtEpochMs": 1760000008000,
+              "interactionSequence": 8,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000010",
+              "startedAtEpochMs": 1760000009000,
+              "interactionSequence": 9,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000011",
+              "startedAtEpochMs": 1760000010000,
+              "interactionSequence": 10,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000012",
+              "startedAtEpochMs": 1760000011000,
+              "interactionSequence": 11,
+              "terminal": true
+            }
+          ],
+          "cursor": "t:8"
+        }
+      },
+      {
+        "name": "noTurns",
+        "description": "Thread without any turn to read.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [],
+          "cursor": null
+        }
+      },
+      {
+        "name": "maximumTurns",
+        "description": "Turn list at the limit.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [
+            {
+              "turnId": "00000000-0000-4000-8000-000000000001",
+              "startedAtEpochMs": 1760000000000,
+              "interactionSequence": 0,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000002",
+              "startedAtEpochMs": 1760000001000,
+              "interactionSequence": 1,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000003",
+              "startedAtEpochMs": 1760000002000,
+              "interactionSequence": 2,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000004",
+              "startedAtEpochMs": 1760000003000,
+              "interactionSequence": 3,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000005",
+              "startedAtEpochMs": 1760000004000,
+              "interactionSequence": 4,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000006",
+              "startedAtEpochMs": 1760000005000,
+              "interactionSequence": 5,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000007",
+              "startedAtEpochMs": 1760000006000,
+              "interactionSequence": 6,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000008",
+              "startedAtEpochMs": 1760000007000,
+              "interactionSequence": 7,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000009",
+              "startedAtEpochMs": 1760000008000,
+              "interactionSequence": 8,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000010",
+              "startedAtEpochMs": 1760000009000,
+              "interactionSequence": 9,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000011",
+              "startedAtEpochMs": 1760000010000,
+              "interactionSequence": 10,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000012",
+              "startedAtEpochMs": 1760000011000,
+              "interactionSequence": 11,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000013",
+              "startedAtEpochMs": 1760000012000,
+              "interactionSequence": 12,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000014",
+              "startedAtEpochMs": 1760000013000,
+              "interactionSequence": 13,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000015",
+              "startedAtEpochMs": 1760000014000,
+              "interactionSequence": 14,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000016",
+              "startedAtEpochMs": 1760000015000,
+              "interactionSequence": 15,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000017",
+              "startedAtEpochMs": 1760000016000,
+              "interactionSequence": 16,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000018",
+              "startedAtEpochMs": 1760000017000,
+              "interactionSequence": 17,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000019",
+              "startedAtEpochMs": 1760000018000,
+              "interactionSequence": 18,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000020",
+              "startedAtEpochMs": 1760000019000,
+              "interactionSequence": 19,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000021",
+              "startedAtEpochMs": 1760000020000,
+              "interactionSequence": 20,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000022",
+              "startedAtEpochMs": 1760000021000,
+              "interactionSequence": 21,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000023",
+              "startedAtEpochMs": 1760000022000,
+              "interactionSequence": 22,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000024",
+              "startedAtEpochMs": 1760000023000,
+              "interactionSequence": 23,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000025",
+              "startedAtEpochMs": 1760000024000,
+              "interactionSequence": 24,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000026",
+              "startedAtEpochMs": 1760000025000,
+              "interactionSequence": 25,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000027",
+              "startedAtEpochMs": 1760000026000,
+              "interactionSequence": 26,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000028",
+              "startedAtEpochMs": 1760000027000,
+              "interactionSequence": 27,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000029",
+              "startedAtEpochMs": 1760000028000,
+              "interactionSequence": 28,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000030",
+              "startedAtEpochMs": 1760000029000,
+              "interactionSequence": 29,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000031",
+              "startedAtEpochMs": 1760000030000,
+              "interactionSequence": 30,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000032",
+              "startedAtEpochMs": 1760000031000,
+              "interactionSequence": 31,
+              "terminal": true
+            }
+          ],
+          "cursor": null
+        }
+      },
+      {
+        "name": "longestCursor",
+        "description": "Cursor at the length limit.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ],
+          "cursor": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+        }
+      },
+      {
+        "name": "freeTextRunnerId",
+        "description": "Runner id with spaces and a multibyte character.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "Runner é (staging)",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ],
+          "cursor": null
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "unknownKey",
+        "description": "Unknown top-level key.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "projectId": "web"
+        }
+      },
+      {
+        "name": "missingCursor",
+        "description": "Required cursor key is missing.",
+        "base": "singleRunningTurn",
+        "patch": {},
+        "omit": ["cursor"]
+      },
+      {
+        "name": "missingTurns",
+        "description": "Required turns key is missing.",
+        "base": "singleRunningTurn",
+        "patch": {},
+        "omit": ["turns"]
+      },
+      {
+        "name": "malformedServerId",
+        "description": "Server id contains a space.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "serverId": "srv alpha"
+        }
+      },
+      {
+        "name": "oversizeServerId",
+        "description": "Server id is longer than the limit.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "serverId": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+        }
+      },
+      {
+        "name": "emptyRunnerId",
+        "description": "Runner id is empty.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "runnerId": ""
+        }
+      },
+      {
+        "name": "oversizeRunnerId",
+        "description": "Runner id is longer than the limit.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "runnerId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        }
+      },
+      {
+        "name": "runnerIdWithControlCharacter",
+        "description": "Runner id contains a control character.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "runnerId": "runner\u0007alpha"
+        }
+      },
+      {
+        "name": "threadIdNotUuid",
+        "description": "Thread id is not a runner UUID.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "threadId": "agt-thread-0001"
+        }
+      },
+      {
+        "name": "uppercaseThreadId",
+        "description": "Thread id is an uppercase UUID.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "threadId": "5F0C2A9E-7B1D-4C3E-8A6F-0D1E2F3A4B5C"
+        }
+      },
+      {
+        "name": "turnsNotAList",
+        "description": "Turns is not a list.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": null
+        }
+      },
+      {
+        "name": "tooManyTurns",
+        "description": "Turn list is one above the limit.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "00000000-0000-4000-8000-000000000001",
+              "startedAtEpochMs": 1760000000000,
+              "interactionSequence": 0,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000002",
+              "startedAtEpochMs": 1760000001000,
+              "interactionSequence": 1,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000003",
+              "startedAtEpochMs": 1760000002000,
+              "interactionSequence": 2,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000004",
+              "startedAtEpochMs": 1760000003000,
+              "interactionSequence": 3,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000005",
+              "startedAtEpochMs": 1760000004000,
+              "interactionSequence": 4,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000006",
+              "startedAtEpochMs": 1760000005000,
+              "interactionSequence": 5,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000007",
+              "startedAtEpochMs": 1760000006000,
+              "interactionSequence": 6,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000008",
+              "startedAtEpochMs": 1760000007000,
+              "interactionSequence": 7,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000009",
+              "startedAtEpochMs": 1760000008000,
+              "interactionSequence": 8,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000010",
+              "startedAtEpochMs": 1760000009000,
+              "interactionSequence": 9,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000011",
+              "startedAtEpochMs": 1760000010000,
+              "interactionSequence": 10,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000012",
+              "startedAtEpochMs": 1760000011000,
+              "interactionSequence": 11,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000013",
+              "startedAtEpochMs": 1760000012000,
+              "interactionSequence": 12,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000014",
+              "startedAtEpochMs": 1760000013000,
+              "interactionSequence": 13,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000015",
+              "startedAtEpochMs": 1760000014000,
+              "interactionSequence": 14,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000016",
+              "startedAtEpochMs": 1760000015000,
+              "interactionSequence": 15,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000017",
+              "startedAtEpochMs": 1760000016000,
+              "interactionSequence": 16,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000018",
+              "startedAtEpochMs": 1760000017000,
+              "interactionSequence": 17,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000019",
+              "startedAtEpochMs": 1760000018000,
+              "interactionSequence": 18,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000020",
+              "startedAtEpochMs": 1760000019000,
+              "interactionSequence": 19,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000021",
+              "startedAtEpochMs": 1760000020000,
+              "interactionSequence": 20,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000022",
+              "startedAtEpochMs": 1760000021000,
+              "interactionSequence": 21,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000023",
+              "startedAtEpochMs": 1760000022000,
+              "interactionSequence": 22,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000024",
+              "startedAtEpochMs": 1760000023000,
+              "interactionSequence": 23,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000025",
+              "startedAtEpochMs": 1760000024000,
+              "interactionSequence": 24,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000026",
+              "startedAtEpochMs": 1760000025000,
+              "interactionSequence": 25,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000027",
+              "startedAtEpochMs": 1760000026000,
+              "interactionSequence": 26,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000028",
+              "startedAtEpochMs": 1760000027000,
+              "interactionSequence": 27,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000029",
+              "startedAtEpochMs": 1760000028000,
+              "interactionSequence": 28,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000030",
+              "startedAtEpochMs": 1760000029000,
+              "interactionSequence": 29,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000031",
+              "startedAtEpochMs": 1760000030000,
+              "interactionSequence": 30,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000032",
+              "startedAtEpochMs": 1760000031000,
+              "interactionSequence": 31,
+              "terminal": true
+            },
+            {
+              "turnId": "00000000-0000-4000-8000-000000000033",
+              "startedAtEpochMs": 1760000032000,
+              "interactionSequence": 32,
+              "terminal": true
+            }
+          ]
+        }
+      },
+      {
+        "name": "duplicateTurnIds",
+        "description": "Two turns share one turn id.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": false
+            },
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000000000,
+              "interactionSequence": null,
+              "terminal": true
+            }
+          ]
+        }
+      },
+      {
+        "name": "turnNotARecord",
+        "description": "A turn is an id instead of a turn descriptor.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": ["7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918"]
+        }
+      },
+      {
+        "name": "turnUnknownKey",
+        "description": "A turn carries an unknown key.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": false,
+              "status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "name": "turnMissingTerminal",
+        "description": "A turn lacks the terminal key.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3
+            }
+          ]
+        }
+      },
+      {
+        "name": "turnMissingSequence",
+        "description": "A turn lacks the interactionSequence key instead of sending null.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "turnIdNotUuid",
+        "description": "Turn id is not a runner UUID.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "agt-turn-0001",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "negativeStartedAt",
+        "description": "Turn start is negative.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": -1,
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "fractionalStartedAt",
+        "description": "Turn start is not an integer.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000.5,
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "startedAtAsText",
+        "description": "Turn start is a timestamp string.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": "2025-10-09T08:55:00.000Z",
+              "interactionSequence": 3,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "negativeSequence",
+        "description": "Interaction sequence is negative.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": -1,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "fractionalSequence",
+        "description": "Interaction sequence is not an integer.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 1.5,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "sequenceAsText",
+        "description": "Interaction sequence is a string.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": "5",
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "sequenceBeyondSafeInteger",
+        "description": "Interaction sequence is above the largest safe integer.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 9007199254740992,
+              "terminal": false
+            }
+          ]
+        }
+      },
+      {
+        "name": "terminalNotBoolean",
+        "description": "Terminal is a string.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "turns": [
+            {
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "startedAtEpochMs": 1760000100000,
+              "interactionSequence": 3,
+              "terminal": "false"
+            }
+          ]
+        }
+      },
+      {
+        "name": "emptyCursor",
+        "description": "Cursor is empty instead of null.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "cursor": ""
+        }
+      },
+      {
+        "name": "cursorWithIllegalCharacter",
+        "description": "Cursor contains a slash.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "cursor": "t/8"
+        }
+      },
+      {
+        "name": "oversizeCursor",
+        "description": "Cursor is longer than the limit.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "cursor": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+        }
+      },
+      {
+        "name": "cursorNotText",
+        "description": "Cursor is a number.",
+        "base": "singleRunningTurn",
+        "patch": {
+          "cursor": 8
+        }
+      }
+    ]
+  },
+  "listResponses": {
+    "description": "Response of get_remote_agent_thread_requests. Every valid case names the valid request it answers; an invalid case answers the request of its base. message is one thread message of contracts/agent-runtime-request-wire.json whose threadId is the request's threadId and whose workspaceId is the request's serverId. nextCursor follows the cursor rule of the request. No other key is accepted.",
+    "valid": [
+      {
+        "name": "emptySnapshot",
+        "description": "Turn without any request.",
+        "request": "singleRunningTurn",
+        "value": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          },
+          "nextCursor": null
+        }
+      },
+      {
+        "name": "pendingAndSettledRecords",
+        "description": "Settled record created at its turn's start next to two live records.",
+        "request": "turnsWithAndWithoutSequence",
+        "value": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "6c1f0e2d-3b4a-4c5d-8e6f-7a8b9c0d1e2f",
+                "turnId": "3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000000000,
+                "resolvedAtEpochMs": 1760000000000,
+                "order": 0,
+                "version": 5,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "question",
+                  "questions": [
+                    {
+                      "id": "targets",
+                      "header": "Targets",
+                      "prompt": "Which packages should be updated?",
+                      "options": [
+                        {
+                          "id": "api",
+                          "label": "API",
+                          "description": ""
+                        },
+                        {
+                          "id": "web",
+                          "label": "Web",
+                          "description": ""
+                        }
+                      ],
+                      "multiple": true,
+                      "allowCustom": true
+                    },
+                    {
+                      "id": "notes",
+                      "header": "",
+                      "prompt": "Anything else to consider?",
+                      "options": [],
+                      "multiple": false,
+                      "allowCustom": true
+                    }
+                  ]
+                },
+                "status": "resolved",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": {
+                  "kind": "answers",
+                  "answers": [
+                    {
+                      "questionId": "targets",
+                      "optionIds": ["api", "web"],
+                      "text": "Also the docs."
+                    },
+                    {
+                      "questionId": "notes",
+                      "optionIds": [],
+                      "text": "Keep the public API stable."
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": null,
+                "order": 0,
+                "version": 7,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "pending",
+                "responseCapability": {
+                  "kind": "live"
+                },
+                "resolution": null
+              },
+              {
+                "id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000105000,
+                "resolvedAtEpochMs": null,
+                "order": 1,
+                "version": 7,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "question",
+                  "questions": [
+                    {
+                      "id": "targets",
+                      "header": "Targets",
+                      "prompt": "Which packages should be updated?",
+                      "options": [
+                        {
+                          "id": "api",
+                          "label": "API",
+                          "description": ""
+                        },
+                        {
+                          "id": "web",
+                          "label": "Web",
+                          "description": ""
+                        }
+                      ],
+                      "multiple": true,
+                      "allowCustom": true
+                    },
+                    {
+                      "id": "notes",
+                      "header": "",
+                      "prompt": "Anything else to consider?",
+                      "options": [],
+                      "multiple": false,
+                      "allowCustom": true
+                    }
+                  ]
+                },
+                "status": "pending",
+                "responseCapability": {
+                  "kind": "live"
+                },
+                "resolution": null
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          },
+          "nextCursor": null
+        }
+      },
+      {
+        "name": "pageWithNextCursor",
+        "description": "Page that stopped early and names the next one.",
+        "request": "maximumTurns",
+        "value": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          },
+          "nextCursor": "t:8"
+        }
+      },
+      {
+        "name": "lastPage",
+        "description": "Final page of a continued read.",
+        "request": "continuationPage",
+        "value": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          },
+          "nextCursor": null
+        }
+      },
+      {
+        "name": "legacyEpochTruncated",
+        "description": "Legacy epoch with skipped history and a refused pending record.",
+        "request": "turnsWithAndWithoutSequence",
+        "value": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-legacy-4",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f6a7b8",
+                "turnId": "3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a",
+                "provider": "codex",
+                "createdAtEpochMs": 1760000000000,
+                "resolvedAtEpochMs": null,
+                "order": 0,
+                "version": 2,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "question",
+                  "questions": [
+                    {
+                      "id": "scope",
+                      "header": "Scope",
+                      "prompt": "Which scope should the change cover?",
+                      "options": [
+                        {
+                          "id": "narrow",
+                          "label": "Narrow",
+                          "description": "Only the failing module."
+                        },
+                        {
+                          "id": "wide",
+                          "label": "Wide",
+                          "description": ""
+                        }
+                      ],
+                      "multiple": false,
+                      "allowCustom": false
+                    }
+                  ]
+                },
+                "status": "submitting",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": null
+              }
+            ],
+            "truncated": true,
+            "unreadable": 0,
+            "reset": false
+          },
+          "nextCursor": null
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "unknownKey",
+        "description": "Unknown top-level key.",
+        "base": "emptySnapshot",
+        "patch": {
+          "truncated": false
+        }
+      },
+      {
+        "name": "missingNextCursor",
+        "description": "Required nextCursor key is missing.",
+        "base": "emptySnapshot",
+        "patch": {},
+        "omit": ["nextCursor"]
+      },
+      {
+        "name": "missingMessage",
+        "description": "Required message key is missing.",
+        "base": "emptySnapshot",
+        "patch": {},
+        "omit": ["message"]
+      },
+      {
+        "name": "messageNotARecord",
+        "description": "Message is null.",
+        "base": "emptySnapshot",
+        "patch": {
+          "message": null
+        }
+      },
+      {
+        "name": "messageUnknownKey",
+        "description": "Message carries an unknown key.",
+        "base": "emptySnapshot",
+        "patch": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false,
+            "sequence": 3
+          }
+        }
+      },
+      {
+        "name": "messageForAnotherThread",
+        "description": "Message belongs to another thread.",
+        "base": "emptySnapshot",
+        "patch": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "messageForAnotherServer",
+        "description": "Message names another server as its workspace.",
+        "base": "emptySnapshot",
+        "patch": {
+          "message": {
+            "workspaceId": "srv-beta",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "messageWithoutWorkspace",
+        "description": "Message has no workspace.",
+        "base": "emptySnapshot",
+        "patch": {
+          "message": {
+            "workspaceId": null,
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "invalidNestedRequest",
+        "description": "One request is a pending request that is not resumable.",
+        "base": "emptySnapshot",
+        "patch": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": null,
+                "order": 0,
+                "version": 7,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "pending",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": null
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "emptyNextCursor",
+        "description": "Next cursor is empty instead of null.",
+        "base": "pageWithNextCursor",
+        "patch": {
+          "nextCursor": ""
+        }
+      },
+      {
+        "name": "nextCursorWithIllegalCharacter",
+        "description": "Next cursor contains a space.",
+        "base": "pageWithNextCursor",
+        "patch": {
+          "nextCursor": "t 8"
+        }
+      },
+      {
+        "name": "oversizeNextCursor",
+        "description": "Next cursor is longer than the limit.",
+        "base": "pageWithNextCursor",
+        "patch": {
+          "nextCursor": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+        }
+      },
+      {
+        "name": "nextCursorNotText",
+        "description": "Next cursor is a number.",
+        "base": "pageWithNextCursor",
+        "patch": {
+          "nextCursor": 8
+        }
+      }
+    ]
+  },
+  "respondRequests": {
+    "description": "Request of respond_remote_agent_thread_request. serverId, runnerId and threadId follow the rules of the list request; turn is one turn descriptor of the list request. requestId is a runner UUID like threadId, because the runner answers a question or an approval only under its UUID. Every questionId and optionId is 1 to idBytes characters of A-Z, a-z, 0-9, underscore, period, colon and hyphen, starting with a letter or digit. A question response holds 1 to answersPerResponse answers with distinct questionIds; an answer holds at most optionIdsPerAnswer distinct optionIds and at most answerTextBytes UTF-8 bytes of text, and has an option or text that is not blank. An approval response holds one of decisions. No other key is accepted at any level.",
+    "valid": [
+      {
+        "name": "questionAnswer",
+        "description": "Answers with options, with custom text and with both.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turn": {
+            "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": 3,
+            "terminal": false
+          },
+          "requestId": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "targets",
+                "optionIds": ["api", "web"],
+                "text": "Also the docs."
+              },
+              {
+                "questionId": "notes",
+                "optionIds": [],
+                "text": "Keep the public API stable."
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "optionOnlyAnswer",
+        "description": "One answer that picks an option without text.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turn": {
+            "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": 3,
+            "terminal": false
+          },
+          "requestId": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "targets",
+                "optionIds": ["api"],
+                "text": ""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "approvalAllowedOnce",
+        "description": "Approval allowed once.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turn": {
+            "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": 3,
+            "terminal": false
+          },
+          "requestId": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+          "response": {
+            "kind": "approval",
+            "decision": "allowOnce"
+          }
+        }
+      },
+      {
+        "name": "approvalAllowedForSession",
+        "description": "Approval allowed for the session on a turn without a sequence.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turn": {
+            "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": null,
+            "terminal": false
+          },
+          "requestId": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+          "response": {
+            "kind": "approval",
+            "decision": "allowForSession"
+          }
+        }
+      },
+      {
+        "name": "approvalDenied",
+        "description": "Approval denied.",
+        "value": {
+          "serverId": "srv-alpha",
+          "runnerId": "runner-alpha",
+          "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+          "turn": {
+            "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": 3,
+            "terminal": false
+          },
+          "requestId": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+          "response": {
+            "kind": "approval",
+            "decision": "deny"
+          }
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "unknownKey",
+        "description": "Unknown top-level key.",
+        "base": "approvalDenied",
+        "patch": {
+          "cursor": null
+        }
+      },
+      {
+        "name": "missingTurn",
+        "description": "Required turn key is missing.",
+        "base": "approvalDenied",
+        "patch": {},
+        "omit": ["turn"]
+      },
+      {
+        "name": "missingResponse",
+        "description": "Required response key is missing.",
+        "base": "approvalDenied",
+        "patch": {},
+        "omit": ["response"]
+      },
+      {
+        "name": "malformedServerId",
+        "description": "Server id contains a space.",
+        "base": "approvalDenied",
+        "patch": {
+          "serverId": "srv alpha"
+        }
+      },
+      {
+        "name": "emptyRunnerId",
+        "description": "Runner id is empty.",
+        "base": "approvalDenied",
+        "patch": {
+          "runnerId": ""
+        }
+      },
+      {
+        "name": "threadIdNotUuid",
+        "description": "Thread id is not a runner UUID.",
+        "base": "approvalDenied",
+        "patch": {
+          "threadId": "agt-thread-0001"
+        }
+      },
+      {
+        "name": "turnAsIdentifier",
+        "description": "Turn is an id instead of a turn descriptor.",
+        "base": "approvalDenied",
+        "patch": {
+          "turn": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918"
+        }
+      },
+      {
+        "name": "turnUnknownKey",
+        "description": "Turn carries an unknown key.",
+        "base": "approvalDenied",
+        "patch": {
+          "turn": {
+            "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": 3,
+            "terminal": false,
+            "status": "running"
+          }
+        }
+      },
+      {
+        "name": "turnIdNotUuid",
+        "description": "Turn id is not a runner UUID.",
+        "base": "approvalDenied",
+        "patch": {
+          "turn": {
+            "turnId": "agt-turn-0001",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": 3,
+            "terminal": false
+          }
+        }
+      },
+      {
+        "name": "turnNegativeSequence",
+        "description": "Interaction sequence of the turn is negative.",
+        "base": "approvalDenied",
+        "patch": {
+          "turn": {
+            "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+            "startedAtEpochMs": 1760000100000,
+            "interactionSequence": -1,
+            "terminal": false
+          }
+        }
+      },
+      {
+        "name": "requestIdNotUuid",
+        "description": "Request id is a wire id that is not a runner UUID.",
+        "base": "approvalDenied",
+        "patch": {
+          "requestId": "req-0002"
+        }
+      },
+      {
+        "name": "uppercaseRequestId",
+        "description": "Request id is an uppercase UUID.",
+        "base": "approvalDenied",
+        "patch": {
+          "requestId": "8D7C6B5A-4F3E-4D2C-9B1A-0F9E8D7C6B5A"
+        }
+      },
+      {
+        "name": "requestIdNotVersion4",
+        "description": "Request id is a version 1 UUID.",
+        "base": "approvalDenied",
+        "patch": {
+          "requestId": "8d7c6b5a-4f3e-1d2c-9b1a-0f9e8d7c6b5a"
+        }
+      },
+      {
+        "name": "unknownResponseKind",
+        "description": "Response kind outside the closed set.",
+        "base": "approvalDenied",
+        "patch": {
+          "response": {
+            "kind": "note",
+            "text": "Looks fine."
+          }
+        }
+      },
+      {
+        "name": "responseUnknownKey",
+        "description": "Approval response carries an unknown key.",
+        "base": "approvalDenied",
+        "patch": {
+          "response": {
+            "kind": "approval",
+            "decision": "deny",
+            "note": "Looks risky."
+          }
+        }
+      },
+      {
+        "name": "unknownDecision",
+        "description": "Decision outside the closed set.",
+        "base": "approvalDenied",
+        "patch": {
+          "response": {
+            "kind": "approval",
+            "decision": "allowAlways"
+          }
+        }
+      },
+      {
+        "name": "approvalWithoutDecision",
+        "description": "Approval response lacks the decision.",
+        "base": "approvalDenied",
+        "patch": {
+          "response": {
+            "kind": "approval"
+          }
+        }
+      },
+      {
+        "name": "questionWithoutAnswers",
+        "description": "Question response lacks the answers.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question"
+          }
+        }
+      },
+      {
+        "name": "noAnswers",
+        "description": "Question response holds no answer.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": []
+          }
+        }
+      },
+      {
+        "name": "tooManyAnswers",
+        "description": "Question response holds one answer above the limit.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "q0",
+                "optionIds": [],
+                "text": "Yes."
+              },
+              {
+                "questionId": "q1",
+                "optionIds": [],
+                "text": "Yes."
+              },
+              {
+                "questionId": "q2",
+                "optionIds": [],
+                "text": "Yes."
+              },
+              {
+                "questionId": "q3",
+                "optionIds": [],
+                "text": "Yes."
+              },
+              {
+                "questionId": "q4",
+                "optionIds": [],
+                "text": "Yes."
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "duplicateAnswerQuestionIds",
+        "description": "Two answers share one question id.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "notes",
+                "optionIds": [],
+                "text": "First."
+              },
+              {
+                "questionId": "notes",
+                "optionIds": [],
+                "text": "Second."
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "answerUnknownKey",
+        "description": "An answer carries an unknown key.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "notes",
+                "optionIds": [],
+                "text": "Fine.",
+                "skipped": false
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "answerMissingText",
+        "description": "An answer lacks the text key.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "targets",
+                "optionIds": ["api"]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "malformedQuestionId",
+        "description": "Question id contains a space.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "the notes",
+                "optionIds": [],
+                "text": "Fine."
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "tooManyOptionIds",
+        "description": "An answer holds one option above the limit.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "targets",
+                "optionIds": [
+                  "option-0",
+                  "option-1",
+                  "option-2",
+                  "option-3",
+                  "option-4",
+                  "option-5",
+                  "option-6",
+                  "option-7",
+                  "option-8",
+                  "option-9",
+                  "option-10",
+                  "option-11",
+                  "option-12"
+                ],
+                "text": ""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "duplicateOptionIds",
+        "description": "An answer names one option twice.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "targets",
+                "optionIds": ["api", "api"],
+                "text": ""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "malformedOptionId",
+        "description": "Option id contains a slash.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "targets",
+                "optionIds": ["api/web"],
+                "text": ""
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "oversizeAnswerText",
+        "description": "Answer text is one byte above the limit.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "notes",
+                "optionIds": [],
+                "text": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "blankAnswer",
+        "description": "An answer has neither an option nor text.",
+        "base": "questionAnswer",
+        "patch": {
+          "response": {
+            "kind": "question",
+            "answers": [
+              {
+                "questionId": "notes",
+                "optionIds": [],
+                "text": "   "
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "respondResponses": {
+    "description": "Response of respond_remote_agent_thread_request. Every valid case names the valid request it answers; an invalid case answers the request of its base. outcome is one of outcomes. message is null or one thread message bound to the request like a list response; answered always carries a message. No other key is accepted.",
+    "valid": [
+      {
+        "name": "answeredQuestion",
+        "description": "Delivered answers come back as a resolved record.",
+        "request": "questionAnswer",
+        "value": {
+          "outcome": "answered",
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": 1760000164000,
+                "order": 0,
+                "version": 9,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "resolved",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": {
+                  "kind": "decision",
+                  "decision": "allowOnce"
+                }
+              },
+              {
+                "id": "2a3b4c5d-6e7f-4a8b-9c0d-1e2f3a4b5c6d",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000105000,
+                "resolvedAtEpochMs": 1760000165000,
+                "order": 1,
+                "version": 9,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "question",
+                  "questions": [
+                    {
+                      "id": "targets",
+                      "header": "Targets",
+                      "prompt": "Which packages should be updated?",
+                      "options": [
+                        {
+                          "id": "api",
+                          "label": "API",
+                          "description": ""
+                        },
+                        {
+                          "id": "web",
+                          "label": "Web",
+                          "description": ""
+                        }
+                      ],
+                      "multiple": true,
+                      "allowCustom": true
+                    },
+                    {
+                      "id": "notes",
+                      "header": "",
+                      "prompt": "Anything else to consider?",
+                      "options": [],
+                      "multiple": false,
+                      "allowCustom": true
+                    }
+                  ]
+                },
+                "status": "resolved",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": {
+                  "kind": "answers",
+                  "answers": [
+                    {
+                      "questionId": "targets",
+                      "optionIds": ["api", "web"],
+                      "text": "Also the docs."
+                    },
+                    {
+                      "questionId": "notes",
+                      "optionIds": [],
+                      "text": "Keep the public API stable."
+                    }
+                  ]
+                }
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "answeredApproval",
+        "description": "Delivered decision comes back as a resolved record.",
+        "request": "approvalAllowedOnce",
+        "value": {
+          "outcome": "answered",
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": 1760000164000,
+                "order": 0,
+                "version": 9,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "resolved",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": {
+                  "kind": "decision",
+                  "decision": "allowOnce"
+                }
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "notAnswerableWithRefusedRecord",
+        "description": "Refused answer comes back as a record that can no longer be answered.",
+        "request": "approvalDenied",
+        "value": {
+          "outcome": "notAnswerable",
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": null,
+                "order": 0,
+                "version": 8,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "submitting",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": null
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "notAnswerableWithoutMessage",
+        "description": "Refused answer without a fresh message.",
+        "request": "approvalDenied",
+        "value": {
+          "outcome": "notAnswerable",
+          "message": null
+        }
+      },
+      {
+        "name": "deliveryUncertainWithoutMessage",
+        "description": "Answer that may or may not have arrived.",
+        "request": "questionAnswer",
+        "value": {
+          "outcome": "deliveryUncertain",
+          "message": null
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "unknownKey",
+        "description": "Unknown top-level key.",
+        "base": "notAnswerableWithoutMessage",
+        "patch": {
+          "nextCursor": null
+        }
+      },
+      {
+        "name": "missingOutcome",
+        "description": "Required outcome key is missing.",
+        "base": "notAnswerableWithoutMessage",
+        "patch": {},
+        "omit": ["outcome"]
+      },
+      {
+        "name": "missingMessage",
+        "description": "Required message key is missing.",
+        "base": "notAnswerableWithoutMessage",
+        "patch": {},
+        "omit": ["message"]
+      },
+      {
+        "name": "unknownOutcome",
+        "description": "Outcome outside the closed set.",
+        "base": "notAnswerableWithoutMessage",
+        "patch": {
+          "outcome": "rejected"
+        }
+      },
+      {
+        "name": "outcomeNotText",
+        "description": "Outcome is a boolean.",
+        "base": "notAnswerableWithoutMessage",
+        "patch": {
+          "outcome": true
+        }
+      },
+      {
+        "name": "answeredWithoutMessage",
+        "description": "Answered outcome has no message.",
+        "base": "answeredApproval",
+        "patch": {
+          "message": null
+        }
+      },
+      {
+        "name": "messageNotARecord",
+        "description": "Message is a list.",
+        "base": "answeredApproval",
+        "patch": {
+          "message": [
+            {
+              "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+              "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+              "provider": "claudeCode",
+              "createdAtEpochMs": 1760000104000,
+              "resolvedAtEpochMs": 1760000164000,
+              "order": 0,
+              "version": 9,
+              "anchorToolId": null,
+              "body": {
+                "kind": "approval",
+                "approvalKind": "command",
+                "title": "Run the test suite",
+                "detail": "npm test -- --run",
+                "detailTruncated": false,
+                "facts": [
+                  {
+                    "label": "Directory",
+                    "value": "packages/api"
+                  }
+                ],
+                "decisions": ["allowOnce", "allowForSession", "deny"]
+              },
+              "status": "resolved",
+              "responseCapability": {
+                "kind": "notResumable",
+                "reason": "unknown"
+              },
+              "resolution": {
+                "kind": "decision",
+                "decision": "allowOnce"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "messageForAnotherThread",
+        "description": "Message belongs to another thread.",
+        "base": "answeredApproval",
+        "patch": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": 1760000164000,
+                "order": 0,
+                "version": 9,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "resolved",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": {
+                  "kind": "decision",
+                  "decision": "allowOnce"
+                }
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "messageForAnotherServer",
+        "description": "Message names another server as its workspace.",
+        "base": "answeredApproval",
+        "patch": {
+          "message": {
+            "workspaceId": "srv-beta",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": 1760000164000,
+                "order": 0,
+                "version": 9,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "resolved",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": {
+                  "kind": "decision",
+                  "decision": "allowOnce"
+                }
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      },
+      {
+        "name": "invalidNestedRequest",
+        "description": "One request is a pending request that is not resumable.",
+        "base": "notAnswerableWithRefusedRecord",
+        "patch": {
+          "message": {
+            "workspaceId": "srv-alpha",
+            "threadId": "5f0c2a9e-7b1d-4c3e-8a6f-0d1e2f3a4b5c",
+            "epoch": "rr1-snapshot",
+            "journal": "saved",
+            "requests": [
+              {
+                "id": "8d7c6b5a-4f3e-4d2c-9b1a-0f9e8d7c6b5a",
+                "turnId": "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918",
+                "provider": "claudeCode",
+                "createdAtEpochMs": 1760000104000,
+                "resolvedAtEpochMs": null,
+                "order": 0,
+                "version": 7,
+                "anchorToolId": null,
+                "body": {
+                  "kind": "approval",
+                  "approvalKind": "command",
+                  "title": "Run the test suite",
+                  "detail": "npm test -- --run",
+                  "detailTruncated": false,
+                  "facts": [
+                    {
+                      "label": "Directory",
+                      "value": "packages/api"
+                    }
+                  ],
+                  "decisions": ["allowOnce", "allowForSession", "deny"]
+                },
+                "status": "pending",
+                "responseCapability": {
+                  "kind": "notResumable",
+                  "reason": "unknown"
+                },
+                "resolution": null
+              }
+            ],
+            "truncated": false,
+            "unreadable": 0,
+            "reset": false
+          }
+        }
+      }
+    ]
+  }
+}

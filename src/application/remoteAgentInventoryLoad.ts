@@ -22,9 +22,10 @@ import type {
   RemoteRunnerTaskResume,
 } from "../domain/remoteRunner";
 import {
-  acceptsRemoteTaskUpdate,
+  isRemoteTaskDetailOf,
   isRemoteTaskTerminal,
   mergeRemoteTasks,
+  supersedeRemoteTask,
 } from "./remoteRunnerTaskState";
 
 export interface RemoteAgentInventorySnapshot {
@@ -191,25 +192,12 @@ export async function loadRemoteAgentInventory(
     check();
     const detail = await gateway.getTask({ serverId, taskId: listed.id });
     check();
-    if (
-      detail.id !== listed.id ||
-      detail.runnerId !== listed.runnerId ||
-      detail.provider !== listed.provider ||
-      (detail.isolation ?? "worktree") !== (listed.isolation ?? "worktree") ||
-      detail.sequence !== listed.sequence ||
-      detail.createdAt !== listed.createdAt ||
-      detail.projectId !== listed.projectId ||
-      (detail.conversationId ?? detail.id) !== (listed.conversationId ?? listed.id) ||
-      detail.parentTaskId !== listed.parentTaskId ||
-      (isRemoteTaskTerminal(listed)
-        ? detail.status !== listed.status
-        : !acceptsRemoteTaskUpdate(listed, detail))
-    ) {
+    if (!isRemoteTaskDetailOf(listed, detail))
       throw new Error("The runner returned a different conversation turn.");
-    }
     // Listing parts may be abbreviated. Canonical detail replaces those parts even
     // after the turn is terminal; ordinary status merges deliberately cannot do so.
-    tasks = tasks.map((task) => (task.id === detail.id ? detail : task));
+    const hydrated = supersedeRemoteTask(listed, detail);
+    tasks = tasks.map((task) => (task.id === detail.id ? hydrated : task));
     detailedTaskIds.add(detail.id);
   }
   selected = tasks.filter((task) => threadId(serverId, task) === selectedThreadId).slice(0, 64);

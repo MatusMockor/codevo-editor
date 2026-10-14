@@ -294,6 +294,9 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
           interactiveQuestionsSupported:
             snapshot.descriptor.capabilities.interactiveQuestions === true,
           portPreviewSupported: snapshot.descriptor.capabilities.portPreview === true,
+          runtimeRequestsSupported: snapshot.descriptor.capabilities.runtimeRequests === true,
+          interactiveApprovalsSupported:
+            snapshot.descriptor.capabilities.interactiveApprovals === true,
           attachmentsByTask,
           reachability: inventory.reachability.get(snapshot.serverId),
           reachabilityDetail: inventory.reconnectingReasons.get(snapshot.serverId),

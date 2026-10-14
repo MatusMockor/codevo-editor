@@ -265,6 +265,13 @@ export interface ExternalSessionsSurface {
 
 export type AgentThreadCopyDetail = "path" | "branch" | "threadId";
 
+export interface RemoteAgentThreadRequestFacts {
+  readonly source: "snapshot" | "legacy";
+  readonly approvals: boolean;
+  readonly sequences: Readonly<Record<string, number>>;
+  readonly awaitingApproval: readonly string[];
+}
+
 /** Display identity only; remote dispatch retains its own exact connection authority. */
 export interface RemoteAgentThreadExecution {
   readonly interactiveQuestions?: boolean;
@@ -281,6 +288,7 @@ export interface RemoteAgentThreadExecution {
   readonly resume: RemoteRunnerTaskResume | null;
   readonly reachability: RemoteRunnerReachability;
   readonly reachabilityDetail?: string;
+  readonly requests?: RemoteAgentThreadRequestFacts;
 }
 
 export interface AgentThreadView {

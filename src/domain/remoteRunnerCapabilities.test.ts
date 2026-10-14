@@ -190,3 +190,113 @@ describe.each(["gitSync", "portPreview"] as const)("remote runner %s capability"
     ).toThrow("Invalid remote runner getRunner response.");
   });
 });
+
+describe.each(["runtimeRequests", "interactiveApprovals"] as const)(
+  "remote runner %s capability",
+  (capability) => {
+    it.each([true, false, undefined])("accepts optional boolean %s", (supported) => {
+      expect(() =>
+        validateRemoteRunnerValue("getRunner", "response", {
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, [capability]: supported },
+        }),
+      ).not.toThrow();
+    });
+    it.each([null, "true", 1, {}, []])("rejects malformed flag %j", (supported) => {
+      expect(() =>
+        validateRemoteRunnerValue("getRunner", "response", {
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, [capability]: supported },
+        }),
+      ).toThrow("Invalid remote runner getRunner response.");
+    });
+    it("keeps the descriptor closed next to the new flag", () => {
+      expect(() =>
+        validateRemoteRunnerValue("getRunner", "response", {
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, [capability]: true, runtimeRequestsV2: true },
+        }),
+      ).toThrow("Invalid remote runner getRunner response.");
+    });
+  },
+);
+
+const task = {
+  id: "11111111-1111-4111-8111-111111111111",
+  sequence: 1,
+  runnerId: "runner-1",
+  provider: "codex",
+  status: "running",
+  projectId: "editor",
+  parts: [{ type: "text", text: "Run" }],
+  createdAt: "2026-01-01T00:00:00.000Z",
+};
+
+describe("remote runner task interaction facts", () => {
+  it("accepts a task of an older runner without the facts", () => {
+    expect(() => validateRemoteRunnerValue("getTask", "response", task)).not.toThrow();
+  });
+
+  it.each([0, 1, 42, Number.MAX_SAFE_INTEGER])(
+    "accepts interactionSequence %s",
+    (interactionSequence) => {
+      expect(() =>
+        validateRemoteRunnerValue("getTask", "response", { ...task, interactionSequence }),
+      ).not.toThrow();
+    },
+  );
+
+  it.each([-1, "5", 1.5, null, true, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects interactionSequence %j",
+    (interactionSequence) => {
+      expect(() =>
+        validateRemoteRunnerValue("getTask", "response", { ...task, interactionSequence }),
+      ).toThrow("Invalid remote runner getTask response.");
+    },
+  );
+
+  it("accepts a task awaiting an approval", () => {
+    expect(() =>
+      validateRemoteRunnerValue("getTask", "response", {
+        ...task,
+        interactionSequence: 3,
+        awaiting: "approval",
+      }),
+    ).not.toThrow();
+  });
+
+  it.each(["question", "", null, true, ["approval"]])("rejects awaiting %j", (awaiting) => {
+    expect(() => validateRemoteRunnerValue("getTask", "response", { ...task, awaiting })).toThrow(
+      "Invalid remote runner getTask response.",
+    );
+  });
+
+  it("keeps the task record closed next to the new facts", () => {
+    expect(() =>
+      validateRemoteRunnerValue("getTask", "response", {
+        ...task,
+        interactionSequence: 3,
+        awaitingSince: "2026-01-01T00:00:00.000Z",
+      }),
+    ).toThrow("Invalid remote runner getTask response.");
+  });
+
+  it("applies the same rules to every task of a listed page", () => {
+    const page = (items: readonly unknown[]) => ({ items, nextCursor: null });
+
+    expect(() =>
+      validateRemoteRunnerValue(
+        "listTasks",
+        "response",
+        page([task, { ...task, interactionSequence: 0, awaiting: "approval" }]),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateRemoteRunnerValue(
+        "listTasks",
+        "response",
+        page([task, { ...task, interactionSequence: -1 }]),
+      ),
+    ).toThrow("Invalid remote runner listTasks response.");
+  });
+});

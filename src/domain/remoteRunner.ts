@@ -90,6 +90,8 @@ export type RemoteRunnerDescriptor = Readonly<{
     portPreview?: boolean;
     speechTranscription?: boolean;
     eventBackwardPaging?: boolean;
+    runtimeRequests?: boolean;
+    interactiveApprovals?: boolean;
   }>;
 }>;
 export type RemoteRunnerProject = Readonly<{ id: string; name: string }>;
@@ -125,6 +127,8 @@ export type RemoteRunnerTask = Readonly<{
   launch?: AgentLaunchOptions;
   parts: readonly RemoteRunnerPart[];
   createdAt: string;
+  interactionSequence?: number;
+  awaiting?: "approval";
 }>;
 export type RemoteRunnerTaskResume =
   | Readonly<{ available: true; reason: null }>

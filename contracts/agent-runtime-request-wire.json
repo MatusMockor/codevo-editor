@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Valid cases carry a complete value. Invalid cases name a valid base case of the same section; replace the top-level keys listed in patch, then remove the top-level keys listed in omit.",
+  "description": "Valid cases carry a complete value. Invalid cases name a valid base case of the same section; replace the top-level keys listed in patch, then remove the top-level keys listed in omit. A producer that does not know when a request was created reports the start time of the request's turn as createdAtEpochMs, a lower bound that a receiver uses only for ordering and fences.",
   "statuses": ["pending", "submitting", "resolved", "cancelled", "expired", "timedOut"],
   "closeReasons": [
     "turnEnded",
@@ -607,6 +607,67 @@
           },
           "status": "pending",
           "responseCapability": { "kind": "live" },
+          "resolution": null
+        }
+      },
+      {
+        "name": "resolvedWithTurnStartAsCreationTime",
+        "description": "Resolved question with unknown times reports its turn's start for both.",
+        "value": {
+          "id": "req-0020",
+          "turnId": "agt-turn-0008",
+          "provider": "claudeCode",
+          "createdAtEpochMs": 1760000600000,
+          "resolvedAtEpochMs": 1760000600000,
+          "order": 0,
+          "version": 7,
+          "anchorToolId": null,
+          "body": {
+            "kind": "question",
+            "questions": [
+              {
+                "id": "notes",
+                "header": "",
+                "prompt": "Anything else to consider?",
+                "options": [],
+                "multiple": false,
+                "allowCustom": true
+              }
+            ]
+          },
+          "status": "resolved",
+          "responseCapability": { "kind": "notResumable", "reason": "unknown" },
+          "resolution": {
+            "kind": "answers",
+            "answers": [
+              { "questionId": "notes", "optionIds": [], "text": "Keep the public API stable." }
+            ]
+          }
+        }
+      },
+      {
+        "name": "runnerRestartedWithTurnStartAsCreationTime",
+        "description": "Approval closed by a runner restart reports its turn's start as its creation.",
+        "value": {
+          "id": "req-0021",
+          "turnId": "agt-turn-0008",
+          "provider": "codex",
+          "createdAtEpochMs": 1760000600000,
+          "resolvedAtEpochMs": 1760000660000,
+          "order": 1,
+          "version": 7,
+          "anchorToolId": null,
+          "body": {
+            "kind": "approval",
+            "approvalKind": "command",
+            "title": "Run the test suite",
+            "detail": "npm test -- --run",
+            "detailTruncated": false,
+            "facts": [],
+            "decisions": ["allowOnce", "deny"]
+          },
+          "status": "expired",
+          "responseCapability": { "kind": "notResumable", "reason": "runnerRestarted" },
           "resolution": null
         }
       }
