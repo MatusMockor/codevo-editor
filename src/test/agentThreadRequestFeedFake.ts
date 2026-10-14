@@ -1,9 +1,10 @@
 import { vi, type Mock } from "vitest";
 import wire from "../../contracts/agent-runtime-request-wire.json";
-import type {
-  AgentThreadRequestFeed,
-  AgentThreadRequestScope,
-  AgentThreadRequestsPage,
+import {
+  AgentThreadRequestsCursorStaleError,
+  type AgentThreadRequestFeed,
+  type AgentThreadRequestScope,
+  type AgentThreadRequestsPage,
 } from "../application/agentThreadRequestPorts";
 import {
   MAX_AGENT_THREAD_REQUESTS_PER_MESSAGE,
@@ -81,7 +82,7 @@ export function agentThreadRequestFeedFake(): AgentThreadRequestFeedFake {
         const recorded = journal.get(scope.threadId) ?? agentThreadRequestsOf(scope);
         const offset = cursorOffset(cursor);
         if (cursor !== agentThreadRequestsCursorOf(scope, turnIds, recorded.epoch, offset))
-          return Promise.reject(new Error("The cursor is stale."));
+          return Promise.reject(new AgentThreadRequestsCursorStaleError());
         const matching = openFirst(
           recorded.requests.filter((request) => turnIds.includes(request.turnId)),
         );

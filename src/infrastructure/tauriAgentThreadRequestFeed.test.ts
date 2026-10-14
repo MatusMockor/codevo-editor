@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import wire from "../../contracts/agent-runtime-request-wire.json";
 import {
+  AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE,
+  AgentThreadRequestsCursorStaleError,
   MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL,
   isAgentThreadRequestFeed,
   type AgentThreadRequestScope,
@@ -369,6 +371,42 @@ describe("TauriAgentThreadRequestFeed", () => {
 
     expect(MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL).toBe(32);
     expect(invoke.mock.calls[0]?.[1].request.turnIds).toStrictEqual(page);
+  });
+
+  it.each([
+    ["the exact text", AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE],
+    ["an error with the exact text", new Error(AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE)],
+  ])("maps a cursor invalidation answered as %s to the typed error", async (_label, rejection) => {
+    const invoke = vi.fn<InvokeAgentThreadRequestCommand>().mockRejectedValue(rejection);
+    const feed = new TauriAgentThreadRequestFeed(invoke, vi.fn(), available);
+
+    const pull = feed.currentThreadRequests(scope, turnIds, "c2.boot-0001.64");
+
+    await expect(pull).rejects.toBeInstanceOf(AgentThreadRequestsCursorStaleError);
+    await expect(pull).rejects.toThrow(AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE);
+    expect(AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE).toBe(
+      "Agent thread request cursor is no longer valid.",
+    );
+  });
+
+  it.each([
+    ["text without the final period", "Agent thread request cursor is no longer valid"],
+    ["text with a trailing space", "Agent thread request cursor is no longer valid. "],
+    ["text in another case", "agent thread request cursor is no longer valid."],
+    ["text with a prefix", "Error: Agent thread request cursor is no longer valid."],
+    ["another error text", new Error("Agent thread request journal is not owned here.")],
+    ["an object carrying the text", { message: AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE }],
+  ])("keeps any other rejection as it is: %s", async (_label, rejection) => {
+    const invoke = vi.fn<InvokeAgentThreadRequestCommand>().mockRejectedValue(rejection);
+    const feed = new TauriAgentThreadRequestFeed(invoke, vi.fn(), available);
+
+    const settled = await feed.currentThreadRequests(scope, turnIds, "c2.boot-0001.64").then(
+      () => "resolved",
+      (error: unknown) => error,
+    );
+
+    expect(settled).toBe(rejection);
+    expect(settled).not.toBeInstanceOf(AgentThreadRequestsCursorStaleError);
   });
 
   it("surfaces a backend rejection instead of inventing a message", async () => {

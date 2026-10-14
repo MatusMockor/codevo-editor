@@ -6,6 +6,7 @@ import {
   type AgentThreadRequestsState,
 } from "../domain/agentRuntimeRequest";
 import {
+  AgentThreadRequestsCursorStaleError,
   MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL,
   type AgentThreadRequestFeed,
   type AgentThreadRequestScope,
@@ -50,6 +51,11 @@ type Listener = (observation: AgentThreadRequestObservation) => void;
 
 type PullOutcome = "complete" | "raced" | "failed";
 
+type PullAnswer =
+  | { readonly kind: "page"; readonly page: AgentThreadRequestsPage }
+  | { readonly kind: "stale" }
+  | { readonly kind: "failed" };
+
 interface CursorChain {
   readonly turnIds: readonly string[];
   readonly cursor: string | null;
@@ -89,6 +95,8 @@ const UNAVAILABLE: AgentThreadRequestObservation = Object.freeze({ kind: "unavai
 const IDLE: Subscription = Object.freeze({ kind: "idle" });
 const FAILED: Subscription = Object.freeze({ kind: "failed" });
 const NO_TURN_IDS: readonly string[] = Object.freeze([]);
+const STALE_PULL: PullAnswer = Object.freeze({ kind: "stale" });
+const FAILED_PULL: PullAnswer = Object.freeze({ kind: "failed" });
 const NO_TURNS: TurnPlan = Object.freeze({ turnIds: NO_TURN_IDS, capped: false });
 const RETRY_POLICY: BoundedRetryPolicy = Object.freeze({
   baseMs: AGENT_THREAD_REQUEST_RETRY_BASE_MS,
@@ -334,19 +342,20 @@ class FeedAgentThreadRequestStore implements AgentThreadRequestStore {
     let chain = chainStart(entry);
     for (let pulls = 0; pulls < MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC; pulls += 1) {
       const pushRevision = entry.pushRevision;
-      const page = await this.current(entry.scope, chain);
+      const answer = await this.current(entry.scope, chain);
       if (!this.watching(entry)) return "failed";
-      if (page === null) {
+      if (answer.kind === "failed") {
         if (chain.cursor === null || chain.restarted) return "failed";
         chain = { ...chain, cursor: null, pages: 0, restarted: true };
         continue;
       }
-      if (entry.pushRevision !== pushRevision) {
+      if (answer.kind === "stale" || entry.pushRevision !== pushRevision) {
         raced += 1;
         if (raced >= MAX_AGENT_THREAD_REQUEST_RACED_PULLS_PER_SYNC) return "raced";
         chain = chainStart(entry);
         continue;
       }
+      const { page } = answer;
       const epoch = entry.state?.epoch ?? page.message.epoch;
       this.apply(entry, merging(entry, page.message, "pull"));
       if (epoch !== page.message.epoch) {
@@ -374,16 +383,18 @@ class FeedAgentThreadRequestStore implements AgentThreadRequestStore {
     return "failed";
   }
 
-  private async current(
-    scope: AgentThreadRequestScope,
-    chain: CursorChain,
-  ): Promise<AgentThreadRequestsPage | null> {
+  private async current(scope: AgentThreadRequestScope, chain: CursorChain): Promise<PullAnswer> {
     const attempt = await attemptWithinDeadline(
-      () => this.feed.currentThreadRequests(scope, chain.turnIds, chain.cursor),
+      () =>
+        this.feed
+          .currentThreadRequests(scope, chain.turnIds, chain.cursor)
+          .then(answered, staleOrRejected),
       AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS,
     );
-    if (attempt.kind !== "settled" || !accepts(scope, attempt.value.message)) return null;
-    return attempt.value;
+    if (attempt.kind !== "settled") return FAILED_PULL;
+    const answer = attempt.value;
+    if (answer.kind === "page" && !accepts(scope, answer.page.message)) return FAILED_PULL;
+    return answer;
   }
 
   private apply(entry: WatchedThread, message: AgentThreadRequestsMerge): void {
@@ -456,6 +467,15 @@ function isCapped(plan: TurnPlan): boolean {
 
 function missing(entry: WatchedThread): readonly string[] {
   return entry.plan.turnIds.filter((turnId) => !entry.covered.has(turnId));
+}
+
+function answered(page: AgentThreadRequestsPage): PullAnswer {
+  return { kind: "page", page };
+}
+
+function staleOrRejected(error: unknown): PullAnswer {
+  if (error instanceof AgentThreadRequestsCursorStaleError) return STALE_PULL;
+  throw error;
 }
 
 function chainStart(entry: WatchedThread): CursorChain {

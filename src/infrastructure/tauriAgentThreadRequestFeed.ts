@@ -1,6 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE,
+  AgentThreadRequestsCursorStaleError,
   MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL,
   type AgentThreadRequestFeed,
   type AgentThreadRequestScope,
@@ -110,6 +112,16 @@ function decodeOrNull(payload: unknown): AgentThreadRequests | null {
   }
 }
 
+function isCursorStale(error: unknown): boolean {
+  if (typeof error === "string") return error === AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE;
+  return error instanceof Error && error.message === AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE;
+}
+
+function rejected(error: unknown): never {
+  if (isCursorStale(error)) throw new AgentThreadRequestsCursorStaleError();
+  throw error;
+}
+
 function runtimeUnavailable(): Error {
   return new Error("Agent thread requests need the native runtime.");
 }
@@ -129,7 +141,7 @@ export class TauriAgentThreadRequestFeed implements AgentThreadRequestFeed {
     const request = ipcRequest(scope, turnIds, cursor);
     if (!this.isRuntimeAvailable()) throw runtimeUnavailable();
     const page = parsePage(
-      await this.invokeCommand(GET_AGENT_THREAD_REQUESTS_IPC_COMMAND, { request }),
+      await this.invokeCommand(GET_AGENT_THREAD_REQUESTS_IPC_COMMAND, { request }).catch(rejected),
     );
     if (page.message.threadId !== request.threadId)
       throw new Error("Agent thread requests belong to another thread.");

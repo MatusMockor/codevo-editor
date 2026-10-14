@@ -13,6 +13,7 @@ import {
   agentThreadRequestsPageOf as pulled,
 } from "../test/agentThreadRequestFeedFake";
 import {
+  AgentThreadRequestsCursorStaleError,
   MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL as PAGE,
   type AgentThreadRequestScope,
   type AgentThreadRequestsPage,
@@ -1222,7 +1223,7 @@ describe("agentThreadRequestStore", () => {
     },
   );
 
-  it("restarts a chain once when a continuation fails and counts a second failure", async () => {
+  it("restarts a chain once when a continuation fails for another reason and counts a second failure", async () => {
     const feed = agentThreadRequestFeedFake();
     feed.record(agentThreadRequestsOf(A, closedRequests(T1, RECORDS + 5)));
     const answer = feed.currentThreadRequests.getMockImplementation();
@@ -1231,7 +1232,7 @@ describe("agentThreadRequestStore", () => {
       if (cursor === null || stale.failures === 0)
         return answer?.(scope, turnIds, cursor) ?? hanging();
       stale.failures -= 1;
-      return Promise.reject(new Error("The cursor is stale."));
+      return Promise.reject(new Error("Journal read failed."));
     });
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
@@ -1355,6 +1356,73 @@ describe("agentThreadRequestStore", () => {
     unwatch();
   });
 
+  it("treats invalidated cursors on a busy thread as raced pages, never as failures, and completes once the thread is quiet", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    feed.record(
+      agentThreadRequestsOf(A, [pendingRequest(T1, "req-open"), ...closedRequests(T1, RECORDS)]),
+    );
+    const answer = feed.currentThreadRequests.getMockImplementation();
+    const busy = { changing: true };
+    feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
+      if (cursor !== null && busy.changing)
+        return Promise.reject(new AgentThreadRequestsCursorStaleError());
+      return answer?.(scope, turnIds, cursor) ?? hanging();
+    });
+    const watcher = recorder();
+    const unwatch = store.watch(A, [T1], watcher.listener);
+    await settle();
+    const perSync = 2 * RACED_PULLS;
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(perSync);
+    expect(cursorsOf(feed)).toEqual(
+      Array.from({ length: perSync }, (_unused, index) =>
+        index % 2 === 0 ? null : cursorAt([T1], RECORDS),
+      ),
+    );
+    expect(vi.getTimerCount()).toBe(1);
+    for (let run = 1; run <= 2 * FAILURE_THRESHOLD; run += 1) {
+      await vi.advanceTimersByTimeAsync(retryDelay(run - 1));
+      expect(feed.currentThreadRequests).toHaveBeenCalledTimes((run + 1) * perSync);
+    }
+    const joined = recorder();
+    const unwatchJoined = store.watch(A, [T1], joined.listener);
+    expect(watcher.views()).toEqual(["pending"]);
+    expect(joined.views()).toEqual(["pending"]);
+    busy.changing = false;
+    await vi.advanceTimersByTimeAsync(AGENT_THREAD_REQUEST_RETRY_CAP_MS);
+    expect(watcher.seen.map(requestCount)).toEqual([-1, RECORDS + 1]);
+    expect(pendingOf(watcher.seen[1])).toEqual([]);
+    expect(joined.seen.map(requestCount)).toEqual([-1, RECORDS + 1]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatchJoined();
+    unwatch();
+  });
+
+  it("keeps an observed thread observed while every continuation of an added turn is invalidated", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    feed.record(agentThreadRequestsOf(A, closedRequests(T2, RECORDS + 1)));
+    const watcher = recorder();
+    const unwatch = store.watch(A, [T1], watcher.listener);
+    await settle();
+    feed.currentThreadRequests.mockImplementation((_scope, turnIds, cursor) => {
+      if (cursor !== null) return Promise.reject(new AgentThreadRequestsCursorStaleError());
+      return Promise.resolve(
+        pulled(
+          agentThreadRequestsOf({ ...A, workspaceId: null }, closedRequests(T2, RECORDS)),
+          cursorAt(turnIds, RECORDS),
+        ),
+      );
+    });
+    const unwatchWide = store.watch(A, [T1, T2], () => undefined);
+    for (let run = 0; run <= 2 * FAILURE_THRESHOLD; run += 1)
+      await vi.advanceTimersByTimeAsync(retryDelay(run));
+    expect(watcher.seen.every((observation) => observation.kind !== "unavailable")).toBe(true);
+    expect(pendingOf(watcher.seen[watcher.seen.length - 1])).toEqual([T2]);
+    unwatchWide();
+    unwatch();
+  });
+
   it("is refused by the journal when a cursor comes back with another turn list or scope", async () => {
     const feed = agentThreadRequestFeedFake();
     feed.record(agentThreadRequestsOf(A, closedRequests(T1, RECORDS + 5)));
@@ -1362,17 +1430,17 @@ describe("agentThreadRequestStore", () => {
     await expect(feed.currentThreadRequests(A, [T1], first.nextCursor)).resolves.toMatchObject({
       nextCursor: null,
     });
-    await expect(feed.currentThreadRequests(A, [T1, T2], first.nextCursor)).rejects.toThrow(
-      "The cursor is stale.",
+    await expect(feed.currentThreadRequests(A, [T1, T2], first.nextCursor)).rejects.toBeInstanceOf(
+      AgentThreadRequestsCursorStaleError,
     );
-    await expect(feed.currentThreadRequests(A, [T2], first.nextCursor)).rejects.toThrow(
-      "The cursor is stale.",
+    await expect(feed.currentThreadRequests(A, [T2], first.nextCursor)).rejects.toBeInstanceOf(
+      AgentThreadRequestsCursorStaleError,
     );
     await expect(
       feed.currentThreadRequests({ ...A, rootKey: B.rootKey }, [T1], first.nextCursor),
-    ).rejects.toThrow("The cursor is stale.");
-    await expect(feed.currentThreadRequests(A, [T1], "boot-0001:64")).rejects.toThrow(
-      "The cursor is stale.",
+    ).rejects.toBeInstanceOf(AgentThreadRequestsCursorStaleError);
+    await expect(feed.currentThreadRequests(A, [T1], "boot-0001:64")).rejects.toBeInstanceOf(
+      AgentThreadRequestsCursorStaleError,
     );
     expect(first.nextCursor).toMatch(/^[A-Za-z0-9_.:-]{1,256}$/);
   });

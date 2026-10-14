@@ -1,6 +1,15 @@
 import type { AgentThreadRequests } from "../domain/agentRuntimeRequest";
 
 export const MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL = 32;
+export const AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE =
+  "Agent thread request cursor is no longer valid.";
+
+export class AgentThreadRequestsCursorStaleError extends Error {
+  constructor() {
+    super(AGENT_THREAD_REQUESTS_CURSOR_STALE_MESSAGE);
+    this.name = "AgentThreadRequestsCursorStaleError";
+  }
+}
 
 export interface AgentThreadRequestScope {
   readonly rootKey: string;
