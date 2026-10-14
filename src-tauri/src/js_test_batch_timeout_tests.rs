@@ -1,19 +1,3 @@
-fn assert_process_reaped(pid: i32) {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if unsafe { libc::kill(pid, 0) } == -1
-            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-        {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "process {pid} remained alive after its batch process group was reaped"
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
 struct TriggeredBatchTimeout(AtomicBool);
 
 impl BatchTimeoutPolicy for TriggeredBatchTimeout {
@@ -104,7 +88,7 @@ fn timeout_reaps_two_complete_process_groups_clears_registry_and_publishes_no_pa
             let pid_path = markers.join(format!("{package}-{role}-pid"));
             let pid =
                 test_support::wait_for_parseable_pid(&pid_path, &format!("{package} {role} pid"));
-            assert_process_reaped(pid);
+            test_support::assert_process_reaped(pid);
         }
     }
     cleanup(root);

@@ -737,10 +737,11 @@ mod tests {
                 Ok(())
             })
         });
-        let ownership = owner_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive ownership");
-        let grandchild = test_support::wait_for_parseable_pid(&grandchild_path, "grandchild pid");
+        let ownership = owner_rx.recv().expect("receive ownership");
+        let grandchild =
+            test_support::await_parseable_pid_while(&grandchild_path, "grandchild pid", || {
+                !worker.is_finished()
+            });
         let started = Instant::now();
         assert!(ownership.request_stop());
         assert!(matches!(
@@ -748,11 +749,7 @@ mod tests {
             JsTestRunnerCompletion::Cancelled(_)
         ));
         assert!(started.elapsed() < Duration::from_secs(2));
-        assert_eq!(unsafe { libc::kill(grandchild, 0) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+        test_support::assert_process_reaped(grandchild);
         assert!(!ownership.request_stop());
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -865,21 +862,14 @@ mod tests {
         let runner = JsTestRunner::Vitest(binary);
         let (owner_tx, owner_rx) = mpsc::sync_channel(1);
         let worker_root = root.clone();
-        let worker_ready = ready.clone();
         let worker = thread::spawn(move || {
             execute_with_args(&runner, &worker_root, Vec::new(), move |ownership| {
-                let started = Instant::now();
-                while !worker_ready.is_file() {
-                    assert!(started.elapsed() < Duration::from_secs(2));
-                    thread::sleep(Duration::from_millis(5));
-                }
                 owner_tx.send(ownership).expect("publish ownership");
                 Ok(())
             })
         });
-        let ownership = owner_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("receive ownership");
+        let ownership = owner_rx.recv().expect("receive ownership");
+        test_support::await_file_while(&ready, "the readiness marker", || !worker.is_finished());
         assert!(ownership.request_stop());
         let completion = worker.join().expect("join runner").expect("runner result");
         let JsTestRunnerCompletion::Cancelled(output) = completion else {

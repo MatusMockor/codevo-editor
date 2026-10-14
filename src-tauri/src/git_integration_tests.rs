@@ -697,8 +697,18 @@ fn push_without_any_remote_reports_no_remote() {
 
 #[test]
 fn push_after_the_remote_advanced_is_rejected() {
-    let repository = TempRepository::create("push-rejected");
-    let worktree = repository.add_agent_worktree("alpha");
+    assert_push_after_remote_advance_is_rejected("push-rejected", "alpha");
+}
+
+#[test]
+fn push_rejection_echoing_auth_like_paths_and_refs_stays_rejected() {
+    assert_push_after_remote_advance_is_rejected("push-rejected-403-publickey", "publickey-403");
+}
+
+fn assert_push_after_remote_advance_is_rejected(label: &str, task_id: &str) {
+    let repository = TempRepository::create(label);
+    let worktree = repository.add_agent_worktree(task_id);
+    let branch = format!("agent/{task_id}");
     let remote = repository.bare_remote("origin");
     commit_file(&worktree, "feature.txt", "one\n", "feature");
     push_branch_upstream(&repository.targets(&worktree)).expect("first push");
@@ -712,7 +722,7 @@ fn push_after_the_remote_advanced_is_rejected() {
         &[
             "clone",
             "--branch",
-            "agent/alpha",
+            branch.as_str(),
             remote.to_str().expect("utf8"),
             other.to_str().expect("utf8"),
         ],
@@ -720,7 +730,7 @@ fn push_after_the_remote_advanced_is_rejected() {
     run_git(&other, &["config", "user.name", "Other"]);
     run_git(&other, &["config", "user.email", "other@example.com"]);
     commit_file(&other, "other.txt", "other\n", "remote moved");
-    run_git(&other, &["push", "origin", "agent/alpha"]);
+    run_git(&other, &["push", "origin", branch.as_str()]);
     let _ = fs::remove_dir_all(&other);
     commit_file(&worktree, "feature.txt", "two\n", "local moved");
 
@@ -740,6 +750,39 @@ fn push_failure_classification_uses_closed_markers() {
             .to_string(),
     ));
     assert!(matches!(auth, PushFailure::AuthRequired(_)));
+
+    let forbidden = classify_push_failure(CommandError::Failed(
+        "remote: Permission to acme/widgets.git denied to other.\nfatal: unable to access 'https://github.com/acme/widgets.git/': The requested URL returned error: 403"
+            .to_string(),
+    ));
+    assert!(matches!(forbidden, PushFailure::AuthRequired(_)));
+
+    let forbidden_with_apostrophe = classify_push_failure(CommandError::Failed(
+        "fatal: unable to access 'https://example.com/o'brien/widgets.git/': The requested URL returned error: 403"
+            .to_string(),
+    ));
+    assert!(
+        matches!(forbidden_with_apostrophe, PushFailure::AuthRequired(_)),
+        "got {forbidden_with_apostrophe:?}"
+    );
+
+    let rejected_with_echoed_markers = classify_push_failure(CommandError::Failed(
+        "To /tmp/repo-14039-permission denied-publickey\n ! [rejected]        agent/fix-403 -> agent/fix-403 (fetch first)\nerror: failed to push some refs to '/tmp/repo-14039-permission denied-publickey'"
+            .to_string(),
+    ));
+    assert!(
+        matches!(rejected_with_echoed_markers, PushFailure::Rejected(_)),
+        "got {rejected_with_echoed_markers:?}"
+    );
+
+    let missing_repository = classify_push_failure(CommandError::Failed(
+        "fatal: repository 'https://github.com/acme/non-fast-forward-403.git/' not found"
+            .to_string(),
+    ));
+    assert!(
+        matches!(missing_repository, PushFailure::GitError(_)),
+        "got {missing_repository:?}"
+    );
 
     let timeout = classify_push_failure(CommandError::TimedOut(Duration::from_secs(120)));
     assert_eq!(

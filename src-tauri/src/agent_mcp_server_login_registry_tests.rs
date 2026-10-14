@@ -312,8 +312,8 @@ fn concurrent_logins_leave_exactly_one_active_session() {
             .filter_map(|worker| worker.join().expect("worker").ok())
             .collect()
     });
-    wait_for("superseded sessions never stopped", || {
-        running.load(Ordering::Acquire) <= 1
+    wait_for("the surviving session never started", || {
+        running.load(Ordering::Acquire) == 1
     });
     let pending: Vec<_> = sessions
         .iter()

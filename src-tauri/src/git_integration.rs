@@ -66,10 +66,10 @@ const AUTH_MARKERS: [&str; 7] = [
     "permission denied",
     "publickey",
     "terminal prompts disabled",
-    "403",
+    "error: 403",
 ];
-const REJECTED_MARKERS: [&str; 4] = [
-    "[rejected]",
+const REF_REJECTED_MARKER: &str = "[rejected]";
+const REJECTED_MARKERS: [&str; 3] = [
     "non-fast-forward",
     "fetch first",
     "failed to push some refs",
@@ -787,19 +787,46 @@ fn classify_push_failure(error: CommandError) -> PushFailure {
         CommandError::Io(message) => return PushFailure::GitError(message),
     };
 
-    let lowered = message.to_ascii_lowercase();
-    if AUTH_MARKERS.iter().any(|marker| lowered.contains(marker)) {
+    let diagnostics = push_diagnostics(&message);
+    if diagnostics.contains(REF_REJECTED_MARKER) {
+        return PushFailure::Rejected(message);
+    }
+
+    if AUTH_MARKERS
+        .iter()
+        .any(|marker| diagnostics.contains(marker))
+    {
         return PushFailure::AuthRequired(message);
     }
 
     if REJECTED_MARKERS
         .iter()
-        .any(|marker| lowered.contains(marker))
+        .any(|marker| diagnostics.contains(marker))
     {
         return PushFailure::Rejected(message);
     }
 
     PushFailure::GitError(message)
+}
+
+fn push_diagnostics(message: &str) -> String {
+    message
+        .lines()
+        .filter(|line| !line.starts_with("To "))
+        .map(without_quoted_span)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase()
+}
+
+fn without_quoted_span(line: &str) -> String {
+    let (Some(start), Some(end)) = (line.find('\''), line.rfind('\'')) else {
+        return line.to_string();
+    };
+    if start == end {
+        return line.to_string();
+    }
+    format!("{} {}", &line[..start], &line[end + 1..])
 }
 
 fn remote_status(

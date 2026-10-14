@@ -34,3 +34,56 @@ pub(crate) fn wait_for_parseable_pid(path: &Path, label: &str) -> i32 {
     );
     parsed.unwrap_or_default()
 }
+
+pub(crate) fn await_parseable_pid_while(
+    path: &Path,
+    label: &str,
+    running: impl Fn() -> bool,
+) -> i32 {
+    loop {
+        if let Some(pid) = read_parseable_pid(path) {
+            return pid;
+        }
+        if !running() {
+            let pid = read_parseable_pid(path);
+            assert!(
+                pid.is_some(),
+                "the process exited before writing {label} at {}",
+                path.display()
+            );
+            return pid.unwrap_or_default();
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+pub(crate) fn await_file_while(path: &Path, label: &str, running: impl Fn() -> bool) {
+    while !path.is_file() {
+        assert!(
+            running() || path.is_file(),
+            "the process exited before creating {label} at {}",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+pub(crate) fn assert_process_reaped(pid: i32) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if unsafe { libc::kill(pid, 0) } == -1
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "process {pid} remained alive after its process group was reaped"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn read_parseable_pid(path: &Path) -> Option<i32> {
+    fs::read_to_string(path).ok()?.trim().parse::<i32>().ok()
+}

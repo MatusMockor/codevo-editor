@@ -1670,11 +1670,7 @@ mod tests {
         };
         assert!(message.contains("remaining batch safety limit"));
         let pid = test_support::wait_for_parseable_pid(&sibling_pid, "sibling pid");
-        assert_eq!(unsafe { libc::kill(pid, 0) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+        test_support::assert_process_reaped(pid);
         cleanup(root);
     }
 

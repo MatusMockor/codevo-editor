@@ -141,7 +141,10 @@ fn replacement_search_supersedes_and_reaps_the_previous_request() {
     let directory = FakeCliDirectory::create("search-superseded");
     directory.script(
         "gh",
-        &format!("touch '{}'\nsleep 20", directory.file("started").display()),
+        &format!(
+            "if [ -f '{started}' ]; then\nprintf '%s' '{{\"items\":[],\"total_count\":0,\"incomplete_results\":false}}'\nexit 0\nfi\ntouch '{started}'\nsleep 20",
+            started = directory.file("started").display()
+        ),
     );
     let service = directory.service();
     let first_service = std::sync::Arc::clone(&service);
@@ -149,15 +152,15 @@ fn replacement_search_supersedes_and_reaps_the_previous_request() {
         std::thread::spawn(move || first_service.search(request("github", "github.com", "old", 1)));
     assert!(directory.await_file("started"));
     directory.advance_past_spawn_interval();
-    directory.script(
-        "gh",
-        "printf '%s' '{\"items\":[],\"total_count\":0,\"incomplete_results\":false}'",
-    );
     let second = service.search(request("github", "github.com", "new", 1));
-    assert!(matches!(
-        first.join().unwrap(),
-        RepositorySearchOutcome::Failure(RepositoryLookupOutcome::Superseded)
-    ));
+    let first = first.join().expect("join the superseded search");
+    assert!(
+        matches!(
+            first,
+            RepositorySearchOutcome::Failure(RepositoryLookupOutcome::Superseded)
+        ),
+        "{first:?}"
+    );
     assert!(matches!(second, RepositorySearchOutcome::Page(_)));
 }
 

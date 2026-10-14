@@ -765,7 +765,7 @@ mod tests {
             File::open(&root_path).expect("root"),
             false,
             WorkspacePackageOperation::Install,
-            Duration::from_secs(2),
+            PACKAGE_OPERATION_TIMEOUT,
         );
         let WorkspacePackageOperationRunResponse::Ok { message, .. } = noisy else {
             panic!("noisy command failed: {noisy:?}");
@@ -791,7 +791,7 @@ mod tests {
                 File::open(&root_path).expect("root"),
                 false,
                 WorkspacePackageOperation::Outdated,
-                Duration::from_secs(1),
+                PACKAGE_OPERATION_TIMEOUT,
             ),
             WorkspacePackageOperationRunResponse::Ok {
                 manifest_changed: false,
