@@ -16,6 +16,9 @@ pub const GITIGNORE_ANCESTOR_LIMIT: usize = 64;
 const VIRTUAL_WORKSPACE_ROOT: &str = "/workspace";
 const GIT_INFO_EXCLUDE: &str = ".git/info/exclude";
 const GITIGNORE: &str = ".gitignore";
+const GIT_DIRECTORY: &str = ".git";
+const GIT_HEAD: &str = "HEAD";
+const UNSCANNED_REPOSITORY_FOLDER: &str = "node_modules";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PatternCase {
@@ -62,16 +65,18 @@ fn load_rules(
         return Ok(DirectoryIgnoreRules::Unavailable);
     }
     let root = PathBuf::from(VIRTUAL_WORKSPACE_ROOT);
+    let boundary = deepest_repository_boundary(files, &components);
+    let mut relative = components[..boundary].iter().collect::<PathBuf>();
     let mut collector = RuleCollector {
         files,
         case: files.pattern_case(),
         remaining_lines: GITIGNORE_LINE_LIMIT,
-        scopes: Vec::with_capacity(components.len() + 2),
+        scopes: Vec::with_capacity(components.len() - boundary + 2),
     };
-    collector.push(&root, Path::new(GIT_INFO_EXCLUDE))?;
-    collector.push(&root, Path::new(GITIGNORE))?;
-    let mut relative = PathBuf::new();
-    for component in components {
+    let scope_root = root.join(&relative);
+    collector.push(&scope_root, &relative.join(GIT_INFO_EXCLUDE))?;
+    collector.push(&scope_root, &relative.join(GITIGNORE))?;
+    for component in &components[boundary..] {
         relative.push(component);
         let directory = root.join(&relative);
         if is_matched(&collector.scopes, &directory, true) {
@@ -83,6 +88,31 @@ fn load_rules(
         directory: root.join(relative),
         scopes: collector.scopes,
     })
+}
+
+fn deepest_repository_boundary(files: &dyn IgnoreRuleFiles, components: &[&OsStr]) -> usize {
+    let scannable = components
+        .iter()
+        .position(|component| is_unscanned_folder(component, files.pattern_case()))
+        .unwrap_or(components.len());
+    (1..=scannable)
+        .rev()
+        .find(|&depth| is_repository_root(files, &components[..depth].iter().collect::<PathBuf>()))
+        .unwrap_or(0)
+}
+
+fn is_unscanned_folder(component: &OsStr, case: PatternCase) -> bool {
+    let name = component.as_encoded_bytes();
+    let unscanned = UNSCANNED_REPOSITORY_FOLDER.as_bytes();
+    match case {
+        PatternCase::Sensitive => name == unscanned,
+        PatternCase::Insensitive => name.eq_ignore_ascii_case(unscanned),
+    }
+}
+
+fn is_repository_root(files: &dyn IgnoreRuleFiles, relative_directory: &Path) -> bool {
+    let marker = relative_directory.join(GIT_DIRECTORY);
+    files.open(&marker.join(GIT_HEAD)).is_ok() || files.open(&marker).is_ok()
 }
 
 fn normal_components(path: &Path) -> io::Result<Vec<&OsStr>> {

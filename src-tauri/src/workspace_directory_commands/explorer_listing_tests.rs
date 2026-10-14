@@ -241,3 +241,152 @@ fn symlinked_gitignore_is_not_followed() {
 
     assert!(!ignored_flag(&fixture.listing(""), "index.ts"));
 }
+
+#[test]
+fn nested_repository_ignored_files_are_listed_and_flagged_by_their_own_gitignore() {
+    let fixture = Fixture::new("nested-repository");
+    fixture
+        .write(".DS_Store", "")
+        .write("docker-compose.yml", "")
+        .write("pa-data-be/.git/HEAD", "ref: refs/heads/main\n")
+        .write(
+            "pa-data-be/.gitignore",
+            "node_modules/\nsrc/environment.ts\nsrc/environment.prod.ts\n",
+        )
+        .write("pa-data-be/node_modules/express/index.js", "")
+        .write("pa-data-be/src/environment.prod.ts", "")
+        .write("pa-data-be/src/environment.prod.ts.secret", "")
+        .write("pa-data-be/src/environment.sample.ts", "")
+        .write("pa-data-be/src/environment.ts", "")
+        .write("pa-data-be/src/index.ts", "");
+
+    let root = fixture.listing("");
+    assert!(!ignored_flag(&root, "pa-data-be"));
+    let repository = fixture.listing("pa-data-be");
+    assert!(ignored_flag(&repository, "node_modules"));
+    assert!(!repository.iter().any(|(name, _)| name == ".git"));
+    let src = fixture.listing("pa-data-be/src");
+    assert_eq!(src.len(), 5, "{src:?}");
+    assert!(ignored_flag(&src, "environment.ts"));
+    assert!(ignored_flag(&src, "environment.prod.ts"));
+    assert!(!ignored_flag(&src, "environment.prod.ts.secret"));
+    assert!(!ignored_flag(&src, "environment.sample.ts"));
+    assert!(!ignored_flag(&src, "index.ts"));
+}
+
+#[test]
+fn outer_repository_rules_stop_at_a_nested_repository_boundary() {
+    let fixture = Fixture::new("nested-boundary");
+    fixture
+        .write(".git/HEAD", "ref: refs/heads/main\n")
+        .write(".git/info/exclude", "notes.txt\n")
+        .write(".gitignore", "*.log\n")
+        .write("debug.log", "")
+        .write("notes.txt", "")
+        .write("inner/.git/HEAD", "ref: refs/heads/main\n")
+        .write("inner/.git/info/exclude", "scratch.txt\n")
+        .write("inner/.gitignore", "*.tmp\n")
+        .write("inner/debug.log", "")
+        .write("inner/notes.txt", "")
+        .write("inner/scratch.txt", "")
+        .write("inner/cache.tmp", "")
+        .write("inner/sub/debug.log", "")
+        .write("inner/sub/cache.tmp", "");
+
+    let top = fixture.listing("");
+    assert!(ignored_flag(&top, "debug.log"));
+    assert!(ignored_flag(&top, "notes.txt"));
+    let inner = fixture.listing("inner");
+    assert!(!ignored_flag(&inner, "debug.log"));
+    assert!(!ignored_flag(&inner, "notes.txt"));
+    assert!(ignored_flag(&inner, "scratch.txt"));
+    assert!(ignored_flag(&inner, "cache.tmp"));
+    let sub = fixture.listing("inner/sub");
+    assert!(!ignored_flag(&sub, "debug.log"));
+    assert!(ignored_flag(&sub, "cache.tmp"));
+}
+
+#[test]
+fn worktree_style_git_file_marks_a_nested_repository_boundary() {
+    let fixture = Fixture::new("nested-git-file");
+    fixture
+        .write(".gitignore", "*.log\n")
+        .write("linked/.git", "gitdir: /elsewhere/.git/worktrees/linked\n")
+        .write("linked/debug.log", "");
+
+    assert!(!ignored_flag(&fixture.listing("linked"), "debug.log"));
+}
+
+#[test]
+fn a_nested_repository_inside_an_ignored_directory_stays_ignored() {
+    let fixture = Fixture::new("nested-ignored");
+    fixture
+        .write(".gitignore", "node_modules/\n")
+        .write("node_modules/pkg/.git/HEAD", "ref: refs/heads/main\n")
+        .write("node_modules/pkg/index.js", "");
+
+    assert!(ignored_flag(&fixture.listing(""), "node_modules"));
+    assert!(ignored_flag(
+        &fixture.listing("node_modules/pkg"),
+        "index.js"
+    ));
+}
+
+#[test]
+fn a_nested_repository_ignored_by_the_outer_repository_uses_its_own_rules() {
+    let fixture = Fixture::new("nested-outer-ignored");
+    fixture
+        .write(".git/HEAD", "ref: refs/heads/main\n")
+        .write(".gitignore", "vendor/\n")
+        .write("vendor/lib/.git/HEAD", "ref: refs/heads/main\n")
+        .write("vendor/lib/.gitignore", "*.gen.ts\n")
+        .write("vendor/lib/index.ts", "")
+        .write("vendor/lib/api.gen.ts", "")
+        .write("vendor/lib/src/main.ts", "")
+        .write("vendor/other/index.ts", "");
+
+    assert!(ignored_flag(&fixture.listing(""), "vendor"));
+    let vendor = fixture.listing("vendor");
+    assert!(ignored_flag(&vendor, "lib"));
+    assert!(ignored_flag(&vendor, "other"));
+    assert!(ignored_flag(&fixture.listing("vendor/other"), "index.ts"));
+    let lib = fixture.listing("vendor/lib");
+    assert!(!ignored_flag(&lib, "index.ts"));
+    assert!(ignored_flag(&lib, "api.gen.ts"));
+    assert!(!ignored_flag(&fixture.listing("vendor/lib/src"), "main.ts"));
+}
+
+#[test]
+fn symlinked_or_fifo_git_markers_do_not_create_a_repository_boundary() {
+    let fixture = Fixture::new("marker-symlink");
+    let outside = Fixture::new("marker-symlink-outside");
+    outside.write("repo/.git/HEAD", "ref: refs/heads/main\n");
+    fixture
+        .write(".gitignore", "*.log\n")
+        .write("linked/debug.log", "")
+        .write("piped/debug.log", "");
+    symlink(
+        outside.root.join("repo/.git"),
+        fixture.root.join("linked/.git"),
+    )
+    .unwrap();
+    let fifo = CString::new(fixture.root.join("piped/.git").as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+
+    assert!(ignored_flag(&fixture.listing("linked"), "debug.log"));
+    assert!(ignored_flag(&fixture.listing("piped"), "debug.log"));
+}
+
+#[test]
+fn unscanned_dependency_folder_matching_follows_the_workspace_filesystem_case() {
+    let fixture = Fixture::new("unscanned-case");
+    fixture
+        .write(".gitignore", "Node_Modules/\n")
+        .write("Node_Modules/pkg/.git/HEAD", "ref: refs/heads/main\n")
+        .write("Node_Modules/pkg/index.js", "");
+
+    assert_eq!(
+        ignored_flag(&fixture.listing("Node_Modules/pkg"), "index.js"),
+        fixture.case_insensitive()
+    );
+}

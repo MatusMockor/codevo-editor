@@ -194,6 +194,43 @@ describe("useAgentSurfaceFileTree", () => {
     harness.unmount();
   });
 
+  it("keeps gitignored files of an expanded nested repository visible and flagged", async () => {
+    const repository = `${WORKTREE}/pa-data-be`;
+    const source = `${repository}/src`;
+    const harness = renderTree({
+      listings: {
+        [WORKTREE]: { entries: [directory(repository)], truncated: false },
+        [repository]: { entries: [directory(source)], truncated: false },
+        [source]: {
+          entries: [
+            file(`${source}/.DS_Store`),
+            { ...file(`${source}/environment.prod.ts`), ignored: true },
+            file(`${source}/environment.prod.ts.secret`),
+            file(`${source}/environment.sample.ts`),
+            { ...file(`${source}/environment.ts`), ignored: true },
+            file(`${source}/index.ts`),
+          ],
+          truncated: false,
+        },
+      },
+    });
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[WORKTREE]).toBeDefined());
+    act(() => harness.hook().toggleDirectory(repository));
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[repository]).toBeDefined());
+    act(() => harness.hook().toggleDirectory(source));
+    await waitForReact(() => expect(harness.hook().entriesByDirectory[source]).toBeDefined());
+
+    const entries = harness.hook().entriesByDirectory[source] ?? [];
+    expect(entries.map((entry) => [entry.name, entry.ignored === true])).toEqual([
+      ["environment.prod.ts", true],
+      ["environment.prod.ts.secret", false],
+      ["environment.sample.ts", false],
+      ["environment.ts", true],
+      ["index.ts", false],
+    ]);
+    harness.unmount();
+  });
+
   it("expands a directory with one read, collapses without re-reading and refuses foreign paths", async () => {
     const harness = renderTree({
       listings: {
