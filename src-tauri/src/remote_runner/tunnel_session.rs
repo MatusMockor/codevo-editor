@@ -10,6 +10,8 @@ use std::sync::{
     Mutex,
 };
 
+const DEADLINE_PASSED: &str = "Runner request was not sent because its time budget ran out.";
+
 #[path = "tunnel_dispatch.rs"]
 mod tunnel_dispatch;
 #[path = "tunnel_http.rs"]
@@ -220,15 +222,40 @@ impl Session {
         body: Option<Value>,
         headers: Vec<(String, String)>,
     ) -> Result<Value, String> {
+        let deadline = std::time::Instant::now() + request_timeout(method, path);
+        self.request_within(server, (method, path, body, headers), deadline, None)
+    }
+    pub(in crate::remote_runner) fn request_before(
+        &self,
+        server: &Server,
+        (method, path, body): (&str, &str, Option<Value>),
+        ceiling: std::time::Instant,
+        gate: Option<std::sync::Arc<crate::remote_runner::send_gate::SendGate>>,
+    ) -> Result<Value, String> {
+        let now = std::time::Instant::now();
+        if now >= ceiling {
+            return Err(DEADLINE_PASSED.into());
+        }
+        let deadline = ceiling.min(now + request_timeout(method, path));
+        self.request_within(server, (method, path, body, vec![]), deadline, gate)
+    }
+    fn request_within(
+        &self,
+        server: &Server,
+        (method, path, body, headers): (&str, &str, Option<Value>, Vec<(String, String)>),
+        deadline: std::time::Instant,
+        gate: Option<std::sync::Arc<crate::remote_runner::send_gate::SendGate>>,
+    ) -> Result<Value, String> {
         if !self.is_alive() {
             return Err("Runner connection is closed. Reconnect the server.".into());
         }
         let request = tunnel_http::prepare(method, path, body, headers)?;
-        let result = self.dispatch.request(
+        let result = self.dispatch.request_until(
             request,
             server.runner_id.clone(),
             response_limit(method, path),
-            request_timeout(method, path),
+            deadline,
+            gate,
         );
         if result
             .as_ref()

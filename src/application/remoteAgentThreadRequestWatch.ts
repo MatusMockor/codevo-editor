@@ -287,11 +287,14 @@ export class RemoteAgentThreadRequestWatch {
   }
 
   private delivery(message: AgentThreadRequests, announce: boolean): AgentThreadRequests | null {
+    const moved = this.envelope !== null && this.envelope.epoch !== message.epoch;
     const changed = this.changes(message);
     this.adopt(message);
     const requests = this.fresh(message.requests);
+    const workspaceId = this.identity.serverId;
+    if (moved) return { ...message, requests: [], workspaceId, reset: true };
     if (!changed && requests.length === 0 && !announce) return null;
-    return { ...message, requests, workspaceId: this.identity.serverId, reset: false };
+    return { ...message, requests, workspaceId, reset: false };
   }
 
   private changes(message: AgentThreadRequests): boolean {

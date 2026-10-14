@@ -352,7 +352,7 @@ fn days_in_month(year: u32, month: u32) -> u32 {
     }
 }
 
-fn timestamp_fields(value: &str) -> Option<[u32; 6]> {
+fn timestamp_fields(value: &str) -> Option<[u32; 7]> {
     let bytes = value.as_bytes();
     let separators = [
         (4, b'-'),
@@ -370,7 +370,6 @@ fn timestamp_fields(value: &str) -> Option<[u32; 6]> {
     {
         return None;
     }
-    number(&bytes[20..23])?;
     Some([
         number(&bytes[0..4])?,
         number(&bytes[5..7])?,
@@ -378,13 +377,29 @@ fn timestamp_fields(value: &str) -> Option<[u32; 6]> {
         number(&bytes[11..13])?,
         number(&bytes[14..16])?,
         number(&bytes[17..19])?,
+        number(&bytes[20..23])?,
     ])
 }
 
 pub(super) fn timestamp(value: &str) -> bool {
-    timestamp_fields(value).is_some_and(|[year, month, day, hour, minute, second]| {
+    timestamp_fields(value).is_some_and(|[year, month, day, hour, minute, second, _]| {
         (1..=days_in_month(year, month)).contains(&day) && hour < 24 && minute < 60 && second < 60
     })
+}
+
+pub(super) fn epoch_millis(value: &str) -> Option<u64> {
+    if !timestamp(value) {
+        return None;
+    }
+    let [year, month, day, hour, minute, second, millis] = timestamp_fields(value)?.map(i64::from);
+    let shifted_year = year - i64::from(month <= 2);
+    let era = shifted_year.div_euclid(400);
+    let year_of_era = shifted_year.rem_euclid(400);
+    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let elapsed = ((days * 24 + hour) * 60 + minute) * 60_000 + second * 1000 + millis;
+    Some(u64::try_from(elapsed).unwrap_or(0))
 }
 
 fn admit_lifecycle(
@@ -442,10 +457,20 @@ fn retain_newest(
     Ok((approvals, truncated))
 }
 
+fn with_question_truncation(mut value: Value) -> Value {
+    if let Some(snapshot) = value.as_object_mut() {
+        snapshot
+            .entry("questionsTruncated")
+            .or_insert(Value::Bool(false));
+    }
+    value
+}
+
 pub(super) fn parse_snapshot(value: Value, task: &str) -> Result<InteractionSnapshot, WireError> {
     bounded(&value, "questions", MAX_QUESTIONS)?;
     bounded(&value, "approvals", MAX_APPROVALS)?;
-    let snapshot: InteractionSnapshot = canonical(value).ok_or(WireError::Malformed)?;
+    let snapshot: InteractionSnapshot =
+        canonical(with_question_truncation(value)).ok_or(WireError::Malformed)?;
     if uuid(&snapshot.task_id).is_err() || snapshot.sequence > MAX_SAFE_INTEGER {
         return Err(WireError::Malformed);
     }

@@ -53,6 +53,22 @@ mod interactions_respond;
 mod interactions_rules;
 mod interactions_wire;
 pub use interactions::*;
+#[cfg(test)]
+mod interactions_fake;
+mod send_gate;
+mod thread_requests;
+mod thread_requests_budget;
+mod thread_requests_cache;
+mod thread_requests_cursor;
+mod thread_requests_evidence;
+mod thread_requests_ipc;
+mod thread_requests_map;
+mod thread_requests_membership;
+mod thread_requests_respond;
+#[cfg(test)]
+mod thread_requests_support;
+pub use thread_requests::*;
+pub use thread_requests_respond::*;
 
 mod surfaces;
 pub use surfaces::*;

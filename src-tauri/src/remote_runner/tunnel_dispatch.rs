@@ -1,8 +1,11 @@
 use super::tunnel_http::{self, Prepared};
 use super::tunnel_stall::{Evidence, Load, StallDetector, StallPolicy, Step};
+use crate::remote_runner::send_gate::SendGate;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
@@ -68,6 +71,7 @@ struct Job {
     expected: Option<String>,
     limit: usize,
     deadline: Instant,
+    gate: Option<Arc<SendGate>>,
     reply: oneshot::Sender<Result<Value, String>>,
 }
 
@@ -147,11 +151,14 @@ impl Dispatch {
                                 _ = canceled.changed() => canceled.borrow().ended().and(Err(CLOSED.into())),
                                 result = tokio::time::timeout_at(
                                 tokio::time::Instant::from_std(job.deadline),
-                                tunnel_http::request_with_authority(&client, &token, job.expected.as_deref(), job.request, job.limit, || {
+                                tunnel_http::request_with_authority(&client, &token, job.expected.as_deref(), (job.request, job.limit), || {
                                     authority.borrow().ended()?;
                                     if Instant::now() >= job.deadline { return Err(TIMED_OUT.into()); }
                                     Ok(())
-                                }, || observed.record_inbound()),
+                                }, || observed.record_inbound(), || match job.gate.as_ref() {
+                                    Some(gate) if !gate.claim() => Err(TIMED_OUT.into()),
+                                    _ => Ok(()),
+                                }),
                             ) => {
                                 let result = result.unwrap_or_else(|_| Err(TIMED_OUT.into()));
                                 if unanswered(&result) { observed.suspect(started, Instant::now()); }
@@ -182,6 +189,7 @@ impl Dispatch {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn request(
         &self,
         request: Prepared,
@@ -189,7 +197,17 @@ impl Dispatch {
         limit: usize,
         timeout: Duration,
     ) -> Result<Value, String> {
-        let deadline = Instant::now() + timeout;
+        self.request_until(request, expected, limit, Instant::now() + timeout, None)
+    }
+
+    pub(super) fn request_until(
+        &self,
+        request: Prepared,
+        expected: Option<String>,
+        limit: usize,
+        deadline: Instant,
+        gate: Option<Arc<SendGate>>,
+    ) -> Result<Value, String> {
         let (reply, response) = oneshot::channel();
         let queued = self
             .sender
@@ -203,6 +221,7 @@ impl Dispatch {
                         expected,
                         limit,
                         deadline,
+                        gate,
                         reply,
                     })
                     .is_ok()
@@ -273,6 +292,7 @@ mod tests {
                 expected: None,
                 limit: 4096,
                 deadline: Instant::now() - Duration::from_secs(1),
+                gate: None,
                 reply,
             })
             .unwrap_or_else(|_| panic!("fixture queue unexpectedly closed"));
@@ -373,6 +393,7 @@ mod tests {
                 expected: None,
                 limit: 4096,
                 deadline: Instant::now() + Duration::from_secs(30),
+                gate: None,
                 reply,
             })
             .unwrap_or_else(|_| panic!("fixture queue unexpectedly closed"));

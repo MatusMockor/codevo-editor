@@ -8,7 +8,6 @@ import {
   type RemoteAgentThreadRequestTurn,
   type RemoteAgentThreadRequestsPage,
   type RemoteAgentThreadRequestsRequest,
-  type RemoteAgentThreadRespondOutcome,
   type RemoteAgentThreadRespondRequest,
   type RemoteAgentThreadRespondResult,
 } from "../application/remoteAgentThreadRequestPorts";
@@ -236,28 +235,12 @@ function parsePage(value: unknown, binding: RequestBinding): RemoteAgentThreadRe
   };
 }
 
-function respondResult(
-  outcome: RemoteAgentThreadRespondOutcome,
-  message: AgentThreadRequests | null,
-): RemoteAgentThreadRespondResult {
-  switch (outcome) {
-    case "answered":
-      if (message === null) return invalid();
-      return { outcome, message };
-    case "notAnswerable":
-    case "deliveryUncertain":
-      return { outcome, message };
-    default:
-      return unsupported(outcome);
-  }
-}
-
 function parseResult(value: unknown, binding: RequestBinding): RemoteAgentThreadRespondResult {
   const result = record(value, RESULT_FIELDS);
-  return respondResult(
-    member(result.outcome, REMOTE_AGENT_THREAD_RESPOND_OUTCOMES),
-    nullable(result.message, (message) => boundMessage(message, binding)),
-  );
+  return {
+    outcome: member(result.outcome, REMOTE_AGENT_THREAD_RESPOND_OUTCOMES),
+    message: nullable(result.message, (message) => boundMessage(message, binding)),
+  };
 }
 
 function failureMessage(failure: unknown): string {

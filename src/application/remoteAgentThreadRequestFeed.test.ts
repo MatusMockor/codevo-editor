@@ -534,20 +534,26 @@ describe("remoteAgentThreadRequestFeed", () => {
       expect(vi.getTimerCount()).toBe(0);
     });
 
-    it("treats a new epoch as a new state and pushes every record again", async () => {
+    it("announces a new epoch without records so the store rebuilds the thread", async () => {
       const { gateway, feed, pushes } = await harness();
       gateway.record(TARGET_A, [pending(T1, "req-1")]);
       feed.describe(A, snapshot([turn(T1, 1)]));
       await settle();
 
       gateway.stamp(TARGET_A, { epoch: "rr1-snapshot-3-1" });
+      gateway.record(TARGET_A, [pending(T1, "req-2")]);
       feed.describe(A, snapshot([turn(T1, 2)]));
       await settle();
+      feed.describe(A, snapshot([turn(T1, 3)]));
+      await settle();
 
-      expect(pushes.map((message) => [message.epoch, ...shown(message)])).toEqual([
-        ["rr1-snapshot", `${T1}/req-1@1:pending`],
-        ["rr1-snapshot-3-1", `${T1}/req-1@1:pending`],
+      expect(
+        pushes.map((message) => [message.epoch, String(message.reset), ...shown(message)]),
+      ).toEqual([
+        ["rr1-snapshot", "false", `${T1}/req-1@1:pending`],
+        ["rr1-snapshot-3-1", "true"],
       ]);
+      expect(gateway.threadRequests).toHaveBeenCalledTimes(3);
     });
   });
 

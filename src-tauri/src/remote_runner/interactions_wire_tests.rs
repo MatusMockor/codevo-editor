@@ -7,6 +7,7 @@ const OTHER_TASK: &str = "7389088c-29b8-4cec-9a15-e825e1fb2f66";
 const UNKNOWN: ResponseCapability = ResponseCapability::NotResumable {
     reason: SettleReason::Unknown,
 };
+const TOLERATED_BY_THE_DESKTOP: &str = "missingQuestionsTruncated";
 
 fn fixture() -> Value {
     serde_json::from_str(FIXTURE).expect("interaction fixture is JSON")
@@ -182,8 +183,11 @@ fn fixture_snapshots_keep_truncation_flags_reasons_and_expiry() {
 
 #[test]
 fn every_rejected_fixture_snapshot_fails_closed() {
-    let rejected = cases("rejectedSnapshots");
-    assert!(rejected.len() >= 40, "{}", rejected.len());
+    let rejected: Vec<_> = cases("rejectedSnapshots")
+        .into_iter()
+        .filter(|(name, _)| name != TOLERATED_BY_THE_DESKTOP)
+        .collect();
+    assert!(rejected.len() >= 39, "{}", rejected.len());
     let mut accepted = Vec::new();
     for (name, value) in rejected {
         let own_task = value
@@ -202,7 +206,6 @@ fn every_rejected_fixture_snapshot_fails_closed() {
 fn rejected_fixture_snapshots_fail_for_the_documented_reason() {
     for (name, expected) in [
         ("unknownRootField", WireError::Malformed),
-        ("missingQuestionsTruncated", WireError::Malformed),
         ("questionsTruncatedNotBoolean", WireError::Malformed),
         ("questionsTruncatedNull", WireError::Malformed),
         ("missingApprovalsTruncated", WireError::Malformed),
@@ -248,6 +251,69 @@ fn rejected_fixture_snapshots_fail_for_the_documented_reason() {
         parse_snapshot(case("rejectedSnapshots", "taskIdNotUuid"), "task-1").err(),
         Some(WireError::Malformed)
     );
+}
+
+#[test]
+fn snapshot_without_question_truncation_reads_as_not_truncated() {
+    let absent = case("rejectedSnapshots", TOLERATED_BY_THE_DESKTOP);
+    assert!(absent.get("questionsTruncated").is_none());
+    let parsed = parse_snapshot(absent.clone(), TASK).unwrap();
+    assert!(!parsed.questions_truncated);
+    assert!(!parsed.approvals_truncated);
+    assert_eq!(parsed.sequence, 3);
+    let mut explicit = absent.clone();
+    explicit["questionsTruncated"] = false.into();
+    assert_eq!(parse_snapshot(explicit.clone(), TASK).unwrap(), parsed);
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), explicit);
+    for (name, value) in cases("snapshots") {
+        let task = value["taskId"].as_str().expect("task id").to_string();
+        let mut older = value.clone();
+        let flag = older
+            .as_object_mut()
+            .expect("snapshot")
+            .remove("questionsTruncated");
+        let parsed = parse_snapshot(older, &task);
+        assert!(parsed.is_ok(), "{name}: {parsed:?}");
+        assert!(!parsed.unwrap().questions_truncated, "{name}");
+        assert!(flag.is_some(), "{name}");
+    }
+    for present in [json!(null), json!("false"), json!(0), json!([])] {
+        let mut invalid = absent.clone();
+        invalid["questionsTruncated"] = present.clone();
+        assert_eq!(error(invalid), Some(WireError::Malformed), "{present}");
+    }
+    let mut both_absent = absent;
+    both_absent
+        .as_object_mut()
+        .expect("snapshot")
+        .remove("approvalsTruncated");
+    assert_eq!(error(both_absent), Some(WireError::Malformed));
+    assert_eq!(error(json!([])), Some(WireError::Malformed));
+}
+
+#[test]
+fn timestamps_convert_to_epoch_milliseconds() {
+    for (value, expected) in [
+        ("1970-01-01T00:00:00.000Z", 0),
+        ("1970-01-01T00:00:00.001Z", 1),
+        ("2000-02-29T00:00:00.000Z", 951_782_400_000),
+        ("2024-02-29T23:59:59.999Z", 1_709_251_199_999),
+        ("2026-10-13T09:00:00.000Z", 1_791_882_000_000),
+        ("2025-10-09T08:55:00.000Z", 1_760_000_100_000),
+        ("9999-12-31T23:59:59.999Z", 253_402_300_799_999),
+        ("0000-01-01T00:00:00.000Z", 0),
+        ("1969-12-31T23:59:59.999Z", 0),
+    ] {
+        assert_eq!(epoch_millis(value), Some(expected), "{value}");
+    }
+    for invalid in [
+        "",
+        "2026-10-13",
+        "2026-02-30T00:00:00.000Z",
+        "2026-10-13T09:00:00Z",
+    ] {
+        assert_eq!(epoch_millis(invalid), None, "{invalid}");
+    }
 }
 
 #[test]

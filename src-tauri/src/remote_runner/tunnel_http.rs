@@ -11,7 +11,7 @@ pub(super) const CONNECTION_FAILED: &str =
 const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(250);
 
 const CLIENT_CAPABILITIES: &str =
-    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging";
+    "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging,runtimeRequests";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -313,17 +313,26 @@ pub(super) async fn request(
     prepared: Prepared,
     limit: usize,
 ) -> Result<Value, String> {
-    request_with_authority(client, token, expected, prepared, limit, || Ok(()), || {}).await
+    request_with_authority(
+        client,
+        token,
+        expected,
+        (prepared, limit),
+        || Ok(()),
+        || {},
+        || Ok(()),
+    )
+    .await
 }
 
 pub(super) async fn request_with_authority(
     client: &reqwest::Client,
     token: &str,
     expected: Option<&str>,
-    prepared: Prepared,
-    limit: usize,
+    (prepared, limit): (Prepared, usize),
     authority: impl Fn() -> Result<(), String>,
     inbound: impl Fn(),
+    claim: impl Fn() -> Result<(), String>,
 ) -> Result<Value, String> {
     authority()?;
     if expected.is_some() && prepared.path != "/v1/runner" {
@@ -345,6 +354,7 @@ pub(super) async fn request_with_authority(
         }
     }
     authority()?;
+    claim()?;
     let artifact = super::super::super::artifacts::is_content_path(&prepared.path);
     let image = prepared.method == reqwest::Method::GET && limit > super::super::MAX_OUTPUT;
     let (output, media) = execute(
@@ -619,10 +629,10 @@ mod tests {
     #[test]
     fn announced_token_count_is_pinned_below_the_runner_limit_of_sixteen() {
         const RUNNER_TOKEN_LIMIT: usize = 16;
-        const DEFERRED_INTERACTION_TOKENS: [&str; 2] = ["runtimeRequests", "interactiveApprovals"];
+        const DEFERRED_INTERACTION_TOKENS: [&str; 1] = ["interactiveApprovals"];
         let tokens: Vec<&str> = CLIENT_CAPABILITIES.split(',').collect();
         let unique: std::collections::HashSet<&str> = tokens.iter().copied().collect();
-        assert_eq!(tokens.len(), 12);
+        assert_eq!(tokens.len(), 13);
         assert_eq!(unique.len(), tokens.len());
         assert!(tokens.len() <= RUNNER_TOKEN_LIMIT);
         for token in DEFERRED_INTERACTION_TOKENS {
@@ -767,8 +777,7 @@ mod tests {
                 &client,
                 "private-token",
                 Some("expected"),
-                prepare("POST", "/v1/tasks", None, vec![]).unwrap(),
-                4096,
+                (prepare("POST", "/v1/tasks", None, vec![]).unwrap(), 4096),
                 || {
                     if checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
                         Ok(())
@@ -777,6 +786,7 @@ mod tests {
                     }
                 },
                 || {},
+                || Ok(()),
             )
             .await
         });
@@ -807,12 +817,12 @@ mod tests {
                 &client,
                 "private-token",
                 Some("expected"),
-                prepare("GET", "/v1/tasks", None, vec![]).unwrap(),
-                4096,
+                (prepare("GET", "/v1/tasks", None, vec![]).unwrap(), 4096),
                 || Ok(()),
                 || {
                     inbound.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 },
+                || Ok(()),
             )
             .await
         });
@@ -840,12 +850,12 @@ mod tests {
                     &client,
                     "private-token",
                     None,
-                    prepare("GET", "/v1/tasks", None, vec![]).unwrap(),
-                    4096,
+                    (prepare("GET", "/v1/tasks", None, vec![]).unwrap(), 4096),
                     || Ok(()),
                     || {
                         inbound.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     },
+                    || Ok(()),
                 )
                 .await
             });

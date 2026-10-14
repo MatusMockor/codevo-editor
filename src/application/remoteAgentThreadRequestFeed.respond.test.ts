@@ -159,6 +159,38 @@ describe("remoteAgentThreadRequestFeed respond", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("reads the turn again when an answer comes back without records", async () => {
+    const { gateway, feed, pushes } = await asked();
+    gateway.respond.mockResolvedValueOnce({ outcome: "answered", message: null });
+    gateway.record(TARGET, [resolved(T1, "req-1")]);
+
+    const outcome = await feed.respond(A, T1, "req-1", ALLOW);
+    await settle();
+
+    expect(outcome).toEqual({ kind: "answered" });
+    expect(gateway.threadRequests).toHaveBeenCalledTimes(2);
+    expect(shown(pushes[1])).toEqual([`${T1}/req-1@3:resolved`]);
+    expect(gateway.respond).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("reads the turn again when a late answer comes back without records", async () => {
+    const { gateway, feed, pushes } = await asked();
+    const answer = heldAnswer(gateway);
+    const responding = watched(feed.respond(A, T1, "req-1", ALLOW));
+    await vi.advanceTimersByTimeAsync(RESPOND_DEADLINE);
+    const confirmation = watched(confirmationAfter(responding));
+    gateway.record(TARGET, [resolved(T1, "req-1")]);
+
+    answer.finish({ outcome: "answered", message: null });
+    await settle();
+
+    expect(confirmation.settled()).toBe("settled");
+    expect(gateway.threadRequests).toHaveBeenCalledTimes(2);
+    expect(shown(pushes[pushes.length - 1])).toEqual([`${T1}/req-1@3:resolved`]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("reads the turn again when the runner refused the answer without records", async () => {
     const { gateway, feed, pushes } = await asked();
     gateway.respond.mockResolvedValueOnce({ outcome: "notAnswerable", message: null });

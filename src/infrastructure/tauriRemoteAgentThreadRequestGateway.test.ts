@@ -343,6 +343,17 @@ describe("TauriRemoteAgentThreadRequestGateway respond", () => {
     expect(invokeCommand).toHaveBeenCalledTimes(1);
   });
 
+  it("returns an answered outcome without a message so the caller reads the thread again", async () => {
+    const response = validCase(RESPOND_RESPONSES, "answeredWhileEpochMoved").value;
+    const request = answeredRequest(RESPOND_REQUESTS, RESPOND_RESPONSES, "answeredWhileEpochMoved");
+    const { gateway } = gatewayReturning(response);
+
+    await expect(gateway.respond(respondRequest(request))).resolves.toEqual({
+      outcome: "answered",
+      message: null,
+    });
+  });
+
   it("rejects an answered outcome of another thread", async () => {
     const answered = validCase(RESPOND_RESPONSES, "answeredApproval").value;
     const request = answeredRequest(RESPOND_REQUESTS, RESPOND_RESPONSES, "answeredApproval");

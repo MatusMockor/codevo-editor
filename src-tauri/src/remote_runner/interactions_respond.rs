@@ -10,7 +10,8 @@ use super::{
     types::uuid,
 };
 use crate::agent_questions::{
-    approvals::AgentApprovalDecision, AgentQuestionAnswerItem, AgentQuestionStatus,
+    approvals::{AgentApprovalDecision, AgentApprovalStatus},
+    AgentQuestionAnswerItem, AgentQuestionStatus,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -107,23 +108,44 @@ fn confirmed_approval(
 
 impl RemoteRequestItem {
     fn find(
-        current: RemoteInteractions,
+        current: &RemoteInteractions,
         request_id: &str,
         response: &RemoteRequestResponse,
     ) -> Result<Self, InteractionError> {
         let item = match response {
             RemoteRequestResponse::Question { .. } => current
                 .questions
-                .into_iter()
+                .iter()
                 .find(|question| question.id == request_id)
+                .cloned()
                 .map(Self::Question),
             RemoteRequestResponse::Approval { .. } => current
                 .approvals
-                .into_iter()
+                .iter()
                 .find(|approval| approval.id == request_id)
+                .cloned()
                 .map(Self::Approval),
         };
         item.ok_or(InteractionError::RequestGone)
+    }
+
+    fn settled_answer(&self, response: &RemoteRequestResponse) -> Option<bool> {
+        match (self, response) {
+            (Self::Question(question), RemoteRequestResponse::Question { answers })
+                if question.status == AgentQuestionStatus::Answered =>
+            {
+                Some(question.answers.as_deref() == Some(answers.as_slice()))
+            }
+            (Self::Approval(approval), RemoteRequestResponse::Approval { decision })
+                if matches!(
+                    approval.status,
+                    AgentApprovalStatus::Approved | AgentApprovalStatus::Denied
+                ) =>
+            {
+                Some(approval.decision == Some(*decision))
+            }
+            _ => None,
+        }
     }
 
     fn capability(&self) -> Option<ResponseCapability> {
@@ -191,49 +213,104 @@ fn admit_response(
     Ok(())
 }
 
+pub(super) struct Responded {
+    pub(super) outcome: RemoteRespondOutcome,
+    pub(super) read: RemoteInteractions,
+    pub(super) delivered: bool,
+}
+
+impl Responded {
+    fn observed(outcome: RemoteRespondOutcome, read: RemoteInteractions) -> Self {
+        Self {
+            outcome,
+            read,
+            delivered: false,
+        }
+    }
+}
+
+fn refused<P: InteractionRunnerPort>(
+    exchange: &Exchange<'_, P>,
+    request_id: &str,
+    response: &RemoteRequestResponse,
+) -> Result<Responded, InteractionError> {
+    let read = exchange.read()?;
+    let request = RemoteRequestItem::find(&read, request_id, response)?.refused();
+    Ok(Responded::observed(
+        RemoteRespondOutcome::NotAnswerable { request },
+        read,
+    ))
+}
+
 fn respond<P: InteractionRunnerPort>(
     exchange: &Exchange<'_, P>,
     request_id: &str,
     response: &RemoteRequestResponse,
-) -> Result<RemoteRespondOutcome, InteractionError> {
+) -> Result<Responded, InteractionError> {
     admit_response(request_id, response)?;
-    let item = RemoteRequestItem::find(exchange.read()?, request_id, response)?;
+    let read = exchange.read()?;
+    let item = RemoteRequestItem::find(&read, request_id, response)?;
     let body = item.body(response)?;
-    if matches!(
-        item.capability(),
-        Some(ResponseCapability::NotResumable { .. })
-    ) {
-        return Ok(RemoteRespondOutcome::NotAnswerable { request: item });
+    if item.settled_answer(response) == Some(true) {
+        return Ok(Responded::observed(
+            RemoteRespondOutcome::Answered { request: item },
+            read,
+        ));
+    }
+    if item.settled_answer(response) == Some(false)
+        || matches!(
+            item.capability(),
+            Some(ResponseCapability::NotResumable { .. })
+        )
+    {
+        return Ok(Responded::observed(
+            RemoteRespondOutcome::NotAnswerable { request: item },
+            read,
+        ));
     }
     match exchange.post(&item.route(), body) {
-        Ok(value) => Ok(RemoteRespondOutcome::Answered {
-            request: item.confirmed(response, value, exchange.task())?,
+        Ok(value) => Ok(Responded {
+            outcome: RemoteRespondOutcome::Answered {
+                request: item.confirmed(response, value, exchange.task())?,
+            },
+            read,
+            delivered: true,
         }),
-        Err(CallError::Conflict) => Ok(RemoteRespondOutcome::NotAnswerable {
-            request: RemoteRequestItem::find(exchange.read()?, request_id, response)?.refused(),
-        }),
+        Err(CallError::Conflict) => refused(exchange, request_id, response),
         Err(CallError::NotFound) => Err(InteractionError::RequestGone),
         Err(error) => Err(error.into()),
     }
 }
 
 pub(super) struct Delivery {
-    outcome: Result<RemoteRespondOutcome, InteractionError>,
+    responded: Result<Responded, InteractionError>,
     posted: bool,
 }
 
 impl Delivery {
-    pub(super) fn settle<P: InteractionRunnerPort>(
+    pub(super) fn posted(&self) -> bool {
+        self.posted
+    }
+
+    pub(super) fn settle_responded<P: InteractionRunnerPort>(
         self,
         port: &P,
-    ) -> Result<RemoteRespondOutcome, InteractionError> {
+    ) -> Result<Responded, InteractionError> {
         if port.is_current() {
-            return self.outcome;
+            return self.responded;
         }
         if self.posted {
             return Err(InteractionError::DeliveryUncertain);
         }
         Err(InteractionError::Superseded)
+    }
+
+    pub(super) fn settle<P: InteractionRunnerPort>(
+        self,
+        port: &P,
+    ) -> Result<RemoteRespondOutcome, InteractionError> {
+        self.settle_responded(port)
+            .map(|responded| responded.outcome)
     }
 }
 
@@ -245,13 +322,24 @@ pub(super) fn deliver<P: InteractionRunnerPort>(
     response: &RemoteRequestResponse,
     now: Instant,
 ) -> Delivery {
-    match Exchange::open(port, runner, task, now) {
+    deliver_until(port, runner, task, (request_id, response), now, None)
+}
+
+pub(super) fn deliver_until<P: InteractionRunnerPort>(
+    port: &P,
+    runner: &str,
+    task: &str,
+    (request_id, response): (&str, &RemoteRequestResponse),
+    now: Instant,
+    deadline: Option<Instant>,
+) -> Delivery {
+    match Exchange::open(port, runner, task, now).map(|exchange| exchange.until(deadline)) {
         Ok(exchange) => Delivery {
-            outcome: respond(&exchange, request_id, response),
+            responded: respond(&exchange, request_id, response),
             posted: exchange.posted(),
         },
         Err(error) => Delivery {
-            outcome: Err(error),
+            responded: Err(error),
             posted: false,
         },
     }

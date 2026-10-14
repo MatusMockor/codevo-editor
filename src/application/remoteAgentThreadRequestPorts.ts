@@ -53,15 +53,10 @@ export interface RemoteAgentThreadRespondRequest {
   readonly response: RemoteAgentThreadRequestResponse;
 }
 
-export type RemoteAgentThreadRespondResult =
-  | {
-      readonly outcome: "answered";
-      readonly message: AgentThreadRequests;
-    }
-  | {
-      readonly outcome: Exclude<RemoteAgentThreadRespondOutcome, "answered">;
-      readonly message: AgentThreadRequests | null;
-    };
+export interface RemoteAgentThreadRespondResult {
+  readonly outcome: RemoteAgentThreadRespondOutcome;
+  readonly message: AgentThreadRequests | null;
+}
 
 export class RemoteAgentThreadRequestNotSentError extends Error {
   constructor(message: string) {

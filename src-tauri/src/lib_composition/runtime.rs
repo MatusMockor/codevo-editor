@@ -351,6 +351,8 @@ pub fn run() {
             crate::remote_runner::answer_remote_agent_question,
             crate::remote_runner::get_remote_agent_interactions,
             crate::remote_runner::respond_remote_agent_request,
+            crate::remote_runner::get_remote_agent_thread_requests,
+            crate::remote_runner::respond_remote_agent_thread_request,
             crate::remote_runner::remote_runner_surface,
             crate::remote_runner::remote_runner_list_task_files,
             crate::remote_runner::remote_runner_get_task_file_diff,

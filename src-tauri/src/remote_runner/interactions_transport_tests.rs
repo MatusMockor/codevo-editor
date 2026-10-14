@@ -1,109 +1,6 @@
-use super::super::super::transport::Session;
-use super::super::super::types::Server;
+use super::super::super::interactions_fake::transport::*;
 use super::*;
-use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::Arc;
-use std::time::Duration;
-
-type Served = std::thread::JoinHandle<Vec<(String, String)>>;
-
-fn connection(server_id: &str, runner: &str) -> (ConnectionLease, UnixListener) {
-    let session = Arc::new(Session::fixture());
-    let listener = UnixListener::bind(session.socket_path()).expect("runner socket");
-    let server = Server {
-        id: server_id.into(),
-        name: server_id.into(),
-        host: "127.0.0.1".into(),
-        username: "codex".into(),
-        port: 22,
-        connected: true,
-        runner_id: Some(runner.into()),
-    };
-    (ConnectionLease::new(server, session), listener)
-}
-
-fn receive(socket: &mut UnixStream) -> (String, String) {
-    let mut head = Vec::new();
-    while !head.ends_with(b"\r\n\r\n") {
-        let mut byte = [0];
-        socket.read_exact(&mut byte).expect("request head");
-        head.push(byte[0]);
-    }
-    let head = String::from_utf8(head).expect("request head text");
-    let length = head
-        .lines()
-        .filter_map(|line| line.split_once(':'))
-        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
-        .unwrap_or(0);
-    let mut body = vec![0; length];
-    socket.read_exact(&mut body).expect("request body");
-    (head, String::from_utf8(body).expect("request body text"))
-}
-
-fn serve(
-    listener: UnixListener,
-    runner: &'static str,
-    exchanges: usize,
-    mut reply: impl FnMut(&str) -> (u16, Value) + Send + 'static,
-) -> Served {
-    listener
-        .set_nonblocking(true)
-        .expect("nonblocking listener");
-    std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let mut served = Vec::new();
-        while served.len() < exchanges && Instant::now() < deadline {
-            let accepted = listener.accept();
-            if accepted.is_err() {
-                std::thread::sleep(Duration::from_millis(5));
-                continue;
-            }
-            let (mut socket, _) = accepted.expect("accepted connection");
-            socket.set_nonblocking(false).expect("blocking socket");
-            socket
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .expect("read timeout");
-            let (head, body) = receive(&mut socket);
-            let line = head
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .trim_end_matches(" HTTP/1.1")
-                .to_string();
-            let (status, value) = match line.as_str() {
-                "GET /healthz" => (200, json!({})),
-                "GET /v1/runner" => (200, json!({"protocolVersion": 1, "runnerId": runner})),
-                other => reply(other),
-            };
-            let payload = value.to_string();
-            write!(
-                socket,
-                "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
-                payload.len()
-            )
-            .expect("response");
-            if line != "GET /healthz" {
-                served.push((head, body));
-            }
-        }
-        served
-    })
-}
-
-fn lines(served: &[(String, String)]) -> Vec<String> {
-    served
-        .iter()
-        .map(|(head, _)| {
-            head.lines()
-                .next()
-                .unwrap_or_default()
-                .trim_end_matches(" HTTP/1.1")
-                .to_string()
-        })
-        .collect()
-}
+use std::collections::VecDeque;
 
 #[test]
 fn server_a_cannot_read_server_b_task() {
@@ -180,8 +77,8 @@ fn real_transport_404_and_409_drive_fallback_and_not_answerable() {
     let (lease, listener) = connection("server-a", "runner-a");
     let questions = format!("GET {}", route("questions"));
     let answer_route = format!("POST {}", route(&format!("questions/{QUESTION}/answer")));
-    let mut statuses = VecDeque::from(["pending", "expired"]);
-    let served = serve(listener, "runner-a", 14, move |line| {
+    let mut statuses = VecDeque::from(["pending", "pending", "expired"]);
+    let served = serve(listener, "runner-a", 16, move |line| {
         if line == questions {
             let status = statuses.pop_front().unwrap_or("expired");
             return (200, json!({"items": [legacy_question(status)]}));
@@ -222,36 +119,19 @@ fn real_transport_404_and_409_drive_fallback_and_not_answerable() {
             format!("GET {}", route("interactions")),
             format!("GET {}", route("questions")),
             format!("GET {}", route("approvals")),
+            format!("GET {}", route("questions")),
+            format!("GET {}", route("approvals")),
             format!("GET {}", route("interactions")),
             format!("POST {}", route(&format!("questions/{QUESTION}/answer"))),
             format!("GET {}", route("questions")),
-            format!("GET {}", route("approvals")),
         ]
     );
-    assert_eq!(served.len(), 14);
-    let posted: Value = serde_json::from_str(&served[9].1).expect("posted answer");
+    assert_eq!(served.len(), 16);
+    let posted: Value = serde_json::from_str(&served[13].1).expect("posted answer");
     assert_eq!(
         posted,
         json!({"answers": [{"questionId": "storage", "optionIds": ["sqlite"], "text": ""}]})
     );
-}
-
-fn state() -> (RemoteRunnerState, std::path::PathBuf) {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let directory = std::env::temp_dir().join(format!(
-        "codevo-remote-interactions-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    let state = RemoteRunnerState::new(directory.clone()).expect("runner state");
-    (state, directory)
-}
-
-fn never_contacted(listener: &UnixListener) -> bool {
-    listener
-        .set_nonblocking(true)
-        .expect("nonblocking listener");
-    listener.accept().is_err()
 }
 
 #[test]

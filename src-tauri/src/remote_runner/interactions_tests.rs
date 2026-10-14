@@ -1,193 +1,7 @@
-use super::super::interactions_ledger::LEGACY_PROBE_INTERVAL;
+use super::super::interactions_fake::*;
+use super::super::interactions_ledger::{APPROVALS_PROBE_INTERVAL, LEGACY_PROBE_INTERVAL};
 use super::*;
 use serde_json::json;
-use std::cell::{Cell, RefCell};
-use std::collections::VecDeque;
-
-const FIXTURE: &str = include_str!("fixtures/agent-interactions-wire.json");
-const RUNNER: &str = "linux-runner";
-const TASK: &str = "8c0d1f5e-2a3b-4c4d-9e5f-6a7b8c9d0e1f";
-const OTHER_TASK: &str = "7389088c-29b8-4cec-9a15-e825e1fb2f66";
-const QUESTION: &str = "a0000000-0000-4000-8000-000000000001";
-const APPROVAL: &str = "b0000000-0000-4000-8000-000000000001";
-
-type Reply = Result<Value, String>;
-type Call = (String, String, Option<Value>);
-
-struct FakeRunner {
-    runner: String,
-    current: Cell<bool>,
-    swapped: Cell<bool>,
-    revoke_on_call: Option<usize>,
-    swap_on_call: Option<usize>,
-    replies: RefCell<VecDeque<Reply>>,
-    calls: RefCell<Vec<Call>>,
-    ledger: InteractionLedger,
-}
-
-impl FakeRunner {
-    fn replying(replies: Vec<Reply>) -> Self {
-        Self {
-            runner: RUNNER.into(),
-            current: Cell::new(true),
-            swapped: Cell::new(false),
-            revoke_on_call: None,
-            swap_on_call: None,
-            replies: RefCell::new(replies.into()),
-            calls: RefCell::new(Vec::new()),
-            ledger: InteractionLedger::default(),
-        }
-    }
-
-    fn queue(&self, replies: Vec<Reply>) {
-        self.replies.borrow_mut().extend(replies);
-    }
-
-    fn calls(&self) -> Vec<Call> {
-        self.calls.borrow().clone()
-    }
-
-    fn routes(&self) -> Vec<String> {
-        self.calls()
-            .into_iter()
-            .map(|(method, path, _)| format!("{method} {path}"))
-            .collect()
-    }
-}
-
-impl InteractionRunnerPort for FakeRunner {
-    fn runner_id(&self) -> &str {
-        if self.swapped.get() {
-            return "replacement-runner";
-        }
-        &self.runner
-    }
-
-    fn is_current(&self) -> bool {
-        self.current.get()
-    }
-
-    fn ledger(&self) -> &InteractionLedger {
-        &self.ledger
-    }
-
-    fn call(&self, method: &'static str, path: &str, body: Option<Value>) -> Reply {
-        self.calls
-            .borrow_mut()
-            .push((method.into(), path.into(), body));
-        let made = self.calls.borrow().len();
-        if self.revoke_on_call == Some(made) {
-            self.current.set(false);
-        }
-        if self.swap_on_call == Some(made) {
-            self.swapped.set(true);
-        }
-        self.replies
-            .borrow_mut()
-            .pop_front()
-            .unwrap_or_else(|| Err("unexpected runner call".into()))
-    }
-}
-
-fn snapshot(name: &str) -> Value {
-    let fixture: Value = serde_json::from_str(FIXTURE).expect("interaction fixture is JSON");
-    fixture["snapshots"]
-        .as_array()
-        .expect("snapshots")
-        .iter()
-        .find(|case| case["name"] == name)
-        .expect("named snapshot")["value"]
-        .clone()
-}
-
-fn live() -> Value {
-    snapshot("livePendingQuestionAndApproval")
-}
-
-fn legacy(item: &Value) -> Value {
-    let mut item = item.clone();
-    let fields = item.as_object_mut().expect("wire item");
-    for added in ["createdAt", "settledAt", "responseCapability"] {
-        fields.remove(added);
-    }
-    item
-}
-
-fn legacy_question(status: &str) -> Value {
-    let mut item = legacy(&live()["questions"][0]);
-    item["status"] = status.into();
-    item
-}
-
-fn legacy_approval(status: &str) -> Value {
-    let mut item = legacy(&live()["approvals"][0]);
-    item["status"] = status.into();
-    item
-}
-
-fn composed(item: Value, capability: Option<Value>) -> Value {
-    let mut item = item;
-    item["createdAt"] = Value::Null;
-    item["settledAt"] = Value::Null;
-    if let Some(capability) = capability {
-        item["responseCapability"] = capability;
-    }
-    item
-}
-
-fn items(items: Vec<Value>) -> Reply {
-    Ok(json!({ "items": items }))
-}
-
-fn not_found() -> Reply {
-    Err("Runner request failed (HTTP 404).".into())
-}
-
-fn conflict() -> Reply {
-    Err("Runner request failed (HTTP 409).".into())
-}
-
-fn route(suffix: &str) -> String {
-    format!("/v1/tasks/{TASK}/{suffix}")
-}
-
-fn read_at(runner: &FakeRunner, now: Instant) -> Result<RemoteInteractions, InteractionError> {
-    settle_read(runner, read_under(runner, RUNNER, TASK, now))
-}
-
-fn answer_at(
-    runner: &FakeRunner,
-    request_id: &str,
-    response: &RemoteRequestResponse,
-    now: Instant,
-) -> Result<RemoteRespondOutcome, InteractionError> {
-    deliver(runner, RUNNER, TASK, request_id, response, now).settle(runner)
-}
-
-fn answer(
-    runner: &FakeRunner,
-    request_id: &str,
-    response: &RemoteRequestResponse,
-) -> Result<RemoteRespondOutcome, InteractionError> {
-    answer_at(runner, request_id, response, Instant::now())
-}
-
-fn choose(option: &str) -> RemoteRequestResponse {
-    serde_json::from_value(json!({
-        "kind": "question",
-        "answers": [{"questionId": "storage", "optionIds": [option], "text": ""}]
-    }))
-    .expect("question response")
-}
-
-fn decide(decision: &str) -> RemoteRequestResponse {
-    serde_json::from_value(json!({"kind": "approval", "decision": decision}))
-        .expect("approval response")
-}
-
-fn wire<T: Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).expect("serialisable IPC value")
-}
 
 #[test]
 fn runner_snapshot_crosses_ipc_unchanged_with_its_source() {
@@ -289,9 +103,11 @@ fn legacy_approval_expiry_is_carried_and_never_decided_locally() {
 }
 
 #[test]
-fn runner_without_approvals_composes_questions_and_skips_the_snapshot_probe_afterwards() {
+fn runner_without_approvals_is_confirmed_twice_and_then_asked_for_questions_only() {
     let now = Instant::now();
     let runner = FakeRunner::replying(vec![
+        not_found(),
+        items(vec![legacy_question("pending")]),
         not_found(),
         items(vec![legacy_question("pending")]),
         not_found(),
@@ -303,16 +119,116 @@ fn runner_without_approvals_composes_questions_and_skips_the_snapshot_probe_afte
     assert!(first.approvals.is_empty());
     assert!(!first.approvals_truncated);
     assert!(runner.ledger.is_legacy_runner(now));
-    runner.queue(vec![items(vec![legacy_question("pending")]), not_found()]);
-    let second = read_at(&runner, now + LEGACY_PROBE_INTERVAL / 2).unwrap();
-    assert_eq!(second, first);
+    assert!(runner.ledger.lacks_approvals(now));
     assert_eq!(
-        runner.routes()[4..],
+        runner.routes(),
         [
+            format!("GET {}", route("interactions")),
             format!("GET {}", route("questions")),
             format!("GET {}", route("approvals")),
+            format!("GET {}", route("questions")),
+            format!("GET {}", route("approvals")),
+            format!("GET {}", route("interactions")),
         ]
     );
+    runner.queue(vec![items(vec![legacy_question("pending")])]);
+    let second = read_at(&runner, now + APPROVALS_PROBE_INTERVAL / 2).unwrap();
+    assert_eq!(second, first);
+    assert_eq!(
+        runner.routes()[6..],
+        [format!("GET {}", route("questions"))]
+    );
+    runner.queue(vec![
+        not_found(),
+        items(vec![legacy_question("pending")]),
+        items(vec![legacy_approval("pending")]),
+        not_found(),
+    ]);
+    let later = read_at(&runner, now + APPROVALS_PROBE_INTERVAL).unwrap();
+    assert_eq!(later.approvals.len(), 1);
+    assert!(!runner
+        .ledger
+        .lacks_approvals(now + APPROVALS_PROBE_INTERVAL));
+    assert_eq!(
+        runner.routes()[7..],
+        [
+            format!("GET {}", route("interactions")),
+            format!("GET {}", route("questions")),
+            format!("GET {}", route("approvals")),
+            format!("GET {}", route("interactions")),
+        ]
+    );
+}
+
+#[test]
+fn missing_approvals_route_is_remembered_only_on_definitive_evidence() {
+    let now = Instant::now();
+    let unavailable = || Err("Runner request failed (HTTP 503).".to_string());
+    let question = || items(vec![legacy_question("pending")]);
+    let vanished = FakeRunner::replying(vec![not_found(), question(), not_found(), not_found()]);
+    assert_eq!(
+        read_at(&vanished, now).unwrap_err(),
+        InteractionError::TaskNotFound
+    );
+    assert!(!vanished.ledger.lacks_approvals(now));
+    assert!(!vanished.ledger.is_legacy_runner(now));
+    let unproven = FakeRunner::replying(vec![not_found(), question(), not_found(), unavailable()]);
+    assert_eq!(
+        read_at(&unproven, now).unwrap_err(),
+        InteractionError::Transport("Runner request failed (HTTP 503).".into())
+    );
+    assert!(!unproven.ledger.lacks_approvals(now));
+    let malformed_proof = FakeRunner::replying(vec![
+        not_found(),
+        question(),
+        not_found(),
+        Ok(json!({"items": "none"})),
+    ]);
+    assert_eq!(
+        read_at(&malformed_proof, now).unwrap_err(),
+        InteractionError::Wire(WireError::Malformed)
+    );
+    assert!(!malformed_proof.ledger.lacks_approvals(now));
+    let unconfirmed = FakeRunner::replying(vec![
+        not_found(),
+        question(),
+        not_found(),
+        question(),
+        unavailable(),
+    ]);
+    assert_eq!(
+        read_at(&unconfirmed, now).unwrap_err(),
+        InteractionError::Transport("Runner request failed (HTTP 503).".into())
+    );
+    assert!(!unconfirmed.ledger.lacks_approvals(now));
+    let transient = FakeRunner::replying(vec![
+        not_found(),
+        question(),
+        not_found(),
+        question(),
+        items(vec![legacy_approval("pending")]),
+        not_found(),
+    ]);
+    let read = read_at(&transient, now).unwrap();
+    assert_eq!(read.approvals.len(), 1);
+    assert!(!transient.ledger.lacks_approvals(now));
+    assert!(transient.ledger.is_legacy_runner(now));
+    let superseded = FakeRunner {
+        revoke_on_call: Some(5),
+        ..FakeRunner::replying(vec![
+            not_found(),
+            question(),
+            not_found(),
+            question(),
+            not_found(),
+        ])
+    };
+    assert_eq!(
+        read_at(&superseded, now).unwrap_err(),
+        InteractionError::Superseded
+    );
+    assert!(!superseded.ledger.lacks_approvals(now));
+    assert_eq!(superseded.calls().len(), 5);
 }
 
 #[test]
@@ -597,10 +513,11 @@ fn refused_request_is_never_returned_as_live() {
         not_found(),
         items(vec![legacy_question("pending")]),
         not_found(),
+        items(vec![legacy_question("pending")]),
+        not_found(),
         not_found(),
         conflict(),
         items(vec![legacy_question("pending")]),
-        not_found(),
     ]);
     let outcome = answer_at(&legacy_runner, QUESTION, &choose("sqlite"), now).unwrap();
     assert_eq!(

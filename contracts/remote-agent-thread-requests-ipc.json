@@ -1927,7 +1927,7 @@
     ]
   },
   "respondResponses": {
-    "description": "Response of respond_remote_agent_thread_request. Every valid case names the valid request it answers; an invalid case answers the request of its base. outcome is one of outcomes. message is null or one thread message bound to the request like a list response; answered always carries a message. No other key is accepted.",
+    "description": "Response of respond_remote_agent_thread_request. Every valid case names the valid request it answers; an invalid case answers the request of its base. outcome is one of outcomes. message is null or one thread message bound to the request like a list response. Every outcome, answered included, may carry null when the record cannot be bound to the epoch the client already holds, for example because the connection's epoch moved while the answer was delivered; the client then reads the thread again. No other key is accepted.",
     "valid": [
       {
         "name": "answeredQuestion",
@@ -2096,6 +2096,15 @@
         }
       },
       {
+        "name": "answeredWhileEpochMoved",
+        "description": "Delivered answer whose record cannot be bound to the client's epoch.",
+        "request": "approvalAllowedOnce",
+        "value": {
+          "outcome": "answered",
+          "message": null
+        }
+      },
+      {
         "name": "notAnswerableWithRefusedRecord",
         "description": "Refused answer comes back as a record that can no longer be answered.",
         "request": "approvalDenied",
@@ -2200,14 +2209,6 @@
         "base": "notAnswerableWithoutMessage",
         "patch": {
           "outcome": true
-        }
-      },
-      {
-        "name": "answeredWithoutMessage",
-        "description": "Answered outcome has no message.",
-        "base": "answeredApproval",
-        "patch": {
-          "message": null
         }
       },
       {

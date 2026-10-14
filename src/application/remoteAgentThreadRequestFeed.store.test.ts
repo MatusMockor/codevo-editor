@@ -150,6 +150,43 @@ describe("remoteAgentThreadRequestFeed under the thread request store", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("rebuilds the thread in the new epoch after an answer that came back without records", async () => {
+    const { gateway, feed, store } = await harness();
+    gateway.record(TARGET_A, [pending(T1, "req-1"), pending(T2, "req-2")]);
+    const epochs: string[] = [];
+    const seen = recorder();
+    feed.describe(A, snapshot([turn(T1, 1), turn(T2, 1)]));
+    store.watch(A, [T1, T2], (observation) => {
+      if (observation.kind === "observed") epochs.push(observation.state.epoch);
+      seen.listener(observation);
+    });
+    await settle();
+    expect(seen.last()).toEqual([`${T1}/req-1@1:pending`, `${T2}/req-2@1:pending`]);
+    const before = gateway.threadRequests.mock.calls.length;
+    const shownBefore = seen.views().length;
+
+    gateway.stamp(TARGET_A, { epoch: "rr1-snapshot-2-1" });
+    gateway.record(TARGET_A, [resolved(T1, "req-1")]);
+    gateway.respond.mockResolvedValueOnce({ outcome: "answered", message: null });
+    const outcome = await feed.respond(A, T1, "req-1", { kind: "approval", decision: "allowOnce" });
+    await settle();
+
+    expect(outcome).toEqual({ kind: "answered" });
+    const reads = gateway.threadRequests.mock.calls.slice(before).map(([request]) => ({
+      turns: request.turns.map((described) => described.turnId),
+      cursor: request.cursor,
+    }));
+    expect(reads).toEqual([
+      { turns: [T1], cursor: null },
+      { turns: [T1, T2], cursor: null },
+    ]);
+    expect(seen.last()).toEqual([`${T1}/req-1@3:resolved`, `${T2}/req-2@1:pending`]);
+    expect(epochs[epochs.length - 1]).toBe("rr1-snapshot-2-1");
+    const after = seen.views().slice(shownBefore).flat();
+    expect(after).not.toContain(`${T1}/req-1@1:pending`);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("shows a moved sequence through one read and one push without a new pull", async () => {
     const { gateway, feed, store, pushes } = await harness();
     gateway.record(TARGET_A, [pending(T1, "req-1")]);
