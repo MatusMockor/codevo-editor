@@ -63,6 +63,7 @@ import {
   type RecentLocation,
 } from "./recentLocations";
 import { DEFAULT_APPEARANCE, normalizeAppearance, type AppearanceSettings } from "./appearance";
+import { DEFAULT_WINDOW_ZOOM_LEVEL, normalizeWindowZoomLevel } from "./windowZoom";
 import {
   normalizeLastCloneParentPath,
   normalizeRecentWorkspaceOpenedAt,
@@ -166,6 +167,7 @@ export interface AppSettings {
   runtimePolicy: BackgroundRuntimePolicy;
   terminalShellIntegrationEnabled: boolean;
   appearance: AppearanceSettings;
+  windowZoomLevel: number;
   wordWrapEnabled?: boolean;
   /**
    * User-authored live templates, GLOBAL (app-level, not per-workspace) like
@@ -285,6 +287,7 @@ export interface StatusBarItemVisibility {
 export interface SettingsGateway {
   loadAppSettings(): Promise<AppSettings>;
   readInitialAppearance?(): AppearanceSettings;
+  readInitialWindowZoomLevel?(): number;
   saveAppSettings(settings: AppSettings): Promise<void>;
   loadWorkspaceSettings(identity: string | WorkspaceSettingsIdentity): Promise<WorkspaceSettings>;
   saveWorkspaceSettings(
@@ -316,6 +319,7 @@ export function defaultAppSettings(): AppSettings {
     runtimePolicy: "keepAlive",
     terminalShellIntegrationEnabled: false,
     appearance: DEFAULT_APPEARANCE,
+    windowZoomLevel: DEFAULT_WINDOW_ZOOM_LEVEL,
     wordWrapEnabled: false,
     userSnippets: [],
     workspaceTabs: [],
@@ -517,6 +521,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     runtimePolicy,
     terminalShellIntegrationEnabled,
     appearance: normalizeAppearance(value.appearance, value.theme),
+    windowZoomLevel: normalizeWindowZoomLevel(value.windowZoomLevel),
     wordWrapEnabled,
     userSnippets,
     workspaceTabs,

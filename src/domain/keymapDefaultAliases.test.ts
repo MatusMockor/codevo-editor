@@ -14,13 +14,13 @@ import {
 const PLATFORMS: readonly KeymapPlatform[] = ["mac", "linux", "windows", "other"];
 
 describe("keymapDefaultAliases", () => {
-  it("maps the font zoom in alias to the platform primary modifier", () => {
+  it("maps the window zoom in alias to the platform primary modifier", () => {
     expect(keymapDefaultAliases("mac")).toEqual([
-      { commandId: "editor.fontZoomIn", shortcut: "Cmd+Shift+=" },
+      { commandId: "workbench.zoomIn", shortcut: "Cmd+Shift+=" },
     ]);
     for (const platform of ["linux", "windows", "other"] as const) {
       expect(keymapDefaultAliases(platform)).toEqual([
-        { commandId: "editor.fontZoomIn", shortcut: "Ctrl+Shift+=" },
+        { commandId: "workbench.zoomIn", shortcut: "Ctrl+Shift+=" },
       ]);
     }
   });
@@ -46,8 +46,8 @@ describe("keymapDefaultAliases", () => {
 
   it("deactivates an alias once its command leaves the default shortcut", () => {
     const [alias] = keymapDefaultAliases("mac");
-    const rebound = { ...defaultKeymapSettings("mac"), "editor.fontZoomIn": "Cmd+Alt+I" };
-    const unbound = { ...defaultKeymapSettings("mac"), "editor.fontZoomIn": "" };
+    const rebound = { ...defaultKeymapSettings("mac"), "workbench.zoomIn": "Cmd+Alt+I" };
+    const unbound = { ...defaultKeymapSettings("mac"), "workbench.zoomIn": "" };
 
     expect(alias && keymapDefaultAliasIsActive(rebound, alias, "mac")).toBe(false);
     expect(alias && keymapDefaultAliasIsActive(unbound, alias, "mac")).toBe(false);
@@ -84,21 +84,21 @@ describe("keymapDefaultAliases", () => {
         keyEvent({ key: "+", metaKey: true, shiftKey: true }),
         "mac",
       ),
-    ).toEqual(["editor.fontZoomIn"]);
+    ).toEqual(["workbench.zoomIn"]);
     expect(
       keymapDefaultAliasCommandIdsForEvent(
         mac,
         keyEvent({ key: "=", metaKey: true, shiftKey: true }),
         "mac",
       ),
-    ).toEqual(["editor.fontZoomIn"]);
+    ).toEqual(["workbench.zoomIn"]);
     expect(
       keymapDefaultAliasCommandIdsForEvent(
         linux,
         keyEvent({ ctrlKey: true, key: "+", shiftKey: true }),
         "linux",
       ),
-    ).toEqual(["editor.fontZoomIn"]);
+    ).toEqual(["workbench.zoomIn"]);
     expect(
       keymapDefaultAliasCommandIdsForEvent(
         mac,

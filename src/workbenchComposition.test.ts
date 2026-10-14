@@ -14,6 +14,7 @@ import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGa
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
+import { tauriWindowZoomGateway } from "./infrastructure/tauriWindowZoomGateway";
 import packageMetadata from "../package.json";
 import { sessionRestoreFlushRegistry } from "./application/sessionRestorePersistence";
 import {
@@ -42,6 +43,12 @@ vi.mock("@tauri-apps/plugin-updater", () => ({ Update: updaterBridge.Update }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: updaterBridge.relaunch }));
 
 describe("workbench live-document runtime composition", () => {
+  it("injects the window zoom gateway into the production controller options", () => {
+    const composition = createWorkbenchComposition();
+    expect(composition.agentControllerGateways.windowZoomGateway).toBe(tauriWindowZoomGateway);
+    expect(composition.windowZoomGateway).toBe(tauriWindowZoomGateway);
+  });
+
   it("checks the single configured update source through Rust and prepares an update without restarting", async () => {
     updaterBridge.invoke.mockResolvedValueOnce("prepareBeforeRestart").mockResolvedValueOnce({
       kind: "available",

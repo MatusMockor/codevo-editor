@@ -17,7 +17,7 @@ export interface KeymapDefaultAlias {
 }
 
 const KEYMAP_DEFAULT_ALIASES: readonly KeymapDefaultAlias[] = Object.freeze([
-  Object.freeze({ commandId: "editor.fontZoomIn", shortcut: "Cmd+Shift+=" }),
+  Object.freeze({ commandId: "workbench.zoomIn", shortcut: "Cmd+Shift+=" }),
 ]);
 
 export function keymapDefaultAliases(

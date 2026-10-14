@@ -1117,11 +1117,11 @@ describe("useWorkbenchKeyboardShortcuts", () => {
   });
 
   it.each(["mac", "linux", "windows"] as const)(
-    "increases the editor font size from the shifted + chord on %s with and without editor text focus",
+    "increases the window zoom from the shifted + chord on %s with and without editor text focus",
     (platform) => {
       withKeymapPlatform(platform, () => {
         const zoomIn = vi.fn();
-        const harness = renderHook({ commandRegistry: fontZoomInRegistry(zoomIn) });
+        const harness = renderHook({ commandRegistry: windowZoomInRegistry(zoomIn) });
         const monaco = createMonacoTextInput();
         const outside = document.createElement("input");
         document.body.append(outside);
@@ -1143,10 +1143,10 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     },
   );
 
-  it("keeps increasing the editor font size from Cmd+= and an unshifted + key", () => {
+  it("keeps increasing the window zoom from Cmd+= and an unshifted + key", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
-      const harness = renderHook({ commandRegistry: fontZoomInRegistry(zoomIn) });
+      const harness = renderHook({ commandRegistry: windowZoomInRegistry(zoomIn) });
 
       expect(dispatchKeyboardEvent({ key: "=", metaKey: true }).defaultPrevented).toBe(true);
       expect(zoomIn).toHaveBeenCalledTimes(1);
@@ -1157,10 +1157,10 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     });
   });
 
-  it("consumes the shifted + chord without running a disabled font zoom in command", () => {
+  it("consumes the shifted + chord without running a disabled window zoom in command", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
-      const harness = renderHook({ commandRegistry: fontZoomInRegistry(zoomIn, false) });
+      const harness = renderHook({ commandRegistry: windowZoomInRegistry(zoomIn, false) });
 
       const event = dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac);
 
@@ -1171,16 +1171,16 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     });
   });
 
-  it("drops the shifted + alias once font zoom in is rebound", () => {
+  it("drops the shifted + alias once window zoom in is rebound", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
       const appSettings = defaultAppSettings();
       const harness = renderHook({
         appSettings: {
           ...appSettings,
-          keymap: { ...appSettings.keymap, "editor.fontZoomIn": "Cmd+Alt+I" },
+          keymap: { ...appSettings.keymap, "workbench.zoomIn": "Cmd+Alt+I" },
         },
-        commandRegistry: fontZoomInRegistry(zoomIn),
+        commandRegistry: windowZoomInRegistry(zoomIn),
       });
       const monaco = createMonacoTextInput();
 
@@ -1208,7 +1208,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
       const save = vi.fn();
-      const registry = fontZoomInRegistry(zoomIn);
+      const registry = windowZoomInRegistry(zoomIn);
       registry.register({
         category: "Editor",
         id: "editor.save",
@@ -1244,7 +1244,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
           ...appSettings,
           keymap: { ...appSettings.keymap, "editor.unfoldAll": "Cmd+Shift+=" },
         },
-        commandRegistry: fontZoomInRegistry(zoomIn),
+        commandRegistry: windowZoomInRegistry(zoomIn),
       });
       const monaco = createMonacoTextInput();
 
@@ -1266,7 +1266,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
       const runAtCursor = vi.fn();
-      const registry = fontZoomInRegistry(zoomIn);
+      const registry = windowZoomInRegistry(zoomIn);
       registry.register({
         category: "Test",
         id: "testing.runAtCursor",
@@ -1299,6 +1299,151 @@ describe("useWorkbenchKeyboardShortcuts", () => {
       expect(zoomIn).toHaveBeenCalledTimes(1);
 
       editor.remove();
+      harness.unmount();
+    });
+  });
+
+  it.each([
+    ["workbench.zoomIn", { code: "Equal", key: "ž", metaKey: true }],
+    ["workbench.zoomIn", { code: "Equal", key: "-", metaKey: true }],
+    ["workbench.zoomIn", { code: "Equal", key: "1", metaKey: true, shiftKey: true }],
+    ["workbench.zoomIn", { code: "NumpadAdd", key: "Add", metaKey: true }],
+    ["workbench.zoomOut", { code: "Minus", key: "=", metaKey: true }],
+    ["workbench.zoomOut", { code: "NumpadSubtract", key: "Subtract", metaKey: true }],
+    ["workbench.zoomReset", { code: "Digit0", key: "é", metaKey: true }],
+    ["workbench.zoomReset", { code: "Numpad0", key: "Insert", metaKey: true }],
+  ] as const)("captures %s before focused surfaces consume it", (id, eventInit) => {
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const registry = new CommandRegistry();
+      registry.register({ category: "Workbench", id, isEnabled: () => true, run, title: id });
+      const harness = renderHook({ commandRegistry: registry });
+      for (const surface of ["monaco-editor", "xterm", "agent-composer", "dialog"]) {
+        const container = document.createElement("div");
+        container.className = surface;
+        if (surface === "dialog") {
+          container.setAttribute("role", "dialog");
+          container.setAttribute("aria-modal", "true");
+        }
+        const input = document.createElement("textarea");
+        container.append(input);
+        document.body.append(container);
+        const consume = vi.fn((event: KeyboardEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+        });
+        input.addEventListener("keydown", consume);
+        input.focus();
+        expect(dispatchKeyboardEventFrom(input, eventInit).defaultPrevented).toBe(true);
+        expect(consume).not.toHaveBeenCalled();
+        container.remove();
+      }
+      expect(dispatchKeyboardEvent(eventInit).defaultPrevented).toBe(true);
+      expect(run).toHaveBeenCalledTimes(5);
+      harness.unmount();
+    });
+  });
+
+  it("captures a custom zoom chord before the agent composer consumes both strokes", () => {
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, "workbench.zoomIn": "Cmd+K Cmd+=" },
+        },
+        commandRegistry: windowZoomInRegistry(run),
+      });
+      const input = document.createElement("textarea");
+      document.body.append(input);
+      const consume = vi.fn((event: KeyboardEvent) => event.stopPropagation());
+      input.addEventListener("keydown", consume);
+      input.focus();
+      expect(dispatchKeyboardEventFrom(input, { key: "k", metaKey: true }).defaultPrevented).toBe(
+        true,
+      );
+      expect(run).not.toHaveBeenCalled();
+      expect(dispatchKeyboardEventFrom(input, { key: "=", metaKey: true }).defaultPrevented).toBe(
+        true,
+      );
+      expect(run).toHaveBeenCalledOnce();
+      expect(consume).not.toHaveBeenCalled();
+      input.remove();
+      harness.unmount();
+    });
+  });
+
+  it.each([
+    ["Cmd+=", [{ code: "Equal", key: "ž", metaKey: true }]],
+    ["Cmd+I", [{ code: "KeyI", key: "i", metaKey: true }]],
+    [
+      "Cmd+K Cmd+=",
+      [
+        { code: "KeyK", key: "k", metaKey: true },
+        { code: "Equal", key: "=", metaKey: true },
+      ],
+    ],
+  ] as const)("captures %s when a modal has already prevented the event", (shortcut, strokes) => {
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, "workbench.zoomIn": shortcut },
+        },
+        commandRegistry: windowZoomInRegistry(run),
+      });
+      const modal = document.createElement("div");
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      const input = document.createElement("textarea");
+      modal.append(input);
+      document.body.append(modal);
+      const consume = vi.fn((event: KeyboardEvent) => event.stopPropagation());
+      input.addEventListener("keydown", consume);
+      input.focus();
+      for (const stroke of strokes) {
+        const event = new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          ...stroke,
+        });
+        event.preventDefault();
+        input.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(true);
+      }
+      expect(run).toHaveBeenCalledOnce();
+      expect(consume).not.toHaveBeenCalled();
+      modal.remove();
+      harness.unmount();
+    });
+  });
+
+  it("preserves custom editor font zoom bindings", () => {
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const registry = new CommandRegistry();
+      registry.register({
+        category: "Editor",
+        id: "editor.fontZoomIn",
+        isEnabled: () => true,
+        run,
+        title: "Increase Editor Font Size",
+      });
+      const appSettings = defaultAppSettings();
+      const harness = renderHook({
+        appSettings: {
+          ...appSettings,
+          keymap: { ...appSettings.keymap, "editor.fontZoomIn": "Cmd+Alt+=" },
+        },
+        commandRegistry: registry,
+      });
+      expect(
+        dispatchKeyboardEvent({ altKey: true, key: "=", metaKey: true }).defaultPrevented,
+      ).toBe(true);
+      expect(run).toHaveBeenCalledOnce();
       harness.unmount();
     });
   });
@@ -1447,14 +1592,14 @@ function commandShortcutCase(
   };
 }
 
-function fontZoomInRegistry(run: () => void, enabled = true): CommandRegistry {
+function windowZoomInRegistry(run: () => void, enabled = true): CommandRegistry {
   const registry = new CommandRegistry();
   registry.register({
     category: "Editor",
-    id: "editor.fontZoomIn",
+    id: "workbench.zoomIn",
     isEnabled: () => enabled,
     run,
-    title: "Increase Editor Font Size",
+    title: "Zoom In",
   });
   return registry;
 }

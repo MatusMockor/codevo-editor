@@ -28,6 +28,15 @@ function containerWithSkeleton(): HTMLElement {
 }
 
 describe("handing the startup skeleton to React", () => {
+  it("settles startup zoom before observing shell paint or importing the workbench", () => {
+    const bootstrap = MAIN_SOURCE.slice(MAIN_SOURCE.indexOf("async function bootstrap"));
+    const ready = bootstrap.indexOf("await startupWindowReady");
+    expect(ready).toBeGreaterThanOrEqual(0);
+    expect(ready).toBeLessThan(bootstrap.indexOf("await waitForStartupShellPaint"));
+    expect(ready).toBeLessThan(bootstrap.indexOf('import("./App")'));
+    expect(MAIN_SOURCE).toContain("level: readBrowserStartupWindowZoomLevel()");
+  });
+
   it("lets React replace the skeleton inside its own commit", () => {
     const host = containerWithSkeleton();
     const root = createRoot(host);

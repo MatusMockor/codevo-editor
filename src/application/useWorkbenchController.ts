@@ -793,7 +793,7 @@ export function useWorkbenchController(
     bumpPhpIdeReadinessVersion: languageRuntimeProjection.commands.bumpPhpIdeReadinessVersion,
     emptyDocumentRefreshTimeoutsRef,
     hasPhpWorkspace: Boolean(workspaceDescriptor?.php),
-    indexProgress: indexProgress,
+    indexProgress,
     intelligenceMode,
     intelligenceModeRef,
     javaScriptTypeScriptLanguageServerRuntimeStatus:
@@ -802,9 +802,9 @@ export function useWorkbenchController(
     javaScriptTypeScriptLanguageServerRuntimeStatusRoot:
       javaScriptTypeScriptLanguageServerRuntimeStatusRoot,
     javaScriptTypeScriptLanguageServerRuntimeStatusRootRef,
-    languageServerRuntimeStatus: languageServerRuntimeStatus,
+    languageServerRuntimeStatus,
     languageServerRuntimeStatusRef,
-    languageServerRuntimeStatusRoot: languageServerRuntimeStatusRoot,
+    languageServerRuntimeStatusRoot,
     languageServerRuntimeStatusRootRef,
     lastPhpIdeReadinessSignatureRef,
     phpFrameworkProviderSignature: phpFrameworkIntelligence.providerSignature,
@@ -2259,6 +2259,7 @@ export function useWorkbenchController(
   } = editorNavigation;
 
   const commandEffects = useWorkbenchCommandEffectsCoordinator({
+    windowZoomGateway: options.windowZoomGateway,
     diagnosticObserverServices: {
       activeEslintBufferClean,
       activeEslintFixes,

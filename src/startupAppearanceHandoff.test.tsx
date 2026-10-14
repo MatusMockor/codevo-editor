@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { act, useState } from "react";
+import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialAppSettings } from "./application/workbenchController/initialAppSettings";
 import { useAppWorkbenchThemes } from "./components/useAppWorkbenchThemes";
 import { COLOR_SCHEME_ATTRIBUTE, DEFAULT_APPEARANCE, PALETTE_ATTRIBUTE } from "./domain/appearance";
@@ -14,6 +14,10 @@ import {
   type KeyValueStorage,
 } from "./infrastructure/browserSettingsGateway";
 import { applyStartupTheme } from "./startupTheme";
+import { useWorkbenchWindowZoom } from "./application/useWorkbenchWindowZoom";
+import { tauriWindowZoomGateway } from "./infrastructure/tauriWindowZoomGateway";
+import { readBrowserStartupWindowZoomLevel } from "./startupWindowZoom";
+import { revealStartupWindow } from "./startupWindowReveal";
 
 const INK_MINT_LIGHT = {
   palette: "ink-mint",
@@ -44,7 +48,26 @@ afterEach(() => {
   applySettings = () => undefined;
   document.documentElement.removeAttribute(PALETTE_ATTRIBUTE);
   document.documentElement.removeAttribute(COLOR_SCHEME_ATTRIBUTE);
+  document.documentElement.style.zoom = "";
+  vi.restoreAllMocks();
 });
+
+function ignoreZoomError(): void {}
+
+function ZoomShell({ gateway }: { readonly gateway: BrowserSettingsGateway }) {
+  const [settings, setSettings] = useState<AppSettings>(() => initialAppSettings(gateway));
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  applySettings = setSettings;
+  useWorkbenchWindowZoom({
+    appSettingsRef: settingsRef,
+    level: settings.windowZoomLevel,
+    gateway: tauriWindowZoomGateway,
+    persistAppSettings: (next) => gateway.saveAppSettings(next),
+    reportError: ignoreZoomError,
+  });
+  return <main className="app-shell" data-window-zoom={settings.windowZoomLevel} />;
+}
 
 function memoryStorage(raw: string): KeyValueStorage {
   const values = new Map<string, string>([[APP_SETTINGS_KEY, raw]]);
@@ -115,6 +138,47 @@ async function bootAndHydrate(raw: string, prefersLight: boolean) {
 }
 
 describe("startup appearance hand-off to React", () => {
+  it("reveals saved zoom before the first workbench render and keeps it through hydration", async () => {
+    window.localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify({ windowZoomLevel: 2 }));
+    const level = readBrowserStartupWindowZoomLevel();
+    const appliedScales = vi.spyOn(tauriWindowZoomGateway, "setScale");
+    const show = vi.fn(async () => {
+      expect(document.documentElement.style.zoom).toBe(String(1.2 ** 2));
+    });
+    await revealStartupWindow(
+      {
+        setBackgroundColor: async () => undefined,
+        show,
+      },
+      { palette: "graphite-teal", colorScheme: "dark" },
+      {
+        gateway: tauriWindowZoomGateway,
+        level,
+      },
+    );
+    expect(show).toHaveBeenCalledOnce();
+    const gateway = new BrowserSettingsGateway(window.localStorage);
+    act(() => root.render(<ZoomShell gateway={gateway} />));
+    expect(host.querySelector(".app-shell")?.getAttribute("data-window-zoom")).toBe("2");
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(host, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-window-zoom"],
+    });
+    const hydrated = await gateway.loadAppSettings();
+    act(() => applySettings(hydrated));
+    expect(observer.takeRecords()).toEqual([]);
+    observer.disconnect();
+    expect(document.documentElement.style.zoom).toBe(String(1.2 ** 2));
+    expect(appliedScales.mock.calls.map(([scale]) => scale)).toEqual([1.2 ** 2, 1.2 ** 2]);
+  });
+
+  it("uses default startup zoom when persisted settings are absent", () => {
+    window.localStorage.removeItem(APP_SETTINGS_KEY);
+    expect(readBrowserStartupWindowZoomLevel()).toBe(0);
+  });
+
   it("keeps a stored Ink Mint light appearance on a dark OS from the first frame", async () => {
     const result = await bootAndHydrate(JSON.stringify({ appearance: INK_MINT_LIGHT }), false);
 

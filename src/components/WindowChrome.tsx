@@ -47,12 +47,7 @@ export function WindowChrome({
   const menus = useMemo(
     () => ({
       edit: editMenuItems(commandsById, commandContext),
-      file: fileMenuItems(
-        commandsById,
-        commandContext,
-        onQuitApplication,
-        platform,
-      ),
+      file: fileMenuItems(commandsById, commandContext, onQuitApplication, platform),
       view: viewMenuItems(commandsById, commandContext),
     }),
     [commandContext, commandsById, onQuitApplication, platform],
@@ -169,27 +164,21 @@ export function WindowChrome({
               isOpen={openMenu === "file"}
               items={menus.file}
               label="File"
-              onOpen={() =>
-                setOpenMenu((current) => (current === "file" ? null : "file"))
-              }
+              onOpen={() => setOpenMenu((current) => (current === "file" ? null : "file"))}
               onSelectItem={runMenuItem}
             />
             <WindowMenu
               isOpen={openMenu === "edit"}
               items={menus.edit}
               label="Edit"
-              onOpen={() =>
-                setOpenMenu((current) => (current === "edit" ? null : "edit"))
-              }
+              onOpen={() => setOpenMenu((current) => (current === "edit" ? null : "edit"))}
               onSelectItem={runMenuItem}
             />
             <WindowMenu
               isOpen={openMenu === "view"}
               items={menus.view}
               label="View"
-              onOpen={() =>
-                setOpenMenu((current) => (current === "view" ? null : "view"))
-              }
+              onOpen={() => setOpenMenu((current) => (current === "view" ? null : "view"))}
               onSelectItem={runMenuItem}
             />
           </nav>
@@ -251,13 +240,7 @@ interface WindowMenuProps {
   onSelectItem(item: WindowMenuItem): void;
 }
 
-function WindowMenu({
-  isOpen,
-  items,
-  label,
-  onOpen,
-  onSelectItem,
-}: WindowMenuProps) {
+function WindowMenu({ isOpen, items, label, onOpen, onSelectItem }: WindowMenuProps) {
   return (
     <div className="window-menu-group">
       <button
@@ -273,11 +256,7 @@ function WindowMenu({
           {items.map((item) => (
             <button
               aria-label={item.label}
-              className={
-                item.separatorBefore
-                  ? "window-menu-item separated"
-                  : "window-menu-item"
-              }
+              className={item.separatorBefore ? "window-menu-item separated" : "window-menu-item"}
               disabled={item.disabled}
               key={item.label}
               onClick={() => onSelectItem(item)}
@@ -332,24 +311,12 @@ function viewMenuItems(
   context: CommandContext,
 ): WindowMenuItem[] {
   return [
-    commandMenuItem(
-      commandsById,
-      context,
-      "editor.fontZoomIn",
-      "Increase Editor Font Size",
-    ),
-    commandMenuItem(
-      commandsById,
-      context,
-      "editor.fontZoomOut",
-      "Decrease Editor Font Size",
-    ),
-    commandMenuItem(
-      commandsById,
-      context,
-      "editor.fontZoomReset",
-      "Reset Editor Font Size",
-    ),
+    commandMenuItem(commandsById, context, "workbench.zoomIn", "Zoom In"),
+    commandMenuItem(commandsById, context, "workbench.zoomOut", "Zoom Out"),
+    commandMenuItem(commandsById, context, "workbench.zoomReset", "Reset Zoom"),
+    commandMenuItem(commandsById, context, "editor.fontZoomIn", "Increase Editor Font Size", true),
+    commandMenuItem(commandsById, context, "editor.fontZoomOut", "Decrease Editor Font Size"),
+    commandMenuItem(commandsById, context, "editor.fontZoomReset", "Reset Editor Font Size"),
     commandMenuItem(
       commandsById,
       context,

@@ -6,6 +6,8 @@ import { executeCommandAndReport, type CommandExecutionRunner } from "../command
 import { createJsTestRerunLastRunCommands } from "../jsTestRerunLastRunCommands";
 import { useFloatingSurfaces } from "../useFloatingSurfaces";
 import { useWorkbenchCommandRegistry } from "../useWorkbenchCommandRegistry";
+import { useWorkbenchWindowZoom } from "../useWorkbenchWindowZoom";
+import type { WindowZoomGateway } from "../windowZoomGateway";
 import { bottomPanelToggle } from "../workbenchPanelCommands";
 import { useWorkbenchSearchEverywhere } from "../useWorkbenchSearchEverywhere";
 import { useQuickOpenPrefixDestinations } from "../useQuickOpenPrefixDispatch";
@@ -1019,7 +1021,9 @@ interface CommandEffectsDependencies extends Omit<
   >;
 }
 
-export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffectsDependencies) {
+export function useWorkbenchCommandEffectsCoordinator(
+  dependencies: CommandEffectsDependencies & { readonly windowZoomGateway?: WindowZoomGateway },
+) {
   const {
     applicationSettings,
     commandIntegrationServices,
@@ -1466,7 +1470,15 @@ export function useWorkbenchCommandEffectsCoordinator(dependencies: CommandEffec
     [agentModeActive, bottomPanelView, showTaskPanelView, toggleTaskPanel],
   );
 
+  const windowZoomActions = useWorkbenchWindowZoom({
+    appSettingsRef,
+    level: appSettings.windowZoomLevel,
+    gateway: dependencies.windowZoomGateway,
+    persistAppSettings,
+    reportError,
+  });
   const commandRegistry = useWorkbenchCommandRegistry({
+    windowZoomActions,
     canShowNette: hasNetteApplicationFramework,
     canShowSymfony: hasSymfonyFramework,
     activeDocument,

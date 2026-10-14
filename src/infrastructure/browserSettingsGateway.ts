@@ -14,6 +14,8 @@ import {
   readPersistedAppearance,
   STARTUP_APP_SETTINGS_KEY,
 } from "../domain/startupTheme";
+import { readPersistedWindowZoomLevel } from "../domain/startupWindowZoom";
+import { DEFAULT_WINDOW_ZOOM_LEVEL } from "../domain/windowZoom";
 
 export interface KeyValueStorage {
   getItem(key: string): string | null;
@@ -29,7 +31,7 @@ export class BrowserSettingsGateway implements SettingsGateway {
   constructor(private readonly storage: KeyValueStorage = localStorage) {}
 
   loadAppSettings(): Promise<AppSettings> {
-    const rawSettings = this.storage.getItem(APP_SETTINGS_KEY);
+    const rawSettings = readRawAppSettings(this.storage);
     return Promise.resolve(readJson(rawSettings, defaultAppSettings()))
       .then(normalizeAppSettings)
       .then((settings) => withReadableAppearance(settings, rawSettings));
@@ -37,6 +39,10 @@ export class BrowserSettingsGateway implements SettingsGateway {
 
   readInitialAppearance(): AppearanceSettings {
     return readPersistedAppearance(readRawAppSettings(this.storage));
+  }
+
+  readInitialWindowZoomLevel(): number {
+    return readPersistedWindowZoomLevel(readRawAppSettings(this.storage));
   }
 
   saveAppSettings(settings: AppSettings): Promise<void> {
@@ -112,7 +118,11 @@ function readRawAppSettings(storage: KeyValueStorage): string | null {
 
 function withReadableAppearance(settings: AppSettings, rawSettings: string | null): AppSettings {
   if (rawSettings === null || persistedAppearanceIsReadable(rawSettings)) return settings;
-  return { ...settings, appearance: DEFAULT_APPEARANCE };
+  return {
+    ...settings,
+    appearance: DEFAULT_APPEARANCE,
+    windowZoomLevel: DEFAULT_WINDOW_ZOOM_LEVEL,
+  };
 }
 
 function trySetItem(

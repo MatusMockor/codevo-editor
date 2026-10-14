@@ -414,11 +414,11 @@ describe("dispatchWorkbenchDefaultAliasCommand", () => {
     ["mac", { key: "+", metaKey: true, shiftKey: true }],
     ["linux", { ctrlKey: true, key: "+", shiftKey: true }],
     ["windows", { ctrlKey: true, key: "+", shiftKey: true }],
-  ] as const)("runs Increase Editor Font Size for the shifted + chord on %s", (platform, init) => {
+  ] as const)("runs Zoom In for the shifted + chord on %s", (platform, init) => {
     const zoomIn = vi.fn();
     const event = keyboardEvent(init);
     const commandRegistry = registry({
-      "editor.fontZoomIn": command({ id: "editor.fontZoomIn", run: zoomIn }),
+      "workbench.zoomIn": command({ id: "workbench.zoomIn", run: zoomIn }),
     });
 
     const handled = dispatchWorkbenchDefaultAliasCommand({
@@ -439,7 +439,7 @@ describe("dispatchWorkbenchDefaultAliasCommand", () => {
     const zoomIn = vi.fn();
     const event = keyboardEvent({ key: "+", metaKey: true, shiftKey: true });
     const commandRegistry = registry({
-      "editor.fontZoomIn": command({ enabled: false, id: "editor.fontZoomIn", run: zoomIn }),
+      "workbench.zoomIn": command({ enabled: false, id: "workbench.zoomIn", run: zoomIn }),
     });
 
     const handled = dispatchWorkbenchDefaultAliasCommand({
@@ -457,13 +457,13 @@ describe("dispatchWorkbenchDefaultAliasCommand", () => {
   });
 
   it.each([
-    ["the command is rebound", { "editor.fontZoomIn": "Cmd+Alt+I" }],
+    ["the command is rebound", { "workbench.zoomIn": "Cmd+Alt+I" }],
     ["another command owns the chord", { "editor.unfoldAll": "Cmd+Shift+=" }],
   ] as const)("leaves the shifted + chord untouched when %s", (_reason, overrides) => {
     const zoomIn = vi.fn();
     const event = keyboardEvent({ key: "+", metaKey: true, shiftKey: true });
     const commandRegistry = registry({
-      "editor.fontZoomIn": command({ id: "editor.fontZoomIn", run: zoomIn }),
+      "workbench.zoomIn": command({ id: "workbench.zoomIn", run: zoomIn }),
     });
 
     const handled = dispatchWorkbenchDefaultAliasCommand({
@@ -488,7 +488,7 @@ describe("dispatchWorkbenchDefaultAliasCommand", () => {
     const zoomIn = vi.fn();
     const event = keyboardEvent(init);
     const commandRegistry = registry({
-      "editor.fontZoomIn": command({ id: "editor.fontZoomIn", run: zoomIn }),
+      "workbench.zoomIn": command({ id: "workbench.zoomIn", run: zoomIn }),
     });
 
     const handled = dispatchWorkbenchDefaultAliasCommand({

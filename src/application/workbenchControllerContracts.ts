@@ -1,3 +1,4 @@
+import type { WindowZoomGateway } from "./windowZoomGateway";
 import type { WorkspaceHomeReference } from "../domain/workspaceRootEligibility";
 import type { AgentCliDiscoveryGateway } from "../domain/agentSettings";
 import type { AgentRootLeaseGateway } from "../domain/agentProject";
@@ -66,6 +67,7 @@ export interface WorkbenchWorkspaceGateways {
 }
 
 export interface WorkbenchControllerOptions {
+  windowZoomGateway?: WindowZoomGateway;
   activeLiveDocumentSaveCoordinator?: EditorActiveLiveDocumentSaveAdmissionPort;
   agentCliDiscoveryGateway?: AgentCliDiscoveryGateway;
   agentProviderGateway?: AgentProviderPolicyGateway &

@@ -1,3 +1,4 @@
+import { tauriWindowZoomGateway } from "./infrastructure/tauriWindowZoomGateway";
 import { TauriHtmlFilePreviewGateway } from "./infrastructure/tauriHtmlFilePreviewGateway";
 import { DirtyCloseDecisionCoordinator } from "./application/dirtyCloseDecisionCoordinator";
 import { EditorCursorStore } from "./application/editorCursorStore";
@@ -145,6 +146,7 @@ export function createWorkbenchComposition() {
   });
 
   const agentControllerGateways = {
+    windowZoomGateway: tauriWindowZoomGateway,
     agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway(),
     agentThreadRequestFeed,
     agentInlineImageGateway: new TauriAgentInlineImageGateway(),

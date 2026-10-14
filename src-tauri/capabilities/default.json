@@ -16,6 +16,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-unminimize",
     "core:webview:allow-set-webview-background-color",
+    "core:webview:allow-set-webview-zoom",
     "dialog:default",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

@@ -55,6 +55,7 @@ describe("settings defaults", () => {
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
       minimapEnabled: false,
@@ -391,6 +392,7 @@ describe("normalizeAppSettings", () => {
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -409,6 +411,7 @@ describe("normalizeAppSettings", () => {
     expect(
       normalizeAppSettings({
         editorFontFamily: "Fira Code",
+        windowZoomLevel: 0,
         editorFontLigatures: true,
         editorFontSize: 18,
         keymap: { "editor.save": "Cmd+Shift+S" },
@@ -433,6 +436,7 @@ describe("normalizeAppSettings", () => {
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "Fira Code, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: true,
       editorFontSize: 18,
       keymap: {
@@ -470,6 +474,7 @@ describe("normalizeAppSettings", () => {
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -537,6 +542,7 @@ describe("normalizeAppSettings", () => {
     expect(
       normalizeAppSettings({
         editorFontFamily: "  ",
+        windowZoomLevel: 0,
         editorFontLigatures: "true",
       }),
     ).toEqual({
@@ -553,6 +559,7 @@ describe("normalizeAppSettings", () => {
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -571,6 +578,7 @@ describe("normalizeAppSettings", () => {
     expect(
       normalizeAppSettings({
         editorFontFamily: 42,
+        windowZoomLevel: 0,
         editorFontLigatures: true,
       }).editorFontFamily,
     ).toBe("JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace");
@@ -616,6 +624,7 @@ describe("normalizeAppSettings", () => {
       agentProviderPreferences: defaultAgentProviderPreferences(),
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),

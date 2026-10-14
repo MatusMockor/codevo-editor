@@ -19,6 +19,9 @@ describe("dispatchNativeMenuCommand", () => {
   it("dispatches every mapped native menu event through the command runner", () => {
     const expectedCommandIds = [
       "editor.closeTab",
+      "workbench.zoomIn",
+      "workbench.zoomOut",
+      "workbench.zoomReset",
       "editor.fontZoomIn",
       "editor.fontZoomOut",
       "editor.fontZoomReset",
@@ -37,6 +40,9 @@ describe("dispatchNativeMenuCommand", () => {
 
     expect(NATIVE_MENU_EVENT_NAMES).toEqual([
       "mockor-close-active-tab",
+      "mockor-window-zoom-in",
+      "mockor-window-zoom-out",
+      "mockor-window-zoom-reset",
       "mockor-editor-font-zoom-in",
       "mockor-editor-font-zoom-out",
       "mockor-editor-font-zoom-reset",
@@ -48,6 +54,34 @@ describe("dispatchNativeMenuCommand", () => {
       expectedCommandIds.map((commandId) => [commandId, commandContext]),
     );
   });
+
+  it.each([false, true])(
+    "dispatches window zoom without depending on an active editor (%s)",
+    (hasActiveDocument) => {
+      const context = { ...commandContext, hasActiveDocument };
+      const runCommand = commandRunner("executed");
+
+      for (const eventName of [
+        "mockor-window-zoom-in",
+        "mockor-window-zoom-out",
+        "mockor-window-zoom-reset",
+      ]) {
+        expect(
+          dispatchNativeMenuCommand({
+            commandContext: context,
+            eventName,
+            runCommand,
+          }),
+        ).toBe(true);
+      }
+
+      expect(runCommand.mock.calls).toEqual([
+        ["workbench.zoomIn", context],
+        ["workbench.zoomOut", context],
+        ["workbench.zoomReset", context],
+      ]);
+    },
+  );
 
   it("consumes a disabled command", () => {
     const runCommand = commandRunner("disabled");
@@ -85,10 +119,7 @@ describe("dispatchNativeMenuCommand", () => {
     });
 
     expect(dispatched).toBe(false);
-    expect(runCommand).toHaveBeenCalledWith(
-      "editor.fontZoomIn",
-      commandContext,
-    );
+    expect(runCommand).toHaveBeenCalledWith("editor.fontZoomIn", commandContext);
   });
 });
 

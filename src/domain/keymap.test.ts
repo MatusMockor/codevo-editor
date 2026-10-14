@@ -33,8 +33,8 @@ function defaultShortcutsWithoutIntentionalCollisions(
 
 describe("keymap", () => {
   it("keeps reserved commands out of the generated editable settings catalog", () => {
-    expect(keymapCommands).toHaveLength(143);
-    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(141);
+    expect(keymapCommands).toHaveLength(146);
+    expect(Object.keys(defaultKeymapSettings("mac"))).toHaveLength(144);
   });
 
   it("creates defaults for editable shortcuts", () => {
@@ -52,9 +52,12 @@ describe("keymap", () => {
       "editor.deleteLine": "Cmd+Shift+K",
       "editor.action.organizeImports": "Shift+Alt+O",
       "editor.surroundWith": "Cmd+Alt+T",
-      "editor.fontZoomIn": "Cmd+=",
-      "editor.fontZoomOut": "Cmd+-",
-      "editor.fontZoomReset": "Cmd+0",
+      "workbench.zoomIn": "Cmd+=",
+      "workbench.zoomOut": "Cmd+-",
+      "workbench.zoomReset": "Cmd+0",
+      "editor.fontZoomIn": "",
+      "editor.fontZoomOut": "",
+      "editor.fontZoomReset": "",
       "editor.toggleFontLigatures": "",
       "editor.goToDeclaration": "",
       "editor.goToDefinition": "Cmd+B",
@@ -793,7 +796,7 @@ describe("keymap", () => {
     });
   });
 
-  it("does not collide the fold all / unfold all shortcuts with font zoom", () => {
+  it("does not collide the fold all / unfold all shortcuts with window zoom", () => {
     for (const platform of ["mac", "linux", "windows"] as const) {
       const defaults = defaultKeymapSettings(platform);
       const foldAll = defaults["editor.foldAll"];
@@ -983,16 +986,16 @@ describe("keymap", () => {
     expect(defaultShortcutForCommand("editor.save", "linux")).toBe("Ctrl+S");
     expect(defaultShortcutForCommand("editor.save", "windows")).toBe("Ctrl+S");
     expect(defaultShortcutForCommand("editor.save", "mac")).toBe("Cmd+S");
-    expect(defaultShortcutForCommand("editor.fontZoomIn", "linux")).toBe("Ctrl+=");
-    expect(defaultShortcutForCommand("editor.fontZoomOut", "linux")).toBe("Ctrl+-");
-    expect(defaultShortcutForCommand("editor.fontZoomReset", "linux")).toBe("Ctrl+0");
+    expect(defaultShortcutForCommand("workbench.zoomIn", "linux")).toBe("Ctrl+=");
+    expect(defaultShortcutForCommand("workbench.zoomOut", "linux")).toBe("Ctrl+-");
+    expect(defaultShortcutForCommand("workbench.zoomReset", "linux")).toBe("Ctrl+0");
     expect(defaultKeymapSettings("linux")).toMatchObject({
       "class.quickOpen": "Ctrl+O",
       "editor.closeTab": "Ctrl+W",
       "editor.fileStructure": "Ctrl+R",
-      "editor.fontZoomIn": "Ctrl+=",
-      "editor.fontZoomOut": "Ctrl+-",
-      "editor.fontZoomReset": "Ctrl+0",
+      "workbench.zoomIn": "Ctrl+=",
+      "workbench.zoomOut": "Ctrl+-",
+      "workbench.zoomReset": "Ctrl+0",
       "editor.goToDefinition": "Ctrl+B",
       "file.quickOpen": "Ctrl+P",
       "navigation.back": "Ctrl+[",
@@ -1001,7 +1004,7 @@ describe("keymap", () => {
     expect(defaultKeymapSettings("linux")["terminal.show"]).toBe("Ctrl+`");
   });
 
-  it("matches the font zoom shortcuts against the platform primary modifier", () => {
+  it("matches the window zoom shortcuts against the platform primary modifier", () => {
     expect(matchesShortcut(keyEvent({ key: "=", metaKey: true }), "Cmd+=", "mac")).toBe(true);
     expect(matchesShortcut(keyEvent({ key: "-", metaKey: true }), "Cmd+-", "mac")).toBe(true);
     expect(matchesShortcut(keyEvent({ key: "0", metaKey: true }), "Cmd+0", "mac")).toBe(true);
@@ -1205,7 +1208,7 @@ describe("keymap", () => {
     it("lets a bare + key reach matching when its = equivalent is a bare-key command", () => {
       const bareKeys = collectBareKeyShortcutKeys({
         ...defaultKeymapSettings("mac"),
-        "editor.fontZoomIn": "=",
+        "workbench.zoomIn": "=",
       });
 
       expect(eventCanMatchKeymapShortcut(keyEvent({ key: "+" }), bareKeys)).toBe(true);

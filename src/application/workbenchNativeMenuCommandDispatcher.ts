@@ -1,11 +1,11 @@
 import type { KeymapCommandId } from "../domain/keymap";
-import type {
-  CommandContext,
-  CommandExecutionRunner,
-} from "./commandRegistry";
+import type { CommandContext, CommandExecutionRunner } from "./commandRegistry";
 
 const NATIVE_MENU_COMMAND_IDS = {
   "mockor-close-active-tab": "editor.closeTab",
+  "mockor-window-zoom-in": "workbench.zoomIn",
+  "mockor-window-zoom-out": "workbench.zoomOut",
+  "mockor-window-zoom-reset": "workbench.zoomReset",
   "mockor-editor-font-zoom-in": "editor.fontZoomIn",
   "mockor-editor-font-zoom-out": "editor.fontZoomOut",
   "mockor-editor-font-zoom-reset": "editor.fontZoomReset",

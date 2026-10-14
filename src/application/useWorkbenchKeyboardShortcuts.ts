@@ -26,6 +26,11 @@ import {
   dispatchWorkbenchShortcutCommand,
 } from "./workbenchShortcutCommandDispatcher";
 
+import {
+  dispatchWorkbenchWindowZoomPhysicalShortcut,
+  windowZoomShortcutNeedsCapture,
+} from "./workbenchWindowZoomShortcutDispatcher";
+
 interface BareKeyShortcutCache {
   keymap: KeymapSettings | null;
   keys: ReadonlySet<string>;
@@ -88,6 +93,7 @@ export function useWorkbenchKeyboardShortcuts({
     let chordKeymap: KeymapSettings | null = null;
     let chordMachine: KeyChordStateMachine | null = null;
     let chordTimeout: number | null = null;
+    let captureZoomChord = false;
 
     function clearChordTimeout() {
       if (chordTimeout === null) return;
@@ -99,6 +105,7 @@ export function useWorkbenchKeyboardShortcuts({
       clearChordTimeout();
       chordMachine?.reset(reason);
       chordEditorOwner = null;
+      captureZoomChord = false;
     }
 
     function currentChordMachine(keymap: KeymapSettings, editorOwner: Element | null) {
@@ -162,8 +169,9 @@ export function useWorkbenchKeyboardShortcuts({
       );
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (handledByModalSurface(event)) return;
+    function handleKeyDown(event: KeyboardEvent, captureWindowZoom = false) {
+      if (event.isComposing) return;
+      if (!captureWindowZoom && handledByModalSurface(event)) return;
       if (event.key === "Escape") {
         doubleShiftDetectorRef.current.reset();
         resetChord("escape");
@@ -293,6 +301,37 @@ export function useWorkbenchKeyboardShortcuts({
       });
     }
 
+    function chordIsAwaitingSecond(): boolean {
+      return chordMachine?.state.status === "awaitingSecond";
+    }
+
+    function handleZoomKeyDownCapture(event: KeyboardEvent) {
+      if (event.isComposing) return;
+      if (chordIsAwaitingSecond()) {
+        if (!captureZoomChord) return;
+        handleKeyDown(event, true);
+        if (!chordIsAwaitingSecond()) captureZoomChord = false;
+        if (event.defaultPrevented) event.stopImmediatePropagation();
+        return;
+      }
+      captureZoomChord = false;
+      if (
+        dispatchWorkbenchWindowZoomPhysicalShortcut({
+          commandContext,
+          commandRegistry,
+          event,
+          keymap,
+          platform: keymapPlatform,
+          runCommand,
+        })
+      )
+        return;
+      if (!windowZoomShortcutNeedsCapture(keymap, event, keymapPlatform)) return;
+      handleKeyDown(event, true);
+      captureZoomChord = chordIsAwaitingSecond();
+      if (event.defaultPrevented) event.stopImmediatePropagation();
+    }
+
     function handleWindowBlur() {
       resetChord("blur");
     }
@@ -303,11 +342,13 @@ export function useWorkbenchKeyboardShortcuts({
       resetChord("editor-replaced");
     }
 
+    window.addEventListener("keydown", handleZoomKeyDownCapture, true);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("blur", handleWindowBlur);
     document.addEventListener("focusin", handleFocusIn, true);
     return () => {
       resetChord("unmount");
+      window.removeEventListener("keydown", handleZoomKeyDownCapture, true);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("blur", handleWindowBlur);
       document.removeEventListener("focusin", handleFocusIn, true);

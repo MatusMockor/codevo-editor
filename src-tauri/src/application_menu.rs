@@ -1,4 +1,8 @@
 #[cfg(target_os = "macos")]
+use crate::lib_composition::{
+    WINDOW_ZOOM_IN_MENU_ID, WINDOW_ZOOM_OUT_MENU_ID, WINDOW_ZOOM_RESET_MENU_ID,
+};
+#[cfg(target_os = "macos")]
 use crate::{
     CLOSE_ACTIVE_TAB_MENU_ID, FONT_ZOOM_IN_MENU_ID, FONT_ZOOM_OUT_MENU_ID, FONT_ZOOM_RESET_MENU_ID,
     OPEN_APPEARANCE_SETTINGS_MENU_ID, QUIT_APPLICATION_MENU_ID, TOGGLE_FONT_LIGATURES_MENU_ID,
@@ -31,16 +35,16 @@ pub(crate) fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry
         .paste()
         .select_all()
         .build()?;
-    let increase_font = MenuItemBuilder::with_id(FONT_ZOOM_IN_MENU_ID, "Increase Editor Font Size")
-        .accelerator("CmdOrCtrl+=")
-        .build(app)?;
+    let zoom_in = MenuItemBuilder::with_id(WINDOW_ZOOM_IN_MENU_ID, "Zoom In").build(app)?;
+    let zoom_out = MenuItemBuilder::with_id(WINDOW_ZOOM_OUT_MENU_ID, "Zoom Out").build(app)?;
+    let reset_zoom =
+        MenuItemBuilder::with_id(WINDOW_ZOOM_RESET_MENU_ID, "Reset Zoom").build(app)?;
+    let increase_font =
+        MenuItemBuilder::with_id(FONT_ZOOM_IN_MENU_ID, "Increase Editor Font Size").build(app)?;
     let decrease_font =
-        MenuItemBuilder::with_id(FONT_ZOOM_OUT_MENU_ID, "Decrease Editor Font Size")
-            .accelerator("CmdOrCtrl+-")
-            .build(app)?;
-    let reset_font = MenuItemBuilder::with_id(FONT_ZOOM_RESET_MENU_ID, "Reset Editor Font Size")
-        .accelerator("CmdOrCtrl+0")
-        .build(app)?;
+        MenuItemBuilder::with_id(FONT_ZOOM_OUT_MENU_ID, "Decrease Editor Font Size").build(app)?;
+    let reset_font =
+        MenuItemBuilder::with_id(FONT_ZOOM_RESET_MENU_ID, "Reset Editor Font Size").build(app)?;
     let toggle_ligatures = MenuItemBuilder::with_id(
         TOGGLE_FONT_LIGATURES_MENU_ID,
         "Toggle Editor Font Ligatures",
@@ -50,6 +54,10 @@ pub(crate) fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry
         MenuItemBuilder::with_id(OPEN_APPEARANCE_SETTINGS_MENU_ID, "Open Appearance Settings")
             .build(app)?;
     let view = SubmenuBuilder::new(app, "View")
+        .item(&zoom_in)
+        .item(&zoom_out)
+        .item(&reset_zoom)
+        .separator()
         .item(&increase_font)
         .item(&decrease_font)
         .item(&reset_font)

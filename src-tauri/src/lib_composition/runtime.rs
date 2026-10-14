@@ -45,6 +45,15 @@ pub fn run() {
             CLOSE_ACTIVE_TAB_MENU_ID => {
                 let _ = app.emit(CLOSE_ACTIVE_TAB_EVENT, ());
             }
+            WINDOW_ZOOM_IN_MENU_ID => {
+                let _ = app.emit(WINDOW_ZOOM_IN_EVENT, ());
+            }
+            WINDOW_ZOOM_OUT_MENU_ID => {
+                let _ = app.emit(WINDOW_ZOOM_OUT_EVENT, ());
+            }
+            WINDOW_ZOOM_RESET_MENU_ID => {
+                let _ = app.emit(WINDOW_ZOOM_RESET_EVENT, ());
+            }
             FONT_ZOOM_IN_MENU_ID => {
                 let _ = app.emit(FONT_ZOOM_IN_EVENT, ());
             }

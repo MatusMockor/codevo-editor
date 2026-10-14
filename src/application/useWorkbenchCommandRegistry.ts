@@ -33,6 +33,8 @@ import {
   type AgentWorkbenchLayoutCommandPort,
 } from "./workbenchAgentCommands";
 import { workbenchAppearanceCommands } from "./workbenchAppearanceCommands";
+import { workbenchWindowZoomCommands } from "./workbenchWindowZoomCommands";
+import type { WindowZoomActions } from "./useWorkbenchWindowZoom";
 import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
 import { workbenchBookmarkCommands } from "./workbenchBookmarkCommands";
 import { workbenchEditMenuCommands } from "./workbenchEditMenuCommands";
@@ -83,6 +85,7 @@ type CommandRun = Command["run"];
 type NavigationRun = () => unknown;
 
 interface UseWorkbenchCommandRegistryOptions {
+  windowZoomActions: WindowZoomActions;
   activeDocument: EditorDocument | null;
   captureNavigationCommandScope(): EditorSurfaceCommandInvocationScope;
   activeEslintBufferClean: boolean;
@@ -259,6 +262,7 @@ export function useWorkbenchCommandRegistry(
   options: UseWorkbenchCommandRegistryOptions,
 ): CommandRegistry {
   const {
+    windowZoomActions,
     activeDocument,
     captureNavigationCommandScope,
     activeEslintBufferClean,
@@ -729,6 +733,9 @@ export function useWorkbenchCommandRegistry(
     }).forEach((command) => registry.register(command));
 
     appearanceCommands.workbenchCommands.forEach((command) => registry.register(command));
+    workbenchWindowZoomCommands(shortcut, windowZoomActions).forEach((command) =>
+      registry.register(command),
+    );
 
     const openPaletteSurface = () => {
       setClassOpenOpen(false);
@@ -936,6 +943,7 @@ export function useWorkbenchCommandRegistry(
     zoomEditorFontIn,
     zoomEditorFontOut,
     resetEditorFontSize,
+    windowZoomActions,
     indexProgress,
     intelligenceMode,
     isLanguageServerActiveForWorkspace,

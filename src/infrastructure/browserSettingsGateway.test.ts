@@ -642,6 +642,7 @@ describe("BrowserSettingsGateway", () => {
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
@@ -743,6 +744,7 @@ describe("BrowserSettingsGateway", () => {
       agentCliKind: "claudeCode",
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "Fira Code, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: true,
       editorFontSize: 18,
       keymap: {
@@ -851,6 +853,7 @@ describe("BrowserSettingsGateway", () => {
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "Fira Code, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: true,
       editorFontSize: 18,
       keymap: {
@@ -1009,6 +1012,7 @@ describe("BrowserSettingsGateway", () => {
       agentProviderPreferences: defaultAppSettings().agentProviderPreferences,
       maxConcurrentAgentTasks: 64,
       editorFontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),

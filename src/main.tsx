@@ -8,9 +8,18 @@ import { applyBrowserStartupTheme } from "./startupTheme";
 import { createTauriNativeWindow } from "./infrastructure/tauriNativeWindow";
 import { revealStartupWindow } from "./startupWindowReveal";
 import { applyBrowserStartupRail } from "./startupRail";
+import { readBrowserStartupWindowZoomLevel } from "./startupWindowZoom";
+import { tauriWindowZoomGateway } from "./infrastructure/tauriWindowZoomGateway";
 
 applyBrowserStartupRail();
-void revealStartupWindow(createTauriNativeWindow(), applyBrowserStartupTheme());
+const startupWindowReady = revealStartupWindow(
+  createTauriNativeWindow(),
+  applyBrowserStartupTheme(),
+  {
+    gateway: tauriWindowZoomGateway,
+    level: readBrowserStartupWindowZoomLevel(),
+  },
+);
 
 const rootElement = document.getElementById("root");
 
@@ -70,6 +79,7 @@ function reportStartupShellPaint(): void {
 }
 
 async function bootstrap(): Promise<void> {
+  await startupWindowReady;
   const startupShellPaintOutcome = await waitForStartupShellPaint();
   if (startupShellPaintWasObserved(startupShellPaintOutcome)) {
     reportStartupShellPaint();

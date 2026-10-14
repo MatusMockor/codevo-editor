@@ -444,17 +444,12 @@ export const keymapCommands = [
   },
   {
     category: "Editor",
-    // Cmd+Alt+- collapses every folding region. Distinct from font zoom out
-    // (Cmd+-) by the Alt modifier, so the two never collide.
     defaultShortcut: "Cmd+Alt+-",
     id: "editor.foldAll",
     label: "Fold All",
   },
   {
     category: "Editor",
-    // Cmd+Alt+= expands every folding region. Distinct from font zoom in
-    // (Cmd+=) by the Alt modifier; Cmd+Shift+= is reserved for the font zoom
-    // in alias because Cmd+"+" is typed with Shift on a US layout.
     defaultShortcut: "Cmd+Alt+=",
     id: "editor.unfoldAll",
     label: "Unfold All",
@@ -472,20 +467,38 @@ export const keymapCommands = [
     label: "Unfold Recursively",
   },
   {
-    category: "Editor",
+    category: "Workbench",
     defaultShortcut: "Cmd+=",
+    id: "workbench.zoomIn",
+    label: "Zoom In",
+  },
+  {
+    category: "Workbench",
+    defaultShortcut: "Cmd+-",
+    id: "workbench.zoomOut",
+    label: "Zoom Out",
+  },
+  {
+    category: "Workbench",
+    defaultShortcut: "Cmd+0",
+    id: "workbench.zoomReset",
+    label: "Reset Zoom",
+  },
+  {
+    category: "Editor",
+    defaultShortcut: "",
     id: "editor.fontZoomIn",
     label: "Increase Editor Font Size",
   },
   {
     category: "Editor",
-    defaultShortcut: "Cmd+-",
+    defaultShortcut: "",
     id: "editor.fontZoomOut",
     label: "Decrease Editor Font Size",
   },
   {
     category: "Editor",
-    defaultShortcut: "Cmd+0",
+    defaultShortcut: "",
     id: "editor.fontZoomReset",
     label: "Reset Editor Font Size",
   },

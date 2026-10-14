@@ -50,11 +50,7 @@ describe("WindowChrome", () => {
     host.remove();
     if (restoreExecCommand) {
       if (originalExecCommandDescriptor) {
-        Object.defineProperty(
-          document,
-          "execCommand",
-          originalExecCommandDescriptor,
-        );
+        Object.defineProperty(document, "execCommand", originalExecCommandDescriptor);
       } else {
         Reflect.deleteProperty(document, "execCommand");
       }
@@ -135,12 +131,18 @@ describe("WindowChrome", () => {
       platform: "Linux x86_64",
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
     });
+    const zoomIn = vi.fn();
+    const zoomOut = vi.fn();
+    const resetZoom = vi.fn();
     const openAppearanceSettings = vi.fn();
     const increaseFont = vi.fn();
     const decreaseFont = vi.fn();
     const resetFont = vi.fn();
     const toggleLigatures = vi.fn();
     const commands: Command[] = [
+      command("workbench.zoomIn", "Zoom In", zoomIn),
+      command("workbench.zoomOut", "Zoom Out", zoomOut),
+      command("workbench.zoomReset", "Reset Zoom", resetZoom),
       command(
         "workbench.openAppearanceSettings",
         "Open Appearance Settings",
@@ -149,11 +151,7 @@ describe("WindowChrome", () => {
       command("editor.fontZoomIn", "Increase Editor Font Size", increaseFont),
       command("editor.fontZoomOut", "Decrease Editor Font Size", decreaseFont),
       command("editor.fontZoomReset", "Reset Editor Font Size", resetFont),
-      command(
-        "editor.toggleFontLigatures",
-        "Toggle Editor Font Ligatures",
-        toggleLigatures,
-      ),
+      command("editor.toggleFontLigatures", "Toggle Editor Font Ligatures", toggleLigatures),
     ];
 
     await act(async () => {
@@ -168,6 +166,24 @@ describe("WindowChrome", () => {
       );
     });
 
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Zoom In").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Zoom Out").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "View").click();
+    });
+    await act(async () => {
+      buttonWithText(host, "Reset Zoom").click();
+    });
     await act(async () => {
       buttonWithText(host, "View").click();
     });
@@ -199,6 +215,9 @@ describe("WindowChrome", () => {
       buttonWithText(host, "Open Appearance Settings").click();
     });
 
+    expect(zoomIn).toHaveBeenCalledOnce();
+    expect(zoomOut).toHaveBeenCalledOnce();
+    expect(resetZoom).toHaveBeenCalledOnce();
     expect(increaseFont).toHaveBeenCalledOnce();
     expect(decreaseFont).toHaveBeenCalledOnce();
     expect(resetFont).toHaveBeenCalledOnce();
@@ -212,10 +231,7 @@ describe("WindowChrome", () => {
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
     });
     const execCommand = vi.fn();
-    originalExecCommandDescriptor = Object.getOwnPropertyDescriptor(
-      document,
-      "execCommand",
-    );
+    originalExecCommandDescriptor = Object.getOwnPropertyDescriptor(document, "execCommand");
     restoreExecCommand = true;
     Object.defineProperty(document, "execCommand", {
       configurable: true,
@@ -652,9 +668,7 @@ describe("WindowChrome", () => {
     const popover = host.querySelector(".window-menu-popover");
 
     expect(popover?.getAttribute("role")).toBeNull();
-    expect(
-      host.querySelector(".window-menu-item")?.getAttribute("role"),
-    ).toBeNull();
+    expect(host.querySelector(".window-menu-item")?.getAttribute("role")).toBeNull();
   });
 
   it("leaves macOS traffic-light controls native", async () => {
@@ -687,8 +701,7 @@ describe("WindowChrome", () => {
 function buttonWithText(host: HTMLElement, text: string): HTMLButtonElement {
   const button = [...host.querySelectorAll("button")].find(
     (candidate) =>
-      candidate.getAttribute("aria-label") === text ||
-      candidate.textContent?.trim() === text,
+      candidate.getAttribute("aria-label") === text || candidate.textContent?.trim() === text,
   );
 
   if (!button) {
@@ -698,11 +711,7 @@ function buttonWithText(host: HTMLElement, text: string): HTMLButtonElement {
   return button;
 }
 
-function command(
-  id: string,
-  title: string,
-  run: () => void | Promise<void>,
-): Command {
+function command(id: string, title: string, run: () => void | Promise<void>): Command {
   return {
     category: "Test",
     id,
