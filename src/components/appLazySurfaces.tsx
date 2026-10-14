@@ -1,5 +1,7 @@
 import { Suspense, type ComponentProps, type ReactNode } from "react";
+import type { AgentThreadRequestFeed } from "../application/agentThreadRequestPorts";
 import type { AppUpdaterSurface } from "../application/useAppUpdater";
+import { AgentThreadRequestFeedContext } from "./agentMode/agentThreadRequestFeedContext";
 import { AgentFrameFallback } from "./AgentFrameFallback";
 import { AppUpdaterContext } from "./appUpdaterContext";
 import { DeferredSurfaceHost } from "./DeferredSurfaceHost";
@@ -136,22 +138,26 @@ export function LazyAgentWorkbenchHost({
   active,
   appUpdater,
   editorPanelDocuments,
+  threadRequestFeed = null,
   ...props
 }: ComponentProps<typeof LazyAgentWorkbenchScreen> & {
   readonly active: boolean;
   readonly appUpdater: AppUpdaterSurface | null;
   readonly editorPanelDocuments: EditorPanelDocumentsValue | null;
+  readonly threadRequestFeed?: AgentThreadRequestFeed | null;
 }) {
   return (
     <EditorPanelDocumentsContext.Provider value={editorPanelDocuments}>
       <AppUpdaterContext.Provider value={appUpdater}>
-        <StickyLazySurfaceHost
-          active={active}
-          fallback={<AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />}
-          label={AGENT_WORKSPACE_LABEL}
-        >
-          <LazyAgentWorkbenchScreen {...props} />
-        </StickyLazySurfaceHost>
+        <AgentThreadRequestFeedContext.Provider value={threadRequestFeed}>
+          <StickyLazySurfaceHost
+            active={active}
+            fallback={<AgentFrameFallback label={AGENT_WORKSPACE_LABEL} />}
+            label={AGENT_WORKSPACE_LABEL}
+          >
+            <LazyAgentWorkbenchScreen {...props} />
+          </StickyLazySurfaceHost>
+        </AgentThreadRequestFeedContext.Provider>
       </AppUpdaterContext.Provider>
     </EditorPanelDocumentsContext.Provider>
   );

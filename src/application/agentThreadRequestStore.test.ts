@@ -1,18 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  MAX_AGENT_THREAD_REQUESTS_PER_MESSAGE as RECORDS,
   MAX_AGENT_THREAD_REQUESTS_RETAINED,
   MAX_AGENT_THREAD_REQUEST_FENCES,
   type AgentRuntimeRequest,
-  type AgentThreadRequests,
 } from "../domain/agentRuntimeRequest";
 import {
   agentRuntimeRequestOf,
   agentThreadRequestFeedFake,
+  agentThreadRequestsCursorOf,
   agentThreadRequestsOf,
+  agentThreadRequestsPageOf as pulled,
 } from "../test/agentThreadRequestFeedFake";
 import {
   MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL as PAGE,
   type AgentThreadRequestScope,
+  type AgentThreadRequestsPage,
 } from "./agentThreadRequestPorts";
 import {
   AGENT_THREAD_REQUEST_FAILURE_NOTICE_THRESHOLD as FAILURE_THRESHOLD,
@@ -20,6 +23,8 @@ import {
   AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS as DEADLINE,
   AGENT_THREAD_REQUEST_RETRY_BASE_MS,
   AGENT_THREAD_REQUEST_RETRY_CAP_MS,
+  MAX_AGENT_THREAD_REQUEST_CURSOR_PAGES_PER_TURN_PAGE as CHAIN_PAGES,
+  MAX_AGENT_THREAD_REQUEST_EPOCH_CHANGES_PER_SYNC as EPOCH_CHANGES,
   MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC,
   MAX_AGENT_THREAD_REQUEST_RACED_PULLS_PER_SYNC as RACED_PULLS,
   MAX_AGENT_THREAD_REQUEST_RETIRED_EPOCHS,
@@ -115,6 +120,40 @@ async function released(): Promise<void> {
   await Promise.resolve();
 }
 
+async function drain(): Promise<void> {
+  for (let round = 0; round < 200; round += 1) await settle();
+}
+
+function closedRequests(turnId: string, count: number): readonly AgentRuntimeRequest[] {
+  return Array.from({ length: count }, (_unused, index) =>
+    agentRuntimeRequestOf("timedOutApproval", {
+      turnId,
+      id: `req-closed-${String(index).padStart(3, "0")}`,
+      createdAtEpochMs: CREATED,
+      resolvedAtEpochMs: CREATED + 1,
+      order: 0,
+    }),
+  );
+}
+
+function cursorAt(turnIds: readonly string[], offset: number, epoch = "boot-0001"): string | null {
+  return agentThreadRequestsCursorOf(A, turnIds, epoch, offset);
+}
+
+function cursorsOf(feed: ReturnType<typeof agentThreadRequestFeedFake>): readonly unknown[] {
+  return feed.currentThreadRequests.mock.calls.map(([, , cursor]) => cursor);
+}
+
+function requestCount(observation: AgentThreadRequestObservation | undefined): number {
+  if (observation?.kind !== "observed") return -1;
+  return observation.state.requests.length;
+}
+
+function pendingOf(observation: AgentThreadRequestObservation | undefined): readonly string[] {
+  if (observation?.kind !== "observed") return ["not observed"];
+  return observation.pendingTurnIds;
+}
+
 async function settle(): Promise<void> {
   for (let turn = 0; turn < 80; turn += 1) await Promise.resolve();
 }
@@ -177,7 +216,7 @@ describe("agentThreadRequestStore", () => {
     expect(feed.currentThreadRequests).not.toHaveBeenCalled();
     subscription.resolve(() => undefined);
     await settle();
-    expect(feed.currentThreadRequests.mock.calls).toEqual([[A, [T1]]]);
+    expect(feed.currentThreadRequests.mock.calls).toEqual([[A, [T1], null]]);
     expect(first.views()).toEqual(["pending", view([`${T1}/req-1@1:pending`])]);
     expect(vi.getTimerCount()).toBe(0);
     unwatch();
@@ -188,7 +227,7 @@ describe("agentThreadRequestStore", () => {
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [], watcher.listener);
     await settle();
-    expect(feed.currentThreadRequests.mock.calls).toEqual([[A, []]]);
+    expect(feed.currentThreadRequests.mock.calls).toEqual([[A, [], null]]);
     expect(watcher.views()).toEqual(["pending", view([])]);
     expect(vi.getTimerCount()).toBe(0);
     unwatch();
@@ -254,7 +293,7 @@ describe("agentThreadRequestStore", () => {
     feed.record(
       agentThreadRequestsOf(A, [pendingRequest(T1, "req-1"), pendingRequest(T1, "req-2")]),
     );
-    const pull = deferred<AgentThreadRequests>();
+    const pull = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => pull.promise);
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
@@ -262,7 +301,7 @@ describe("agentThreadRequestStore", () => {
     feed.push(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-1")]));
     expect(watcher.views()).toEqual(["pending"]);
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1);
-    pull.resolve(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]));
+    pull.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")])));
     await settle();
     expect(watcher.views()).toEqual([
       "pending",
@@ -275,13 +314,13 @@ describe("agentThreadRequestStore", () => {
 
   it("never shows the older epoch of a pull that started before the first push", async () => {
     const feed = agentThreadRequestFeedFake();
-    const older = deferred<AgentThreadRequests>();
+    const older = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => older.promise);
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
     await settle();
     feed.publish(agentThreadRequestsOf(A, [pendingRequest(T1, "req-9")], { epoch: "boot-0002" }));
-    older.resolve(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]));
+    older.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")])));
     await settle();
     expect(watcher.views()).toEqual([
       "pending",
@@ -301,10 +340,10 @@ describe("agentThreadRequestStore", () => {
     const unwatch = store.watch(A, [T1], watcher.listener);
     await settle();
     feed.push(agentThreadRequestsOf(A, [pendingRequest("agt-turn-0003", "req-5")]));
-    const page = deferred<AgentThreadRequests>();
+    const page = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => page.promise);
     const unwatchWide = store.watch(A, [T1, T2], () => undefined);
-    page.resolve(agentThreadRequestsOf(A, [pendingRequest(T2, "req-4")], { reset: true }));
+    page.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T2, "req-4")], { reset: true })));
     await settle();
     expect(watcher.views()[watcher.seen.length - 1]).toEqual(
       view([`${T1}/req-1@1:pending`, `${T2}/req-4@1:pending`, "agt-turn-0003/req-5@1:pending"]),
@@ -363,7 +402,7 @@ describe("agentThreadRequestStore", () => {
         }),
     );
     feed.push(agentThreadRequestsOf(A, newer));
-    const snapshot = deferred<AgentThreadRequests>();
+    const snapshot = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => snapshot.promise);
     const unwatchWide = store.watch(A, [T1, T2], () => undefined);
     const closed = agentRuntimeRequestOf("timedOutApproval", {
@@ -374,7 +413,7 @@ describe("agentThreadRequestStore", () => {
       resolvedAtEpochMs: CREATED + 1,
     });
     feed.publish(agentThreadRequestsOf(A, [closed]));
-    snapshot.resolve(agentThreadRequestsOf(A, [pendingRequest(T2, "req-x")]));
+    snapshot.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T2, "req-x")])));
     await settle();
     const live = watcher
       .views()
@@ -384,9 +423,9 @@ describe("agentThreadRequestStore", () => {
     expect(live).toEqual([]);
     expect(typeof last === "string" ? null : last?.pending).toEqual([]);
     expect(feed.currentThreadRequests.mock.calls).toEqual([
-      [A, [T1]],
-      [A, [T2]],
-      [A, [T2]],
+      [A, [T1], null],
+      [A, [T2], null],
+      [A, [T2], null],
     ]);
     expect(vi.getTimerCount()).toBe(0);
     unwatchWide();
@@ -399,12 +438,12 @@ describe("agentThreadRequestStore", () => {
     feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]));
     const answer = feed.currentThreadRequests.getMockImplementation();
     const busy = { pushes: 0, racing: true };
-    feed.currentThreadRequests.mockImplementation((scope, turnIds) => {
+    feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
       if (busy.racing) {
         busy.pushes += 1;
         feed.publish(agentThreadRequestsOf(A, [pendingRequest(T2, `req-busy-${busy.pushes}`)]));
       }
-      return answer?.(scope, turnIds) ?? hanging();
+      return answer?.(scope, turnIds, cursor) ?? hanging();
     });
     const watcher = recorder();
     const unwatch = store.watch(A, [T1], watcher.listener);
@@ -439,12 +478,12 @@ describe("agentThreadRequestStore", () => {
     const store = agentThreadRequestStore(feed);
     const answer = feed.currentThreadRequests.getMockImplementation();
     const busy = { racing: true, pushes: 0 };
-    feed.currentThreadRequests.mockImplementation((scope, turnIds) => {
+    feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
       if (busy.racing) {
         busy.pushes += 1;
         feed.publish(agentThreadRequestsOf(A, [pendingRequest(T2, `req-busy-${busy.pushes}`)]));
       }
-      return answer?.(scope, turnIds) ?? hanging();
+      return answer?.(scope, turnIds, cursor) ?? hanging();
     });
     const unwatch = store.watch(A, [T1], () => undefined);
     await settle();
@@ -480,12 +519,12 @@ describe("agentThreadRequestStore", () => {
     await settle();
     const answer = feed.currentThreadRequests.getMockImplementation();
     const busy = { pushes: 0 };
-    feed.currentThreadRequests.mockImplementation((scope, turnIds) => {
+    feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
       if (busy.pushes < RACED_PULLS) {
         busy.pushes += 1;
         feed.publish(agentThreadRequestsOf(A, [pendingRequest(T2, `req-busy-${busy.pushes}`)]));
       }
-      return answer?.(scope, turnIds) ?? hanging();
+      return answer?.(scope, turnIds, cursor) ?? hanging();
     });
     const unwatchWide = store.watch(A, [T1, T2], () => undefined);
     await settle();
@@ -547,12 +586,12 @@ describe("agentThreadRequestStore", () => {
       await settle();
       const before = view([`${T1}/req-1@1:pending`, `${T1}/req-2@1:pending`]);
       const epoch = overrides.epoch ?? "boot-0001";
-      const pull = deferred<AgentThreadRequests>();
+      const pull = deferred<AgentThreadRequestsPage>();
       feed.currentThreadRequests.mockImplementationOnce(() => pull.promise);
       feed.publish(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-2")], overrides));
       expect(feed.currentThreadRequests.mock.calls).toEqual([
-        [A, [T1]],
-        [A, [T1]],
+        [A, [T1], null],
+        [A, [T1], null],
       ]);
       const replaced = view([`${T1}/req-2@2:resolved`], { epoch, pending: [T1] });
       expect(watcher.views()).toEqual(["pending", before, replaced]);
@@ -567,7 +606,7 @@ describe("agentThreadRequestStore", () => {
       });
       expect(watcher.views()).toEqual(["pending", before, replaced, grown]);
       feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-9")], { epoch }));
-      pull.resolve(agentThreadRequestsOf(A, [pendingRequest(T1, "req-raced")], { epoch }));
+      pull.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-raced")], { epoch })));
       await settle();
       expect(watcher.views()).toEqual([
         "pending",
@@ -607,11 +646,13 @@ describe("agentThreadRequestStore", () => {
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(2);
     feed.push(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-2")], { epoch: epochOf(2) }));
     expect(watcher.views()[4]).toEqual(view([`${T1}/req-2@2:resolved`], { epoch: epochOf(2) }));
-    const page = deferred<AgentThreadRequests>();
+    const page = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => page.promise);
     const unwatchWide = agentThreadRequestStore(feed).watch(A, [T1, T2], () => undefined);
     feed.push(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-1", 9)]));
-    page.resolve(agentThreadRequestsOf(A, [pendingRequest(T2, "req-6")], { epoch: epochOf(2) }));
+    page.resolve(
+      pulled(agentThreadRequestsOf(A, [pendingRequest(T2, "req-6")], { epoch: epochOf(2) })),
+    );
     await settle();
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(3);
     expect(watcher.views()[watcher.seen.length - 1]).toEqual(
@@ -662,17 +703,17 @@ describe("agentThreadRequestStore", () => {
     const first = recorder();
     const unwatchFirst = store.watch(A, [T1], first.listener);
     await settle();
-    const stale = deferred<AgentThreadRequests>();
+    const stale = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => stale.promise);
     const second = recorder();
     const unwatchSecond = store.watch(A, [T1, T2], second.listener);
     feed.publish(agentThreadRequestsOf(A, [pendingRequest(T2, "req-5")], { reset: true }));
-    stale.resolve(agentThreadRequestsOf(A, [pendingRequest(T2, "req-stale")]));
+    stale.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T2, "req-stale")])));
     await settle();
     expect(feed.currentThreadRequests.mock.calls).toEqual([
-      [A, [T1]],
-      [A, [T2]],
-      [A, [T1, T2]],
+      [A, [T1], null],
+      [A, [T2], null],
+      [A, [T1, T2], null],
     ]);
     expect(second.views()).toEqual([
       view([`${T1}/req-1@1:pending`], { pending: [T2] }),
@@ -685,13 +726,13 @@ describe("agentThreadRequestStore", () => {
 
   it("discards the first page when a reset arrives before it settles", async () => {
     const feed = agentThreadRequestFeedFake();
-    const stale = deferred<AgentThreadRequests>();
+    const stale = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => stale.promise);
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
     await settle();
     feed.publish(agentThreadRequestsOf(A, [pendingRequest(T1, "req-5")], { reset: true }));
-    stale.resolve(agentThreadRequestsOf(A, [pendingRequest(T1, "req-stale")]));
+    stale.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-stale")])));
     await settle();
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(2);
     expect(watcher.views()).toEqual(["pending", view([`${T1}/req-5@1:pending`])]);
@@ -727,7 +768,7 @@ describe("agentThreadRequestStore", () => {
   it("merges messages without a workspace and messages of the scope workspace into one state", async () => {
     const feed = agentThreadRequestFeedFake();
     feed.currentThreadRequests.mockResolvedValueOnce(
-      agentThreadRequestsOf({ ...A, workspaceId: null }, [pendingRequest(T1, "req-1")]),
+      pulled(agentThreadRequestsOf({ ...A, workspaceId: null }, [pendingRequest(T1, "req-1")])),
     );
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
@@ -750,7 +791,7 @@ describe("agentThreadRequestStore", () => {
     { name: "another workspace", answer: agentThreadRequestsOf({ ...A, workspaceId: "other" }) },
   ])("treats a pull answered for $name as a failed pull", async ({ answer }) => {
     const feed = agentThreadRequestFeedFake();
-    feed.currentThreadRequests.mockResolvedValue(answer);
+    feed.currentThreadRequests.mockResolvedValue(pulled(answer));
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
     await failUntilNoticed();
@@ -765,7 +806,7 @@ describe("agentThreadRequestStore", () => {
   it("isolates workspace A, then B, then A again as separate generations", async () => {
     const feed = agentThreadRequestFeedFake();
     const store = agentThreadRequestStore(feed);
-    const stale = deferred<AgentThreadRequests>();
+    const stale = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => stale.promise);
     const first = recorder();
     const unwatchFirst = store.watch(A, [T1], first.listener);
@@ -783,7 +824,7 @@ describe("agentThreadRequestStore", () => {
     const unwatchSecond = store.watch(A, [T1], second.listener);
     expect(second.views()).toEqual(["pending"]);
     await settle();
-    stale.resolve(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-1", 99)]));
+    stale.resolve(pulled(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-1", 99)])));
     await settle();
     expect(first.views()).toEqual(["pending"]);
     expect(second.views()).toEqual(["pending", view([`${T1}/req-1@1:pending`])]);
@@ -800,7 +841,7 @@ describe("agentThreadRequestStore", () => {
       view([`${T1}/req-1@1:pending`]),
       view([`${T1}/req-1@2:resolved`]),
     ]);
-    expect(reregistered.views()).toEqual(["pending"]);
+    expect(reregistered.views()).toEqual(["pending", view([`${T1}/req-1@1:pending`])]);
     expect(feed.subscribeThreadRequests).toHaveBeenCalledTimes(1);
     unwatchSecond();
     unwatchReregistered();
@@ -812,7 +853,7 @@ describe("agentThreadRequestStore", () => {
   it("does no work after an unwatch during a pending pull or a pending subscription", async () => {
     const feed = agentThreadRequestFeedFake();
     const store = agentThreadRequestStore(feed);
-    const pull = deferred<AgentThreadRequests>();
+    const pull = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => pull.promise);
     const pulling = recorder();
     const unwatchPulling = store.watch(A, [T1], pulling.listener);
@@ -841,13 +882,13 @@ describe("agentThreadRequestStore", () => {
 
   it("stops paging once the thread is unwatched between two pages", async () => {
     const feed = agentThreadRequestFeedFake();
-    const page = deferred<AgentThreadRequests>();
+    const page = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => page.promise);
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, turnIdsOf(PAGE + 1), watcher.listener);
     await settle();
     unwatch();
-    page.resolve(agentThreadRequestsOf(A));
+    page.resolve(pulled(agentThreadRequestsOf(A)));
     await settle();
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1);
     expect(watcher.views()).toEqual(["pending"]);
@@ -886,7 +927,7 @@ describe("agentThreadRequestStore", () => {
       const first = recorder();
       const unwatchFirst = store.watch(A, [T1], first.listener);
       await settle();
-      const pull = deferred<AgentThreadRequests>();
+      const pull = deferred<AgentThreadRequestsPage>();
       feed.currentThreadRequests.mockImplementationOnce(() => pull.promise);
       if (releaseFirst) unwatchFirst();
       const second = recorder();
@@ -904,12 +945,12 @@ describe("agentThreadRequestStore", () => {
         view([`${T1}/req-1@1:pending`, `${T2}/req-5@1:pending`], { pending: [T2] }),
       ]);
       feed.record(agentThreadRequestsOf(A, [pendingRequest(T2, "req-4")]));
-      pull.resolve(agentThreadRequestsOf(A, [pendingRequest(T2, "req-raced")]));
+      pull.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T2, "req-raced")])));
       await settle();
       expect(feed.currentThreadRequests.mock.calls).toEqual([
-        [A, [T1]],
-        [A, [T2]],
-        [A, [T2]],
+        [A, [T1], null],
+        [A, [T2], null],
+        [A, [T2], null],
       ]);
       expect(second.views()).toEqual([
         view([`${T1}/req-1@1:pending`], { pending: [T2] }),
@@ -953,8 +994,8 @@ describe("agentThreadRequestStore", () => {
       view([`${T1}/req-1@1:pending`, `${T2}/req-5@1:pending`]),
     ]);
     expect(feed.currentThreadRequests.mock.calls).toEqual([
-      [A, [T1]],
-      [A, [T1, T2]],
+      [A, [T1], null],
+      [A, [T1, T2], null],
     ]);
     expect(feed.subscribeThreadRequests).toHaveBeenCalledTimes(2);
     expect(first.views()).toEqual(["pending", view([`${T1}/req-1@1:pending`])]);
@@ -964,7 +1005,7 @@ describe("agentThreadRequestStore", () => {
   it("adopts the pull in flight when the scope is released and watched again in the same tick", async () => {
     const feed = agentThreadRequestFeedFake();
     const store = agentThreadRequestStore(feed);
-    const pull = deferred<AgentThreadRequests>();
+    const pull = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => pull.promise);
     const first = recorder();
     const unwatchFirst = store.watch(A, [T1], first.listener);
@@ -973,7 +1014,7 @@ describe("agentThreadRequestStore", () => {
     const second = recorder();
     const unwatchSecond = store.watch(A, [T1], second.listener);
     await released();
-    pull.resolve(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]));
+    pull.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")])));
     await settle();
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1);
     expect(feed.subscribeThreadRequests).toHaveBeenCalledTimes(1);
@@ -1040,8 +1081,8 @@ describe("agentThreadRequestStore", () => {
     const unwatchAgain = store.watch(A, [T1, T2], () => undefined);
     await settle();
     expect(feed.currentThreadRequests.mock.calls).toEqual([
-      [A, [T1, T2]],
-      [A, [T2]],
+      [A, [T1, T2], null],
+      [A, [T2], null],
     ]);
     unwatchNarrow();
     unwatchAgain();
@@ -1065,29 +1106,347 @@ describe("agentThreadRequestStore", () => {
     unwatchNarrow();
   });
 
-  it("bounds the pulls of one sync when the backend keeps changing its epoch", async () => {
+  it("bounds the epoch changes of one sync when the backend keeps changing its epoch", async () => {
     const feed = agentThreadRequestFeedFake();
     const turnIds = turnIdsOf(PAGE + 1);
-    const unstable = 2 * MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC + 8;
+    const unstable = 1 + 2 * EPOCH_CHANGES;
     feed.currentThreadRequests.mockImplementation(() => {
       const pulls = feed.currentThreadRequests.mock.calls.length;
       const epoch = pulls > unstable ? "boot-stable" : `boot-${pulls}`;
-      return Promise.resolve(agentThreadRequestsOf(A, [], { epoch }));
+      return Promise.resolve(pulled(agentThreadRequestsOf(A, [], { epoch })));
     });
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, turnIds, watcher.listener);
     await settle();
-    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(
-      MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC,
-    );
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1 + EPOCH_CHANGES);
     expect(vi.getTimerCount()).toBe(1);
     expect(watcher.views()).toEqual(["pending"]);
     await vi.advanceTimersByTimeAsync(retryDelay(0));
-    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(
-      2 * MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC,
-    );
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1 + 2 * EPOCH_CHANGES);
     await vi.advanceTimersByTimeAsync(retryDelay(1));
     expect(watcher.views()).toEqual(["pending", view([], { epoch: "boot-stable" })]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+  });
+
+  it("follows a cursor chain and covers the turns only when it ends, open requests first", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    feed.record(
+      agentThreadRequestsOf(A, [
+        ...closedRequests(T1, RECORDS + 5),
+        pendingRequest(T1, "req-open"),
+      ]),
+    );
+    const watcher = recorder();
+    const unwatch = store.watch(A, [], watcher.listener);
+    await settle();
+    const unwatchWide = store.watch(A, [T1], () => undefined);
+    await settle();
+    expect(feed.currentThreadRequests.mock.calls).toEqual([
+      [A, [], null],
+      [A, [T1], null],
+      [A, [T1], cursorAt([T1], RECORDS)],
+    ]);
+    expect(watcher.seen.slice(1).map(requestCount)).toEqual([0, 0, RECORDS, RECORDS + 6]);
+    expect(watcher.seen.slice(1).map(pendingOf)).toEqual([[], [T1], [T1], []]);
+    const first = watcher.views()[3];
+    expect(typeof first === "string" ? [] : first?.requests).toContain(`${T1}/req-open@1:pending`);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatchWide();
+    unwatch();
+  });
+
+  it("merges a chain of many cursor pages without loss in one first observation", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const records = closedRequests(T1, 3 * RECORDS + 8);
+    feed.record(agentThreadRequestsOf(A, records));
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+    await settle();
+    expect(cursorsOf(feed)).toEqual([
+      null,
+      cursorAt([T1], RECORDS),
+      cursorAt([T1], 2 * RECORDS),
+      cursorAt([T1], 3 * RECORDS),
+    ]);
+    expect(watcher.views()).toEqual([
+      "pending",
+      view(records.map((request) => `${T1}/${request.id}@2:timedOut`)),
+    ]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+  });
+
+  it.each([
+    { name: "a push", overrides: {} },
+    { name: "a reset", overrides: { reset: true } },
+  ])(
+    "restarts the turn page from the start when $name lands between cursor pages",
+    async ({ overrides }) => {
+      const feed = agentThreadRequestFeedFake();
+      const closed = closedRequests(T1, RECORDS + 5);
+      const pushed = agentThreadRequestsOf(
+        A,
+        [...closed, pendingRequest(T1, "req-pushed")],
+        overrides,
+      );
+      feed.record(agentThreadRequestsOf(A, closed));
+      const answer = feed.currentThreadRequests.getMockImplementation();
+      const interrupted = { done: false };
+      feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
+        if (cursor !== null && !interrupted.done) {
+          interrupted.done = true;
+          feed.record(pushed);
+          feed.push(agentThreadRequestsOf(A, [pendingRequest(T1, "req-pushed")], overrides));
+        }
+        return answer?.(scope, turnIds, cursor) ?? hanging();
+      });
+      const watcher = recorder();
+      const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+      await settle();
+      expect(cursorsOf(feed)).toEqual([
+        null,
+        cursorAt([T1], RECORDS),
+        null,
+        cursorAt([T1], RECORDS),
+      ]);
+      expect(watcher.seen.map(requestCount)).toEqual([-1, RECORDS + 6]);
+      expect(pendingOf(watcher.seen[1])).toEqual([]);
+      const last = watcher.views()[1];
+      expect(typeof last === "string" ? [] : last?.requests).toContain(
+        `${T1}/req-pushed@1:pending`,
+      );
+      expect(vi.getTimerCount()).toBe(0);
+      unwatch();
+    },
+  );
+
+  it("restarts a chain once when a continuation fails and counts a second failure", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.record(agentThreadRequestsOf(A, closedRequests(T1, RECORDS + 5)));
+    const answer = feed.currentThreadRequests.getMockImplementation();
+    const stale = { failures: 3 };
+    feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
+      if (cursor === null || stale.failures === 0)
+        return answer?.(scope, turnIds, cursor) ?? hanging();
+      stale.failures -= 1;
+      return Promise.reject(new Error("The cursor is stale."));
+    });
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+    await settle();
+    const continued = cursorAt([T1], RECORDS);
+    expect(cursorsOf(feed)).toEqual([null, continued, null, continued]);
+    expect(watcher.views()).toEqual(["pending"]);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(retryDelay(0));
+    expect(cursorsOf(feed)).toEqual([
+      null,
+      continued,
+      null,
+      continued,
+      null,
+      continued,
+      null,
+      continued,
+    ]);
+    expect(watcher.seen.map(requestCount)).toEqual([-1, RECORDS + 5]);
+    expect(pendingOf(watcher.seen[1])).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+  });
+
+  it("restarts a chain from the start when the journal changes its epoch behind a cursor", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.record(agentThreadRequestsOf(A, closedRequests(T1, RECORDS + 5)));
+    const next = [pendingRequest(T1, "req-next"), ...closedRequests(T1, RECORDS)];
+    const answer = feed.currentThreadRequests.getMockImplementation();
+    const rotated = { done: false };
+    feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
+      if (cursor !== null && !rotated.done) {
+        rotated.done = true;
+        feed.record(agentThreadRequestsOf(A, next, { epoch: epochOf(2) }));
+      }
+      return answer?.(scope, turnIds, cursor) ?? hanging();
+    });
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+    await settle();
+    expect(cursorsOf(feed)).toEqual([
+      null,
+      cursorAt([T1], RECORDS, epochOf(1)),
+      null,
+      cursorAt([T1], RECORDS, epochOf(2)),
+    ]);
+    expect(watcher.seen.map(requestCount)).toEqual([-1, RECORDS + 1]);
+    const last = watcher.views()[1];
+    expect(typeof last === "string" ? null : last?.epoch).toBe(epochOf(2));
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+  });
+
+  it("abandons a chain whose continuation answers from another epoch and pulls the turn page again", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    const watcher = recorder();
+    const unwatch = store.watch(A, [], watcher.listener);
+    await settle();
+    const next = [pendingRequest(T1, "req-next"), ...closedRequests(T1, RECORDS)];
+    feed.currentThreadRequests
+      .mockResolvedValueOnce(
+        pulled(agentThreadRequestsOf(A, closedRequests(T1, RECORDS)), "boot-0001:64"),
+      )
+      .mockImplementationOnce(() => {
+        feed.record(agentThreadRequestsOf(A, next, { epoch: epochOf(2) }));
+        return Promise.resolve(
+          pulled(agentThreadRequestsOf(A, next.slice(RECORDS), { epoch: epochOf(2) })),
+        );
+      });
+    const unwatchWide = store.watch(A, [T1], () => undefined);
+    await settle();
+    expect(cursorsOf(feed)).toEqual([
+      null,
+      null,
+      "boot-0001:64",
+      null,
+      cursorAt([T1], RECORDS, epochOf(2)),
+    ]);
+    const last = watcher.seen[watcher.seen.length - 1];
+    expect(requestCount(last)).toBe(RECORDS + 1);
+    expect(pendingOf(last)).toEqual([]);
+    expect(watcher.seen.slice(2).map(pendingOf)).toEqual([[T1], [T1], [T1], [T1], []]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatchWide();
+    unwatch();
+  });
+
+  it("keeps the turn list a chain started with when the watched turns change during a continuation", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    feed.record(
+      agentThreadRequestsOf(A, [...closedRequests(T1, RECORDS + 5), pendingRequest(T2, "req-2")]),
+    );
+    const watcher = recorder();
+    const unwatch = store.watch(A, [], watcher.listener);
+    await settle();
+    const answer = feed.currentThreadRequests.getMockImplementation();
+    const gate = deferred<null>();
+    feed.currentThreadRequests.mockImplementationOnce(async (scope, turnIds, cursor) => {
+      await gate.promise;
+      return (await answer?.(scope, turnIds, cursor)) ?? hanging();
+    });
+    const unwatchFirst = store.watch(A, [T1], () => undefined);
+    const unwatchSecond = store.watch(A, [T1, T2], () => undefined);
+    unwatchFirst();
+    gate.resolve(null);
+    await settle();
+    expect(feed.currentThreadRequests.mock.calls).toEqual([
+      [A, [], null],
+      [A, [T1], null],
+      [A, [T1], cursorAt([T1], RECORDS)],
+      [A, [T2], null],
+    ]);
+    const last = watcher.seen[watcher.seen.length - 1];
+    expect(requestCount(last)).toBe(RECORDS + 6);
+    expect(pendingOf(last)).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatchSecond();
+    unwatch();
+  });
+
+  it("is refused by the journal when a cursor comes back with another turn list or scope", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.record(agentThreadRequestsOf(A, closedRequests(T1, RECORDS + 5)));
+    const first = await feed.currentThreadRequests(A, [T1], null);
+    await expect(feed.currentThreadRequests(A, [T1], first.nextCursor)).resolves.toMatchObject({
+      nextCursor: null,
+    });
+    await expect(feed.currentThreadRequests(A, [T1, T2], first.nextCursor)).rejects.toThrow(
+      "The cursor is stale.",
+    );
+    await expect(feed.currentThreadRequests(A, [T2], first.nextCursor)).rejects.toThrow(
+      "The cursor is stale.",
+    );
+    await expect(
+      feed.currentThreadRequests({ ...A, rootKey: B.rootKey }, [T1], first.nextCursor),
+    ).rejects.toThrow("The cursor is stale.");
+    await expect(feed.currentThreadRequests(A, [T1], "boot-0001:64")).rejects.toThrow(
+      "The cursor is stale.",
+    );
+    expect(first.nextCursor).toMatch(/^[A-Za-z0-9_.:-]{1,256}$/);
+  });
+
+  it("applies the deadline to each cursor page and restarts the chain once when one hangs", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.record(agentThreadRequestsOf(A, closedRequests(T1, RECORDS + 5)));
+    const answer = feed.currentThreadRequests.getMockImplementation();
+    const late = deferred<AgentThreadRequestsPage>();
+    const hung = { done: false };
+    feed.currentThreadRequests.mockImplementation((scope, turnIds, cursor) => {
+      if (cursor === null || hung.done) return answer?.(scope, turnIds, cursor) ?? hanging();
+      hung.done = true;
+      return late.promise;
+    });
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+    await settle();
+    expect(cursorsOf(feed)).toEqual([null, cursorAt([T1], RECORDS)]);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    late.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-late")])));
+    await settle();
+    expect(cursorsOf(feed)).toEqual([null, cursorAt([T1], RECORDS), null, cursorAt([T1], RECORDS)]);
+    expect(watcher.seen.map(requestCount)).toEqual([-1, RECORDS + 5]);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+  });
+
+  it("fails a chain that never ends without ever covering its turns", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    const watcher = recorder();
+    const unwatch = store.watch(A, [], watcher.listener);
+    await settle();
+    feed.currentThreadRequests.mockImplementation(() =>
+      Promise.resolve(pulled(agentThreadRequestsOf(A), "more")),
+    );
+    const unwatchWide = store.watch(A, [T1], () => undefined);
+    await drain();
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1 + CHAIN_PAGES);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(retryDelay(0));
+    await drain();
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1 + 2 * CHAIN_PAGES);
+    expect(watcher.views()).toEqual(["pending", view([]), view([], { pending: [T1] })]);
+    unwatchWide();
+    unwatch();
+  });
+
+  it("counts cursor pages against the pulls of one sync and resumes from the covered turn pages", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const turnIds = turnIdsOf(MAX_AGENT_THREAD_REQUEST_TURN_IDS);
+    const chain = 100;
+    feed.currentThreadRequests.mockImplementation((_scope, _turnIds, cursor) => {
+      const page = cursor === null ? 1 : Number(cursor.slice(1)) + 1;
+      return Promise.resolve(pulled(agentThreadRequestsOf(A), page < chain ? `p${page}` : null));
+    });
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, turnIds, watcher.listener);
+    await drain();
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(
+      MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC,
+    );
+    expect(watcher.views()).toEqual(["pending"]);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(retryDelay(0));
+    await drain();
+    const turnPages = MAX_AGENT_THREAD_REQUEST_TURN_IDS / PAGE;
+    const covered = Math.floor(MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC / chain);
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(
+      MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC + (turnPages - covered) * chain,
+    );
+    expect(watcher.views()).toEqual(["pending", view([])]);
     expect(vi.getTimerCount()).toBe(0);
     unwatch();
   });
@@ -1105,9 +1464,9 @@ describe("agentThreadRequestStore", () => {
     const unwatch = agentThreadRequestStore(feed).watch(A, turnIds, watcher.listener);
     await settle();
     expect(feed.currentThreadRequests.mock.calls).toEqual([
-      [A, turnIds.slice(0, PAGE)],
-      [A, turnIds.slice(PAGE, 2 * PAGE)],
-      [A, turnIds.slice(2 * PAGE)],
+      [A, turnIds.slice(0, PAGE), null],
+      [A, turnIds.slice(PAGE, 2 * PAGE), null],
+      [A, turnIds.slice(2 * PAGE), null],
     ]);
     expect(watcher.views()).toEqual([
       "pending",
@@ -1129,7 +1488,8 @@ describe("agentThreadRequestStore", () => {
     const answer = feed.currentThreadRequests.getMockImplementation();
     feed.currentThreadRequests
       .mockImplementationOnce(
-        (scope, page) => answer?.(scope, page) ?? Promise.reject(new Error("no journal")),
+        (scope, page, cursor) =>
+          answer?.(scope, page, cursor) ?? Promise.reject(new Error("no journal")),
       )
       .mockRejectedValueOnce(new Error("offline"));
     const watcher = recorder();
@@ -1139,9 +1499,9 @@ describe("agentThreadRequestStore", () => {
     expect(vi.getTimerCount()).toBe(1);
     await vi.advanceTimersByTimeAsync(retryDelay(0));
     expect(feed.currentThreadRequests.mock.calls).toEqual([
-      [A, turnIds.slice(0, PAGE)],
-      [A, turnIds.slice(PAGE)],
-      [A, turnIds.slice(PAGE)],
+      [A, turnIds.slice(0, PAGE), null],
+      [A, turnIds.slice(PAGE), null],
+      [A, turnIds.slice(PAGE), null],
     ]);
     expect(watcher.views()).toEqual([
       "pending",
@@ -1355,7 +1715,7 @@ describe("agentThreadRequestStore", () => {
   it("abandons a pull that never settles, retries it and rejects its late answer", async () => {
     const feed = agentThreadRequestFeedFake();
     feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]));
-    const hung = deferred<AgentThreadRequests>();
+    const hung = deferred<AgentThreadRequestsPage>();
     feed.currentThreadRequests.mockImplementationOnce(() => hung.promise);
     const watcher = recorder();
     const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
@@ -1365,7 +1725,7 @@ describe("agentThreadRequestStore", () => {
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(vi.getTimerCount()).toBe(1);
-    hung.resolve(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-1", 99)]));
+    hung.resolve(pulled(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-1", 99)])));
     await settle();
     expect(watcher.views()).toEqual(["pending"]);
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1);
@@ -1557,7 +1917,7 @@ describe("agentThreadRequestStore", () => {
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1 + AGENT_THREAD_REQUEST_MAX_RETRIES);
     expect(watcher.views()).toEqual(["pending", "unavailable"]);
     feed.currentThreadRequests.mockResolvedValue(
-      agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]),
+      pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")])),
     );
     const joined = recorder();
     const unwatchJoined = store.watch(A, [T1], joined.listener);
@@ -1585,7 +1945,7 @@ describe("agentThreadRequestStore", () => {
     expect(feed.currentThreadRequests).toHaveBeenCalledTimes(1 + AGENT_THREAD_REQUEST_MAX_RETRIES);
     expect(vi.getTimerCount()).toBe(0);
     feed.currentThreadRequests.mockResolvedValue(
-      agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]),
+      pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")])),
     );
     feed.push(agentThreadRequestsOf(A, [pendingRequest(T1, "req-3")]));
     expect(watcher.views()).toEqual(["pending", "unavailable"]);

@@ -3,8 +3,10 @@ import wire from "../../contracts/agent-runtime-request-wire.json";
 import type {
   AgentThreadRequestFeed,
   AgentThreadRequestScope,
+  AgentThreadRequestsPage,
 } from "../application/agentThreadRequestPorts";
 import {
+  MAX_AGENT_THREAD_REQUESTS_PER_MESSAGE,
   parseAgentRuntimeRequest,
   type AgentRuntimeRequest,
   type AgentThreadRequests,
@@ -56,6 +58,13 @@ export function agentThreadRequestsOf(
   };
 }
 
+export function agentThreadRequestsPageOf(
+  message: AgentThreadRequests,
+  nextCursor: string | null = null,
+): AgentThreadRequestsPage {
+  return { message, nextCursor };
+}
+
 export function agentThreadRequestFeedFake(): AgentThreadRequestFeedFake {
   const handlers = new Set<ThreadRequestsHandler>();
   const journal = new Map<string, AgentThreadRequests>();
@@ -67,11 +76,25 @@ export function agentThreadRequestFeedFake(): AgentThreadRequestFeedFake {
     [...handlers].forEach((handler) => handler(message));
   };
   return {
-    currentThreadRequests: vi.fn((scope: AgentThreadRequestScope, turnIds: readonly string[]) => {
-      const recorded = journal.get(scope.threadId) ?? agentThreadRequestsOf(scope);
-      const requests = recorded.requests.filter((request) => turnIds.includes(request.turnId));
-      return Promise.resolve({ ...recorded, requests, reset: false });
-    }),
+    currentThreadRequests: vi.fn(
+      (scope: AgentThreadRequestScope, turnIds: readonly string[], cursor: string | null) => {
+        const recorded = journal.get(scope.threadId) ?? agentThreadRequestsOf(scope);
+        const offset = cursorOffset(cursor);
+        if (cursor !== agentThreadRequestsCursorOf(scope, turnIds, recorded.epoch, offset))
+          return Promise.reject(new Error("The cursor is stale."));
+        const matching = openFirst(
+          recorded.requests.filter((request) => turnIds.includes(request.turnId)),
+        );
+        const end = offset + MAX_AGENT_THREAD_REQUESTS_PER_MESSAGE;
+        const requests = matching.slice(offset, end);
+        const message = { ...recorded, requests, workspaceId: null, reset: false };
+        const nextCursor =
+          end < matching.length
+            ? agentThreadRequestsCursorOf(scope, turnIds, recorded.epoch, end)
+            : null;
+        return Promise.resolve({ message, nextCursor });
+      },
+    ),
     subscribeThreadRequests: vi.fn((handler: ThreadRequestsHandler) => {
       handlers.add(handler);
       return Promise.resolve(() => {
@@ -88,6 +111,38 @@ export function agentThreadRequestFeedFake(): AgentThreadRequestFeedFake {
       push(message);
     },
   };
+}
+
+export function agentThreadRequestsCursorOf(
+  scope: Pick<AgentThreadRequestScope, "rootKey" | "ownerId" | "threadId">,
+  turnIds: readonly string[],
+  epoch: string,
+  offset: number,
+): string | null {
+  if (offset === 0) return null;
+  const bound = JSON.stringify([scope.rootKey, scope.ownerId, scope.threadId, turnIds]);
+  return `${epoch}:${offset}:${checksum(bound)}`;
+}
+
+function cursorOffset(cursor: string | null): number {
+  if (cursor === null) return 0;
+  return Number(cursor.split(":").slice(-2)[0]);
+}
+
+function checksum(text: string): string {
+  let hash = 2_166_136_261;
+  for (const character of text)
+    hash = Math.imul(hash ^ (character.codePointAt(0) ?? 0), 16_777_619);
+  return (hash >>> 0).toString(36);
+}
+
+function openFirst(requests: readonly AgentRuntimeRequest[]): readonly AgentRuntimeRequest[] {
+  const open = requests.filter(isOpen);
+  return [...open, ...requests.filter((request) => !isOpen(request))];
+}
+
+function isOpen(request: AgentRuntimeRequest): boolean {
+  return request.status === "pending" || request.status === "submitting";
 }
 
 function journaled(

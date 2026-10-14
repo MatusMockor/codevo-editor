@@ -12,6 +12,7 @@ import {
 import { MAX_AGENT_TASK_PATH_BYTES, MAX_AGENT_TASK_WORKSPACE_ID_BYTES } from "../domain/agentTask";
 import {
   AGENT_THREAD_REQUESTS_EVENT,
+  MAX_AGENT_THREAD_REQUESTS_CURSOR_CHARS,
   TauriAgentThreadRequestFeed,
   type AgentThreadRequestRuntimeDetector,
   type InvokeAgentThreadRequestCommand,
@@ -71,6 +72,19 @@ function threadRequests(requests: readonly unknown[], overrides: WireValue = {})
   };
 }
 
+function pullMessage(requests: readonly unknown[], overrides: WireValue = {}): WireValue {
+  return threadRequests(requests, { workspaceId: null, ...overrides });
+}
+
+function pullShaped(value: WireValue, patch: WireValue = {}): WireValue {
+  if ("workspaceId" in patch) return value;
+  return { ...value, workspaceId: null };
+}
+
+function isPullShaped(message: WireValue): boolean {
+  return message.workspaceId === null && message.reset === false;
+}
+
 function numberedRequests(count: number): readonly WireValue[] {
   return Array.from({ length: count }, (_unused, index) => ({
     ...VALID_REQUESTS[0]?.value,
@@ -78,13 +92,44 @@ function numberedRequests(count: number): readonly WireValue[] {
   }));
 }
 
-const validMessages: ReadonlyArray<readonly [string, WireValue]> = [
+const pushedMessages: ReadonlyArray<readonly [string, WireValue]> = [
   ...VALID_THREAD_REQUESTS.map((valid) => [valid.name, valid.value] as const),
   ...VALID_REQUESTS.map((valid) => [valid.name, threadRequests([valid.value])] as const),
   ["a full message", threadRequests(numberedRequests(MAX_AGENT_THREAD_REQUESTS_PER_MESSAGE))],
 ];
 
-const invalidMessages: ReadonlyArray<readonly [string, unknown]> = [
+const pulledMessages: ReadonlyArray<readonly [string, WireValue]> = [
+  ...VALID_THREAD_REQUESTS.map(
+    (valid) => [valid.name, { ...pullShaped(valid.value), reset: false }] as const,
+  ),
+  ...VALID_REQUESTS.map((valid) => [valid.name, pullMessage([valid.value])] as const),
+  ["a full message", pullMessage(numberedRequests(MAX_AGENT_THREAD_REQUESTS_PER_MESSAGE))],
+];
+
+const pushOnlyMessages: ReadonlyArray<readonly [string, WireValue]> = [
+  ...pushedMessages.filter(([, message]) => !isPullShaped(message)),
+  ["a reset without a workspace", pullMessage([], { reset: true })],
+  ["a workspace without a reset", threadRequests([])],
+];
+
+const invalidPulledMessages: ReadonlyArray<readonly [string, unknown]> = [
+  ...INVALID_THREAD_REQUESTS.map(
+    (invalid) =>
+      [invalid.name, pullShaped(patched(VALID_THREAD_REQUESTS, invalid), invalid.patch)] as const,
+  ),
+  ...INVALID_REQUESTS.map(
+    (invalid) => [invalid.name, pullMessage([patched(VALID_REQUESTS, invalid)])] as const,
+  ),
+  [
+    "more records than one message holds",
+    pullMessage(numberedRequests(MAX_AGENT_THREAD_REQUESTS_PER_MESSAGE + 1)),
+  ],
+  ["a list instead of a message", [pullMessage([])]],
+  ["null", null],
+  ["text", "requests"],
+];
+
+const invalidPushedMessages: ReadonlyArray<readonly [string, unknown]> = [
   ...INVALID_THREAD_REQUESTS.map(
     (invalid) => [invalid.name, patched(VALID_THREAD_REQUESTS, invalid)] as const,
   ),
@@ -116,6 +161,10 @@ function fakeEventBus() {
   return { listen, emit };
 }
 
+function pulled(message: unknown, nextCursor: unknown = null): WireValue {
+  return { message, nextCursor };
+}
+
 function feedReturning(payload: unknown) {
   const invoke = vi.fn<InvokeAgentThreadRequestCommand>().mockResolvedValue(payload);
   return { invoke, feed: new TauriAgentThreadRequestFeed(invoke, vi.fn(), available) };
@@ -134,12 +183,13 @@ describe("TauriAgentThreadRequestFeed", () => {
     expect(isAgentThreadRequestFeed(null)).toBe(false);
   });
 
-  it("pulls with exactly the root, owner, thread and turn identity", async () => {
-    const { invoke, feed } = feedReturning(threadRequests([]));
+  it("pulls with exactly the root, owner, thread, turn identity and cursor", async () => {
+    const { invoke, feed } = feedReturning(pulled(pullMessage([])));
 
-    await expect(feed.currentThreadRequests(scope, turnIds)).resolves.toStrictEqual(
-      threadRequests([]),
-    );
+    await expect(feed.currentThreadRequests(scope, turnIds, null)).resolves.toStrictEqual({
+      message: pullMessage([]),
+      nextCursor: null,
+    });
 
     expect(invoke.mock.calls).toStrictEqual([
       [
@@ -150,17 +200,30 @@ describe("TauriAgentThreadRequestFeed", () => {
             ownerId: "agent-root:00000000000000aa",
             threadId: "agt-thread-0001",
             turnIds: ["agt-turn-0001", "agt-turn-0002"],
+            cursor: null,
           },
         },
       ],
     ]);
   });
 
+  it("sends a continuation cursor back unchanged and returns the next one", async () => {
+    const next = "c".repeat(MAX_AGENT_THREAD_REQUESTS_CURSOR_CHARS);
+    const { invoke, feed } = feedReturning(pulled(pullMessage([]), next));
+
+    await expect(
+      feed.currentThreadRequests(scope, turnIds, "boot-0001:64_a.B"),
+    ).resolves.toStrictEqual({ message: pullMessage([]), nextCursor: next });
+
+    expect(MAX_AGENT_THREAD_REQUESTS_CURSOR_CHARS).toBe(256);
+    expect(invoke.mock.calls[0]?.[1].request.cursor).toBe("boot-0001:64_a.B");
+  });
+
   it("never forwards the workspace registration or any other scope field", async () => {
-    const { invoke, feed } = feedReturning(threadRequests([]));
+    const { invoke, feed } = feedReturning(pulled(pullMessage([])));
     const widened = { ...scope, kind: "local", repositoryRoot: "/repo/nested" };
 
-    await feed.currentThreadRequests(widened, []);
+    await feed.currentThreadRequests(widened, [], null);
 
     expect(invoke.mock.calls[0]?.[1]).toStrictEqual({
       request: {
@@ -168,30 +231,86 @@ describe("TauriAgentThreadRequestFeed", () => {
         ownerId: "agent-root:00000000000000aa",
         threadId: "agt-thread-0001",
         turnIds: [],
+        cursor: null,
       },
     });
   });
 
-  it.each(validMessages)("accepts the pulled contract message %s", async (_label, message) => {
-    const { feed } = feedReturning(message);
+  it.each(pulledMessages)("accepts the pulled contract message %s", async (_label, message) => {
+    const { feed } = feedReturning(pulled(message));
 
-    await expect(feed.currentThreadRequests(scopeOf(message), turnIds)).resolves.toStrictEqual(
-      message,
-    );
+    await expect(
+      feed.currentThreadRequests(scopeOf(message), turnIds, null),
+    ).resolves.toStrictEqual({ message, nextCursor: null });
   });
 
-  it.each(invalidMessages)("rejects the pulled message with %s", async (_label, message) => {
-    const { feed } = feedReturning(message);
+  it.each(invalidPulledMessages)("rejects the pulled message with %s", async (_label, message) => {
+    const { feed } = feedReturning(pulled(message));
 
-    await expect(feed.currentThreadRequests(scope, turnIds)).rejects.toThrow();
+    await expect(feed.currentThreadRequests(scope, turnIds, null)).rejects.toThrow();
+  });
+
+  it.each(pushOnlyMessages)(
+    "rejects the pushed-only message %s as a pull answer",
+    async (_label, message) => {
+      const { feed } = feedReturning(pulled(message));
+
+      await expect(feed.currentThreadRequests(scopeOf(message), turnIds, null)).rejects.toThrow(
+        "Agent thread requests were answered with a pushed message.",
+      );
+    },
+  );
+
+  it("keeps pull and push cases apart", () => {
+    expect(pulledMessages.every(([, message]) => isPullShaped(message))).toBe(true);
+    expect(pushOnlyMessages.some(([, message]) => message.reset === true)).toBe(true);
+    expect(pushOnlyMessages.some(([, message]) => message.workspaceId !== null)).toBe(true);
+    expect(pushOnlyMessages.length).toBeGreaterThan(VALID_REQUESTS.length);
+  });
+
+  it.each([
+    ["a bare message without the page envelope", pullMessage([])],
+    ["a missing next cursor", { message: pullMessage([]) }],
+    ["an undefined next cursor", { message: pullMessage([]), nextCursor: undefined }],
+    ["a missing message", { nextCursor: null }],
+    ["an unknown page key", { ...pulled(pullMessage([])), total: 1 }],
+    ["a renamed cursor key", { message: pullMessage([]), next_cursor: null }],
+    ["an empty next cursor", pulled(pullMessage([]), "")],
+    ["a numeric next cursor", pulled(pullMessage([]), 64)],
+    ["a next cursor with a space", pulled(pullMessage([]), "boot 64")],
+    ["a next cursor with a slash", pulled(pullMessage([]), "boot/64")],
+    ["a next cursor with a line break", pulled(pullMessage([]), "boot\n64")],
+    [
+      "an oversized next cursor",
+      pulled(pullMessage([]), "c".repeat(MAX_AGENT_THREAD_REQUESTS_CURSOR_CHARS + 1)),
+    ],
+    ["a list instead of a page", [pulled(pullMessage([]))]],
+    ["null", null],
+  ])("rejects a pulled page with %s", async (_label, page) => {
+    const { feed } = feedReturning(page);
+
+    await expect(feed.currentThreadRequests(scope, turnIds, null)).rejects.toThrow();
   });
 
   it("rejects a pull answered for another thread", async () => {
-    const { feed } = feedReturning(threadRequests([], { threadId: "agt-thread-0002" }));
+    const { feed } = feedReturning(pulled(pullMessage([], { threadId: "agt-thread-0002" })));
 
-    await expect(feed.currentThreadRequests(scope, turnIds)).rejects.toThrow(
+    await expect(feed.currentThreadRequests(scope, turnIds, null)).rejects.toThrow(
       "Agent thread requests belong to another thread.",
     );
+  });
+
+  it.each([
+    ["an empty cursor", ""],
+    ["a cursor with a space", "boot 64"],
+    ["a cursor with a control character", "boot\u000764"],
+    ["an oversized cursor", "c".repeat(MAX_AGENT_THREAD_REQUESTS_CURSOR_CHARS + 1)],
+  ])("rejects %s before reaching the transport", async (_label, cursor) => {
+    const { invoke, feed } = feedReturning(pulled(pullMessage([])));
+
+    await expect(feed.currentThreadRequests(scope, turnIds, cursor)).rejects.toThrow();
+
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -225,24 +344,28 @@ describe("TauriAgentThreadRequestFeed", () => {
   ])(
     "rejects %s before reaching the transport, with and without the native runtime",
     async (_label, invalidScope, invalidTurnIds) => {
-      const { invoke, feed } = feedReturning(threadRequests([]));
+      const { invoke, feed } = feedReturning(pulled(pullMessage([])));
       const offline = new TauriAgentThreadRequestFeed(invoke, vi.fn(), unavailable);
 
-      await expect(feed.currentThreadRequests(invalidScope, invalidTurnIds)).rejects.toThrow();
-      await expect(offline.currentThreadRequests(invalidScope, invalidTurnIds)).rejects.toThrow();
+      await expect(
+        feed.currentThreadRequests(invalidScope, invalidTurnIds, null),
+      ).rejects.toThrow();
+      await expect(
+        offline.currentThreadRequests(invalidScope, invalidTurnIds, null),
+      ).rejects.toThrow();
 
       expect(invoke).not.toHaveBeenCalled();
     },
   );
 
   it("pulls the largest turn page the contract allows", async () => {
-    const { invoke, feed } = feedReturning(threadRequests([]));
+    const { invoke, feed } = feedReturning(pulled(pullMessage([])));
     const page = Array.from(
       { length: MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL },
       (_unused, index) => `agt-turn-${index}`,
     );
 
-    await feed.currentThreadRequests(scope, page);
+    await feed.currentThreadRequests(scope, page, null);
 
     expect(MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL).toBe(32);
     expect(invoke.mock.calls[0]?.[1].request.turnIds).toStrictEqual(page);
@@ -254,7 +377,7 @@ describe("TauriAgentThreadRequestFeed", () => {
       .mockRejectedValue(new Error("Workspace is not registered."));
     const feed = new TauriAgentThreadRequestFeed(invoke, vi.fn(), available);
 
-    await expect(feed.currentThreadRequests(scope, turnIds)).rejects.toThrow(
+    await expect(feed.currentThreadRequests(scope, turnIds, null)).rejects.toThrow(
       "Workspace is not registered.",
     );
   });
@@ -265,12 +388,12 @@ describe("TauriAgentThreadRequestFeed", () => {
     const received: AgentThreadRequests[] = [];
 
     await feed.subscribeThreadRequests((message) => received.push(message));
-    validMessages.forEach(([, message]) => bus.emit(AGENT_THREAD_REQUESTS_EVENT, message));
+    pushedMessages.forEach(([, message]) => bus.emit(AGENT_THREAD_REQUESTS_EVENT, message));
 
     expect(bus.listen.mock.calls.map(([event]) => event)).toStrictEqual([
       "agent-thread://requests",
     ]);
-    expect(received).toStrictEqual(validMessages.map(([, message]) => message));
+    expect(received).toStrictEqual(pushedMessages.map(([, message]) => message));
     expect(new Set(received.map((message) => message.threadId)).size).toBeGreaterThan(1);
   });
 
@@ -280,10 +403,10 @@ describe("TauriAgentThreadRequestFeed", () => {
     const handler = vi.fn<(message: AgentThreadRequests) => void>();
 
     await feed.subscribeThreadRequests(handler);
-    invalidMessages.forEach(([, message]) => bus.emit(AGENT_THREAD_REQUESTS_EVENT, message));
+    invalidPushedMessages.forEach(([, message]) => bus.emit(AGENT_THREAD_REQUESTS_EVENT, message));
     bus.emit(AGENT_THREAD_REQUESTS_EVENT, undefined);
 
-    expect(invalidMessages.length).toBeGreaterThan(
+    expect(invalidPushedMessages.length).toBeGreaterThan(
       INVALID_THREAD_REQUESTS.length + INVALID_REQUESTS.length,
     );
     expect(handler).not.toHaveBeenCalled();
@@ -327,10 +450,10 @@ describe("TauriAgentThreadRequestFeed", () => {
     const feed = new TauriAgentThreadRequestFeed(invoke, listen, unavailable);
     const handler = vi.fn<(message: AgentThreadRequests) => void>();
 
-    await expect(feed.currentThreadRequests(scope, turnIds)).rejects.toThrow(
+    await expect(feed.currentThreadRequests(scope, turnIds, null)).rejects.toThrow(
       "Agent thread requests need the native runtime.",
     );
-    await expect(feed.currentThreadRequests(scope, [])).rejects.toThrow(
+    await expect(feed.currentThreadRequests(scope, [], null)).rejects.toThrow(
       "Agent thread requests need the native runtime.",
     );
     await expect(feed.subscribeThreadRequests(handler)).rejects.toThrow(

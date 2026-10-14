@@ -9,11 +9,17 @@ export interface AgentThreadRequestScope {
   readonly workspaceId: string | null;
 }
 
+export interface AgentThreadRequestsPage {
+  readonly message: AgentThreadRequests;
+  readonly nextCursor: string | null;
+}
+
 export interface AgentThreadRequestFeed {
   currentThreadRequests(
     scope: AgentThreadRequestScope,
     turnIds: readonly string[],
-  ): Promise<AgentThreadRequests>;
+    cursor: string | null,
+  ): Promise<AgentThreadRequestsPage>;
   subscribeThreadRequests(handler: (message: AgentThreadRequests) => void): Promise<() => void>;
 }
 

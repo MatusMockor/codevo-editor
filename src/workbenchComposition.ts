@@ -23,6 +23,7 @@ import { resolveTauriWorkspaceHome } from "./infrastructure/tauriHomeDirectory";
 import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
 import { BrowserAgentSidebarRailPreference } from "./infrastructure/browserAgentSidebarRailPreference";
 import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
+import { TauriAgentThreadRequestFeed } from "./infrastructure/tauriAgentThreadRequestFeed";
 import { TauriAgentInlineImageGateway } from "./infrastructure/tauriAgentInlineImageGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
@@ -172,6 +173,7 @@ export function createWorkbenchComposition() {
       fileChanges: workspaceFileChangeGateway,
       worktreeFileChanges: workspaceFileChangeGateway,
       fileSearch: workspaceGateway,
+      threadRequestFeed: new TauriAgentThreadRequestFeed(),
     },
     indexProgressGateway: new TauriIndexProgressGateway(),
     javaScriptTypeScriptLanguageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(

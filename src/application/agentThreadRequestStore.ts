@@ -9,6 +9,7 @@ import {
   MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL,
   type AgentThreadRequestFeed,
   type AgentThreadRequestScope,
+  type AgentThreadRequestsPage,
 } from "./agentThreadRequestPorts";
 import { BoundedRetry, attemptWithinDeadline, type BoundedRetryPolicy } from "./boundedRetry";
 
@@ -19,8 +20,13 @@ export const AGENT_THREAD_REQUEST_FAILURE_NOTICE_THRESHOLD = 3;
 export const AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS = 5_000;
 export const MAX_AGENT_THREAD_REQUEST_WATCHED_SCOPES = 64;
 export const MAX_AGENT_THREAD_REQUEST_TURN_IDS = 256;
-export const MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC = 16;
 export const MAX_AGENT_THREAD_REQUEST_RACED_PULLS_PER_SYNC = 4;
+export const MAX_AGENT_THREAD_REQUEST_EPOCH_CHANGES_PER_SYNC = 4;
+export const MAX_AGENT_THREAD_REQUEST_CURSOR_PAGES_PER_TURN_PAGE = 128;
+export const MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC =
+  MAX_AGENT_THREAD_REQUEST_TURN_IDS / MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL +
+  MAX_AGENT_THREAD_REQUEST_RACED_PULLS_PER_SYNC *
+    MAX_AGENT_THREAD_REQUEST_CURSOR_PAGES_PER_TURN_PAGE;
 export const MAX_AGENT_THREAD_REQUEST_RETIRED_EPOCHS = 8;
 
 export type AgentThreadRequestObservation =
@@ -43,6 +49,13 @@ export interface AgentThreadRequestStore {
 type Listener = (observation: AgentThreadRequestObservation) => void;
 
 type PullOutcome = "complete" | "raced" | "failed";
+
+interface CursorChain {
+  readonly turnIds: readonly string[];
+  readonly cursor: string | null;
+  readonly pages: number;
+  readonly restarted: boolean;
+}
 
 type Subscription =
   | { readonly kind: "idle" }
@@ -317,33 +330,59 @@ class FeedAgentThreadRequestStore implements AgentThreadRequestStore {
 
   private async pull(entry: WatchedThread): Promise<PullOutcome> {
     let raced = 0;
+    let epochChanges = 0;
+    let chain = chainStart(entry);
     for (let pulls = 0; pulls < MAX_AGENT_THREAD_REQUEST_PULLS_PER_SYNC; pulls += 1) {
       const pushRevision = entry.pushRevision;
-      const page = nextPage(entry);
-      const message = await this.current(entry.scope, page);
-      if (message === null || !this.watching(entry)) return "failed";
+      const page = await this.current(entry.scope, chain);
+      if (!this.watching(entry)) return "failed";
+      if (page === null) {
+        if (chain.cursor === null || chain.restarted) return "failed";
+        chain = { ...chain, cursor: null, pages: 0, restarted: true };
+        continue;
+      }
       if (entry.pushRevision !== pushRevision) {
         raced += 1;
         if (raced >= MAX_AGENT_THREAD_REQUEST_RACED_PULLS_PER_SYNC) return "raced";
+        chain = chainStart(entry);
         continue;
       }
-      this.apply(entry, merging(entry, message, "pull"));
-      for (const turnId of page) entry.covered.add(turnId);
+      const epoch = entry.state?.epoch ?? page.message.epoch;
+      this.apply(entry, merging(entry, page.message, "pull"));
+      if (epoch !== page.message.epoch) {
+        epochChanges += 1;
+        const exhausted = epochChanges >= MAX_AGENT_THREAD_REQUEST_EPOCH_CHANGES_PER_SYNC;
+        const abandoned = chain.cursor !== null;
+        if (exhausted || abandoned) this.present(entry);
+        if (exhausted) return "failed";
+        if (abandoned) {
+          chain = chainStart(entry);
+          continue;
+        }
+      }
+      if (page.nextCursor !== null) {
+        this.present(entry);
+        if (chain.pages + 1 >= MAX_AGENT_THREAD_REQUEST_CURSOR_PAGES_PER_TURN_PAGE) return "failed";
+        chain = { ...chain, cursor: page.nextCursor, pages: chain.pages + 1 };
+        continue;
+      }
+      for (const turnId of chain.turnIds) entry.covered.add(turnId);
       if (missing(entry).length === 0) return "complete";
       this.present(entry);
+      chain = chainStart(entry);
     }
     return "failed";
   }
 
   private async current(
     scope: AgentThreadRequestScope,
-    turnIds: readonly string[],
-  ): Promise<AgentThreadRequests | null> {
+    chain: CursorChain,
+  ): Promise<AgentThreadRequestsPage | null> {
     const attempt = await attemptWithinDeadline(
-      () => this.feed.currentThreadRequests(scope, turnIds),
+      () => this.feed.currentThreadRequests(scope, chain.turnIds, chain.cursor),
       AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS,
     );
-    if (attempt.kind !== "settled" || !accepts(scope, attempt.value)) return null;
+    if (attempt.kind !== "settled" || !accepts(scope, attempt.value.message)) return null;
     return attempt.value;
   }
 
@@ -419,8 +458,13 @@ function missing(entry: WatchedThread): readonly string[] {
   return entry.plan.turnIds.filter((turnId) => !entry.covered.has(turnId));
 }
 
-function nextPage(entry: WatchedThread): readonly string[] {
-  return missing(entry).slice(0, MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL);
+function chainStart(entry: WatchedThread): CursorChain {
+  return {
+    turnIds: missing(entry).slice(0, MAX_AGENT_THREAD_REQUEST_TURN_IDS_PER_PULL),
+    cursor: null,
+    pages: 0,
+    restarted: false,
+  };
 }
 
 function backingOff(entry: WatchedThread): boolean {

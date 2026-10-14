@@ -1,5 +1,6 @@
 import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
 import { AgentThreadSessionEmpty } from "./AgentThreadSessionEmpty";
+import { AgentThreadTranscriptRequests } from "./AgentThreadTranscriptRequests";
 import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
 import { AgentAgentsDock } from "./AgentAgentsDock";
 import { useAgentBackgroundWait } from "./useAgentBackgroundWait";
@@ -581,55 +582,57 @@ function AgentThreadSessionBody({
           <AgentArtifactPreviewScope
             key={`${threadId}:${serverId ?? "local"}:${runnerId ?? record.owner.ownerId}`}
           >
-            <div className="agent-turn-list">
-              {displayedTurns.map((turn) => (
-                <Fragment key={turn.turnId}>
-                  <AgentTurnView
-                    activitySource={activitySources.get(turn.turnId) ?? null}
-                    attachmentImages={
-                      agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
-                    }
-                    artifactScope={artifactScope}
-                    highlight={highlightFor(turn.turnId)}
-                    onOpenAgents={agents.openPanel}
-                    subagents={agents.subagentsFor(turn.turnId)}
-                    inlineImages={inlineImageViewer}
-                    prose={prose}
-                    provider={record.provider.kind}
-                    executionTarget={thread.execution?.kind ?? "local"}
-                    reachability={thread.execution?.reachability}
-                    serverId={serverId}
-                    renderProbe={turnRenderProbe}
-                    textClipboard={textClipboard}
-                    turn={turn}
-                    turnLog={turnLog}
-                    workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
-                  />
-                  {isTerminalAgentTurnStatus(turn.status) && getTurnChanges && (
-                    <AgentRecordedTurnChanges
-                      active={activeDiffTurnId === turn.turnId}
-                      getTurnChanges={getTurnChanges}
-                      key={`${threadId}:${turn.turnId}`}
-                      onOpenDiff={(summary, relativePath) =>
-                        onOpenTurnDiff?.(threadId, summary, relativePath)
+            <AgentThreadTranscriptRequests thread={thread} turns={displayedTurns}>
+              <div className="agent-turn-list">
+                {displayedTurns.map((turn) => (
+                  <Fragment key={turn.turnId}>
+                    <AgentTurnView
+                      activitySource={activitySources.get(turn.turnId) ?? null}
+                      attachmentImages={
+                        agentTurnCarriesAttachments(turn) ? attachmentImageViewer : null
                       }
-                      revision={turnChangesRevision}
-                      threadId={threadId}
-                      turnId={turn.turnId}
+                      artifactScope={artifactScope}
+                      highlight={highlightFor(turn.turnId)}
+                      onOpenAgents={agents.openPanel}
+                      subagents={agents.subagentsFor(turn.turnId)}
+                      inlineImages={inlineImageViewer}
+                      prose={prose}
+                      provider={record.provider.kind}
+                      executionTarget={thread.execution?.kind ?? "local"}
+                      reachability={thread.execution?.reachability}
+                      serverId={serverId}
+                      renderProbe={turnRenderProbe}
+                      textClipboard={textClipboard}
+                      turn={turn}
+                      turnLog={turnLog}
+                      workspaceRoot={record.target.worktreePath ?? record.owner.repositoryRoot}
                     />
-                  )}
-                </Fragment>
-              ))}
-              {pendingSend !== null && historyPage === null && (
-                <AgentPendingUserMessage
-                  onDismiss={onDismissPendingSend ?? ignorePendingSendDismissal}
-                  openExternalLink={openExternalLink}
-                  provider={record.provider.kind}
-                  send={pendingSend}
-                  textClipboard={textClipboard}
-                />
-              )}
-            </div>
+                    {isTerminalAgentTurnStatus(turn.status) && getTurnChanges && (
+                      <AgentRecordedTurnChanges
+                        active={activeDiffTurnId === turn.turnId}
+                        getTurnChanges={getTurnChanges}
+                        key={`${threadId}:${turn.turnId}`}
+                        onOpenDiff={(summary, relativePath) =>
+                          onOpenTurnDiff?.(threadId, summary, relativePath)
+                        }
+                        revision={turnChangesRevision}
+                        threadId={threadId}
+                        turnId={turn.turnId}
+                      />
+                    )}
+                  </Fragment>
+                ))}
+                {pendingSend !== null && historyPage === null && (
+                  <AgentPendingUserMessage
+                    onDismiss={onDismissPendingSend ?? ignorePendingSendDismissal}
+                    openExternalLink={openExternalLink}
+                    provider={record.provider.kind}
+                    send={pendingSend}
+                    textClipboard={textClipboard}
+                  />
+                )}
+              </div>
+            </AgentThreadTranscriptRequests>
           </AgentArtifactPreviewScope>
           {awaiting !== null &&
             liveTurn !== null &&
