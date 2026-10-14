@@ -345,6 +345,11 @@ mod halt_request_tests;
 mod management_tests;
 #[path = "ordering_tests.rs"]
 mod ordering_tests;
+#[cfg(unix)]
+#[path = "../agent_runtime_requests/journal_tests.rs"]
+mod runtime_request_journal_tests;
+#[path = "runtime_request_tests.rs"]
+mod runtime_request_tests;
 
 fn artifact_turn(
     index: usize,

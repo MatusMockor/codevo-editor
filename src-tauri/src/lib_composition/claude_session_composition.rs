@@ -345,7 +345,8 @@ mod tests {
             "resumeSessionId": null,
             "launch": serde_json::to_value(AgentLaunchOptions::default()).expect("launch"),
             "providerGeneration": 1,
-            "threadId": "agt-1-0a1c"
+            "threadId": "agt-1-0a1c",
+            "historyScope": {"rootKey": "/repo", "ownerId": "agent-root:repo"}
         });
         if let (Some(target), Some(extra)) = (value.as_object_mut(), extra.as_object()) {
             target.extend(extra.clone());

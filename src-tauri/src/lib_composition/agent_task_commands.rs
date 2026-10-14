@@ -8,6 +8,7 @@ use super::agent_attachment_commands::agent_thread_store::{
 };
 use super::workspace_facade::{close_workspace_owner, WorkspaceOwnerCloseResult};
 use super::{canonicalize_workspace_root, trusted_for, workspace_root_for_disposal, GitTrustState};
+use crate::agent_runtime_requests::journal::RuntimeRequestJournal;
 use crate::agent_task_admission::AgentTaskAdmissionRegistry;
 use crate::agent_task_spawner::agent_launch::{
     AgentLaunchOptions, AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR,
@@ -33,7 +34,7 @@ use crate::agent_task_supervisor::{
     AgentTaskOutputEvent, AgentTaskRegistry,
     AgentTaskStartRequest as AgentTaskRegistryStartRequest, AgentTaskStartResult,
     AgentTaskStatusEvent, AGENT_TASK_INTERACTIONS_EVENT_CHANNEL, AGENT_TASK_OUTPUT_EVENT_CHANNEL,
-    AGENT_TASK_STARTS_CLOSED_ERROR, AGENT_TASK_STATUS_EVENT_CHANNEL,
+    AGENT_TASK_STARTS_CLOSED_ERROR, AGENT_TASK_STATUS_EVENT_CHANNEL, DUPLICATE_AGENT_TASK_ERROR,
 };
 use crate::effective_executable_environment::EffectiveExecutablePath;
 use crate::git_worktree::{ensure_worktree_path_in_base, safe_agent_task_id};
@@ -63,6 +64,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+#[path = "agent_history_scope.rs"]
+pub(crate) mod agent_history_scope;
 #[path = "../agent_root_lease.rs"]
 pub(crate) mod agent_root_lease;
 #[path = "agent_root_workspace_registration.rs"]
@@ -72,6 +75,7 @@ mod agent_task_start_authority;
 pub(crate) use crate::agent_task_spawner::{
     codex_app_server_host, codex_app_server_protocol, codex_app_server_turn,
 };
+use agent_history_scope::{bound_history_scope, StartAgentTaskHistoryScope};
 #[path = "claude_session_composition.rs"]
 pub(crate) mod claude_session_composition;
 #[path = "codex_task_composition.rs"]
@@ -122,6 +126,7 @@ pub(crate) struct StartAgentTaskRequest {
     launch: AgentLaunchOptions,
     provider_generation: u64,
     thread_id: String,
+    history_scope: StartAgentTaskHistoryScope,
     #[serde(default)]
     attachments: Vec<StartAgentTaskAttachment>,
     #[serde(default)]
@@ -206,10 +211,14 @@ impl AgentTaskEventSink for AppHandleAgentTaskEventSink {
         let _ = self.app.emit(AGENT_TASK_OUTPUT_EVENT_CHANNEL, event);
     }
 
-    fn interactions(&self, snapshot: AgentInteractionSnapshot) {
+    fn interactions(&self, task: &AgentTaskMetadata, snapshot: AgentInteractionSnapshot) {
         let _ = self
             .app
-            .emit(AGENT_TASK_INTERACTIONS_EVENT_CHANNEL, snapshot);
+            .emit(AGENT_TASK_INTERACTIONS_EVENT_CHANNEL, &snapshot);
+        let Some(journal) = self.app.try_state::<Arc<RuntimeRequestJournal>>() else {
+            return;
+        };
+        journal.observe(task.history_scope.as_ref(), &task.thread_id, snapshot);
     }
 }
 
@@ -617,6 +626,7 @@ async fn start_owned_agent_task(
         let workspace_registry = app.state::<WorkspaceRegistry>();
         let trust_state = app.state::<Mutex<WorkspaceTrustService>>();
         revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)?;
+        let history_scope = bound_history_scope(&request.history_scope, &authority)?;
         let workspace_lease = match workspace_registry.reserve_runtime_start(&request.workspace_id)
         {
             Ok(workspace_lease) => workspace_lease,
@@ -685,7 +695,18 @@ async fn start_owned_agent_task(
         revalidate_agent_task_filesystem_authority(&workspace_registry, &request, &authority)?;
         app.state::<Arc<AgentProviderRuntimeRegistry>>()
             .revalidate_turn_authority(&provider_turn)?;
-        let admission = admission.with_runtime_lease(provider_turn);
+        let turn_tracking = app
+            .state::<Arc<RuntimeRequestJournal>>()
+            .track_turn(
+                &history_scope,
+                &registry_request.thread_id,
+                &registry_request.task_id,
+            )
+            .map_err(|_| DUPLICATE_AGENT_TASK_ERROR.to_string())?;
+        let turn_authority = turn_tracking.authority().clone();
+        let admission = admission
+            .with_runtime_lease((provider_turn, turn_tracking))
+            .with_history_scope(turn_authority.task_scope());
         let result = app
             .state::<AgentTaskRegistry>()
             .start(registry_request, plan, admission)
@@ -695,6 +716,10 @@ async fn start_owned_agent_task(
                 }
                 error
             });
+        if result.is_err() {
+            app.state::<Arc<RuntimeRequestJournal>>()
+                .forget_refused_start(&turn_authority);
+        }
         drop(trust_leases);
         drop(workspace_lease);
         result

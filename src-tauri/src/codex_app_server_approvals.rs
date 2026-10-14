@@ -385,7 +385,7 @@ fn text(params: &Value, field: &str) -> Option<String> {
     params
         .get(field)
         .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
+        .filter(|value| !crate::agent_questions::is_blank(value))
         .map(str::to_string)
 }
 

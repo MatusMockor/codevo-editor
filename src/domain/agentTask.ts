@@ -28,12 +28,14 @@ export {
 export const MAX_AGENT_TASK_ID_BYTES = 64;
 export const MAX_AGENT_TASK_WORKSPACE_ID_BYTES = 1_024;
 export const MAX_AGENT_TASK_PATH_BYTES = 4_096;
+export const MAX_AGENT_HISTORY_ROOT_KEY_BYTES = 4_096;
 export const MAX_AGENT_TASK_PROMPT_BYTES = 32 * 1_024;
 export const MAX_AGENT_TASK_OUTPUT_CHUNK_BYTES = 8 * 1_024;
 export const MAX_AGENT_TASK_FAILURE_BYTES = 4_096;
 export const MAX_AGENT_STEERS_PER_TURN = 32;
 
 export const AGENT_TASK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{2,63}$/;
+const AGENT_HISTORY_OWNER_ID_PATTERN = /^agent-root:[0-9a-f]{16}$/;
 
 export type AgentTaskIsolation = "worktree" | "in-place";
 
@@ -72,9 +74,15 @@ export type StartAgentTaskAttachment =
   | { readonly kind: "staged"; readonly attachmentId: string }
   | { readonly kind: "reference"; readonly name: string; readonly path: string };
 
+export interface AgentHistoryScope {
+  readonly rootKey: string;
+  readonly ownerId: string;
+}
+
 export interface StartAgentTaskRequest {
   readonly taskId: string;
   readonly threadId: string;
+  readonly historyScope: AgentHistoryScope;
   readonly workspaceId: string;
   readonly projectRoot: string;
   readonly repositoryRoot: string;
@@ -302,6 +310,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
     [
       "taskId",
       "threadId",
+      "historyScope",
       "workspaceId",
       "projectRoot",
       "repositoryRoot",
@@ -331,6 +340,7 @@ export function validateStartAgentTaskRequest(value: unknown): StartAgentTaskReq
   return {
     taskId: agentTaskId(request.taskId, "request.taskId"),
     threadId: agentTaskId(request.threadId, "request.threadId"),
+    historyScope: agentHistoryScope(request.historyScope, "request.historyScope"),
     workspaceId: agentWorkspaceId(request.workspaceId, "request.workspaceId"),
     projectRoot: agentPath(request.projectRoot, "request.projectRoot"),
     repositoryRoot,
@@ -523,6 +533,23 @@ function worktreePath(value: unknown, isolation: AgentTaskIsolation, path: strin
     return null;
   }
   return agentPath(value, path);
+}
+
+function agentHistoryScope(value: unknown, path: string): AgentHistoryScope {
+  const scope = record(value, path);
+  exactKeys(scope, ["rootKey", "ownerId"], path);
+  const rootKey = boundedText(
+    scope.rootKey,
+    `${path}.rootKey`,
+    MAX_AGENT_HISTORY_ROOT_KEY_BYTES,
+    false,
+    true,
+  );
+  const ownerId = scope.ownerId;
+  if (typeof ownerId !== "string" || !AGENT_HISTORY_OWNER_ID_PATTERN.test(ownerId)) {
+    invalid(`${path}.ownerId`, "an agent root owner id");
+  }
+  return { rootKey, ownerId };
 }
 
 function agentPath(value: unknown, path: string): string {

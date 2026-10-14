@@ -1,4 +1,4 @@
-use super::{halt_requests, imports, legacy, sql};
+use super::{halt_requests, imports, legacy, runtime_requests, sql};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{
     fs,
@@ -37,6 +37,14 @@ fn ensure_directory(path: &Path) -> Result<(), String> {
     }
 }
 pub(super) fn open(base: &Path, root: &str, owner: &str) -> Result<Connection, String> {
+    open_with_busy_timeout(base, root, owner, Duration::from_secs(5))
+}
+pub(super) fn open_with_busy_timeout(
+    base: &Path,
+    root: &str,
+    owner: &str,
+    busy: Duration,
+) -> Result<Connection, String> {
     if root.is_empty()
         || root.len() > legacy::MAX_AGENT_ROOT_KEY_BYTES
         || owner != legacy::agent_root_owner_id(root)
@@ -83,7 +91,7 @@ pub(super) fn open(base: &Path, root: &str, owner: &str) -> Result<Connection, S
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ))?;
-    sql(connection.busy_timeout(Duration::from_secs(5)))?;
+    sql(connection.busy_timeout(busy))?;
     sql(connection.pragma_update(None, "cache_size", -4000))?;
     let version: i64 = sql(connection.pragma_query_value(None, "user_version", |r| r.get(0)))?;
     if version != 0 && version != 2 {
@@ -132,10 +140,83 @@ pub(super) fn open(base: &Path, root: &str, owner: &str) -> Result<Connection, S
     }
     imports::ensure_schema(&connection)?;
     halt_requests::ensure_schema(&connection)?;
+    runtime_requests::ensure_schema(&connection)?;
     sql(connection.pragma_update(None, "user_version", 2))?;
     sql(connection.execute_batch("COMMIT"))?;
     validate_owner(&connection, root, owner)?;
     Ok(connection)
+}
+pub(super) const DATABASE_FILE_NAME: &str = "history.sqlite3";
+pub(super) fn open_existing(
+    base: &Path,
+    root: &str,
+    owner: &str,
+    busy: Duration,
+) -> Result<Connection, String> {
+    if root.is_empty()
+        || root.len() > legacy::MAX_AGENT_ROOT_KEY_BYTES
+        || owner != legacy::agent_root_owner_id(root)
+    {
+        return Err(legacy::AGENT_THREAD_OWNER_MISMATCH_ERROR.into());
+    }
+    let path = database_path(base, root);
+    let first = base.join("agent-history");
+    let second = first.join("v2");
+    let third = second.join(legacy::fnv1a64hex(root));
+    for directory in [&first, &second, &third] {
+        let is_directory = fs::symlink_metadata(directory)
+            .map_err(|e| e.to_string())?
+            .file_type()
+            .is_dir();
+        if !is_directory {
+            return Err("The history owner directory is invalid.".into());
+        }
+    }
+    let is_file = fs::symlink_metadata(&path)
+        .map_err(|e| e.to_string())?
+        .file_type()
+        .is_file();
+    if !is_file {
+        return Err("The saved history database must be a regular file.".into());
+    }
+    let resolved = fs::canonicalize(&third)
+        .map_err(|e| e.to_string())?
+        .join(DATABASE_FILE_NAME);
+    let connection = sql(Connection::open_with_flags(
+        &resolved,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ))?;
+    sql(connection.busy_timeout(busy))?;
+    Ok(connection)
+}
+pub(super) fn validate_existing(
+    connection: &Connection,
+    root: &str,
+    owner: &str,
+) -> Result<(), String> {
+    let version: i64 = sql(connection.pragma_query_value(None, "user_version", |r| r.get(0)))?;
+    if version != 2 {
+        return Err("The saved history database has an unsupported version.".into());
+    }
+    validate_owner(connection, root, owner)?;
+    sql(connection.pragma_update(None, "synchronous", "FULL"))
+}
+pub(super) fn has_moved(connection: &Connection) -> Result<bool, String> {
+    let mut moved: std::ffi::c_int = 0;
+    let status = unsafe {
+        rusqlite::ffi::sqlite3_file_control(
+            connection.handle(),
+            c"main".as_ptr(),
+            rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
+            std::ptr::from_mut(&mut moved).cast(),
+        )
+    };
+    if status != rusqlite::ffi::SQLITE_OK {
+        return Err("The saved history database could not be identified.".into());
+    }
+    Ok(moved != 0)
 }
 fn validate_owner(connection: &Connection, root: &str, owner: &str) -> Result<(), String> {
     let found: Option<(String, String)> = sql(connection

@@ -61,22 +61,49 @@ pub struct AgentQuestionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answers: Option<Vec<AgentQuestionAnswerItem>>,
 }
+pub const MAX_AGENT_QUESTION_ID_BYTES: usize = 128;
+pub const MAX_AGENT_QUESTIONS_PER_REQUEST: usize = 4;
+pub const MAX_AGENT_QUESTION_HEADER_BYTES: usize = 128;
+pub const MAX_AGENT_QUESTION_PROMPT_BYTES: usize = 8192;
+pub const MAX_AGENT_QUESTION_OPTIONS: usize = 12;
+pub const MAX_AGENT_QUESTION_OPTION_LABEL_BYTES: usize = 512;
+pub const MAX_AGENT_QUESTION_OPTION_DESCRIPTION_BYTES: usize = 2048;
+pub const MAX_AGENT_QUESTION_ANSWER_TEXT_BYTES: usize = 8192;
 fn id(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 128
+        && value.len() <= MAX_AGENT_QUESTION_ID_BYTES
         && value.as_bytes()[0].is_ascii_alphanumeric()
         && value
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || b"_.:-".contains(&c))
 }
+pub const MAX_RETAINED_AGENT_QUESTIONS: usize = 32;
+pub fn is_blank(value: &str) -> bool {
+    value.chars().all(|character| {
+        matches!(
+            character,
+            '\u{0009}'..='\u{000D}'
+                | '\u{0020}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+        )
+    })
+}
 fn text(value: &str, max: usize, empty: bool) -> bool {
-    value.len() <= max && !value.contains('\0') && (empty || !value.trim().is_empty())
+    value.len() <= max && !value.contains('\0') && (empty || !is_blank(value))
 }
 pub fn validate_request(request: &AgentQuestionRequest) -> Result<(), String> {
     if !id(&request.id)
         || !matches!(request.provider.as_str(), "codex" | "claudeCode")
         || request.questions.is_empty()
-        || request.questions.len() > 4
+        || request.questions.len() > MAX_AGENT_QUESTIONS_PER_REQUEST
     {
         return Err("Invalid agent question.".into());
     }
@@ -84,9 +111,9 @@ pub fn validate_request(request: &AgentQuestionRequest) -> Result<(), String> {
     for q in &request.questions {
         if !id(&q.id)
             || !ids.insert(&q.id)
-            || !text(&q.header, 128, true)
-            || !text(&q.prompt, 8192, false)
-            || q.options.len() > 12
+            || !text(&q.header, MAX_AGENT_QUESTION_HEADER_BYTES, true)
+            || !text(&q.prompt, MAX_AGENT_QUESTION_PROMPT_BYTES, false)
+            || q.options.len() > MAX_AGENT_QUESTION_OPTIONS
             || (q.options.is_empty() && !q.allow_custom)
         {
             return Err("Invalid agent question.".into());
@@ -95,8 +122,12 @@ pub fn validate_request(request: &AgentQuestionRequest) -> Result<(), String> {
         for o in &q.options {
             if !id(&o.id)
                 || !options.insert(&o.id)
-                || !text(&o.label, 512, false)
-                || !text(&o.description, 2048, true)
+                || !text(&o.label, MAX_AGENT_QUESTION_OPTION_LABEL_BYTES, false)
+                || !text(
+                    &o.description,
+                    MAX_AGENT_QUESTION_OPTION_DESCRIPTION_BYTES,
+                    true,
+                )
             {
                 return Err("Invalid agent question option.".into());
             }
@@ -132,11 +163,11 @@ pub fn validate_response(
             .find(|q| q.id == a.question_id)
             .ok_or("Unknown question.")?;
         if !ids.insert(&a.question_id)
-            || !text(&a.text, 8192, true)
+            || !text(&a.text, MAX_AGENT_QUESTION_ANSWER_TEXT_BYTES, true)
             || (!q.allow_custom && !a.text.is_empty())
             || (!q.multiple && a.option_ids.len() > 1)
-            || a.option_ids.len() > 12
-            || (a.option_ids.is_empty() && a.text.trim().is_empty())
+            || a.option_ids.len() > MAX_AGENT_QUESTION_OPTIONS
+            || (a.option_ids.is_empty() && is_blank(&a.text))
         {
             return Err("Invalid question answer.".into());
         }
@@ -149,6 +180,7 @@ pub fn validate_response(
     }
     Ok(())
 }
+pub const QUESTION_EXPIRED_WHILE_SENDING_ERROR: &str = "Question expired while sending answer.";
 pub type AgentQuestionResponder =
     Arc<dyn Fn(&AgentQuestionResponse) -> Result<(), String> + Send + Sync>;
 struct Entry {
@@ -260,7 +292,7 @@ impl AgentQuestionSession {
         {
             return Err("Question session unavailable.".into());
         }
-        if state.entries.len() >= 32 {
+        if state.entries.len() >= MAX_RETAINED_AGENT_QUESTIONS {
             let i = state
                 .entries
                 .iter()
@@ -394,7 +426,7 @@ impl AgentQuestionSession {
                 .find(|e| e.request.id == request_id)
                 .ok_or("Question expired.")?;
             if entry.request.status != AgentQuestionStatus::Pending {
-                return Err("Question expired while sending answer.".into());
+                return Err(QUESTION_EXPIRED_WHILE_SENDING_ERROR.into());
             }
             entry.submitting = false;
             match result {

@@ -17,6 +17,10 @@ pub(super) struct AgentInteractionLeases {
 }
 
 impl AgentInteractionLeases {
+    pub(super) fn next_sequence(&self) -> u64 {
+        self.sequence.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
     fn issue(&mut self, task_id: &str) -> AgentInteractionLease {
         self.superseded_by_task
             .retain(|_, lease| lease.strong_count() > 0);
@@ -38,8 +42,7 @@ struct AgentInteractionPublisher {
     shared: Weak<AgentTaskShared>,
     session: Weak<AgentQuestionSession>,
     superseded: Arc<AtomicBool>,
-    task_id: String,
-    workspace_id: String,
+    metadata: AgentTaskMetadata,
 }
 
 impl AgentInteractionPublisher {
@@ -53,11 +56,11 @@ impl AgentInteractionPublisher {
         if self.superseded.load(Ordering::SeqCst) {
             return;
         }
-        let snapshot = session.snapshot(&self.task_id, &self.workspace_id);
+        let snapshot = session.snapshot(&self.metadata.task_id, &self.metadata.workspace_id);
         if self.superseded.load(Ordering::SeqCst) {
             return;
         }
-        shared.sink.interactions(snapshot);
+        shared.sink.interactions(&self.metadata, snapshot);
     }
 }
 
@@ -78,8 +81,7 @@ impl AgentInteractionSubscription {
             shared: Arc::downgrade(shared),
             session: Arc::downgrade(session),
             superseded: lease.superseded,
-            task_id: metadata.task_id.clone(),
-            workspace_id: metadata.workspace_id.clone(),
+            metadata: metadata.clone(),
         };
         let subscription = Self {
             session: Arc::downgrade(session),

@@ -2,6 +2,12 @@ use super::*;
 use crate::agent_questions::approvals::{AgentApprovalDecision, AgentApprovalRequest};
 use crate::agent_questions::interactions::AgentInteractionSnapshot;
 use crate::agent_questions::{AgentQuestionRequest, AgentQuestionResponse};
+use crate::agent_runtime_requests::journal::RuntimeRequestJournal;
+use crate::agent_runtime_requests::model::RequestResolution;
+use crate::agent_task_supervisor::questions::AnsweringTask;
+use agent_answer_journal::JournaledAnswer;
+#[path = "agent_answer_journal.rs"]
+mod agent_answer_journal;
 const MAX_AGENT_INTERACTION_REQUEST_ID_BYTES: usize = 128;
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -56,32 +62,62 @@ fn owned_interactions(
 fn answer_owned_question(
     workspaces: &WorkspaceRegistry,
     tasks: &AgentTaskRegistry,
+    journal: &RuntimeRequestJournal,
     request: QuestionAnswerRequest,
 ) -> Result<AgentQuestionRequest, String> {
     ensure_request_id_bounds(&request.request_id)?;
     let root = registered_workspace_root(workspaces, &request.task_id, &request.workspace_id)?;
-    tasks.answer_question(
-        &request.task_id,
-        request.workspace_id.as_str(),
-        &root,
+    let task = tasks.question_task(&request.task_id, request.workspace_id.as_str(), &root)?;
+    deliver_question_answer(tasks, journal, &task, request)
+}
+fn deliver_question_answer(
+    tasks: &AgentTaskRegistry,
+    journal: &RuntimeRequestJournal,
+    task: &AnsweringTask,
+    request: QuestionAnswerRequest,
+) -> Result<AgentQuestionRequest, String> {
+    let journaled = JournaledAnswer::begin(
+        journal,
+        tasks,
+        task,
         &request.request_id,
-        request.response,
-    )
+        RequestResolution::Answers {
+            answers: request.response.answers.clone(),
+        },
+    );
+    let answered = tasks.answer_captured_question(task, &request.request_id, request.response);
+    journaled.finish(&answered);
+    answered
 }
 fn answer_owned_approval(
     workspaces: &WorkspaceRegistry,
     tasks: &AgentTaskRegistry,
+    journal: &RuntimeRequestJournal,
     request: ApprovalAnswerRequest,
 ) -> Result<AgentApprovalRequest, String> {
     ensure_request_id_bounds(&request.request_id)?;
     let root = registered_workspace_root(workspaces, &request.task_id, &request.workspace_id)?;
-    tasks.answer_approval(
-        &request.task_id,
-        request.workspace_id.as_str(),
-        &root,
+    let task = tasks.approval_task(&request.task_id, request.workspace_id.as_str(), &root)?;
+    deliver_approval_answer(tasks, journal, &task, request)
+}
+fn deliver_approval_answer(
+    tasks: &AgentTaskRegistry,
+    journal: &RuntimeRequestJournal,
+    task: &AnsweringTask,
+    request: ApprovalAnswerRequest,
+) -> Result<AgentApprovalRequest, String> {
+    let journaled = JournaledAnswer::begin(
+        journal,
+        tasks,
+        task,
         &request.request_id,
-        request.decision,
-    )
+        RequestResolution::Decision {
+            decision: request.decision,
+        },
+    );
+    let answered = tasks.answer_captured_approval(task, &request.request_id, request.decision);
+    journaled.finish(&answered);
+    answered
 }
 #[tauri::command]
 pub(crate) async fn get_agent_interactions(
@@ -106,6 +142,7 @@ pub(crate) async fn answer_agent_question(
         answer_owned_question(
             &app.state::<WorkspaceRegistry>(),
             &app.state::<AgentTaskRegistry>(),
+            &app.state::<Arc<RuntimeRequestJournal>>(),
             request,
         )
     })
@@ -120,6 +157,7 @@ pub(crate) async fn answer_agent_approval(
         answer_owned_approval(
             &app.state::<WorkspaceRegistry>(),
             &app.state::<AgentTaskRegistry>(),
+            &app.state::<Arc<RuntimeRequestJournal>>(),
             request,
         )
     })

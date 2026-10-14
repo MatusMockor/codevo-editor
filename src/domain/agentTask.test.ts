@@ -49,6 +49,7 @@ function startRequest(overrides: Record<string, unknown> = {}): Record<string, u
   return {
     taskId: "agt-1-0a1b",
     threadId: "agt-1-0a1c",
+    historyScope: { rootKey: "/repo", ownerId: "agent-root:0123456789abcdef" },
     workspaceId: "ws-1",
     projectRoot: "/repo",
     repositoryRoot: "/repo",
@@ -387,6 +388,36 @@ describe("validateStartAgentTaskRequest", () => {
       startRequest({ providerGeneration: 1.5 }),
       startRequest({ providerGeneration: Number.MAX_SAFE_INTEGER + 1 }),
       startRequest({ extra: 1 }),
+    ];
+    for (const value of rejected) {
+      expect(() => validateStartAgentTaskRequest(value)).toThrow(TypeError);
+    }
+  });
+
+  it("requires a strict history scope that names an agent root owner", () => {
+    const ownerId = "agent-root:0123456789abcdef";
+    const accepted = startRequest({ historyScope: { rootKey: "/Users/me/my project", ownerId } });
+    expect(validateStartAgentTaskRequest(accepted).historyScope).toEqual({
+      rootKey: "/Users/me/my project",
+      ownerId,
+    });
+    const withoutHistoryScope = startRequest();
+    delete withoutHistoryScope.historyScope;
+    const rejected: readonly unknown[] = [
+      withoutHistoryScope,
+      startRequest({ historyScope: null }),
+      startRequest({ historyScope: "/repo" }),
+      startRequest({ historyScope: { rootKey: "/repo" } }),
+      startRequest({ historyScope: { ownerId } }),
+      startRequest({ historyScope: { rootKey: "/repo", ownerId, workspaceId: "ws-1" } }),
+      startRequest({ historyScope: { rootKey: "", ownerId } }),
+      startRequest({ historyScope: { rootKey: "/repo\nforeign", ownerId } }),
+      startRequest({ historyScope: { rootKey: `/${"x".repeat(4_096)}`, ownerId } }),
+      startRequest({ historyScope: { rootKey: 7, ownerId } }),
+      startRequest({ historyScope: { rootKey: "/repo", ownerId: "ws-1" } }),
+      startRequest({ historyScope: { rootKey: "/repo", ownerId: "agent-root:0123" } }),
+      startRequest({ historyScope: { rootKey: "/repo", ownerId: "agent-root:0123456789ABCDEF" } }),
+      startRequest({ historyScope: { rootKey: "/repo", ownerId: null } }),
     ];
     for (const value of rejected) {
       expect(() => validateStartAgentTaskRequest(value)).toThrow(TypeError);

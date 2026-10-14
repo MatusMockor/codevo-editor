@@ -151,6 +151,59 @@ fn starting_a_task_pushes_the_interactions_its_session_already_holds() {
 }
 
 #[test]
+fn every_pushed_snapshot_names_the_task_and_thread_that_own_its_session() {
+    let fixture = fixture(Duration::from_secs(10));
+    let root = Path::new("/repo-interactions");
+    let first = start_with_session(&fixture, "agt-owner-a", root, 9731);
+    let second = start_with_session(&fixture, "agt-owner-b", root, 9732);
+    assert_eq!(
+        second
+            .session
+            .register(question("question-b"), Arc::new(|_| Ok(()))),
+        Ok(())
+    );
+    assert_eq!(
+        first
+            .session
+            .register(question("question-a"), Arc::new(|_| Ok(()))),
+        Ok(())
+    );
+
+    let owners = fixture.sink.interaction_owners();
+    let pushed = fixture.sink.interactions();
+    assert_eq!(owners.len(), pushed.len());
+    assert!(pushed.len() >= 4);
+    for (owner, snapshot) in owners.iter().zip(&pushed) {
+        assert_eq!(owner.task_id, snapshot.task_id);
+        assert_eq!(owner.workspace_id, snapshot.workspace_id);
+        assert_eq!(owner.thread_id, "thread-a");
+        assert_eq!(owner.cwd, root.join(".worktrees").join(&snapshot.task_id));
+    }
+    let before = fixture.registry.next_interaction_sequence();
+    assert!(
+        before
+            > pushed
+                .iter()
+                .map(|snapshot| snapshot.sequence)
+                .max()
+                .unwrap_or(0)
+    );
+    assert_eq!(
+        first
+            .session
+            .register(question("question-c"), Arc::new(|_| Ok(()))),
+        Ok(())
+    );
+    let latest = pushed_for(&fixture, "agt-owner-a")
+        .last()
+        .map(|snapshot| snapshot.sequence);
+    assert!(latest > Some(before));
+    assert_eq!(fixture.registry.stop("agt-owner-a"), Ok(()));
+    assert_eq!(fixture.registry.stop("agt-owner-b"), Ok(()));
+    drop((first.process, second.process));
+}
+
+#[test]
 fn a_task_without_a_session_pushes_nothing_and_reads_as_empty() {
     let fixture = fixture(Duration::from_secs(10));
     let root = Path::new("/repo-interactions");

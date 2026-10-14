@@ -1048,10 +1048,15 @@ describe("useAgentTurnDispatch startThread", () => {
     expect(started?.workspaceId).toBe(OWNER_A);
     expect(started?.agentCliKind).toBe("claudeCode");
     expect(started?.providerGeneration).toBe(1);
+    expect(started?.historyScope).toEqual({
+      rootKey: ROOT_A,
+      ownerId: agentRootOwnerId(ROOT_A),
+    });
     expect(Object.keys(started ?? {}).sort()).toEqual(
       [
         "taskId",
         "threadId",
+        "historyScope",
         "workspaceId",
         "projectRoot",
         "repositoryRoot",

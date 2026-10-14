@@ -61,9 +61,10 @@ use agent_task_spawner::{
 };
 use agent_task_supervisor::{
     AgentInteractionSnapshot, AgentProcessGroupSignalSender, AgentTaskEventSink,
-    AgentTaskIsolation, AgentTaskOutputEvent, AgentTaskOutputStream, AgentTaskRegistry,
-    AgentTaskStartRequest, AgentTaskStartResult, AgentTaskStatusEvent, AgentTaskStatusPayload,
-    KILL_PROCESS_GROUP_SIGNAL, MAX_QUEUED_AGENT_TASK_EVENTS, TERMINATE_PROCESS_GROUP_SIGNAL,
+    AgentTaskIsolation, AgentTaskMetadata, AgentTaskOutputEvent, AgentTaskOutputStream,
+    AgentTaskRegistry, AgentTaskStartRequest, AgentTaskStartResult, AgentTaskStatusEvent,
+    AgentTaskStatusPayload, KILL_PROCESS_GROUP_SIGNAL, MAX_QUEUED_AGENT_TASK_EVENTS,
+    TERMINATE_PROCESS_GROUP_SIGNAL,
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -114,6 +115,7 @@ struct RecordingSink {
     statuses: Mutex<Vec<AgentTaskStatusEvent>>,
     outputs: Mutex<Vec<AgentTaskOutputEvent>>,
     interactions: Mutex<Vec<AgentInteractionSnapshot>>,
+    interaction_owners: Mutex<Vec<AgentTaskMetadata>>,
     panic_on_interactions: AtomicBool,
 }
 
@@ -128,6 +130,13 @@ impl RecordingSink {
 
     fn interactions(&self) -> Vec<AgentInteractionSnapshot> {
         self.interactions.lock().expect("interactions lock").clone()
+    }
+
+    fn interaction_owners(&self) -> Vec<AgentTaskMetadata> {
+        self.interaction_owners
+            .lock()
+            .expect("interaction owners lock")
+            .clone()
     }
 
     fn has_terminal_status(&self, task_id: &str) -> bool {
@@ -149,7 +158,11 @@ impl AgentTaskEventSink for RecordingSink {
         self.outputs.lock().expect("outputs lock").push(event);
     }
 
-    fn interactions(&self, snapshot: AgentInteractionSnapshot) {
+    fn interactions(&self, task: &AgentTaskMetadata, snapshot: AgentInteractionSnapshot) {
+        self.interaction_owners
+            .lock()
+            .expect("interaction owners lock")
+            .push(task.clone());
         self.interactions
             .lock()
             .expect("interactions lock")

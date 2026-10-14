@@ -203,7 +203,7 @@ pub trait AgentTaskEventSink: Send + Sync {
 
     fn status(&self, event: AgentTaskStatusEvent);
     fn output(&self, event: AgentTaskOutputEvent);
-    fn interactions(&self, _snapshot: AgentInteractionSnapshot) {}
+    fn interactions(&self, _task: &AgentTaskMetadata, _snapshot: AgentInteractionSnapshot) {}
     /// Asynchronous transports must opt into bounded consumption acknowledgement.
     /// Synchronous sinks finish consuming an event before returning from `output`.
     fn requires_output_acknowledgement(&self) -> bool {
@@ -495,6 +495,7 @@ pub struct AgentTaskMetadata {
     pub cwd: PathBuf,
     pub isolation: AgentTaskIsolation,
     pub worktree_path: Option<PathBuf>,
+    pub history_scope: Option<crate::agent_task_admission::AgentTaskHistoryScope>,
 }
 
 impl AgentTaskMetadata {
@@ -796,6 +797,7 @@ impl AgentTaskRegistry {
             cwd: plan.cwd().to_path_buf(),
             isolation: request.isolation,
             worktree_path: request.worktree_path,
+            history_scope: admission.history_scope(),
         };
         let watchdog = Arc::new(WatchdogGate::default());
         {
@@ -1635,7 +1637,7 @@ mod session_tests;
 pub(crate) mod utf8_tests;
 
 #[path = "agent_task_questions.rs"]
-mod questions;
+pub mod questions;
 
 #[path = "agent_task_interactions.rs"]
 mod interactions;

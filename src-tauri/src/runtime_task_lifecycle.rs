@@ -18,6 +18,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
+const AGENT_REQUEST_JOURNAL_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+
 pub(crate) trait RuntimeTaskLifecycleExt {
     fn request_stop_all_tasks(&self, js_test_batches: &js_test_run::batch::JsTestBatchRegistry);
     fn request_stop_workspace_tasks(
@@ -101,6 +103,11 @@ pub(crate) fn shutdown_runtime_processes(
     }
     if let Some(hosts) = app.try_state::<Arc<crate::agent_task_spawner::codex_app_server_host::CodexAppServerHostRegistry>>() {
         hosts.drain_for_dispose();
+    }
+    if let Some(journal) =
+        app.try_state::<Arc<crate::agent_runtime_requests::journal::RuntimeRequestJournal>>()
+    {
+        journal.flush(AGENT_REQUEST_JOURNAL_FLUSH_TIMEOUT);
     }
     app.request_stop_all_tasks(js_test_batches);
     if let Some(authorizer) = app.try_state::<LegacyLocalHistoryWorkspaceAuthorizer>() {

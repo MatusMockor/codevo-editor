@@ -466,6 +466,42 @@ fn question_waits_for_answer_and_maps_exact_provider_values() {
     child.state.settle(0);
 }
 #[test]
+fn question_custom_answer_uses_the_blank_rule_shared_with_the_session() {
+    use crate::agent_questions::{AgentQuestionAnswerItem, AgentQuestionResponse};
+    let port = FakePort::new();
+    let child = port.child();
+    questions::register(&child.state,json!(92),json!({"threadId":THREAD,"turnId":TURN,"questions":[{"id":"choice","header":"Choice","question":"Which?","options":[{"label":"First","description":"Recommended"}]}]})).unwrap();
+    let request = child.state.questions.list("task").remove(0);
+    let custom_only = |text: &str| AgentQuestionResponse {
+        answers: vec![AgentQuestionAnswerItem {
+            question_id: "choice".into(),
+            option_ids: Vec::new(),
+            text: text.into(),
+        }],
+    };
+
+    let blank = child
+        .state
+        .questions
+        .answer("task", &request.id, custom_only("\u{FEFF}"));
+    assert!(blank.is_err());
+    assert!(port.question_answers.lock().unwrap().is_empty());
+
+    child
+        .state
+        .questions
+        .answer("task", &request.id, custom_only("\u{0085}"))
+        .unwrap();
+    assert_eq!(
+        *port.question_answers.lock().unwrap(),
+        vec![(
+            json!(92),
+            json!({"answers":{"choice":{"answers":["\u{0085}"]}}})
+        )]
+    );
+    child.state.settle(0);
+}
+#[test]
 fn question_rejects_foreign_turn_and_expires_on_stop() {
     let port = FakePort::new();
     let child = port.child();

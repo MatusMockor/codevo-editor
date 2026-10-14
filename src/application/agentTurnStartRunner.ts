@@ -1,6 +1,7 @@
 import type { CodexTransport } from "../domain/agentProviderSettings";
 import type { AgentAttachment } from "../domain/agentAttachment";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
+import { agentRootOwnerId } from "../domain/agentProject";
 import {
   isDefiniteAgentTaskStartRejection,
   type AgentCliKind,
@@ -236,6 +237,10 @@ async function runOwnedTurnStart(
     gateway.startAgentTask({
       taskId: turnId,
       threadId: start.threadId,
+      historyScope: {
+        rootKey: authority.rootKey,
+        ownerId: agentRootOwnerId(authority.rootKey),
+      },
       workspaceId,
       projectRoot: start.projectRoot,
       repositoryRoot,

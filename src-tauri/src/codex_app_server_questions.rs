@@ -103,7 +103,7 @@ pub(super) fn register(state: &Arc<TurnState>, rpc_id: Value, params: Value) -> 
                             .ok_or("Unknown option.")
                     })
                     .collect::<Result<_, _>>()?;
-                if !answer.text.trim().is_empty() {
+                if !crate::agent_questions::is_blank(&answer.text) {
                     values.push(answer.text.clone());
                 }
                 answers.insert(answer.question_id.clone(), json!({"answers":values}));

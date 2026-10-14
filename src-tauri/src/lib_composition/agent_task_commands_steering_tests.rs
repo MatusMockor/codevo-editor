@@ -49,6 +49,7 @@ fn steer_target(request: &StartAgentTaskRequest, workspace_id: &str) -> AgentTas
             cwd: PathBuf::from(&request.cwd),
             isolation: request.isolation,
             worktree_path: None,
+            history_scope: None,
         },
         descriptor: test_authority(request).descriptor,
     }

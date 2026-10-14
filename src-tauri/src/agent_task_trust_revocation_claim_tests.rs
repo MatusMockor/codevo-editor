@@ -51,6 +51,7 @@ fn running_turn(signals: &Arc<RecordingSignals>) -> AgentTaskRegistryState {
                 cwd: PathBuf::from(NESTED_REPOSITORY),
                 isolation: AgentTaskIsolation::InPlace,
                 worktree_path: None,
+                history_scope: None,
             },
             phase: AgentTaskPhase::Running,
             acknowledged: true,

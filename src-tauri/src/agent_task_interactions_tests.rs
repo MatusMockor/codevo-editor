@@ -51,7 +51,7 @@ impl AgentTaskEventSink for RecordingSink {
 
     fn output(&self, _event: AgentTaskOutputEvent) {}
 
-    fn interactions(&self, snapshot: AgentInteractionSnapshot) {
+    fn interactions(&self, _task: &AgentTaskMetadata, snapshot: AgentInteractionSnapshot) {
         self.interactions
             .lock()
             .expect("interactions lock")
@@ -69,6 +69,7 @@ fn metadata() -> AgentTaskMetadata {
         cwd: PathBuf::from(ROOT),
         isolation: AgentTaskIsolation::InPlace,
         worktree_path: None,
+        history_scope: None,
     }
 }
 

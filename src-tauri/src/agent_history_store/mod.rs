@@ -5,6 +5,10 @@ pub(crate) mod connection;
 pub(crate) mod halt_requests;
 mod migration;
 mod pages;
+mod runtime_request_reads;
+mod runtime_request_store;
+mod runtime_request_turn_states;
+pub(crate) mod runtime_requests;
 pub(crate) use catalog::{FoundImport, ThreadPage};
 pub(crate) mod imports;
 
@@ -254,6 +258,7 @@ impl AgentHistoryStore {
             sql(tx.execute("DELETE FROM import_identity WHERE thread_id=?1", [id]))?;
             sql(tx.execute("DELETE FROM turns WHERE thread_id=?1", [id]))?;
             halt_requests::delete(&tx, id)?;
+            runtime_requests::delete(&tx, id)?;
             sql(tx.execute("DELETE FROM imported_exchanges WHERE thread_id=?1", [id]))?;
             sql(tx.execute("DELETE FROM imported_checkpoints WHERE thread_id=?1", [id]))?;
             sql(tx.execute("DELETE FROM imported_legacy WHERE thread_id=?1", [id]))?;

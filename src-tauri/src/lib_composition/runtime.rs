@@ -171,6 +171,17 @@ pub fn run() {
                 agent_history_commands::agent_history_store::AgentHistoryStore::new(app.path().app_data_dir()?),
             ));
             app.manage(Arc::new(
+                crate::agent_runtime_requests::journal::RuntimeRequestJournal::start(
+                    Arc::new(
+                        agent_history_commands::agent_history_store::runtime_requests::HistoryRuntimeRequestStore::new(
+                            app.path().app_data_dir()?,
+                        ),
+                    ),
+                    crate::agent_runtime_requests::journal::new_run_id(),
+                    crate::agent_runtime_requests::journal::system_clock(),
+                ),
+            ));
+            app.manage(Arc::new(
                 agent_turn_log_commands::agent_turn_log::AgentTurnLogStore::new(
                     app.path().app_data_dir()?,
                 ),

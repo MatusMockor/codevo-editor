@@ -1,3 +1,4 @@
+use super::super::super::agent_history_commands::agent_history_store::runtime_requests::HistoryRuntimeRequestStore;
 use super::*;
 use crate::agent_questions::approvals::{
     AgentApprovalFact, AgentApprovalKind, AgentApprovalStatus,
@@ -5,13 +6,47 @@ use crate::agent_questions::approvals::{
 use crate::agent_questions::{
     AgentQuestion, AgentQuestionAnswerItem, AgentQuestionSession, AgentQuestionStatus,
 };
+use crate::agent_runtime_requests::journal::{
+    new_run_id, system_clock, JournalLimits, TurnTracking,
+};
+use crate::agent_runtime_requests::scopes::HistoryScope;
 use crate::agent_task_spawner::{AgentChild, AgentProcessSpawner, AgentTaskProcessOwnership};
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 static NEXT_WORKSPACE: AtomicU64 = AtomicU64::new(0);
 
 const TASK: &str = "agt-turn-interactions";
+const THREAD: &str = "thread-interactions";
+
+#[path = "tests/agent_question_commands_journal_tests.rs"]
+mod journal_tests;
+
+fn request_store(base: &Path) -> Arc<HistoryRuntimeRequestStore> {
+    Arc::new(HistoryRuntimeRequestStore::new(base.to_path_buf()))
+}
+
+fn scoped_admission(
+    admission: crate::agent_task_admission::AgentTaskAdmission,
+    history: Option<TurnTracking>,
+) -> crate::agent_task_admission::AgentTaskAdmission {
+    let Some(tracking) = history else {
+        return admission;
+    };
+    let task_scope = tracking.task_scope();
+    admission
+        .with_runtime_lease(tracking)
+        .with_history_scope(task_scope)
+}
+
+fn detached_journal() -> RuntimeRequestJournal {
+    RuntimeRequestJournal::start(
+        request_store(Path::new("/nonexistent/codevo-detached-request-journal")),
+        new_run_id(),
+        system_clock(),
+    )
+}
 
 struct WaitingTurn {
     session: Arc<AgentQuestionSession>,
@@ -53,16 +88,47 @@ impl AgentChild for WaitingTurn {
     }
 }
 
+#[derive(Default)]
 struct WaitingTurnSpawner {
-    session: Arc<AgentQuestionSession>,
+    sessions: Mutex<std::collections::VecDeque<Arc<AgentQuestionSession>>>,
+    exits: Mutex<Vec<Arc<AtomicBool>>>,
+}
+
+impl WaitingTurnSpawner {
+    fn with_session(session: &Arc<AgentQuestionSession>) -> Self {
+        let spawner = Self::default();
+        spawner.spawn_next_with(session);
+        spawner
+    }
+
+    fn finish_spawned_turns(&self) {
+        for exit in self.exits.lock().expect("spawned turns").iter() {
+            exit.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn spawn_next_with(&self, session: &Arc<AgentQuestionSession>) {
+        self.sessions
+            .lock()
+            .expect("upcoming sessions")
+            .push_back(Arc::clone(session));
+    }
 }
 
 impl AgentProcessSpawner for WaitingTurnSpawner {
     fn spawn(&self, _plan: &AgentTaskSpawnPlan) -> Result<Box<dyn AgentChild>, String> {
-        Ok(Box::new(WaitingTurn {
-            session: Arc::clone(&self.session),
-            stopped: Arc::new(AtomicBool::new(false)),
-        }))
+        let session = self
+            .sessions
+            .lock()
+            .map_err(|error| error.to_string())?
+            .pop_front()
+            .ok_or("no session is waiting for this turn")?;
+        let stopped = Arc::new(AtomicBool::new(false));
+        self.exits
+            .lock()
+            .map_err(|error| error.to_string())?
+            .push(Arc::clone(&stopped));
+        Ok(Box::new(WaitingTurn { session, stopped }))
     }
 }
 
@@ -106,105 +172,145 @@ impl Drop for Workspace {
 
 struct RunningTurn {
     tasks: AgentTaskRegistry,
+    spawner: Arc<WaitingTurnSpawner>,
     session: Arc<AgentQuestionSession>,
+}
+
+fn start_task(
+    tasks: &AgentTaskRegistry,
+    (task_id, thread_id): (&str, &str),
+    descriptor: &ManagedWorkspaceDescriptor,
+    repository_root: &Path,
+    history: Option<TurnTracking>,
+) {
+    let admission = tasks
+        .admission()
+        .reserve(
+            &descriptor.workspace_id,
+            repository_root,
+            repository_root,
+            AgentTaskIsolation::InPlace,
+        )
+        .expect("admission");
+    let started = tasks.start(
+        AgentTaskRegistryStartRequest {
+            task_id: task_id.to_string(),
+            thread_id: thread_id.to_string(),
+            workspace_id: descriptor.workspace_id.as_str().to_string(),
+            trust_root: descriptor.canonical_root_path.clone(),
+            repository_root: repository_root.to_path_buf(),
+            isolation: AgentTaskIsolation::InPlace,
+            worktree_path: None,
+        },
+        AgentTaskSpawnPlan::for_tests(
+            PathBuf::from("/bin/codevo-waiting-turn"),
+            Vec::new(),
+            repository_root.to_path_buf(),
+            Vec::new(),
+        ),
+        scoped_admission(admission, history),
+    );
+    assert_eq!(
+        started.map(|result| result.task_id),
+        Ok(task_id.to_string())
+    );
+    assert_eq!(tasks.acknowledge(task_id), Ok(()));
+}
+
+fn ask_both(session: &AgentQuestionSession) {
+    let question = AgentQuestionRequest {
+        id: "question-1".into(),
+        task_id: String::new(),
+        provider: "claudeCode".into(),
+        questions: vec![AgentQuestion {
+            id: "q".into(),
+            header: String::new(),
+            prompt: "Choose".into(),
+            options: Vec::new(),
+            multiple: false,
+            allow_custom: true,
+        }],
+        status: AgentQuestionStatus::Pending,
+        answers: None,
+    };
+    let approval = AgentApprovalRequest {
+        id: "approval-1".into(),
+        task_id: String::new(),
+        provider: "claudeCode".into(),
+        kind: AgentApprovalKind::Command,
+        title: "Run a command".into(),
+        detail: "npm test".into(),
+        detail_truncated: false,
+        facts: vec![AgentApprovalFact {
+            label: "Directory".into(),
+            value: "/repo".into(),
+        }],
+        decisions: vec![
+            AgentApprovalDecision::AllowOnce,
+            AgentApprovalDecision::Deny,
+        ],
+        status: AgentApprovalStatus::Pending,
+        decision: None,
+    };
+    assert_eq!(session.register(question, Arc::new(|_| Ok(()))), Ok(()));
+    assert_eq!(
+        session.approvals().register(approval, Arc::new(|_| Ok(()))),
+        Ok(())
+    );
 }
 
 impl RunningTurn {
     fn start(descriptor: &ManagedWorkspaceDescriptor, repository_root: &Path) -> Self {
+        Self::start_observed(descriptor, repository_root, Arc::new(SilentSink), None)
+    }
+
+    fn start_observed(
+        descriptor: &ManagedWorkspaceDescriptor,
+        repository_root: &Path,
+        sink: Arc<dyn AgentTaskEventSink>,
+        history: Option<TurnTracking>,
+    ) -> Self {
+        Self::start_in_thread(THREAD, descriptor, repository_root, sink, history)
+    }
+
+    fn start_in_thread(
+        thread_id: &str,
+        descriptor: &ManagedWorkspaceDescriptor,
+        repository_root: &Path,
+        sink: Arc<dyn AgentTaskEventSink>,
+        history: Option<TurnTracking>,
+    ) -> Self {
         let session = Arc::new(AgentQuestionSession::new());
+        let spawner = Arc::new(WaitingTurnSpawner::with_session(&session));
         let tasks = AgentTaskRegistry::new(
             Arc::new(AgentTaskAdmissionRegistry::new()),
-            Arc::new(WaitingTurnSpawner {
-                session: Arc::clone(&session),
-            }),
-            Arc::new(SilentSink),
+            Arc::clone(&spawner) as Arc<dyn AgentProcessSpawner>,
+            sink,
+        )
+        .with_clean_exit_grace_for_tests(Duration::ZERO);
+        start_task(
+            &tasks,
+            (TASK, thread_id),
+            descriptor,
+            repository_root,
+            history,
         );
-        let admission = tasks
-            .admission()
-            .reserve(
-                &descriptor.workspace_id,
-                repository_root,
-                repository_root,
-                AgentTaskIsolation::InPlace,
-            )
-            .expect("admission");
-        let started = tasks.start(
-            AgentTaskRegistryStartRequest {
-                task_id: TASK.to_string(),
-                thread_id: "thread-interactions".to_string(),
-                workspace_id: descriptor.workspace_id.as_str().to_string(),
-                trust_root: descriptor.canonical_root_path.clone(),
-                repository_root: repository_root.to_path_buf(),
-                isolation: AgentTaskIsolation::InPlace,
-                worktree_path: None,
-            },
-            AgentTaskSpawnPlan::for_tests(
-                PathBuf::from("/bin/codevo-waiting-turn"),
-                Vec::new(),
-                repository_root.to_path_buf(),
-                Vec::new(),
-            ),
-            admission,
-        );
-        assert_eq!(started.map(|result| result.task_id), Ok(TASK.to_string()));
-        assert_eq!(tasks.acknowledge(TASK), Ok(()));
-        Self { tasks, session }
+        Self {
+            tasks,
+            spawner,
+            session,
+        }
     }
 
     fn ask(&self) {
-        let question = AgentQuestionRequest {
-            id: "question-1".into(),
-            task_id: String::new(),
-            provider: "claudeCode".into(),
-            questions: vec![AgentQuestion {
-                id: "q".into(),
-                header: String::new(),
-                prompt: "Choose".into(),
-                options: Vec::new(),
-                multiple: false,
-                allow_custom: true,
-            }],
-            status: AgentQuestionStatus::Pending,
-            answers: None,
-        };
-        let approval = AgentApprovalRequest {
-            id: "approval-1".into(),
-            task_id: String::new(),
-            provider: "claudeCode".into(),
-            kind: AgentApprovalKind::Command,
-            title: "Run a command".into(),
-            detail: "npm test".into(),
-            detail_truncated: false,
-            facts: vec![AgentApprovalFact {
-                label: "Directory".into(),
-                value: "/repo".into(),
-            }],
-            decisions: vec![
-                AgentApprovalDecision::AllowOnce,
-                AgentApprovalDecision::Deny,
-            ],
-            status: AgentApprovalStatus::Pending,
-            decision: None,
-        };
-        assert_eq!(
-            self.session.register(question, Arc::new(|_| Ok(()))),
-            Ok(())
-        );
-        assert_eq!(
-            self.session
-                .approvals()
-                .register(approval, Arc::new(|_| Ok(()))),
-            Ok(())
-        );
+        ask_both(&self.session);
     }
 }
 
 fn idle_tasks() -> AgentTaskRegistry {
     AgentTaskRegistry::new(
         Arc::new(AgentTaskAdmissionRegistry::new()),
-        Arc::new(WaitingTurnSpawner {
-            session: Arc::new(AgentQuestionSession::new()),
-        }),
+        Arc::new(WaitingTurnSpawner::default()),
         Arc::new(SilentSink),
     )
 }
@@ -246,8 +352,20 @@ fn assert_every_command_is_rejected(
     descriptor: &ManagedWorkspaceDescriptor,
 ) {
     assert!(owned_interactions(workspaces, tasks, &owner(descriptor)).is_err());
-    assert!(answer_owned_question(workspaces, tasks, question_answer(descriptor)).is_err());
-    assert!(answer_owned_approval(workspaces, tasks, approval_answer(descriptor)).is_err());
+    assert!(answer_owned_question(
+        workspaces,
+        tasks,
+        &detached_journal(),
+        question_answer(descriptor)
+    )
+    .is_err());
+    assert!(answer_owned_approval(
+        workspaces,
+        tasks,
+        &detached_journal(),
+        approval_answer(descriptor)
+    )
+    .is_err());
 }
 
 fn assert_requests_stay_pending(turn: &RunningTurn) {
@@ -277,8 +395,20 @@ fn a_task_that_has_not_started_reads_as_the_empty_sequence_zero_snapshot() {
             approvals: Vec::new(),
         })
     );
-    assert!(answer_owned_question(&workspaces, &tasks, question_answer(&descriptor)).is_err());
-    assert!(answer_owned_approval(&workspaces, &tasks, approval_answer(&descriptor)).is_err());
+    assert!(answer_owned_question(
+        &workspaces,
+        &tasks,
+        &detached_journal(),
+        question_answer(&descriptor)
+    )
+    .is_err());
+    assert!(answer_owned_approval(
+        &workspaces,
+        &tasks,
+        &detached_journal(),
+        approval_answer(&descriptor)
+    )
+    .is_err());
 }
 
 #[test]
@@ -303,13 +433,23 @@ fn a_task_in_a_nested_repository_is_read_and_answered_through_its_workspace() {
     assert_eq!(snapshot.approvals[0].status, AgentApprovalStatus::Pending);
 
     assert_eq!(
-        answer_owned_question(&workspaces, &turn.tasks, question_answer(&descriptor))
-            .map(|request| request.status),
+        answer_owned_question(
+            &workspaces,
+            &turn.tasks,
+            &detached_journal(),
+            question_answer(&descriptor)
+        )
+        .map(|request| request.status),
         Ok(AgentQuestionStatus::Answered)
     );
     assert_eq!(
-        answer_owned_approval(&workspaces, &turn.tasks, approval_answer(&descriptor))
-            .map(|request| request.status),
+        answer_owned_approval(
+            &workspaces,
+            &turn.tasks,
+            &detached_journal(),
+            approval_answer(&descriptor)
+        )
+        .map(|request| request.status),
         Ok(AgentApprovalStatus::Approved)
     );
     let answered =
@@ -332,8 +472,13 @@ fn a_task_at_the_workspace_root_is_read_and_answered() {
         Ok((1, 1))
     );
     assert_eq!(
-        answer_owned_question(&workspaces, &turn.tasks, question_answer(&descriptor))
-            .map(|request| request.status),
+        answer_owned_question(
+            &workspaces,
+            &turn.tasks,
+            &detached_journal(),
+            question_answer(&descriptor)
+        )
+        .map(|request| request.status),
         Ok(AgentQuestionStatus::Answered)
     );
 }
@@ -477,11 +622,13 @@ fn oversized_request_ids_are_rejected_before_reaching_the_task() {
         ..approval_answer(&descriptor)
     };
     assert_eq!(
-        answer_owned_question(&workspaces, &turn.tasks, question).map(|request| request.status),
+        answer_owned_question(&workspaces, &turn.tasks, &detached_journal(), question)
+            .map(|request| request.status),
         Err("Invalid agent interaction request.".to_string())
     );
     assert_eq!(
-        answer_owned_approval(&workspaces, &turn.tasks, approval).map(|request| request.status),
+        answer_owned_approval(&workspaces, &turn.tasks, &detached_journal(), approval)
+            .map(|request| request.status),
         Err("Invalid agent interaction request.".to_string())
     );
     assert_requests_stay_pending(&turn);

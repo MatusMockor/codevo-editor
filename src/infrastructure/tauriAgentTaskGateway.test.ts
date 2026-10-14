@@ -18,6 +18,7 @@ import {
 const START_REQUEST: StartAgentTaskRequest = {
   taskId: "agt-1-0a1b",
   threadId: "agt-1-0a1c",
+  historyScope: { rootKey: "/repo", ownerId: "agent-root:0123456789abcdef" },
   workspaceId: "ws-1",
   projectRoot: "/repo",
   repositoryRoot: "/repo",

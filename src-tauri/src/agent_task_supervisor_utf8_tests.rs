@@ -117,6 +117,7 @@ fn output_fixture() -> (Arc<AgentTaskShared>, Arc<RecordingSink>) {
                 cwd: PathBuf::from("/test"),
                 isolation: AgentTaskIsolation::InPlace,
                 worktree_path: None,
+                history_scope: None,
             },
             phase: AgentTaskPhase::Running,
             acknowledged: true,

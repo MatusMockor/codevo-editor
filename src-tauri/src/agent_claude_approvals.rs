@@ -216,7 +216,7 @@ fn provider_title(request: &Value) -> Option<String> {
     request
         .get("title")
         .and_then(Value::as_str)
-        .filter(|title| !title.trim().is_empty())
+        .filter(|title| !crate::agent_questions::is_blank(title))
         .map(str::to_string)
 }
 
@@ -256,7 +256,7 @@ fn facts(tool: &str, input: &Value, request: &Value) -> Vec<AgentApprovalFact> {
     candidates
         .into_iter()
         .filter_map(|(label, value)| {
-            let value = value.filter(|value| !value.trim().is_empty())?;
+            let value = value.filter(|value| !crate::agent_questions::is_blank(value))?;
             Some(AgentApprovalFact {
                 label: label.into(),
                 value: bounded_text(&value, MAX_AGENT_APPROVAL_FACT_VALUE_BYTES).0,

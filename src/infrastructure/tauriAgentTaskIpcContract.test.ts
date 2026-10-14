@@ -34,6 +34,7 @@ import {
 const START_REQUEST: StartAgentTaskRequest = {
   taskId: "agt-1-0a1b",
   threadId: "agt-1-0a1c",
+  historyScope: { rootKey: "/repo", ownerId: "agent-root:0123456789abcdef" },
   workspaceId: "ws-1",
   projectRoot: "/repo",
   repositoryRoot: "/repo",
@@ -90,6 +91,19 @@ describe("invokeStartAgentTaskIpc", () => {
         ...START_REQUEST,
         isolation: "in-place",
         cwd: "/elsewhere",
+      }),
+    ).rejects.toThrow(TypeError);
+    const { historyScope: _historyScope, ...withoutHistoryScope } = START_REQUEST;
+    await expect(
+      invokeStartAgentTaskIpc(
+        invokeCommand,
+        withoutHistoryScope as unknown as StartAgentTaskRequest,
+      ),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      invokeStartAgentTaskIpc(invokeCommand, {
+        ...START_REQUEST,
+        historyScope: { rootKey: "/repo", ownerId: "ws-1" },
       }),
     ).rejects.toThrow(TypeError);
     expect(invokeCommand).not.toHaveBeenCalled();
@@ -265,6 +279,24 @@ describe("invokeStartAgentTaskIpc", () => {
     expect(DEFINITE_AGENT_TASK_START_REJECTIONS.has(AGENT_LAUNCH_PROVIDER_MISMATCH_REJECTION)).toBe(
       true,
     );
+  });
+
+  it("classifies a refused history scope as a definite rejection", async () => {
+    const message = "Agent history scope does not match the workspace the task starts in.";
+    expect(DEFINITE_AGENT_TASK_START_REJECTIONS.has(message)).toBe(true);
+    const invokeCommand = vi.fn<InvokeAgentTaskCommand>().mockRejectedValue(message);
+
+    const rejection = await invokeStartAgentTaskIpc(invokeCommand, START_REQUEST).catch(
+      (error: unknown) => error,
+    );
+
+    expect(isDefiniteAgentTaskStartRejection(rejection)).toBe(true);
+    expect((rejection as Error).message).toBe(message);
+    expect(invokeCommand).toHaveBeenCalledWith("start_agent_task", {
+      request: expect.objectContaining({
+        historyScope: { rootKey: "/repo", ownerId: "agent-root:0123456789abcdef" },
+      }),
+    });
   });
 
   it("classifies the session restart refusal as a definite rejection by its prefix", async () => {

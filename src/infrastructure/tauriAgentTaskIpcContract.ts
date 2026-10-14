@@ -53,6 +53,7 @@ export const DEFINITE_AGENT_TASK_START_REJECTIONS: ReadonlySet<string> = new Set
   "Agent project root does not match the registered workspace.",
   "Agent repository must be contained within the registered project root.",
   "Agent task paths must be bounded normalized absolute paths.",
+  "Agent history scope does not match the workspace the task starts in.",
   "Agent task workspace is closing or busy.",
   "Agent task trust authority is busy.",
   "Agent task startup is closed.",

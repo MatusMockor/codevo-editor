@@ -13,6 +13,7 @@ mod agent_mcp_servers;
 mod agent_mcp_servers_domain;
 mod agent_mcp_servers_protocol;
 pub mod agent_questions;
+pub mod agent_runtime_requests;
 mod agent_subagent_lifecycle;
 pub mod agent_task_admission;
 pub mod agent_task_spawner;

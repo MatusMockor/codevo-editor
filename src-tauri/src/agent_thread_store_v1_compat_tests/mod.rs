@@ -260,3 +260,142 @@ fn a_subagent_spawn_is_unreadable_for_the_shipped_loader_and_refused_by_the_curr
         Err(AGENT_THREAD_HISTORY_ONLY_EVENT_ERROR.to_string())
     );
 }
+
+#[test]
+fn journaled_runtime_requests_add_no_keys_for_any_shipped_reader() {
+    use super::super::super::agent_history_commands::agent_history_store::{
+        connection::database_path, runtime_requests::HistoryRuntimeRequestStore, AgentHistoryStore,
+    };
+    use crate::agent_questions::approvals::{AgentApprovalDecision, AgentApprovalKind};
+    use crate::agent_runtime_requests::model::{RequestBody, RequestProvider, RequestResolution};
+    use crate::agent_runtime_requests::observed::{ObservedRequest, ObservedState, ObservedTurn};
+    use crate::agent_runtime_requests::scopes::HistoryScope;
+    use crate::agent_runtime_requests::store::{
+        AnswerIntent, IntentReceipt, RootClaim, RuntimeRequestStore, TurnKey, TurnObservation,
+    };
+
+    let fixture = fixture();
+    let temp = TempBase::create("runtime-requests");
+    let scope = HistoryScope {
+        root_key: fixture.root_key.clone(),
+        owner_id: super::agent_root_owner_id(&fixture.root_key),
+    };
+    let current = AgentThreadStore::new(temp.path.clone());
+    let history = AgentHistoryStore::new(temp.path.clone());
+    let journal = HistoryRuntimeRequestStore::new(temp.path.clone());
+    assert!(matches!(
+        journal.claim_root(&scope, "boot-0001", 1_760_000_000_000),
+        Ok(RootClaim::Acquired(_))
+    ));
+    let mut saved_turns = 0;
+    for (name, thread) in &fixture.threads {
+        let document: AgentThreadDocument = serde_json::from_value(envelope(thread))
+            .unwrap_or_else(|error| panic!("{name} is unreadable for the current build: {error}"));
+        current
+            .save(&fixture.root_key, &document)
+            .unwrap_or_else(|error| panic!("{name} is refused by the current store: {error}"));
+        history
+            .save(&fixture.root_key, &scope.owner_id, &document.thread, 0)
+            .unwrap_or_else(|error| panic!("{name} is refused by the history store: {error}"));
+        saved_turns += document.thread.turns.len();
+        let key = TurnKey {
+            thread_id: document.thread.thread_id.clone(),
+            turn_id: document
+                .thread
+                .turns
+                .first()
+                .map_or("agt-turn-journal".to_string(), |turn| turn.turn_id.clone()),
+        };
+        let applied = journal
+            .apply_snapshot(
+                &scope,
+                "boot-0001",
+                &TurnObservation {
+                    key: key.clone(),
+                    incarnation: 1,
+                    first_observed_at_epoch_ms: 1_760_000_000_000,
+                    observed_at_epoch_ms: 1_760_000_000_000,
+                    turn: ObservedTurn {
+                        sequence: 1,
+                        requests: vec![ObservedRequest {
+                            id: "approval-1".to_string(),
+                            provider: RequestProvider::ClaudeCode,
+                            body: RequestBody::Approval {
+                                approval_kind: AgentApprovalKind::Command,
+                                title: "Run the test suite".to_string(),
+                                detail: "npm test -- --run".to_string(),
+                                detail_truncated: false,
+                                facts: Vec::new(),
+                                decisions: vec![
+                                    AgentApprovalDecision::AllowOnce,
+                                    AgentApprovalDecision::Deny,
+                                ],
+                            },
+                            state: ObservedState::Pending,
+                        }],
+                        digested: Vec::new(),
+                        rejected: Vec::new(),
+                    },
+                },
+            )
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(applied.transitions, 1, "{name}");
+        let recorded = journal.record_intent(
+            &scope,
+            "boot-0001",
+            &AnswerIntent {
+                key,
+                incarnation: 1,
+                request_id: "approval-1".to_string(),
+                resolution: RequestResolution::Decision {
+                    decision: AgentApprovalDecision::Deny,
+                },
+                version: 2,
+                at_epoch_ms: 1_760_000_000_500,
+            },
+            std::time::Instant::now() + std::time::Duration::from_millis(250),
+        );
+        assert_eq!(recorded, Ok(IntentReceipt::Recorded), "{name}");
+    }
+
+    let loaded = shipped_store::AgentThreadStore::new(temp.path.clone())
+        .load(&fixture.root_key)
+        .expect("shipped load");
+    assert!(loaded.unreadable.is_empty());
+    assert_eq!(loaded.evicted, 0);
+    assert_eq!(loaded.threads.len(), fixture.threads.len());
+
+    let connection = rusqlite::Connection::open(database_path(&temp.path, &fixture.root_key))
+        .expect("open the history database");
+    let payloads = |table: &str| -> Vec<String> {
+        connection
+            .prepare(&format!("SELECT payload FROM {table}"))
+            .expect("payload statement")
+            .query_map([], |row| row.get(0))
+            .expect("payload rows")
+            .map(|row| row.expect("payload"))
+            .collect()
+    };
+    let threads = payloads("threads");
+    let turns = payloads("turns");
+    assert_eq!(threads.len(), fixture.threads.len());
+    assert_eq!(turns.len(), saved_turns);
+    for payload in &threads {
+        serde_json::from_str::<shipped_store::AgentThread>(payload)
+            .unwrap_or_else(|error| panic!("thread payload gained keys: {error}"));
+    }
+    for payload in &turns {
+        serde_json::from_str::<shipped_store::AgentTurn>(payload)
+            .unwrap_or_else(|error| panic!("turn payload gained keys: {error}"));
+    }
+    let journaled: i64 = connection
+        .query_row("SELECT COUNT(*) FROM runtime_requests", [], |row| {
+            row.get(0)
+        })
+        .expect("journaled requests");
+    assert_eq!(journaled as usize, fixture.threads.len());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("schema version");
+    assert_eq!(version, 2);
+}

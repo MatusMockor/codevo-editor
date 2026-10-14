@@ -235,6 +235,7 @@ mod tests {
                 cwd: PathBuf::from("/repo"),
                 isolation: AgentTaskIsolation::InPlace,
                 worktree_path: None,
+                history_scope: None,
             },
             phase: AgentTaskPhase::Terminal,
             acknowledged: true,

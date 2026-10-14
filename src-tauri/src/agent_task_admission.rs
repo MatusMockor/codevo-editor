@@ -69,6 +69,7 @@ impl AgentTaskAdmissionRegistry {
         Ok(AgentTaskAdmission {
             id,
             registry: Arc::clone(self),
+            history_scope: None,
             _runtime_lease: None,
         })
     }
@@ -80,13 +81,30 @@ impl AgentTaskAdmissionRegistry {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AgentTaskHistoryScope {
+    pub root_key: String,
+    pub owner_id: String,
+    pub incarnation: u64,
+}
+
 pub struct AgentTaskAdmission {
     id: u64,
     registry: Arc<AgentTaskAdmissionRegistry>,
+    history_scope: Option<AgentTaskHistoryScope>,
     _runtime_lease: Option<Box<dyn Send>>,
 }
 
 impl AgentTaskAdmission {
+    pub fn with_history_scope(mut self, history_scope: AgentTaskHistoryScope) -> Self {
+        self.history_scope = Some(history_scope);
+        self
+    }
+
+    pub fn history_scope(&self) -> Option<AgentTaskHistoryScope> {
+        self.history_scope.clone()
+    }
+
     pub fn with_runtime_lease(mut self, runtime_lease: impl Send + 'static) -> Self {
         self._runtime_lease = Some(Box::new(runtime_lease));
         self

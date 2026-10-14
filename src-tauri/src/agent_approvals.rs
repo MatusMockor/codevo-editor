@@ -92,7 +92,7 @@ fn valid_id(value: &str) -> bool {
 }
 
 fn valid_text(value: &str, max: usize, empty: bool) -> bool {
-    value.len() <= max && !value.contains('\0') && (empty || !value.trim().is_empty())
+    value.len() <= max && !value.contains('\0') && (empty || !super::is_blank(value))
 }
 
 pub fn validate_approval(request: &AgentApprovalRequest) -> Result<(), String> {

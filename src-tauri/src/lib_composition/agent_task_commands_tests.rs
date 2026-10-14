@@ -17,6 +17,9 @@ static TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[path = "tests/agent_task_commands_agent_root_lease_tests.rs"]
 mod agent_root_workspace_registration_tests;
+#[cfg(unix)]
+#[path = "tests/agent_task_commands_history_scope_tests.rs"]
+mod history_scope_tests;
 
 struct TempWorkspace {
     root: PathBuf,
@@ -83,8 +86,18 @@ fn start_request(
         launch: AgentLaunchOptions::default(),
         provider_generation: 1,
         thread_id: "agt-thread-0001".to_string(),
+        history_scope: history_scope_for(&workspace.root.to_string_lossy()),
         attachments: Vec::new(),
         session_restart: Default::default(),
+    }
+}
+
+fn history_scope_for(root_key: &str) -> StartAgentTaskHistoryScope {
+    StartAgentTaskHistoryScope {
+        root_key: root_key.to_string(),
+        owner_id: super::super::agent_attachment_commands::agent_thread_store::agent_root_owner_id(
+            root_key,
+        ),
     }
 }
 
@@ -822,7 +835,7 @@ fn a_dangerous_launch_still_depends_on_the_repository_trust_gate() {
 
 #[test]
 fn the_start_request_contract_has_no_dangerous_launch_confirmation_field() {
-    let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"},"providerGeneration":1,"threadId":"agt-thread-0001"}"#;
+    let dangerous = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"codex","resumeSessionId":null,"launch":{"provider":"codex","model":"gpt-5.6-sol","mode":"dangerFullAccess"},"providerGeneration":1,"threadId":"agt-thread-0001","historyScope":{"rootKey":"/repo","ownerId":"agent-root:repo"}}"#;
     let parsed: StartAgentTaskRequest =
         serde_json::from_str(dangerous).expect("dangerous request parses");
     assert_eq!(
@@ -911,7 +924,7 @@ fn prepare_drops_the_chrome_flag_for_a_thread_that_turned_browser_integration_of
 
 #[test]
 fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
-    let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"},"providerGeneration":1,"threadId":"agt-thread-0001"}"#;
+    let complete = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"claudeCode","resumeSessionId":null,"launch":{"provider":"claudeCode","model":"opus","mode":"plan"},"providerGeneration":1,"threadId":"agt-thread-0001","historyScope":{"rootKey":"/repo","ownerId":"agent-root:repo"}}"#;
     let parsed: StartAgentTaskRequest =
         serde_json::from_str(complete).expect("complete request parses");
     assert_eq!(
@@ -927,7 +940,7 @@ fn the_start_request_contract_requires_a_launch_and_rejects_unknown_fields() {
         }
     );
 
-    let missing_launch = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"claudeCode","resumeSessionId":null,"threadId":"agt-thread-0001"}"#;
+    let missing_launch = r#"{"taskId":"agt-test-0001","workspaceId":"workspace-1","projectRoot":"/repo","repositoryRoot":"/repo","cwd":"/repo","isolation":"in-place","prompt":"do it","agentCliKind":"claudeCode","resumeSessionId":null,"threadId":"agt-thread-0001","historyScope":{"rootKey":"/repo","ownerId":"agent-root:repo"}}"#;
     assert!(serde_json::from_str::<StartAgentTaskRequest>(missing_launch).is_err());
 
     let missing_project_root = complete.replace("\"projectRoot\":\"/repo\",", "");
@@ -1311,14 +1324,14 @@ fn prepare_rejects_a_flag_like_resume_session_id() {
 #[test]
 fn start_requests_reject_unknown_fields_and_accept_a_null_resume_session_id() {
     let unknown = serde_json::from_str::<StartAgentTaskRequest>(
-        "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"threadId\":\"agt-thread-0001\",\"extra\":1}",
+        "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"threadId\":\"agt-thread-0001\",\"historyScope\":{\"rootKey\":\"/r\",\"ownerId\":\"agent-root:r\"},\"extra\":1}",
     );
     let accepted = serde_json::from_str::<StartAgentTaskRequest>(
-        "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"threadId\":\"agt-thread-0001\"}",
+        "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"threadId\":\"agt-thread-0001\",\"historyScope\":{\"rootKey\":\"/r\",\"ownerId\":\"agent-root:r\"}}",
     )
     .expect("deserialize start request");
     let injected_path = serde_json::from_str::<StartAgentTaskRequest>(
-        "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/tmp/injected\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"threadId\":\"agt-thread-0001\"}",
+        "{\"taskId\":\"agt-test-0001\",\"workspaceId\":\"w\",\"projectRoot\":\"/r\",\"repositoryRoot\":\"/r\",\"cwd\":\"/r\",\"isolation\":\"in-place\",\"prompt\":\"p\",\"agentCliPath\":\"/tmp/injected\",\"agentCliKind\":\"claudeCode\",\"resumeSessionId\":null,\"launch\":{\"provider\":\"claudeCode\",\"model\":\"default\",\"mode\":\"default\"},\"providerGeneration\":1,\"threadId\":\"agt-thread-0001\",\"historyScope\":{\"rootKey\":\"/r\",\"ownerId\":\"agent-root:r\"}}",
     );
 
     assert!(unknown.is_err(), "unknown start field must be rejected");
