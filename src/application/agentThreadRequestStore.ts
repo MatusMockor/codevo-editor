@@ -271,13 +271,31 @@ class FeedAgentThreadRequestStore implements AgentThreadRequestStore {
   }
 
   private async open(lease: object): Promise<(() => void) | null> {
-    const attempt = await attemptWithinDeadline(
-      () => this.feed.subscribeThreadRequests((message) => this.receive(lease, message)),
-      AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS,
-      release,
+    const messages = await opened(() =>
+      this.feed.subscribeThreadRequests((message) => this.receive(lease, message)),
     );
-    if (attempt.kind !== "settled") return null;
-    return attempt.value;
+    if (messages === null) return null;
+    const invalidations = await opened(
+      () =>
+        this.feed.subscribeThreadRequestInvalidations?.((epoch) => this.invalidate(lease, epoch)) ??
+        Promise.resolve(ignore),
+    );
+    if (invalidations === null) {
+      release(messages);
+      return null;
+    }
+    return () => {
+      release(messages);
+      release(invalidations);
+    };
+  }
+
+  private invalidate(lease: object, epoch: string): void {
+    if (!this.holds(lease)) return;
+    for (const entry of [...this.watched.values()]) {
+      if (!this.watching(entry) || entry.state?.epoch === epoch) continue;
+      this.take(entry, invalidation(entry, epoch));
+    }
   }
 
   private holds(lease: object): boolean {
@@ -467,6 +485,33 @@ function isCapped(plan: TurnPlan): boolean {
 
 function missing(entry: WatchedThread): readonly string[] {
   return entry.plan.turnIds.filter((turnId) => !entry.covered.has(turnId));
+}
+
+async function opened(start: () => Promise<() => void>): Promise<(() => void) | null> {
+  const attempt = await attemptWithinDeadline(
+    start,
+    AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS,
+    release,
+  );
+  if (attempt.kind !== "settled") return null;
+  return attempt.value;
+}
+
+function ignore(): void {
+  return;
+}
+
+function invalidation(entry: WatchedThread, epoch: string): AgentThreadRequests {
+  return {
+    workspaceId: null,
+    threadId: entry.scope.threadId,
+    epoch,
+    journal: entry.state?.journal ?? "saved",
+    requests: [],
+    truncated: false,
+    unreadable: entry.state?.unreadable ?? 0,
+    reset: true,
+  };
 }
 
 function answered(page: AgentThreadRequestsPage): PullAnswer {

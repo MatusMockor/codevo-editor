@@ -55,6 +55,12 @@ class UnifiedAgentThreadRequestFeed implements AgentThreadRequestFeed {
     throw new Error("Agent thread requests are unavailable.");
   }
 
+  subscribeThreadRequestInvalidations(handler: (epoch: string) => void): Promise<() => void> {
+    const { local } = this.feeds;
+    if (local.subscribeThreadRequestInvalidations === undefined) return Promise.resolve(ignore);
+    return local.subscribeThreadRequestInvalidations(handler);
+  }
+
   private feedOf(route: AgentThreadRequestScopeRoute): AgentThreadRequestFeed {
     switch (route) {
       case "local":
@@ -67,6 +73,10 @@ class UnifiedAgentThreadRequestFeed implements AgentThreadRequestFeed {
       }
     }
   }
+}
+
+function ignore(): void {
+  return;
 }
 
 function safelyRelease(unsubscribe: () => void): void {

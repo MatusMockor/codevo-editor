@@ -14,6 +14,7 @@ import {
 } from "../domain/agentRuntimeRequest";
 
 type ThreadRequestsHandler = (message: AgentThreadRequests) => void;
+type InvalidationHandler = (epoch: string) => void;
 type WireValue = Readonly<Record<string, unknown>>;
 
 interface WireCase {
@@ -24,8 +25,13 @@ interface WireCase {
 export interface AgentThreadRequestFeedFake extends AgentThreadRequestFeed {
   readonly currentThreadRequests: Mock<AgentThreadRequestFeed["currentThreadRequests"]>;
   readonly subscribeThreadRequests: Mock<AgentThreadRequestFeed["subscribeThreadRequests"]>;
+  readonly subscribeThreadRequestInvalidations: Mock<
+    (handler: InvalidationHandler) => Promise<() => void>
+  >;
   readonly unsubscribed: Mock<() => void>;
   subscribers(): number;
+  invalidationSubscribers(): number;
+  invalidate(epoch: string): void;
   record(message: AgentThreadRequests): void;
   push(message: AgentThreadRequests): void;
   publish(message: AgentThreadRequests): void;
@@ -68,6 +74,7 @@ export function agentThreadRequestsPageOf(
 
 export function agentThreadRequestFeedFake(): AgentThreadRequestFeedFake {
   const handlers = new Set<ThreadRequestsHandler>();
+  const invalidations = new Set<InvalidationHandler>();
   const journal = new Map<string, AgentThreadRequests>();
   const unsubscribed = vi.fn<() => void>();
   const record = (message: AgentThreadRequests): void => {
@@ -103,8 +110,18 @@ export function agentThreadRequestFeedFake(): AgentThreadRequestFeedFake {
         unsubscribed();
       });
     }),
+    subscribeThreadRequestInvalidations: vi.fn((handler: InvalidationHandler) => {
+      invalidations.add(handler);
+      return Promise.resolve(() => {
+        invalidations.delete(handler);
+      });
+    }),
     unsubscribed,
     subscribers: () => handlers.size,
+    invalidationSubscribers: () => invalidations.size,
+    invalidate: (epoch) => {
+      [...invalidations].forEach((handler) => handler(epoch));
+    },
     record,
     push,
     publish: (message) => {

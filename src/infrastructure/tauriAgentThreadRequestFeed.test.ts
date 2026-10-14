@@ -14,6 +14,7 @@ import {
 import { MAX_AGENT_TASK_PATH_BYTES, MAX_AGENT_TASK_WORKSPACE_ID_BYTES } from "../domain/agentTask";
 import {
   AGENT_THREAD_REQUESTS_EVENT,
+  AGENT_THREAD_REQUESTS_INVALIDATED_EVENT,
   MAX_AGENT_THREAD_REQUESTS_CURSOR_CHARS,
   TauriAgentThreadRequestFeed,
   type AgentThreadRequestRuntimeDetector,
@@ -452,6 +453,66 @@ describe("TauriAgentThreadRequestFeed", () => {
     bus.emit(AGENT_THREAD_REQUESTS_EVENT, threadRequests([]));
 
     expect(handler.mock.calls).toStrictEqual([[threadRequests([])]]);
+  });
+
+  it("delivers the epoch of a strictly parsed invalidation and drops malformed ones", async () => {
+    const bus = fakeEventBus();
+    const feed = new TauriAgentThreadRequestFeed(vi.fn(), bus.listen, available);
+    const handler = vi.fn<(epoch: string) => void>();
+    const malformed: readonly unknown[] = [
+      null,
+      undefined,
+      "run-0002.1",
+      ["run-0002.1"],
+      {},
+      { epoch: "" },
+      { epoch: "run 0002" },
+      { epoch: ".run" },
+      { epoch: "r".repeat(129) },
+      { epoch: 2 },
+      { epoch: null },
+      { epoch: "run-0002.1", threadId: "agt-thread-0001" },
+      { Epoch: "run-0002.1" },
+    ];
+
+    const unsubscribe = await feed.subscribeThreadRequestInvalidations(handler);
+    malformed.forEach((payload) => bus.emit(AGENT_THREAD_REQUESTS_INVALIDATED_EVENT, payload));
+    bus.emit(AGENT_THREAD_REQUESTS_EVENT, { epoch: "run-0002.1" });
+    expect(handler).not.toHaveBeenCalled();
+    bus.emit(AGENT_THREAD_REQUESTS_INVALIDATED_EVENT, { epoch: "run-0002.1" });
+    bus.emit(AGENT_THREAD_REQUESTS_INVALIDATED_EVENT, { epoch: "r".repeat(128) });
+    unsubscribe();
+    bus.emit(AGENT_THREAD_REQUESTS_INVALIDATED_EVENT, { epoch: "run-0003.1" });
+
+    expect(bus.listen.mock.calls.map(([event]) => event)).toStrictEqual([
+      "agent-thread://requests-invalidated",
+    ]);
+    expect(handler.mock.calls).toStrictEqual([["run-0002.1"], ["r".repeat(128)]]);
+  });
+
+  it("never reports thread request messages as invalidations or the reverse", async () => {
+    const bus = fakeEventBus();
+    const feed = new TauriAgentThreadRequestFeed(vi.fn(), bus.listen, available);
+    const invalidated = vi.fn<(epoch: string) => void>();
+    const received = vi.fn<(message: AgentThreadRequests) => void>();
+
+    await feed.subscribeThreadRequestInvalidations(invalidated);
+    await feed.subscribeThreadRequests(received);
+    bus.emit(AGENT_THREAD_REQUESTS_INVALIDATED_EVENT, threadRequests([]));
+    bus.emit(AGENT_THREAD_REQUESTS_EVENT, { epoch: "run-0002.1" });
+
+    expect(invalidated).not.toHaveBeenCalled();
+    expect(received).not.toHaveBeenCalled();
+  });
+
+  it("rejects the invalidation subscription without the native runtime", async () => {
+    const listen = vi.fn<ListenToAgentThreadRequestEvent>();
+    const feed = new TauriAgentThreadRequestFeed(vi.fn(), listen, unavailable);
+
+    await expect(feed.subscribeThreadRequestInvalidations(vi.fn())).rejects.toThrow(
+      "Agent thread requests need the native runtime.",
+    );
+    expect(listen).not.toHaveBeenCalled();
   });
 
   it("ignores events published on other channels", async () => {

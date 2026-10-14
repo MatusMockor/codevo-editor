@@ -30,6 +30,7 @@ export interface AgentThreadRequestFeed {
     cursor: string | null,
   ): Promise<AgentThreadRequestsPage>;
   subscribeThreadRequests(handler: (message: AgentThreadRequests) => void): Promise<() => void>;
+  subscribeThreadRequestInvalidations?(handler: (epoch: string) => void): Promise<() => void>;
 }
 
 export function isAgentThreadRequestFeed(value: unknown): value is AgentThreadRequestFeed {

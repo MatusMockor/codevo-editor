@@ -88,6 +88,19 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function slowly(gateway: RemoteAgentThreadRequestGatewayFake, delayMs: number): void {
+  const answer = gateway.threadRequests.getMockImplementation();
+  gateway.threadRequests.mockImplementationOnce(
+    (request) =>
+      new Promise<RemoteAgentThreadRequestsPage>((resolve, reject) => {
+        setTimeout(() => {
+          if (answer === undefined) return reject(new Error("no reader"));
+          answer(request).then(resolve, reject);
+        }, delayMs);
+      }),
+  );
+}
+
 function shown(message: AgentThreadRequests | undefined): readonly string[] {
   return (message?.requests ?? []).map(
     (request) => `${request.turnId}/${request.id}@${request.version}:${request.status}`,
@@ -393,6 +406,148 @@ describe("remoteAgentThreadRequestFeed", () => {
       await settle();
       expect(gateway.threadRequests).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
+  describe("slow runner", () => {
+    it("waits for a read that takes far longer than a store pull and pushes it", async () => {
+      const { gateway, feed, pushes } = await harness();
+      gateway.record(TARGET_A, [pending(T1, "req-1")]);
+      slowly(gateway, 20_000);
+
+      feed.describe(A, snapshot([turn(T1, 1)]));
+      await settle();
+      await vi.advanceTimersByTimeAsync(19_000);
+      expect(pushes).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await settle();
+
+      expect(pushes.map(shown)).toEqual([[`${T1}/req-1@1:pending`]]);
+      expect(gateway.threadRequests).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("answers a store pull from the read already in flight for its turns", async () => {
+      const { gateway, feed, pushes } = await harness();
+      gateway.record(TARGET_A, [pending(T1, "req-1"), pending(T2, "req-2")]);
+      slowly(gateway, 3_000);
+      feed.describe(A, snapshot([turn(T1, 1), turn(T2, 1)]));
+      await settle();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      const pulled = feed.currentThreadRequests(A, [T2], null);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await settle();
+
+      const page = await pulled;
+      expect(shown(page.message)).toEqual([`${T2}/req-2@1:pending`]);
+      expect(page.nextCursor).toBeNull();
+      expect(gateway.threadRequests).toHaveBeenCalledTimes(1);
+      expect(pushes.map(shown)).toEqual([[`${T1}/req-1@1:pending`, `${T2}/req-2@1:pending`]]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("fails a store pull at its deadline without cancelling or repeating the read", async () => {
+      const { gateway, feed, pushes } = await harness();
+      gateway.record(TARGET_A, [pending(T1, "req-1")]);
+      slowly(gateway, 20_000);
+      feed.describe(A, snapshot([turn(T1, 1)]));
+      await settle();
+      await vi.advanceTimersByTimeAsync(1_000);
+      const outcomes: string[] = [];
+      void feed.currentThreadRequests(A, [T1], null).then(
+        () => outcomes.push("resolved"),
+        () => outcomes.push("rejected"),
+      );
+
+      await vi.advanceTimersByTimeAsync(PULL_DEADLINE - 1);
+      expect(outcomes).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(outcomes).toEqual(["rejected"]);
+      expect(gateway.threadRequests).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      await settle();
+      expect(gateway.threadRequests).toHaveBeenCalledTimes(1);
+      expect(pushes.map(shown)).toEqual([[`${T1}/req-1@1:pending`]]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("queues a pull for turns the running read does not cover", async () => {
+      const { gateway, feed } = await harness();
+      slowly(gateway, 3_000);
+      feed.describe(A, snapshot([turn(T1, 1), turn(T2, 0)]));
+      await settle();
+
+      const pulled = feed.currentThreadRequests(A, [T1, T2], null);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await settle();
+
+      await expect(pulled).resolves.toMatchObject({ nextCursor: null });
+      expect(gateway.threadRequests).toHaveBeenCalledTimes(2);
+      expect(gateway.threadRequests.mock.calls[1]?.[0].turns).toEqual([turn(T1, 1), turn(T2, 0)]);
+    });
+
+    it("pushes the late answer of a store pull that outlived its deadline", async () => {
+      const { gateway, feed, pushes } = await harness();
+      gateway.record(TARGET_A, [pending(T1, "req-1")]);
+      feed.describe(A, snapshot([turn(T1, 0)]));
+      slowly(gateway, 8_000);
+
+      await expect(
+        Promise.race([
+          feed.currentThreadRequests(A, [T1], null),
+          vi.advanceTimersByTimeAsync(PULL_DEADLINE).then(() => "still waiting"),
+        ]),
+      ).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(3_000);
+      await settle();
+
+      expect(pushes.map(shown)).toEqual([[`${T1}/req-1@1:pending`]]);
+      expect(gateway.threadRequests).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("restarts a paged read at once when its cursor is no longer valid", async () => {
+      const { gateway, feed, pushes } = await harness();
+      gateway.record(
+        TARGET_A,
+        Array.from({ length: 70 }, (_unused, index) => pending(T1, `req-${index}`)),
+      );
+      const answer = gateway.threadRequests.getMockImplementation();
+      gateway.threadRequests
+        .mockImplementationOnce((request) =>
+          answer === undefined ? Promise.reject(new Error("no reader")) : answer(request),
+        )
+        .mockRejectedValueOnce(new Error("Remote thread request cursor is no longer valid."));
+
+      feed.describe(A, snapshot([turn(T1, 1)]));
+      await settle();
+
+      expect(gateway.threadRequests.mock.calls.map(([request]) => request.cursor)).toEqual([
+        null,
+        "t:64",
+        null,
+        "t:64",
+      ]);
+      expect(pushes.map((message) => message.requests.length)).toEqual([64, 6]);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it("treats a new epoch as a new state and pushes every record again", async () => {
+      const { gateway, feed, pushes } = await harness();
+      gateway.record(TARGET_A, [pending(T1, "req-1")]);
+      feed.describe(A, snapshot([turn(T1, 1)]));
+      await settle();
+
+      gateway.stamp(TARGET_A, { epoch: "rr1-snapshot-3-1" });
+      feed.describe(A, snapshot([turn(T1, 2)]));
+      await settle();
+
+      expect(pushes.map((message) => [message.epoch, ...shown(message)])).toEqual([
+        ["rr1-snapshot", `${T1}/req-1@1:pending`],
+        ["rr1-snapshot-3-1", `${T1}/req-1@1:pending`],
+      ]);
     });
   });
 
@@ -744,7 +899,7 @@ describe("remoteAgentThreadRequestFeed", () => {
       feed.describe(A, snapshot([turn(T1, 1)]));
       feed.describe(A2, snapshot([turn(T2, 1)]));
       await settle();
-      await vi.advanceTimersByTimeAsync(READ_DEADLINE + 10 * RETRY_BASE);
+      await vi.advanceTimersByTimeAsync(READ_DEADLINE + 2 * RETRY_BASE);
       await settle();
       expect(gateway.threadRequests).toHaveBeenCalledTimes(1);
       expect(pushes).toEqual([]);

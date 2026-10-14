@@ -1423,6 +1423,181 @@ describe("agentThreadRequestStore", () => {
     unwatch();
   });
 
+  it("resets every watched scope on an invalidation of another epoch and pulls them again", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-a")]));
+    feed.record(agentThreadRequestsOf(B, [pendingRequest(T1, "req-b")]));
+    const first = recorder();
+    const second = recorder();
+    const unwatchFirst = store.watch(A, [T1], first.listener);
+    const unwatchSecond = store.watch(B, [T1], second.listener);
+    await settle();
+    const pulls = feed.currentThreadRequests.mock.calls.length;
+    const epoch = "run-0002.1";
+    feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-a2")], { epoch }));
+    feed.record(agentThreadRequestsOf(B, [], { epoch }));
+    feed.invalidate(epoch);
+    expect(first.views()).toEqual([
+      "pending",
+      view([`${T1}/req-a@1:pending`]),
+      view([], { epoch, pending: [T1] }),
+    ]);
+    expect(second.views()).toEqual([
+      "pending",
+      view([`${T1}/req-b@1:pending`]),
+      view([], { epoch, pending: [T1] }),
+    ]);
+    await settle();
+    expect(feed.currentThreadRequests.mock.calls.slice(pulls)).toEqual([
+      [A, [T1], null],
+      [B, [T1], null],
+    ]);
+    expect(first.views()[3]).toEqual(view([`${T1}/req-a2@1:pending`], { epoch }));
+    expect(second.views()[3]).toEqual(view([], { epoch }));
+    feed.push(agentThreadRequestsOf(A, [resolvedRequest(T1, "req-a", 5)]));
+    expect(first.views()).toHaveLength(4);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatchFirst();
+    unwatchSecond();
+  });
+
+  it("ignores an invalidation of the epoch a scope already has and of a superseded epoch", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-a")]));
+    const first = recorder();
+    const second = recorder();
+    const unwatchFirst = store.watch(A, [T1], first.listener);
+    const unwatchSecond = store.watch(B, [T1], second.listener);
+    await settle();
+    const pulls = feed.currentThreadRequests.mock.calls.length;
+    feed.invalidate("boot-0001");
+    await settle();
+    expect(first.seen).toHaveLength(2);
+    expect(second.seen).toHaveLength(2);
+    feed.publish(agentThreadRequestsOf(A, [], { epoch: epochOf(2), reset: true }));
+    await settle();
+    const shownFirst = first.seen.length;
+    const pullsAfterMove = feed.currentThreadRequests.mock.calls.length;
+    expect(pullsAfterMove).toBe(pulls + 1);
+    feed.invalidate(epochOf(2));
+    feed.invalidate("boot-0001");
+    await settle();
+    expect(first.seen).toHaveLength(shownFirst);
+    expect(feed.currentThreadRequests.mock.calls.slice(pullsAfterMove)).toEqual([[B, [T1], null]]);
+    expect(second.views()[2]).toEqual(view([], { epoch: epochOf(2), pending: [T1] }));
+    unwatchFirst();
+    unwatchSecond();
+  });
+
+  it("drops a pull that was in flight when an invalidation arrives and pulls again", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const older = deferred<AgentThreadRequestsPage>();
+    feed.currentThreadRequests.mockImplementationOnce(() => older.promise);
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+    await settle();
+    const epoch = "run-0002.1";
+    feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-new")], { epoch }));
+    feed.invalidate(epoch);
+    older.resolve(pulled(agentThreadRequestsOf(A, [pendingRequest(T1, "req-old")])));
+    await settle();
+    expect(watcher.views()).toEqual(["pending", view([`${T1}/req-new@1:pending`], { epoch })]);
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(2);
+    unwatch();
+  });
+
+  it("opens one invalidation subscription before the first pull and releases it with the last watcher", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const store = agentThreadRequestStore(feed);
+    const unwatchFirst = store.watch(A, [T1], () => undefined);
+    const unwatchSecond = store.watch(B, [T1], () => undefined);
+    await settle();
+    expect(feed.subscribeThreadRequestInvalidations).toHaveBeenCalledTimes(1);
+    expect(feed.invalidationSubscribers()).toBe(1);
+    const [subscribed] = feed.subscribeThreadRequestInvalidations.mock.invocationCallOrder;
+    const [pulled] = feed.currentThreadRequests.mock.invocationCallOrder;
+    expect(subscribed).toBeLessThan(pulled ?? 0);
+    unwatchFirst();
+    unwatchSecond();
+    expect(feed.invalidationSubscribers()).toBe(1);
+    await released();
+    expect(feed.invalidationSubscribers()).toBe(0);
+    expect(feed.subscribers()).toBe(0);
+    const pulls = feed.currentThreadRequests.mock.calls.length;
+    feed.invalidate("run-0002.1");
+    await settle();
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(pulls);
+    const abandoned = feed.subscribeThreadRequestInvalidations.mock.calls[0]?.[0];
+    const watcher = recorder();
+    const unwatchAgain = store.watch(A, [T1], watcher.listener);
+    await settle();
+    abandoned?.("run-0003.1");
+    await settle();
+    expect(abandoned).toBeTypeOf("function");
+    expect(feed.subscribeThreadRequestInvalidations).toHaveBeenCalledTimes(2);
+    expect(watcher.views()).toEqual(["pending", view([])]);
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(pulls + 1);
+    unwatchAgain();
+    await released();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("abandons an invalidation subscription that never settles together with the message subscription", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]));
+    const hung = deferred<() => void>();
+    const releaseLate = vi.fn();
+    feed.subscribeThreadRequestInvalidations.mockImplementationOnce(() => hung.promise);
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+    await settle();
+    expect(feed.subscribers()).toBe(1);
+    expect(feed.currentThreadRequests).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(DEADLINE);
+    expect(feed.subscribers()).toBe(0);
+    expect(feed.unsubscribed).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(retryDelay(0));
+    expect(watcher.views()).toEqual(["pending", view([`${T1}/req-1@1:pending`])]);
+    hung.resolve(releaseLate);
+    await settle();
+    expect(releaseLate).toHaveBeenCalledTimes(1);
+    expect(feed.subscribers()).toBe(1);
+    expect(feed.invalidationSubscribers()).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    unwatch();
+  });
+
+  it("reports unavailable when the invalidation subscription keeps failing", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.subscribeThreadRequestInvalidations.mockRejectedValue(new Error("no event bus"));
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(feed).watch(A, [T1], watcher.listener);
+    await failUntilNoticed();
+    expect(watcher.views()).toEqual(["pending", "unavailable"]);
+    expect(feed.currentThreadRequests).not.toHaveBeenCalled();
+    expect(feed.subscribers()).toBe(0);
+    unwatch();
+  });
+
+  it("works with a feed that cannot invalidate", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.record(agentThreadRequestsOf(A, [pendingRequest(T1, "req-1")]));
+    const plain = {
+      currentThreadRequests: feed.currentThreadRequests,
+      subscribeThreadRequests: feed.subscribeThreadRequests,
+    };
+    const watcher = recorder();
+    const unwatch = agentThreadRequestStore(plain).watch(A, [T1], watcher.listener);
+    await settle();
+    expect(watcher.views()).toEqual(["pending", view([`${T1}/req-1@1:pending`])]);
+    expect(feed.subscribeThreadRequestInvalidations).not.toHaveBeenCalled();
+    unwatch();
+    await released();
+    expect(feed.subscribers()).toBe(0);
+  });
+
   it("is refused by the journal when a cursor comes back with another turn list or scope", async () => {
     const feed = agentThreadRequestFeedFake();
     feed.record(agentThreadRequestsOf(A, closedRequests(T1, RECORDS + 5)));

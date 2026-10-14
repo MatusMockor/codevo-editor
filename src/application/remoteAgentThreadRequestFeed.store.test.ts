@@ -124,6 +124,32 @@ describe("remoteAgentThreadRequestFeed under the thread request store", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("syncs a store from a slow read without a second gateway read", async () => {
+    const { gateway, feed, store } = await harness();
+    gateway.record(TARGET_A, [pending(T1, "req-1")]);
+    const answer = gateway.threadRequests.getMockImplementation();
+    gateway.threadRequests.mockImplementationOnce(
+      (request) =>
+        new Promise((resolve, reject) => {
+          setTimeout(() => {
+            if (answer === undefined) return reject(new Error("no reader"));
+            answer(request).then(resolve, reject);
+          }, 4_000);
+        }),
+    );
+    const seen = recorder();
+    feed.describe(A, snapshot([turn(T1, 1)]));
+    await settle();
+
+    store.watch(A, [T1], seen.listener);
+    await vi.advanceTimersByTimeAsync(4_000);
+    await settle();
+
+    expect(seen.views()).toEqual(["pending", [`${T1}/req-1@1:pending`]]);
+    expect(gateway.threadRequests).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("shows a moved sequence through one read and one push without a new pull", async () => {
     const { gateway, feed, store, pushes } = await harness();
     gateway.record(TARGET_A, [pending(T1, "req-1")]);

@@ -73,6 +73,40 @@ describe("unifiedAgentThreadRequestFeed", () => {
     expect(local.currentThreadRequests).not.toHaveBeenCalled();
   });
 
+  it("forwards the invalidations of the local feed only", async () => {
+    const { local, remote, unified } = feeds();
+    const handler = vi.fn<(epoch: string) => void>();
+
+    const release = await unified.subscribeThreadRequestInvalidations?.(handler);
+    local.invalidate("run-0002.1");
+    remote.invalidate("run-0003.1");
+    release?.();
+    local.invalidate("run-0004.1");
+
+    expect(handler.mock.calls).toEqual([["run-0002.1"]]);
+    expect(local.subscribeThreadRequestInvalidations).toHaveBeenCalledTimes(1);
+    expect(remote.subscribeThreadRequestInvalidations).not.toHaveBeenCalled();
+    expect(local.invalidationSubscribers()).toBe(0);
+  });
+
+  it("offers a no-op invalidation subscription when the local feed cannot invalidate", async () => {
+    const local = agentThreadRequestFeedFake();
+    const remote = agentThreadRequestFeedFake();
+    const unified = createUnifiedAgentThreadRequestFeed({
+      local: {
+        currentThreadRequests: local.currentThreadRequests,
+        subscribeThreadRequests: local.subscribeThreadRequests,
+      },
+      remote,
+    });
+
+    const release = await unified.subscribeThreadRequestInvalidations?.(vi.fn());
+
+    expect(release).toBeTypeOf("function");
+    expect(() => release?.()).not.toThrow();
+    expect(remote.subscribeThreadRequestInvalidations).not.toHaveBeenCalled();
+  });
+
   it("sends a local scope to the local feed only", async () => {
     const { local, remote, unified } = feeds();
 

@@ -12,6 +12,8 @@ import { parseAgentThreadRequests, type AgentThreadRequests } from "../domain/ag
 import { MAX_AGENT_TASK_PATH_BYTES, MAX_AGENT_TASK_WORKSPACE_ID_BYTES } from "../domain/agentTask";
 
 export const AGENT_THREAD_REQUESTS_EVENT = "agent-thread://requests" as const;
+export const AGENT_THREAD_REQUESTS_INVALIDATED_EVENT =
+  "agent-thread://requests-invalidated" as const;
 export const GET_AGENT_THREAD_REQUESTS_IPC_COMMAND = "get_agent_thread_requests" as const;
 export const MAX_AGENT_THREAD_REQUESTS_CURSOR_CHARS = 256;
 
@@ -122,6 +124,15 @@ function rejected(error: unknown): never {
   throw error;
 }
 
+function invalidatedEpochOrNull(payload: unknown): string | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const keys = Object.keys(payload);
+  if (keys.length !== 1 || keys[0] !== "epoch") return null;
+  const { epoch } = payload as { readonly epoch: unknown };
+  if (typeof epoch !== "string" || !ID_PATTERN.test(epoch)) return null;
+  return epoch;
+}
+
 function runtimeUnavailable(): Error {
   return new Error("Agent thread requests need the native runtime.");
 }
@@ -156,6 +167,15 @@ export class TauriAgentThreadRequestFeed implements AgentThreadRequestFeed {
       const message = decodeOrNull(event.payload);
       if (message === null) return;
       handler(message);
+    });
+  }
+
+  subscribeThreadRequestInvalidations(handler: (epoch: string) => void): Promise<() => void> {
+    if (!this.isRuntimeAvailable()) return Promise.reject(runtimeUnavailable());
+    return this.listenToEvent(AGENT_THREAD_REQUESTS_INVALIDATED_EVENT, (event) => {
+      const epoch = invalidatedEpochOrNull(event.payload);
+      if (epoch === null) return;
+      handler(epoch);
     });
   }
 }

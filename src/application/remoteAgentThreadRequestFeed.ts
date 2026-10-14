@@ -42,7 +42,7 @@ export const REMOTE_AGENT_THREAD_REQUEST_READ_SETTLEMENT_MS = 75_000;
 export const REMOTE_AGENT_THREAD_REQUEST_RESPOND_SETTLEMENT_MS = 150_000;
 export const MAX_REMOTE_AGENT_THREAD_REQUEST_UNDESCRIBED_PULLS = 64;
 export const MAX_REMOTE_AGENT_THREAD_REQUEST_READ_RETRIES = 5;
-export const REMOTE_AGENT_THREAD_REQUEST_READ_DEADLINE_MS = 5_000;
+export const REMOTE_AGENT_THREAD_REQUEST_READ_DEADLINE_MS = 65_000;
 export const REMOTE_AGENT_THREAD_REQUEST_PULL_DEADLINE_MS = 5_000;
 export const REMOTE_AGENT_THREAD_REQUEST_RESPOND_DEADLINE_MS = 15_000;
 export const REMOTE_AGENT_THREAD_REQUEST_READ_RETRY_BASE_MS = 1_000;
@@ -93,10 +93,19 @@ interface Reading {
 }
 type Handler = (message: AgentThreadRequests) => void;
 
+interface LaneRead {
+  readonly lease: object;
+  readonly thread: Tracked;
+  readonly turnIds: ReadonlySet<string>;
+  readonly cursor: string | null;
+  readonly joined: PullJob[];
+}
+
 interface Lane {
   readonly serverId: string;
   readonly threads: Set<Tracked>;
   readonly pulls: PullJob[];
+  current: LaneRead | null;
   lease: object | null;
   since: number;
   stranded: Timer | undefined;
@@ -122,6 +131,7 @@ interface Tracked {
   pulls: number;
   pullFailed: boolean;
   kickOwed: boolean;
+  restarted: boolean;
 }
 
 interface PullJob {
@@ -238,6 +248,7 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
       pulls: 0,
       pullFailed: owed,
       kickOwed: owed,
+      restarted: false,
     };
     this.tracked.set(key, thread);
     lane.threads.add(thread);
@@ -278,7 +289,8 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
     }
     if (!thread.reachable || !this.serves(thread, turnIds)) return refused(thread);
     const lane = thread.lane;
-    if (lane.pulls.length >= MAX_REMOTE_AGENT_THREAD_REQUEST_QUEUED_PULLS) return refused(thread);
+    const waiting = lane.pulls.length + (lane.current?.joined.length ?? 0);
+    if (waiting >= MAX_REMOTE_AGENT_THREAD_REQUEST_QUEUED_PULLS) return refused(thread);
     return new Promise((resolve, reject) => {
       const job: PullJob = {
         thread,
@@ -294,6 +306,7 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
         this.pump(lane);
       }, REMOTE_AGENT_THREAD_REQUEST_PULL_DEADLINE_MS);
       thread.pulls += 1;
+      if (this.join(lane, job)) return;
       lane.pulls.push(job);
       this.pump(lane);
     });
@@ -533,6 +546,7 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
       serverId,
       threads: new Set(),
       pulls: [],
+      current: null,
       lease: null,
       since: 0,
       stranded: undefined,
@@ -565,8 +579,33 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
     this.tracked.delete(thread.key);
     thread.lane.threads.delete(thread);
     this.suspend(thread);
-    for (const job of thread.lane.pulls.filter((queued) => queued.thread === thread))
+    const joined = thread.lane.current?.joined ?? [];
+    for (const job of [...thread.lane.pulls, ...joined].filter(
+      (queued) => queued.thread === thread,
+    ))
       this.settlePull(job, null);
+  }
+
+  private join(lane: Lane, job: PullJob): boolean {
+    const current = lane.current;
+    if (current === null || current.thread !== job.thread) return false;
+    if (current.cursor !== null || job.cursor !== null) return false;
+    if (!job.turnIds.every((turnId) => current.turnIds.has(turnId))) return false;
+    current.joined.push(job);
+    return true;
+  }
+
+  private rejoin(lane: Lane, lease: object, page: RemoteAgentThreadRequestsPage | null): boolean {
+    const current = lane.current;
+    if (current === null || current.lease !== lease) return false;
+    lane.current = null;
+    const waiting = current.joined.filter((job) => !job.done);
+    if (page === null || page.nextCursor !== null) {
+      lane.pulls.unshift(...waiting);
+      return false;
+    }
+    for (const job of waiting) this.settlePull(job, shared(page, job.turnIds));
+    return waiting.length > 0;
   }
 
   private retire(lane: Lane): void {
@@ -645,9 +684,13 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
     turns: readonly RemoteAgentThreadRequestTurn[],
   ): Promise<void> {
     const reading = this.occupy(lane, job.thread, turns, job.cursor);
-    const attempt = await this.within(reading);
-    this.settlePull(job, this.owned(job.thread, attempt));
-    this.vacate(lane, reading, attempt);
+    const attempt = await this.within(reading, REMOTE_AGENT_THREAD_REQUEST_PULL_DEADLINE_MS);
+    const page = this.owned(job.thread, attempt);
+    if (job.done && page !== null) this.announce(job.thread, page.message);
+    this.settlePull(job, page);
+    if (attempt.kind === "timedOut")
+      void reading.call.then((late) => this.announce(job.thread, late.message), ignore);
+    this.vacate(lane, reading, attempt, REMOTE_AGENT_THREAD_REQUEST_PULL_DEADLINE_MS);
   }
 
   private settlePull(job: PullJob, page: RemoteAgentThreadRequestsPage | null): void {
@@ -658,6 +701,8 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
     const thread = job.thread;
     const queued = thread.lane.pulls.indexOf(job);
     if (queued >= 0) thread.lane.pulls.splice(queued, 1);
+    const joined = thread.lane.current?.joined.indexOf(job) ?? -1;
+    if (joined >= 0) thread.lane.current?.joined.splice(joined, 1);
     thread.pulls -= 1;
     if (page === null) {
       thread.pullFailed = true;
@@ -677,19 +722,35 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
       thread.confirmations.bind(step.chain, new Set(step.turns.map((turn) => turn.turnId)));
     thread.reading = true;
     const reading = this.occupy(lane, thread, step.turns, step.cursor);
-    const attempt = await this.within(reading);
+    lane.current = {
+      lease: reading.lease,
+      thread,
+      turnIds: new Set(step.turns.map((turn) => turn.turnId)),
+      cursor: step.cursor,
+      joined: [],
+    };
+    const attempt = await this.within(reading, REMOTE_AGENT_THREAD_REQUEST_READ_DEADLINE_MS);
+    const page = this.owned(thread, attempt);
+    const shared = this.rejoin(lane, reading.lease, page);
     if (this.owns(thread)) {
       thread.reading = false;
-      this.readSettled(thread, step, this.owned(thread, attempt));
+      this.readSettled(thread, step, page, shared);
     }
-    this.vacate(lane, reading, attempt);
+    this.vacate(lane, reading, attempt, REMOTE_AGENT_THREAD_REQUEST_READ_DEADLINE_MS);
   }
 
   private readSettled(
     thread: Tracked,
     step: RemoteAgentThreadRequestReadStep,
     page: RemoteAgentThreadRequestsPage | null,
+    shared: boolean,
   ): void {
+    if (page === null && step.cursor !== null && !thread.restarted) {
+      thread.restarted = true;
+      thread.watch.abandon();
+      thread.confirmations.unbind(step.chain);
+      return;
+    }
     if (page === null) {
       thread.watch.abandon();
       this.readFailed(thread, step);
@@ -706,6 +767,7 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
         break;
       case "complete":
         thread.failures = 0;
+        thread.restarted = false;
         thread.confirmations.confirm(step.chain, settlement.statuses);
         this.arm(thread);
         break;
@@ -714,7 +776,15 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
         return exhaustive;
       }
     }
-    this.push(thread, settlement.push);
+    if (!shared) {
+      this.push(thread, settlement.push);
+      return;
+    }
+    const push = settlement.push;
+    if (push === null) return;
+    setTimeout(() => {
+      if (this.owns(thread)) this.push(thread, push);
+    }, 0);
   }
 
   private readFailed(thread: Tracked, step: RemoteAgentThreadRequestReadStep): void {
@@ -756,22 +826,23 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
     return this.gateway.threadRequests(request);
   }
 
-  private within(reading: Reading): Promise<DeadlineAttempt<RemoteAgentThreadRequestsPage>> {
-    return attemptWithinDeadline(() => reading.call, REMOTE_AGENT_THREAD_REQUEST_READ_DEADLINE_MS);
+  private within(
+    reading: Reading,
+    deadlineMs: number,
+  ): Promise<DeadlineAttempt<RemoteAgentThreadRequestsPage>> {
+    return attemptWithinDeadline(() => reading.call, deadlineMs);
   }
 
   private vacate(
     lane: Lane,
     reading: Reading,
     attempt: DeadlineAttempt<RemoteAgentThreadRequestsPage>,
+    deadlineMs: number,
   ): void {
     const free = (): void => this.free(lane, reading.lease);
     void reading.call.then(free, free);
     if (attempt.kind !== "timedOut" || lane.lease !== reading.lease) return;
-    lane.stranded = setTimeout(
-      free,
-      REMOTE_AGENT_THREAD_REQUEST_READ_SETTLEMENT_MS - REMOTE_AGENT_THREAD_REQUEST_READ_DEADLINE_MS,
-    );
+    lane.stranded = setTimeout(free, REMOTE_AGENT_THREAD_REQUEST_READ_SETTLEMENT_MS - deadlineMs);
   }
 
   private free(lane: Lane, lease: object): void {
@@ -817,6 +888,19 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
     clearTimeout(thread.wake);
     thread.wake = undefined;
   }
+}
+
+function shared(
+  page: RemoteAgentThreadRequestsPage,
+  turnIds: readonly string[],
+): RemoteAgentThreadRequestsPage {
+  const wanted = new Set(turnIds);
+  const requests = page.message.requests.filter((request) => wanted.has(request.turnId));
+  return { message: { ...page.message, requests }, nextCursor: null };
+}
+
+function ignore(): void {
+  return;
 }
 
 function guardKey(scopeId: string, key: string): string {
