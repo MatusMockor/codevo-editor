@@ -31,6 +31,7 @@ export const MCP_OPEN_PAGE_AGAIN_LABEL = "Open page again";
 export const MCP_CHECK_AGAIN_LABEL = "Check again";
 export const MCP_FINISH_SIGN_IN_LABEL = "Finish sign-in";
 export const MCP_ADD_SERVER_LABEL = "Add server";
+export const MCP_ADD_MENU_LABEL = "Add an MCP server to";
 export const MCP_OPENING_PAGE_TEXT = "Opening the sign-in page…";
 export const MCP_FINISH_IN_BROWSER_TEXT = "Finish signing in in your browser.";
 export const MCP_PAGE_BLOCKED_TEXT = "The sign-in page did not open.";

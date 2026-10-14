@@ -292,7 +292,7 @@ describe("McpServersSettingsPage", () => {
     typeQuery('missing "server"');
     expect(host.querySelectorAll("[data-mcp-server]")).toHaveLength(0);
     expect(host.querySelectorAll("[data-mcp-provider]")).toHaveLength(0);
-    expect(host.textContent).toContain('No MCP servers match "missing "server""');
+    expect(host.textContent).toContain('No MCP servers match “missing "server"”');
     const escaped = new KeyboardEvent("keydown", {
       key: "Escape",
       bubbles: true,
@@ -312,6 +312,63 @@ describe("McpServersSettingsPage", () => {
     ).toEqual(original);
     expect(host.textContent).not.toContain("No MCP servers match");
     expect(gateway.requests()).toHaveLength(2);
+  });
+
+  it("clears the search from the field and from the no-match card", async () => {
+    show();
+    await answerBoth();
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Search MCP servers"]');
+    expect(input).not.toBeNull();
+    if (input === null) return;
+    const original = [...host.querySelectorAll<HTMLElement>("[data-mcp-server]")].length;
+    const typeQuery = (query: string): void => {
+      act(() => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          input,
+          query,
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const clearButtons = (): ReadonlyArray<HTMLButtonElement> =>
+      [...host.querySelectorAll<HTMLButtonElement>("button")].filter(
+        (button) =>
+          button.getAttribute("aria-label") === "Clear search" ||
+          button.textContent === "Clear search",
+      );
+    expect(clearButtons()).toEqual([]);
+
+    typeQuery("redis");
+    const card = host.querySelector(".settings-mcp-empty");
+    expect(card?.querySelector('[role="status"]')?.textContent).toBe(
+      "No MCP servers match “redis”",
+    );
+    expect(card?.querySelector("strong")?.textContent).toBe("“redis”");
+    expect(clearButtons()).toHaveLength(2);
+    act(() => card?.querySelector<HTMLButtonElement>("button")?.click());
+    expect(input.value).toBe("");
+    expect(document.activeElement).toBe(input);
+    expect(host.querySelector(".settings-mcp-empty")).toBeNull();
+    expect(host.querySelectorAll("[data-mcp-server]")).toHaveLength(original);
+
+    typeQuery("sentry");
+    expect(host.querySelector(".settings-mcp-empty")).toBeNull();
+    const inline = host.querySelector<HTMLButtonElement>(".settings-mcp-search__clear");
+    expect(inline?.getAttribute("aria-label")).toBe("Clear search");
+    act(() => inline?.click());
+    expect(input.value).toBe("");
+    expect(document.activeElement).toBe(input);
+    expect(host.querySelector(".settings-mcp-search__clear")).toBeNull();
+    expect(host.querySelectorAll("[data-mcp-server]")).toHaveLength(original);
+
+    const escaped = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => input.dispatchEvent(escaped));
+    expect(escaped.defaultPrevented).toBe(true);
+    expect(document.activeElement).not.toBe(input);
   });
 
   it.each([
@@ -367,7 +424,7 @@ describe("McpServersSettingsPage", () => {
     expect(host.textContent).not.toContain("No MCP servers match");
     act(() => refreshButton()?.click());
     await answerBoth();
-    expect(host.textContent).toContain('No MCP servers match "missing"');
+    expect(host.textContent).toContain("No MCP servers match “missing”");
     expect(host.querySelectorAll("[data-mcp-provider]")).toHaveLength(0);
   });
 

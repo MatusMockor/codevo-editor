@@ -2,32 +2,122 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  padding: var(--cv-space-5) var(--cv-space-6);
   gap: var(--cv-space-4);
 }
 
 .settings-mcp-search {
   position: relative;
+  display: flex;
+  min-width: 0;
   flex: 1 1 220px;
+  align-items: center;
 }
 
-.settings-mcp-search > svg {
+.settings-mcp-search__icon {
   position: absolute;
-  top: 7px;
   left: 10px;
   color: var(--cv-fg-subtle);
   pointer-events: none;
+  transition: color var(--cv-motion-fast);
 }
 
-.settings-mcp-search .settings-input {
+.settings-mcp-search > .settings-input {
+  width: 100%;
+  padding-right: 30px;
   padding-left: 30px;
 }
 
-.settings-mcp-toolbar__add {
-  display: inline-flex;
-  align-items: center;
+.settings-mcp-search__input::-webkit-search-cancel-button,
+.settings-mcp-search__input::-webkit-search-decoration {
+  appearance: none;
+}
+
+.settings-mcp-search:hover > .settings-input {
+  background: var(--cv-tint-2);
+}
+
+.settings-mcp-toolbar
+  .settings-mcp-search:focus-within
+  > .settings-input.settings-mcp-search__input {
+  background: var(--cv-tint-2);
+  box-shadow: var(--cv-ring-hair-strong), var(--cv-ring-hair-strong);
+  outline: none;
+}
+
+.settings-mcp-search:focus-within > .settings-mcp-search__icon,
+.settings-mcp-search[data-query] > .settings-mcp-search__icon {
   color: var(--cv-fg-muted);
-  font-size: var(--cv-t-xs);
-  gap: var(--cv-space-3);
+}
+
+.settings-mcp-search__clear {
+  position: absolute;
+  right: 4px;
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cv-r-xs);
+  background: transparent;
+  color: var(--cv-fg-subtle);
+  cursor: pointer;
+  transition:
+    background-color var(--cv-motion-fast),
+    color var(--cv-motion-fast);
+}
+
+.settings-mcp-search__clear:hover {
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
+.cv-button.settings-mcp-toolbar__add {
+  padding: 0 8px 0 10px;
+  border-radius: var(--cv-r-sm);
+}
+
+.cv-button.settings-mcp-toolbar__add:hover:not(:disabled),
+.cv-button.settings-mcp-toolbar__add[aria-expanded="true"] {
+  background: var(--cv-tint-3);
+  color: var(--cv-fg-strong);
+}
+
+.settings-mcp-toolbar__chevron {
+  margin-left: 2px;
+  color: var(--cv-fg-subtle);
+  transition: transform var(--cv-motion-base);
+}
+
+.settings-mcp-toolbar__add[aria-expanded="true"] .settings-mcp-toolbar__chevron {
+  transform: rotate(180deg);
+}
+
+.settings-mcp-toolbar .cv-button.settings-mcp-toolbar__add:focus-visible,
+.settings-mcp-search .settings-mcp-search__clear:focus-visible,
+.settings-mcp-empty .cv-button:focus-visible {
+  background: var(--cv-tint-3);
+  box-shadow: var(--cv-ring-hair-strong), var(--cv-ring-hair-strong);
+  color: var(--cv-fg-strong);
+  outline: none;
+}
+
+.settings-mcp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px var(--cv-space-6);
+  color: var(--cv-fg-subtle);
+  font-size: var(--cv-t-md);
+  gap: var(--cv-space-4);
+  text-align: center;
+}
+
+.settings-mcp-empty strong {
+  color: var(--cv-fg);
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .settings-mcp-project__location {
@@ -200,6 +290,12 @@
 
 .settings-mcp-add__problem {
   color: var(--cv-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-mcp-toolbar__chevron {
+    transition: none;
+  }
 }
 
 @media (max-width: 720px) {

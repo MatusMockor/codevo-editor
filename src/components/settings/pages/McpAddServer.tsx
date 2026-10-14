@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { ChevronDown, Plus } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 import type {
   AgentMcpServerActivityError,
@@ -14,8 +14,12 @@ import {
 } from "../../../domain/agentMcpServerDraft";
 import type { AgentMcpServersTarget } from "../../../domain/agentMcpServersTarget";
 import type { AgentCliKind } from "../../../domain/agentTask";
+import { AgentProviderGlyph } from "../../agentMode/AgentProviderGlyph";
+import { agentProviderLabel } from "../../agentMode/agentSidebarPresentation";
 import { Button } from "../../../ui/foundation/Button";
 import { Dialog } from "../../../ui/foundation/Dialog";
+import { Menu } from "../../../ui/foundation/Menu";
+import { MenuItem, MenuLabel } from "../../../ui/foundation/MenuItem";
 import { SegmentedControl } from "../../../ui/foundation/SegmentedControl";
 import { TextField } from "../../../ui/foundation/TextField";
 import {
@@ -24,6 +28,7 @@ import {
   MCP_ADD_CODEX_SCOPE_NOTE,
   MCP_ADD_COMMAND_HINT,
   MCP_ADD_COMMAND_LABEL,
+  MCP_ADD_MENU_LABEL,
   MCP_ADD_NAME_HINT,
   MCP_ADD_NAME_LABEL,
   MCP_ADD_SCOPE_LABEL,
@@ -39,40 +44,74 @@ import {
   mcpNameIssueMessage,
   mcpTargetIssueMessage,
 } from "./mcpServerManagementPresentation";
+import { mcpServerCountLabel } from "./mcpServersPresentation";
 
-export interface McpAddServerProps {
+export interface McpAddServerOption {
   readonly configuredNames: ReadonlyArray<string>;
   readonly management: AgentMcpServerManagementStore;
   readonly provider: AgentCliKind;
   readonly target: AgentMcpServersTarget;
 }
 
-type AddOwner = Pick<McpAddServerProps, "management" | "provider" | "target">;
+type AddOwner = Pick<McpAddServerOption, "management" | "provider" | "target">;
 
-export function McpAddServer({ configuredNames, management, provider, target }: McpAddServerProps) {
+export function McpAddServerMenu({
+  options,
+}: {
+  readonly options: ReadonlyArray<McpAddServerOption>;
+}) {
+  const anchorRef = useRef<HTMLElement | null>(null);
+  const membership = options.map((option) => option.provider).join(" ");
+  const [openFor, setOpenFor] = useState<string | null>(null);
   const [owner, setOwner] = useState<AddOwner | null>(null);
-  const openerRef = useRef<HTMLElement | null>(null);
+  if (openFor !== null && openFor !== membership) setOpenFor(null);
+  const open = openFor === membership;
+  const offered =
+    owner === null ? undefined : options.find((option) => option.provider === owner.provider);
+  if (owner !== null && offered === undefined) setOwner(null);
+  const available = options.length > 0;
   return (
     <>
       <Button
-        aria-label={mcpAddServerButtonLabel(provider)}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        className="settings-mcp-toolbar__add"
+        disabled={!available}
         icon={<Plus aria-hidden="true" size={14} />}
         onClick={(event) => {
-          openerRef.current = event.currentTarget;
-          setOwner({ management, provider, target });
+          anchorRef.current = event.currentTarget;
+          setOpenFor((shownFor) => (shownFor === null ? membership : null));
         }}
-        size="sm"
-        variant="ghost"
       >
         {MCP_ADD_SERVER_LABEL}
+        <ChevronDown aria-hidden="true" className="settings-mcp-toolbar__chevron" size={12} />
       </Button>
-      {owner === null ? null : (
+      <Menu
+        anchorRef={anchorRef}
+        label={MCP_ADD_MENU_LABEL}
+        onClose={() => setOpenFor(null)}
+        open={open}
+        placement="bottom-end"
+      >
+        <MenuLabel>{MCP_ADD_MENU_LABEL}</MenuLabel>
+        {options.map(({ configuredNames, management, provider, target }) => (
+          <MenuItem
+            icon={<AgentProviderGlyph decorative kind={provider} />}
+            key={provider}
+            onSelect={() => setOwner({ management, provider, target })}
+            shortcut={mcpServerCountLabel(configuredNames.length)}
+          >
+            {agentProviderLabel(provider)}
+          </MenuItem>
+        ))}
+      </Menu>
+      {owner === null || offered === undefined ? null : (
         <McpAddServerDialog
-          configuredNames={configuredNames}
+          configuredNames={offered.configuredNames}
           management={owner.management}
           onClose={() => setOwner(null)}
           provider={owner.provider}
-          returnFocusRef={openerRef}
+          returnFocusRef={anchorRef}
           target={owner.target}
         />
       )}
@@ -80,7 +119,7 @@ export function McpAddServer({ configuredNames, management, provider, target }: 
   );
 }
 
-interface McpAddServerDialogProps extends McpAddServerProps {
+interface McpAddServerDialogProps extends McpAddServerOption {
   readonly returnFocusRef: RefObject<HTMLElement | null>;
   onClose(): void;
 }

@@ -16,7 +16,7 @@ import {
 } from "../../../test/agentMcpServerManagementTestSupport";
 import { DeferredAgentMcpServersGateway } from "../../../test/agentMcpServersTestSupport";
 import { click, mountUi, type MountedUi } from "../../../ui/foundation/foundationTestSupport";
-import { McpAddServer } from "./McpAddServer";
+import { McpAddServerMenu } from "./McpAddServer";
 import { McpServerActionsMenu } from "./McpServerActionsMenu";
 
 function present<T>(value: T | null | undefined): T {
@@ -109,10 +109,13 @@ describe("MCP server dialogs keep the owner they were opened for", () => {
       scheduler: new ManualScheduler(),
     });
     const add = (target: AgentMcpServersTarget) => (
-      <McpAddServer configuredNames={[]} management={store} provider="claudeCode" target={target} />
+      <McpAddServerMenu
+        options={[{ configuredNames: [], management: store, provider: "claudeCode", target }]}
+      />
     );
     ui.render(add(APP));
-    click(button("Add Claude Code MCP server"));
+    click(button("Add server"));
+    click(present(document.querySelector('[role="menuitem"]')));
     type("Name", "docs");
     type("URL", "https://docs.example.com/mcp");
 
@@ -121,5 +124,109 @@ describe("MCP server dialogs keep the owner they were opened for", () => {
     expect(management.changes.requests().map((request) => request.target)).toEqual([APP]);
     expect(store.activity(APP, "docs").kind).toBe("changing");
     expect(store.activity(API, "docs").kind).toBe("idle");
+  });
+
+  function addOptions(providers: ReadonlyArray<"claudeCode" | "codex">) {
+    const store = new AgentMcpServerManagementCoordinator({
+      management: new DeferredAgentMcpServerManagement(),
+      statuses: new AgentMcpServersStatusStore(
+        agentMcpServersSource(new DeferredAgentMcpServersGateway(), null, {
+          confirm: async () => "unavailable",
+          support: () => "unavailable",
+        }),
+      ),
+      urlOpener: new RecordingUrlOpener(),
+      scheduler: new ManualScheduler(),
+    });
+    return providers.map((provider) => ({
+      configuredNames: [],
+      management: store,
+      provider,
+      target: present(localAgentMcpServersTarget("/work/app", provider)),
+    }));
+  }
+
+  function menuItemLabels(): ReadonlyArray<string | null | undefined> {
+    return [...document.querySelectorAll('[role="menuitem"] .cv-menu__text')].map(
+      (item) => item.textContent,
+    );
+  }
+
+  it("dismisses the open add menu and keeps focus on its button when a provider goes away", () => {
+    const both = addOptions(["claudeCode", "codex"]);
+    ui.render(<McpAddServerMenu options={both} />);
+    const add = button("Add server");
+    act(() => add.focus());
+    click(add);
+    expect(menuItemLabels()).toEqual(["Claude Code", "Codex"]);
+    expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+
+    ui.render(<McpAddServerMenu options={both.filter((option) => option.provider === "codex")} />);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(add.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(add);
+
+    click(add);
+    expect(menuItemLabels()).toEqual(["Codex"]);
+    expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+  });
+
+  it("does not reopen the add menu by itself when providers come back", () => {
+    const both = addOptions(["claudeCode", "codex"]);
+    ui.render(<McpAddServerMenu options={both} />);
+    const add = button("Add server");
+    act(() => add.focus());
+    click(add);
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    ui.render(<McpAddServerMenu options={[]} />);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(add.disabled).toBe(true);
+    expect(add.getAttribute("aria-expanded")).toBe("false");
+
+    ui.render(<McpAddServerMenu options={both} />);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(add.disabled).toBe(false);
+    expect(add.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement?.closest('[role="menu"]') ?? null).toBeNull();
+  });
+
+  it("drops an open add draft once its provider is no longer offered", () => {
+    const store = new AgentMcpServerManagementCoordinator({
+      management: new DeferredAgentMcpServerManagement(),
+      statuses: new AgentMcpServersStatusStore(
+        agentMcpServersSource(new DeferredAgentMcpServersGateway(), null, {
+          confirm: async () => "unavailable",
+          support: () => "unavailable",
+        }),
+      ),
+      urlOpener: new RecordingUrlOpener(),
+      scheduler: new ManualScheduler(),
+    });
+    const add = (offered: boolean) => (
+      <McpAddServerMenu
+        options={
+          offered
+            ? [{ configuredNames: [], management: store, provider: "claudeCode", target: APP }]
+            : []
+        }
+      />
+    );
+    ui.render(add(true));
+    click(button("Add server"));
+    click(present(document.querySelector('[role="menuitem"]')));
+    type("Name", "docs");
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+
+    ui.render(add(false));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(button("Add server").disabled).toBe(true);
+
+    ui.render(add(true));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    click(button("Add server"));
+    click(present(document.querySelector('[role="menuitem"]')));
+    const name = [...document.querySelectorAll<HTMLInputElement>('[role="dialog"] input')][0];
+    expect(name?.value).toBe("");
   });
 });

@@ -23,6 +23,9 @@ export const MCP_NO_PROJECT_NOTICE = "Open a project to see its MCP servers.";
 export const MCP_UNAVAILABLE_NOTICE = "MCP server status is not available in this window.";
 export const MCP_TRUNCATED_NOTICE = "Some servers are not shown.";
 export const MCP_REFRESH_LABEL = "Check MCP servers";
+export const MCP_SEARCH_LABEL = "Search MCP servers";
+export const MCP_CLEAR_SEARCH_LABEL = "Clear search";
+export const MCP_NO_MATCH_LEAD = "No MCP servers match";
 
 export type McpProjectPlace = AgentMcpServersProject["kind"];
 export type McpServerStatusTone = "ok" | "pending" | "attention" | "danger" | "muted";
@@ -200,6 +203,10 @@ export function mcpProviderSummary(
   }
 }
 
+export function mcpServerCountLabel(count: number): string {
+  return count === 1 ? "1 server" : `${count} servers`;
+}
+
 export function mcpCheckedLabel(checkedAtMs: number, nowMs: number): string {
   return `Checked ${elapsedLabel(checkedAtMs, nowMs)}`;
 }
@@ -292,7 +299,7 @@ function loadedSummary(
       hintCommand: `${agentMcpProviderProgram(provider)} mcp add`,
     };
   const attention = servers.filter((server) => mcpServerNeedsAttention(server.status)).length;
-  const total = servers.length === 1 ? "1 server" : `${servers.length} servers`;
+  const total = mcpServerCountLabel(servers.length);
   if (attention === 0) return neutral(total);
   return neutral(`${total}, ${attention} ${attention === 1 ? "needs" : "need"} attention`);
 }

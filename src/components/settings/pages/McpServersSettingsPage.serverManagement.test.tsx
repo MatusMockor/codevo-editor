@@ -189,7 +189,7 @@ describe("McpServersSettingsPage management of server projects", () => {
     expect(button("Copy sign-in command for linear")).not.toBeNull();
     expect(button("Sign in to linear")).toBeNull();
     expect(button("More actions for linear")).toBeNull();
-    expect(button("Add Claude Code MCP server")).toBeNull();
+    expect(button("Add server")?.disabled).toBe(true);
   }
 
   it("keeps the copy-command hint for a runner without the management capability", async () => {
@@ -206,7 +206,13 @@ describe("McpServersSettingsPage management of server projects", () => {
   it("signs in on a capable runner by pasting the address the browser ended on", async () => {
     await show(managingGateway(), mcpRunnerFixture("runner-home", true, true));
     expect(row().textContent).not.toContain("On the server, run");
-    expect(button("Add Claude Code MCP server")).not.toBeNull();
+    pressButton("Add server");
+    expect(
+      [...document.querySelectorAll('[role="menu"] [role="menuitem"] .cv-menu__text')].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["Claude Code"]);
+    act(() => button("Add server")?.click());
     pressButton("Sign in to linear");
     await settle();
     expect(remoteManagement.starts.requests()).toEqual([
