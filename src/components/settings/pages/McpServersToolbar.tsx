@@ -19,7 +19,7 @@ export function McpServersToolbar({
   ...search
 }: McpServerSearchProps & { readonly addOptions: ReadonlyArray<McpAddServerOption> }) {
   return (
-    <div className="settings-group">
+    <div className="settings-group settings-mcp-field">
       <div className="settings-mcp-toolbar">
         <McpServerSearch {...search} />
         <McpAddServerMenu options={addOptions} />
@@ -34,30 +34,32 @@ function McpServerSearch({ inputRef, onQueryChange, query }: McpServerSearchProp
     inputRef.current?.focus();
   };
   return (
-    <span className="settings-mcp-search" data-query={query === "" ? undefined : true}>
-      <Search aria-hidden="true" className="settings-mcp-search__icon" size={14} />
-      <input
-        aria-label={MCP_SEARCH_LABEL}
-        autoComplete="off"
-        className="settings-input settings-mcp-search__input"
-        maxLength={256}
-        onChange={(event) => onQueryChange(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
-          event.preventDefault();
-          event.stopPropagation();
-          if (query === "") {
-            event.currentTarget.blur();
-            return;
-          }
-          onQueryChange("");
-        }}
-        placeholder={MCP_SEARCH_LABEL}
-        ref={inputRef}
-        spellCheck={false}
-        type="search"
-        value={query}
-      />
+    <div className="settings-mcp-search" data-query={query === "" ? undefined : true}>
+      <label className="settings-mcp-search__label">
+        <Search aria-hidden="true" className="settings-mcp-search__icon" size={14} />
+        <input
+          aria-label={MCP_SEARCH_LABEL}
+          autoComplete="off"
+          className="settings-mcp-search__input"
+          maxLength={256}
+          onChange={(event) => onQueryChange(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (query === "") {
+              event.currentTarget.blur();
+              return;
+            }
+            onQueryChange("");
+          }}
+          placeholder={MCP_SEARCH_LABEL}
+          ref={inputRef}
+          spellCheck={false}
+          type="search"
+          value={query}
+        />
+      </label>
       {query === "" ? null : (
         <button
           aria-label={MCP_CLEAR_SEARCH_LABEL}
@@ -69,7 +71,7 @@ function McpServerSearch({ inputRef, onQueryChange, query }: McpServerSearchProp
           <X aria-hidden="true" size={12} />
         </button>
       )}
-    </span>
+    </div>
   );
 }
 

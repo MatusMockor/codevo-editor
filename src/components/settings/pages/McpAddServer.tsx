@@ -80,6 +80,7 @@ export function McpAddServerMenu({
         icon={<Plus aria-hidden="true" size={14} />}
         onClick={(event) => {
           anchorRef.current = event.currentTarget;
+          event.currentTarget.focus();
           setOpenFor((shownFor) => (shownFor === null ? membership : null));
         }}
       >

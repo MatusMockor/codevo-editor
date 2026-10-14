@@ -330,6 +330,10 @@ describe("McpServersSettingsPage", () => {
         input.dispatchEvent(new Event("input", { bubbles: true }));
       });
     };
+    expect(input.closest("label")?.classList.contains("settings-mcp-search__label")).toBe(true);
+    expect(
+      input.closest(".settings-mcp-field")?.querySelector(".settings-mcp-toolbar__add"),
+    ).not.toBeNull();
     const clearButtons = (): ReadonlyArray<HTMLButtonElement> =>
       [...host.querySelectorAll<HTMLButtonElement>("button")].filter(
         (button) =>
@@ -355,6 +359,9 @@ describe("McpServersSettingsPage", () => {
     expect(host.querySelector(".settings-mcp-empty")).toBeNull();
     const inline = host.querySelector<HTMLButtonElement>(".settings-mcp-search__clear");
     expect(inline?.getAttribute("aria-label")).toBe("Clear search");
+    expect(inline?.closest("label")).toBeNull();
+    expect(inline?.closest(".settings-mcp-search")).toBe(input.closest(".settings-mcp-search"));
+    expect(input.closest("label")?.querySelector("button")).toBeNull();
     act(() => inline?.click());
     expect(input.value).toBe("");
     expect(document.activeElement).toBe(input);

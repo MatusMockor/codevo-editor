@@ -1,31 +1,65 @@
+.settings-mcp-field {
+  transition:
+    background-color var(--cv-motion-fast),
+    box-shadow var(--cv-motion-fast);
+}
+
+.settings-mcp-field:has(.settings-mcp-search:hover) {
+  background: var(--cv-tint-2);
+}
+
+.settings-mcp-field:has(.settings-mcp-search__input:focus) {
+  background: var(--cv-tint-2);
+  box-shadow: var(--cv-ring-hair-strong), var(--cv-ring-hair-strong);
+}
+
 .settings-mcp-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  padding: var(--cv-space-5) var(--cv-space-6);
-  gap: var(--cv-space-4);
+  min-height: 44px;
+  align-items: stretch;
 }
 
 .settings-mcp-search {
-  position: relative;
   display: flex;
   min-width: 0;
-  flex: 1 1 220px;
+  flex: 1 1 auto;
   align-items: center;
 }
 
+.settings-mcp-search__label {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 var(--cv-space-4) 0 var(--cv-space-6);
+  cursor: text;
+  gap: var(--cv-space-4);
+}
+
 .settings-mcp-search__icon {
-  position: absolute;
-  left: 10px;
   color: var(--cv-fg-subtle);
   pointer-events: none;
   transition: color var(--cv-motion-fast);
 }
 
-.settings-mcp-search > .settings-input {
-  width: 100%;
-  padding-right: 30px;
-  padding-left: 30px;
+.settings-mcp-search__input {
+  min-width: 0;
+  height: 28px;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  color: var(--cv-fg-strong);
+  font-family: inherit;
+  font-size: var(--cv-t-md);
+  outline: none;
+}
+
+.settings-mcp-search__input::placeholder {
+  color: var(--cv-fg-subtle);
+  opacity: 1;
 }
 
 .settings-mcp-search__input::-webkit-search-cancel-button,
@@ -33,29 +67,22 @@
   appearance: none;
 }
 
-.settings-mcp-search:hover > .settings-input {
-  background: var(--cv-tint-2);
-}
-
-.settings-mcp-toolbar
-  .settings-mcp-search:focus-within
-  > .settings-input.settings-mcp-search__input {
-  background: var(--cv-tint-2);
-  box-shadow: var(--cv-ring-hair-strong), var(--cv-ring-hair-strong);
+.settings-mcp-search__label > .settings-mcp-search__input:focus-visible {
+  box-shadow: none;
   outline: none;
 }
 
-.settings-mcp-search:focus-within > .settings-mcp-search__icon,
-.settings-mcp-search[data-query] > .settings-mcp-search__icon {
+.settings-mcp-search:focus-within .settings-mcp-search__icon,
+.settings-mcp-search[data-query] .settings-mcp-search__icon {
   color: var(--cv-fg-muted);
 }
 
 .settings-mcp-search__clear {
-  position: absolute;
-  right: 4px;
   display: inline-grid;
+  margin-right: var(--cv-space-4);
   width: 20px;
   height: 20px;
+  flex: none;
   place-items: center;
   padding: 0;
   border: 0;
@@ -73,15 +100,25 @@
   color: var(--cv-fg-strong);
 }
 
-.cv-button.settings-mcp-toolbar__add {
-  padding: 0 8px 0 10px;
-  border-radius: var(--cv-r-sm);
+.settings-mcp-toolbar > .cv-button.settings-mcp-toolbar__add {
+  height: auto;
+  align-self: stretch;
+  margin: 1px 1px 1px 0;
+  padding: 0 14px;
+  border-radius: 0 calc(var(--cv-r-group) - 1px) calc(var(--cv-r-group) - 1px) 0;
+  background: transparent;
+  box-shadow: var(--cv-edge-start-divider);
+  color: var(--cv-fg-muted);
 }
 
-.cv-button.settings-mcp-toolbar__add:hover:not(:disabled),
-.cv-button.settings-mcp-toolbar__add[aria-expanded="true"] {
-  background: var(--cv-tint-3);
+.settings-mcp-toolbar > .cv-button.settings-mcp-toolbar__add:hover:not(:disabled),
+.settings-mcp-toolbar > .cv-button.settings-mcp-toolbar__add[aria-expanded="true"] {
+  background: var(--cv-tint-2);
   color: var(--cv-fg-strong);
+}
+
+.settings-mcp-toolbar > .cv-button.settings-mcp-toolbar__add:disabled {
+  color: var(--cv-fg-disabled);
 }
 
 .settings-mcp-toolbar__chevron {
@@ -94,7 +131,13 @@
   transform: rotate(180deg);
 }
 
-.settings-mcp-toolbar .cv-button.settings-mcp-toolbar__add:focus-visible,
+.settings-mcp-toolbar > .cv-button.settings-mcp-toolbar__add:focus-visible {
+  background: var(--cv-tint-3);
+  box-shadow: var(--cv-edge-start-divider), var(--cv-ring-hair-strong);
+  color: var(--cv-fg-strong);
+  outline: none;
+}
+
 .settings-mcp-search .settings-mcp-search__clear:focus-visible,
 .settings-mcp-empty .cv-button:focus-visible {
   background: var(--cv-tint-3);

@@ -15,7 +15,12 @@ import {
   RecordingUrlOpener,
 } from "../../../test/agentMcpServerManagementTestSupport";
 import { DeferredAgentMcpServersGateway } from "../../../test/agentMcpServersTestSupport";
-import { click, mountUi, type MountedUi } from "../../../ui/foundation/foundationTestSupport";
+import {
+  click,
+  mountUi,
+  press,
+  type MountedUi,
+} from "../../../ui/foundation/foundationTestSupport";
 import { McpAddServerMenu } from "./McpAddServer";
 import { McpServerActionsMenu } from "./McpServerActionsMenu";
 
@@ -169,6 +174,22 @@ describe("MCP server dialogs keep the owner they were opened for", () => {
     click(add);
     expect(menuItemLabels()).toEqual(["Codex"]);
     expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+  });
+
+  it("returns focus to the Add server button even when a click left focus on a container", () => {
+    ui.render(
+      <div data-testid="page" tabIndex={-1}>
+        <McpAddServerMenu options={addOptions(["claudeCode", "codex"])} />
+      </div>,
+    );
+    const page = present(ui.host.querySelector<HTMLElement>('[data-testid="page"]'));
+    act(() => page.focus());
+    const add = button("Add server");
+    click(add);
+    expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+    press(present(document.activeElement), "Escape");
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(add);
   });
 
   it("does not reopen the add menu by itself when providers come back", () => {
