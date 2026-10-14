@@ -49,6 +49,7 @@ fn retained_watch_plan_accepts_exact_npm_alias_for_vitest_and_jest() {
         let output = plan
             .authority
             .into_command(plan.args)
+            .expect("retained watch command")
             .output()
             .expect("execute retained watch runner");
         assert!(output.status.success(), "{:?}", output.stderr);

@@ -10,9 +10,9 @@ mod bounded_captured_stream {
     include!("bounded_captured_stream.rs");
 }
 
-use self::bounded_captured_stream::{
-    read_bounded_captured_stream, BoundedCapturedStream, CAPTURED_STREAM_BYTES_LIMIT,
-};
+use self::bounded_captured_stream::CapturedPipeReaders;
+#[cfg(test)]
+use self::bounded_captured_stream::CAPTURED_STREAM_BYTES_LIMIT;
 use crate::{
     js_test_execution_root::{
         ensure_js_test_execution_context_identity, resolve_js_test_execution_context,
@@ -398,7 +398,7 @@ where
         JsTestRunner::Jest(binary) => binary,
     };
     let mut command = if let Some(authority) = authority {
-        authority.into_command(args)
+        authority.into_command(args)?
     } else {
         let mut command = Command::new(binary);
         command.args(args).current_dir(root);
@@ -449,17 +449,24 @@ where
             return Err("JavaScript test runner has no stderr pipe.".to_string());
         }
     };
-    let stdout_reader =
-        thread::spawn(move || read_bounded_captured_stream(stdout, CAPTURED_STREAM_BYTES_LIMIT));
-    let stderr_reader =
-        thread::spawn(move || read_bounded_captured_stream(stderr, CAPTURED_STREAM_BYTES_LIMIT));
+    let readers = match CapturedPipeReaders::spawn(stdout, stderr) {
+        Ok(readers) => readers,
+        Err(error) => {
+            ownership.terminate();
+            #[cfg(not(unix))]
+            let _ = child.kill();
+            let _ = ownership.wait_after_terminate(&mut child);
+            return Err(format!(
+                "Failed to capture JavaScript test runner output: {error}"
+            ));
+        }
+    };
     if let Err(message) = activate(ownership.clone()) {
         ownership.terminate();
         #[cfg(not(unix))]
         let _ = child.kill();
         let _ = ownership.wait_after_terminate(&mut child);
-        let _ = stdout_reader.join();
-        let _ = stderr_reader.join();
+        let _ = readers.join_after_process_group_exit();
         return Err(message);
     }
     let started_at = Instant::now();
@@ -470,7 +477,7 @@ where
         }
         match ownership.try_wait(&mut child) {
             Ok(Some(_)) => {
-                let output = join_captured_output(stdout_reader, stderr_reader)?;
+                let output = join_captured_output(readers)?;
                 return Ok(if ownership.was_stop_requested() {
                     JsTestRunnerCompletion::Cancelled(output)
                 } else if let Some(message) = output_read_error(&output) {
@@ -483,7 +490,7 @@ where
             Err(error) => {
                 let stopped = ownership.was_stop_requested();
                 let _ = ownership.wait_after_terminate(&mut child);
-                let output = join_captured_output(stdout_reader, stderr_reader)?;
+                let output = join_captured_output(readers)?;
                 return if stopped {
                     Ok(JsTestRunnerCompletion::Cancelled(output))
                 } else {
@@ -500,7 +507,7 @@ where
             #[cfg(not(unix))]
             let _ = child.kill();
             let _ = ownership.wait_after_terminate(&mut child);
-            let output = join_captured_output(stdout_reader, stderr_reader)?;
+            let output = join_captured_output(readers)?;
             return if stopped {
                 Ok(JsTestRunnerCompletion::Cancelled(output))
             } else {
@@ -517,16 +524,11 @@ where
     }
 }
 
-fn join_captured_output(
-    stdout_reader: thread::JoinHandle<BoundedCapturedStream>,
-    stderr_reader: thread::JoinHandle<BoundedCapturedStream>,
-) -> Result<JsTestProcessOutput, String> {
-    let stdout = stdout_reader
-        .join()
-        .map_err(|_| "JavaScript test stdout reader failed.".to_string())?;
-    let stderr = stderr_reader
-        .join()
-        .map_err(|_| "JavaScript test stderr reader failed.".to_string())?;
+fn join_captured_output(readers: CapturedPipeReaders) -> Result<JsTestProcessOutput, String> {
+    let captured = readers
+        .join_after_process_group_exit()
+        .map_err(|label| format!("JavaScript test {label} reader failed."))?;
+    let (stdout, stderr) = (captured.stdout, captured.stderr);
     let stderr_tail_start = stderr.raw_tail.len().saturating_sub(ERROR_TAIL_BYTES);
     let stderr_diagnostic_tail = stderr.raw_tail[stderr_tail_start..].to_vec();
     Ok(JsTestProcessOutput {

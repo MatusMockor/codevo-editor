@@ -33,7 +33,7 @@ mod bounded_captured_stream {
 }
 
 use bounded_captured_stream::{
-    read_bounded_captured_stream, BoundedCapturedStream, CAPTURED_STREAM_BYTES_LIMIT,
+    BoundedCapturedStream, CapturedPipeReaders, CAPTURED_STREAM_BYTES_LIMIT,
 };
 #[cfg(unix)]
 #[path = "js_test_batch_authority.rs"]
@@ -730,7 +730,9 @@ fn execute_prepared_package(
     }
 
     let args = runner_args(&runner, &result_path, None);
-    let mut command = process_authority.into_command(args);
+    let mut command = process_authority
+        .into_command(args)
+        .map_err(PackageExecutionFailure::failed)?;
     command
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
@@ -775,15 +777,15 @@ fn execute_prepared_package(
             "JavaScript test batch runner has no stderr pipe.".to_string(),
         )
     })?;
-    let stdout_reader =
-        thread::spawn(move || read_bounded_captured_stream(stdout, CAPTURED_STREAM_BYTES_LIMIT));
-    let stderr_reader =
-        thread::spawn(move || read_bounded_captured_stream(stderr, CAPTURED_STREAM_BYTES_LIMIT));
+    let readers = CapturedPipeReaders::spawn(stdout, stderr).map_err(|error| {
+        PackageExecutionFailure::failed(format!(
+            "Failed to capture JavaScript test batch package output: {error}"
+        ))
+    })?;
     if let Err(message) = cancellation.activate(index, ownership.clone()) {
         ownership.terminate();
         let _ = ownership.wait_after_terminate(&mut owned_child.child);
-        let _ = stdout_reader.join();
-        let _ = stderr_reader.join();
+        let _ = readers.join_after_process_group_exit();
         return if cancellation.is_cancelled() {
             Err(PackageExecutionFailure::Cancelled { output: None })
         } else {
@@ -818,8 +820,10 @@ fn execute_prepared_package(
         }
     };
     cancellation.finish(index);
-    let stdout = join_stream(stdout_reader, "stdout").map_err(PackageExecutionFailure::failed)?;
-    let stderr = join_stream(stderr_reader, "stderr").map_err(PackageExecutionFailure::failed)?;
+    let captured = readers.join_after_process_group_exit().map_err(|label| {
+        PackageExecutionFailure::failed(format!("JavaScript test batch {label} reader panicked."))
+    })?;
+    let (stdout, stderr) = (captured.stdout, captured.stderr);
     let output = JsTestBatchOutput {
         stdout: stream_output(&stdout),
         stderr: stream_output(&stderr),
@@ -900,15 +904,6 @@ impl ExecutedPackage {
         self.runner_generation.ensure_identity()?;
         Ok(())
     }
-}
-
-fn join_stream(
-    reader: thread::JoinHandle<BoundedCapturedStream>,
-    label: &str,
-) -> Result<BoundedCapturedStream, String> {
-    reader
-        .join()
-        .map_err(|_| format!("JavaScript test batch {label} reader panicked."))
 }
 
 fn stream_output(stream: &BoundedCapturedStream) -> JsTestBatchOutputStream {

@@ -1,3 +1,7 @@
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "child_descriptor_inheritance.rs"]
+pub(crate) mod child_descriptor_inheritance;
+
 use std::thread;
 use std::time::Duration;
 

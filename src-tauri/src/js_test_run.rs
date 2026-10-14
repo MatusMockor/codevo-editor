@@ -469,7 +469,7 @@ fn execute_runner_with_timeout_policy(
     authority: Option<RetainedJsTestProcessAuthority>,
 ) -> Result<Vec<u8>, String> {
     let mut command = if let Some(authority) = authority {
-        authority.into_command(args)
+        authority.into_command(args)?
     } else {
         let mut command = Command::new(binary);
         command.args(args).current_dir(root);

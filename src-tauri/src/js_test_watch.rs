@@ -978,7 +978,7 @@ fn spawn_watch(
     sink: Arc<dyn JsTestWatchEventSink>,
 ) -> Result<SpawnedWatch, String> {
     plan.authority.ensure_spawn_identity()?;
-    let mut command = plan.authority.into_command(plan.args);
+    let mut command = plan.authority.into_command(plan.args)?;
     command
         .env("LC_ALL", "C")
         .stdin(Stdio::null())

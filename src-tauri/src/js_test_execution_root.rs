@@ -241,13 +241,10 @@ pub(crate) fn retain_js_test_process_authority(
         &context.workspace_root_path,
         "JavaScript test runner parent",
     )?;
-    clear_close_on_exec(&binary_descriptor, "JavaScript test runner")?;
-    clear_close_on_exec(&runner_parent_descriptor, "JavaScript test runner parent")?;
     let execution_root_descriptor = context
         .execution_root_descriptor
         .try_clone()
         .map_err(|error| format!("Failed to retain JavaScript test package root: {error}"))?;
-    clear_close_on_exec(&execution_root_descriptor, "JavaScript test package root")?;
     let workspace_root_descriptor = context
         .workspace_root_descriptor
         .try_clone()
@@ -310,7 +307,6 @@ fn retain_node_interpreter(workspace_root: &Path) -> Result<(fs::File, String), 
             .open(&canonical)
             .map_err(|error| format!("Failed to retain Node interpreter: {error}"))?;
         ensure_same_file(&descriptor, &canonical, "Node interpreter")?;
-        clear_close_on_exec(&descriptor, "Node interpreter")?;
         let authority_path = retained_file_authority_path(&descriptor)?;
         return Ok((descriptor, authority_path));
     }
@@ -471,28 +467,6 @@ fn nearest_node_package_module_kind(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn clear_close_on_exec(file: &fs::File, label: &str) -> Result<(), String> {
-    use std::os::fd::AsRawFd;
-
-    let descriptor_flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFD) };
-    if descriptor_flags < 0
-        || unsafe {
-            libc::fcntl(
-                file.as_raw_fd(),
-                libc::F_SETFD,
-                descriptor_flags & !libc::FD_CLOEXEC,
-            )
-        } < 0
-    {
-        return Err(format!(
-            "Failed to retain {label} for execution: {}",
-            io::Error::last_os_error()
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl RetainedJsTestProcessAuthority {
     pub(crate) fn ensure_spawn_identity(&self) -> Result<(), String> {
         self.binary_requested_path_snapshot.ensure_identity()?;
@@ -534,9 +508,15 @@ impl RetainedJsTestProcessAuthority {
         Ok(())
     }
 
-    pub(crate) fn into_command(self, args: Vec<String>) -> Command {
+    pub(crate) fn into_command(self, args: Vec<String>) -> Result<Command, String> {
+        use crate::process_group_termination::child_descriptor_inheritance::{
+            restrict_child_descriptors, ChildDescriptorInheritance,
+        };
         use std::os::unix::ffi::OsStrExt;
-        use std::os::{fd::AsRawFd, unix::process::CommandExt};
+        use std::os::{
+            fd::{AsFd, AsRawFd},
+            unix::process::CommandExt,
+        };
 
         let package_root = self.execution_root_descriptor;
         let launcher = self.binary_descriptor;
@@ -544,21 +524,30 @@ impl RetainedJsTestProcessAuthority {
         let launcher_kind = self.launcher;
         let node_interpreter = self.node_interpreter;
         let package_manifest_authority = self.package_manifest_authority;
-        let runner_parent_identity = RetainedUnixIdentity::from_metadata(
-            &runner_parent
-                .metadata()
-                .expect("retained JavaScript test runner parent metadata must remain available"),
-        );
-        let runner_parent_c_path =
-            std::ffi::CString::new(self.runner_parent_path.as_os_str().as_bytes())
-                .expect("retained JavaScript test runner parent path cannot contain NUL");
+        let runner_parent_identity =
+            RetainedUnixIdentity::from_metadata(&runner_parent.metadata().map_err(|error| {
+                format!("JavaScript test runner parent identity changed: {error}")
+            })?);
+        let runner_parent_c_path = std::ffi::CString::new(
+            self.runner_parent_path.as_os_str().as_bytes(),
+        )
+        .map_err(|_| "JavaScript test runner parent path contains a NUL byte.".to_string())?;
         let binary_identity = RetainedUnixIdentity::from_metadata(
             &launcher
                 .metadata()
-                .expect("retained JavaScript test runner metadata must remain available"),
+                .map_err(|error| format!("JavaScript test runner identity changed: {error}"))?,
         );
         let binary_c_path = std::ffi::CString::new(self.binary_path.as_os_str().as_bytes())
-            .expect("retained JavaScript test runner path cannot contain NUL");
+            .map_err(|_| "JavaScript test runner path contains a NUL byte.".to_string())?;
+        let mut inherited = vec![
+            launcher.as_fd(),
+            package_root.as_fd(),
+            runner_parent.as_fd(),
+        ];
+        if let Some((interpreter, _)) = &node_interpreter {
+            inherited.push(interpreter.as_fd());
+        }
+        let inheritance = ChildDescriptorInheritance::exactly(&inherited)?;
         let retained_shell_launcher_path = format!(
             "{}/{}",
             self.runner_parent_authority_path, self.binary_file_name
@@ -578,11 +567,11 @@ impl RetainedJsTestProcessAuthority {
                 module_kind,
                 root_option,
             } => {
-                let interpreter_path = node_interpreter
-                    .as_ref()
-                    .expect("retained Node launcher must retain its interpreter")
-                    .1
-                    .as_str();
+                let Some((_, interpreter_path)) = node_interpreter.as_ref() else {
+                    return Err(
+                        "Retained Node test launcher must retain its interpreter.".to_string()
+                    );
+                };
                 let mut command = Command::new(interpreter_path);
                 let loader_registration = retained_node_loader_registration(
                     &retained_node_entry_path,
@@ -625,7 +614,8 @@ impl RetainedJsTestProcessAuthority {
                 Ok(())
             });
         }
-        command
+        restrict_child_descriptors(&mut command, inheritance);
+        Ok(command)
     }
 }
 
@@ -644,8 +634,8 @@ impl RetainedJsTestProcessAuthority {
         Err("Secure JavaScript test runner launch is unavailable on this platform.".to_string())
     }
 
-    pub(crate) fn into_command(self, _args: Vec<String>) -> Command {
-        unreachable!("unsupported retained JavaScript test process authority")
+    pub(crate) fn into_command(self, _args: Vec<String>) -> Result<Command, String> {
+        Err("Secure JavaScript test runner launch is unavailable on this platform.".to_string())
     }
 }
 
@@ -1110,7 +1100,9 @@ mod tests {
         fs::rename(&package, root.join("packages/original")).expect("rename package");
         symlink(&outside, &package).expect("foreign package replacement");
 
-        let mut command = authority.into_command(Vec::new());
+        let mut command = authority
+            .into_command(Vec::new())
+            .expect("retained command");
         assert!(command.status().is_err());
         assert!(!marker.exists());
 
@@ -1183,7 +1175,11 @@ mod tests {
         fs::rename(&package, root.join("packages/original")).expect("swap package");
         symlink(&outside, &package).expect("foreign package replacement");
 
-        assert!(authority.into_command(Vec::new()).output().is_err());
+        assert!(authority
+            .into_command(Vec::new())
+            .expect("retained command")
+            .output()
+            .is_err());
         assert!(!marker.exists());
         fs::remove_dir_all(root).expect("cleanup root");
         fs::remove_dir_all(outside).expect("cleanup outside");
@@ -1249,6 +1245,7 @@ mod tests {
 
             let output = authority
                 .into_command(Vec::new())
+                .expect("retained command")
                 .output()
                 .expect("execute retained Node entry");
             assert!(output.status.success(), "{:?}", output.stderr);
@@ -1300,7 +1297,9 @@ mod tests {
             retain_js_test_process_authority(&context, &runner, RetainedJsTestRunnerKind::Vitest)
                 .expect("authority");
         authority.ensure_spawn_identity().expect("final check");
-        let mut command = authority.into_command(Vec::new());
+        let mut command = authority
+            .into_command(Vec::new())
+            .expect("retained command");
 
         fs::rename(&runner, runner_package.join("original.mjs")).expect("retain original");
         fs::write(&runner, "#!/usr/bin/env node\nthrow new Error('foreign');")
@@ -1333,7 +1332,9 @@ mod tests {
             )
             .expect("authority");
             authority.ensure_spawn_identity().expect("final check");
-            let mut command = authority.into_command(Vec::new());
+            let mut command = authority
+                .into_command(Vec::new())
+                .expect("retained command");
 
             if label == "mutation" {
                 fs::write(&manifest, r#"{"type":"commonjs"}"#).expect("mutate manifest");
@@ -1371,6 +1372,7 @@ mod tests {
 
         let output = authority
             .into_command(vec!["--version".to_string()])
+            .expect("retained command")
             .output()
             .expect("execute retained repository Vitest");
 
@@ -1397,7 +1399,9 @@ mod tests {
             retain_js_test_process_authority(&context, &runner, RetainedJsTestRunnerKind::Vitest)
                 .expect("process authority");
 
-        let mut command = authority.into_command(Vec::new());
+        let mut command = authority
+            .into_command(Vec::new())
+            .expect("retained command");
         let output = command.output().expect("execute retained authority");
 
         assert!(output.status.success());
@@ -1407,6 +1411,71 @@ mod tests {
                 .expect("canonical package")
                 .to_string_lossy()
         );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn retained_runner_descriptors_reach_only_their_own_runner_process() {
+        use super::{retain_js_test_process_authority, RetainedJsTestRunnerKind};
+        use crate::process_group_termination::child_descriptor_inheritance::test_support;
+        use std::os::{fd::AsRawFd, unix::fs::PermissionsExt};
+        use std::process::Stdio;
+
+        let root = fixture();
+        let runner = root.join("packages/web/probe.sh");
+        fs::write(
+            &runner,
+            format!("#!/bin/sh\n{}\n", test_support::PROBE_SCRIPT),
+        )
+        .expect("runner");
+        fs::set_permissions(&runner, fs::Permissions::from_mode(0o755)).expect("permissions");
+        let context = resolve_js_test_execution_context(&root, "packages/web", JsTestRunScope::All)
+            .expect("context");
+        let authority =
+            retain_js_test_process_authority(&context, &runner, RetainedJsTestRunnerKind::Vitest)
+                .expect("process authority");
+        let mut retained = vec![
+            authority.binary_descriptor.as_raw_fd(),
+            authority.runner_parent_descriptor.as_raw_fd(),
+            authority.execution_root_descriptor.as_raw_fd(),
+        ];
+        retained.sort_unstable();
+        for descriptor in &retained {
+            assert!(
+                test_support::close_on_exec(*descriptor),
+                "retained descriptor {descriptor} must stay close-on-exec in the parent"
+            );
+        }
+        let (stray_read, stray_write) = test_support::inheritable_pipe();
+
+        let unrelated = test_support::probe_open_descriptors_command(&retained)
+            .stdin(Stdio::null())
+            .output()
+            .expect("unrelated concurrent probe");
+        assert!(unrelated.status.success(), "{:?}", unrelated.stderr);
+        assert_eq!(
+            test_support::reported_descriptors(&unrelated.stdout),
+            Vec::<i32>::new(),
+            "an unrelated spawn inherited retained runner descriptors"
+        );
+
+        let probed = retained
+            .iter()
+            .copied()
+            .chain([stray_read.as_raw_fd(), stray_write.as_raw_fd()])
+            .map(|descriptor| descriptor.to_string())
+            .collect();
+        let output = authority
+            .into_command(probed)
+            .expect("retained command")
+            .stdin(Stdio::null())
+            .output()
+            .expect("runner probe");
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let mut inherited = test_support::reported_descriptors(&output.stdout);
+        inherited.sort_unstable();
+        assert_eq!(inherited, retained);
         fs::remove_dir_all(root).expect("cleanup");
     }
 }
