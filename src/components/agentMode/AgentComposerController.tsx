@@ -1,8 +1,10 @@
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
-import { agentPendingRequestAvailability } from "../../application/agentPendingRequestReachability";
-import { agentQuestionOwner } from "../../application/agentQuestionOwner";
+import {
+  agentThreadRequestScopeKey,
+  agentThreadRequestViewScope,
+} from "../../application/agentThreadRequestViewScope";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
@@ -53,6 +55,13 @@ export interface AgentComposerControllerProps {
   readonly interactions?: AgentComposerInteractionsInput;
 }
 
+interface HeldInteraction {
+  readonly owner: string | null;
+  readonly interaction: AgentComposerInteraction | null;
+}
+
+const NO_INTERACTION: HeldInteraction = { owner: null, interaction: null };
+
 export const AgentComposerController = memo(function AgentComposerController({
   followUpBehavior = "queue",
   executionServerId = null,
@@ -78,14 +87,20 @@ export const AgentComposerController = memo(function AgentComposerController({
     submissionBlocked,
     submit,
   });
-  const [interaction, setInteraction] = useState<AgentComposerInteraction | null>(null);
-  const owner = interactions === undefined ? null : agentQuestionOwner(interactions.thread);
-  const ownerKey = JSON.stringify(owner);
-  const attachmentThreadId =
-    owner?.kind === "local" ? (interactions?.thread?.thread.threadId ?? null) : null;
+  const [held, setHeld] = useState<HeldInteraction>(NO_INTERACTION);
+  const interactionThread = interactions?.thread ?? null;
+  const threadId = interactionThread?.thread.threadId ?? null;
+  const remoteThread = interactionThread?.execution !== undefined;
+  const ownerKey = interactionOwnerKey(interactionThread);
+  const interaction = held.owner === ownerKey ? held.interaction : null;
+  const publish = useCallback(
+    (next: AgentComposerInteraction | null) =>
+      setHeld(next === null ? NO_INTERACTION : { owner: ownerKey, interaction: next }),
+    [ownerKey],
+  );
   const questionAttachments = useMemo(
-    () => questionAttachmentTarget(owner?.kind ?? null, attachmentThreadId),
-    [owner?.kind, attachmentThreadId],
+    () => questionAttachmentTarget(threadId, remoteThread),
+    [threadId, remoteThread],
   );
   const compactContext = (submission: Parameters<typeof submit>[1]): Promise<boolean> =>
     submit("/compact", submission, "compaction");
@@ -93,13 +108,11 @@ export const AgentComposerController = memo(function AgentComposerController({
     <>
       {interactions !== undefined && (
         <AgentComposerInteractionSource
-          availability={agentPendingRequestAvailability(interactions.thread)}
           gateway={interactions.gateway}
           key={ownerKey}
-          onChange={setInteraction}
-          owner={owner}
+          onChange={publish}
           questionAttachments={questionAttachments}
-          running={interactions.thread?.lifecycle === "running"}
+          threadId={threadId}
         />
       )}
       <AgentCommandCatalogProjectContext.Provider
@@ -220,14 +233,19 @@ function samePreviousWorktree(
 }
 
 function questionAttachmentTarget(
-  ownerKind: "local" | "remote" | null,
   threadId: string | null,
+  remote: boolean,
 ): AgentComposerQuestionAttachmentTarget {
+  if (remote) return { kind: "unavailable", reason: AGENT_QUESTION_REMOTE_ATTACHMENTS_UNAVAILABLE };
   if (threadId !== null) return { kind: "thread", threadId };
-  if (ownerKind === "remote") {
-    return { kind: "unavailable", reason: AGENT_QUESTION_REMOTE_ATTACHMENTS_UNAVAILABLE };
-  }
   return { kind: "unavailable", reason: AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE };
+}
+
+function interactionOwnerKey(thread: AgentThreadView | null): string {
+  return JSON.stringify([
+    thread?.thread.threadId ?? null,
+    agentThreadRequestScopeKey(agentThreadRequestViewScope(thread)),
+  ]);
 }
 
 function sameInteractions(
@@ -236,15 +254,9 @@ function sameInteractions(
 ): boolean {
   if (left === undefined || right === undefined) return left === right;
   if (left.gateway !== right.gateway) return false;
-  if (left.thread?.lifecycle !== right.thread?.lifecycle) return false;
-  if (
-    agentPendingRequestAvailability(left.thread) !== agentPendingRequestAvailability(right.thread)
-  )
+  if ((left.thread?.execution === undefined) !== (right.thread?.execution === undefined))
     return false;
-  return (
-    JSON.stringify(agentQuestionOwner(left.thread)) ===
-    JSON.stringify(agentQuestionOwner(right.thread))
-  );
+  return interactionOwnerKey(left.thread ?? null) === interactionOwnerKey(right.thread ?? null);
 }
 
 function sameComposerAttachments(

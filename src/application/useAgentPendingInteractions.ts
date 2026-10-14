@@ -1,27 +1,31 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  agentPendingInteractionIdentity,
+  agentPendingRuntimeRequestIdentity,
   type AgentPendingInteraction,
   type AgentPendingInteractionIdentity,
 } from "../domain/agentPendingInteraction";
-import { runningTurn } from "../domain/agentThread";
-import { isAgentInteractionFeed } from "./agentInteractionPorts";
+import { pendingAgentRuntimeRequests } from "../domain/agentRuntimeRequest";
 import {
-  agentInteractionStore,
-  type AgentInteractionObservation,
-  type AgentInteractionStore,
-} from "./agentInteractionStore";
-import { agentQuestionOwner } from "./agentQuestionOwner";
-import type { AgentLocalQuestionOwner, AgentQuestionGateway } from "./agentQuestionPorts";
+  agentPendingInteractionTargets,
+  type AgentPendingInteractionTarget,
+} from "./agentPendingInteractionTargets";
+import type { AgentThreadRequestFeed } from "./agentThreadRequestPorts";
+import {
+  agentThreadRequestStore,
+  type AgentThreadRequestObservation,
+  type AgentThreadRequestStore,
+} from "./agentThreadRequestStore";
 import type { AgentThreadView } from "./agentThreadPorts";
+import { remoteAgentThreadRequestControl } from "./unifiedAgentThreadRequestFeed";
+import { useAgentPendingInteractionDescriptions } from "./useAgentPendingInteractionDescriptions";
 
-export const MAX_AGENT_PENDING_INTERACTION_THREADS = 8;
-
-export interface AgentPendingInteractionTarget {
-  readonly threadId: string;
-  readonly owner: AgentLocalQuestionOwner;
-  readonly key: string;
-}
+export {
+  MAX_AGENT_PENDING_INTERACTION_DESCRIBED_LEGACY_THREADS,
+  MAX_AGENT_PENDING_INTERACTION_DESCRIBED_REMOTE_THREADS,
+  MAX_AGENT_PENDING_INTERACTION_THREADS,
+  agentPendingInteractionTargets,
+  type AgentPendingInteractionTarget,
+} from "./agentPendingInteractionTargets";
 
 interface PendingObservation {
   readonly key: string;
@@ -32,7 +36,7 @@ type ObservedThreads = ReadonlyMap<string, PendingObservation>;
 
 type PublishObservation = (
   target: AgentPendingInteractionTarget,
-  observation: AgentInteractionObservation | null,
+  observation: AgentThreadRequestObservation | null,
 ) => void;
 
 export interface AgentPendingInteractionObservations {
@@ -48,57 +52,31 @@ const NO_OBSERVED_THREADS: ObservedThreads = new Map();
 const TARGET_SEPARATOR = "\u0001";
 const LIST_SEPARATOR = "\u0002";
 
-export function agentPendingInteractionTargets(
-  views: ReadonlyArray<AgentThreadView>,
-  pinnedThreadId: string | null = null,
-): ReadonlyArray<AgentPendingInteractionTarget> {
-  return views
-    .filter(
-      (view) =>
-        view.lifecycle === "running" &&
-        view.execution?.kind !== "remote" &&
-        runningTurn(view.thread) !== null,
-    )
-    .flatMap((view) => {
-      const owner = agentQuestionOwner(view);
-      if (owner === null || owner.kind !== "local") return [];
-      const target = { threadId: view.thread.threadId, owner, key: JSON.stringify(owner) };
-      return [{ view, target }];
-    })
-    .sort((left, right) => {
-      const pinned =
-        Number(right.view.thread.threadId === pinnedThreadId) -
-        Number(left.view.thread.threadId === pinnedThreadId);
-      if (pinned !== 0) return pinned;
-      return right.view.thread.updatedAtEpochMs - left.view.thread.updatedAtEpochMs;
-    })
-    .slice(0, MAX_AGENT_PENDING_INTERACTION_THREADS)
-    .map(({ target }) => target);
-}
-
 export function useAgentPendingInteractions(
-  gateway: AgentQuestionGateway | null,
+  feed: AgentThreadRequestFeed | null,
   views: ReadonlyArray<AgentThreadView>,
   pinnedThreadId: string | null = null,
 ): ReadonlyMap<string, AgentPendingInteraction> {
-  return useAgentPendingInteractionObservations(gateway, views, pinnedThreadId).pending;
+  return useAgentPendingInteractionObservations(feed, views, pinnedThreadId).pending;
 }
 
 export function useAgentPendingInteractionObservations(
-  gateway: AgentQuestionGateway | null,
+  feed: AgentThreadRequestFeed | null,
   views: ReadonlyArray<AgentThreadView>,
   pinnedThreadId: string | null = null,
 ): AgentPendingInteractionObservations {
+  const describer = remoteAgentThreadRequestControl(feed);
   const targets = useMemo(
-    () => agentPendingInteractionTargets(views, pinnedThreadId),
-    [pinnedThreadId, views],
+    () => agentPendingInteractionTargets(watchableViews(views, describer !== null), pinnedThreadId),
+    [describer, pinnedThreadId, views],
   );
+  useAgentPendingInteractionDescriptions(describer, targets);
   const signature = targets.map(watchKey).sort().join(LIST_SEPARATOR);
   const targetsRef = useRef(targets);
   useLayoutEffect(() => {
     targetsRef.current = targets;
   }, [targets]);
-  const store = useMemo(() => interactionStoreOf(gateway), [gateway]);
+  const store = useMemo(() => (feed === null ? null : agentThreadRequestStore(feed)), [feed]);
   const watchesRef = useRef<AgentPendingInteractionWatches | null>(null);
   const [observed, setObserved] = useState<ObservedThreads>(NO_OBSERVED_THREADS);
 
@@ -132,7 +110,7 @@ class AgentPendingInteractionWatches {
   private readonly releases = new Map<string, () => void>();
 
   constructor(
-    private readonly store: AgentInteractionStore,
+    private readonly store: AgentThreadRequestStore,
     private readonly publish: PublishObservation,
   ) {}
 
@@ -154,20 +132,24 @@ class AgentPendingInteractionWatches {
   }
 
   private watch(target: AgentPendingInteractionTarget): () => void {
-    const { workspaceId, taskId } = target.owner;
-    const unwatch = this.store.watch({ workspaceId, taskId }, (observation) =>
-      this.publish(target, observation),
-    );
+    let live = true;
+    const unwatch = this.store.watch(target.scope, [target.turnId], (observation) => {
+      if (live) this.publish(target, observation);
+    });
     return () => {
+      live = false;
       unwatch();
       this.publish(target, null);
     };
   }
 }
 
-function interactionStoreOf(gateway: AgentQuestionGateway | null): AgentInteractionStore | null {
-  if (gateway === null || !isAgentInteractionFeed(gateway)) return null;
-  return agentInteractionStore(gateway);
+function watchableViews(
+  views: ReadonlyArray<AgentThreadView>,
+  describable: boolean,
+): ReadonlyArray<AgentThreadView> {
+  if (describable) return views;
+  return views.filter((view) => view.execution?.kind !== "remote");
 }
 
 function watchKey(target: AgentPendingInteractionTarget): string {
@@ -186,7 +168,7 @@ function byThreadId(
 function withObservation(
   previous: ObservedThreads,
   target: AgentPendingInteractionTarget,
-  observation: AgentInteractionObservation | null,
+  observation: AgentThreadRequestObservation | null,
 ): ObservedThreads {
   const seen = previous.get(target.threadId);
   if (observation?.kind !== "observed") {
@@ -195,8 +177,11 @@ function withObservation(
     next.delete(target.threadId);
     return next;
   }
-  const { approvals, questions } = observation.snapshot;
-  const pending = agentPendingInteractionIdentity(approvals, questions);
+  if (observation.pendingTurnIds.includes(target.turnId)) return previous;
+  const pending = agentPendingRuntimeRequestIdentity(
+    pendingAgentRuntimeRequests(observation.state),
+    target.turnId,
+  );
   if (seen?.key === target.key && sameIdentity(seen.pending, pending)) return previous;
   return new Map(previous).set(target.threadId, { key: target.key, pending });
 }

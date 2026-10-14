@@ -60,7 +60,7 @@ import {
 } from "./agentTurnAdmission";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
 import type { AgentInlineImageGateway } from "./agentInlineImagePorts";
-import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import type { AgentThreadRequestFeed } from "./agentThreadRequestPorts";
 import { agentThreadHasPendingInput } from "./agentThreadPendingInput";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
 import {
@@ -110,7 +110,7 @@ export interface AgentThreadsDependencies {
   readonly externalSessionImportGateway?: ExternalSessionImportGateway;
   readonly agentTaskGateway: AgentTaskGateway;
   readonly agentThreadSessionGateway?: AgentThreadSessionGateway;
-  readonly agentQuestionGateway?: AgentQuestionGateway;
+  readonly agentThreadRequestFeed?: AgentThreadRequestFeed;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
   readonly agentInlineImageGateway?: AgentInlineImageGateway;
@@ -442,7 +442,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     inspectSessionRestart: sessions.inspectRestart,
     hasPendingThreadInput: (threadId) =>
       agentThreadHasPendingInput(
-        dependencies.agentQuestionGateway,
+        dependencies.agentThreadRequestFeed,
         store.state.threads.get(threadId),
       ),
     agentAttachmentGateway: dependencies.agentAttachmentGateway,

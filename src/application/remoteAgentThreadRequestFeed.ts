@@ -83,6 +83,11 @@ export interface RemoteAgentThreadRequestFeed extends AgentThreadRequestFeed {
     response: RemoteAgentThreadRequestResponse,
   ): Promise<RemoteAgentThreadRequestRespondOutcome>;
   reconnected(serverId: string): void;
+  confirm(
+    scope: AgentThreadRequestScope,
+    turnId: string,
+    requestId: string,
+  ): Promise<RemoteAgentThreadRequestConfirmation>;
 }
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -349,6 +354,28 @@ class GatewayRemoteAgentThreadRequestFeed implements RemoteAgentThreadRequestFee
     );
     if (attempt.kind === "settled") return this.concluded(thread, turnId, key, attempt.value);
     return { kind: "deliveryUncertain", confirmation: this.overdue(thread, turnId, key, sent) };
+  }
+
+  confirm(
+    scope: AgentThreadRequestScope,
+    turnId: string,
+    requestId: string,
+  ): Promise<RemoteAgentThreadRequestConfirmation> {
+    const scopeId = scopeKey(scope);
+    const thread = this.tracked.get(scopeId);
+    if (thread === undefined || thread.watch.turn(turnId) === null)
+      return Promise.resolve("unconfirmed");
+    const key = remoteAgentThreadRequestKey(turnId, requestId);
+    if (this.mayStillSend(guardKey(scopeId, key))) return Promise.resolve("unconfirmed");
+    return this.confirmation(thread, turnId, key);
+  }
+
+  private mayStillSend(send: string): boolean {
+    const guard = this.sends.get(send);
+    if (guard === undefined) return false;
+    if (this.clock() - guard.since < REMOTE_AGENT_THREAD_REQUEST_RESPOND_SETTLEMENT_MS) return true;
+    this.sends.delete(send);
+    return false;
   }
 
   private async send(request: RemoteAgentThreadRespondRequest): Promise<Sent> {

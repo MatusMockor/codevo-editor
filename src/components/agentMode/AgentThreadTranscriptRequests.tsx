@@ -1,14 +1,14 @@
-import { useContext, useMemo, type ReactNode } from "react";
-import type { AgentThreadRequestScope } from "../../application/agentThreadRequestPorts";
+import { useContext, useLayoutEffect, type ReactNode } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import {
-  useAgentThreadRuntimeRequests,
-  type AgentThreadRequestGaps,
-} from "../../application/useAgentThreadRuntimeRequests";
-import { agentRootOwnerId } from "../../domain/agentProject";
+import type { AgentThreadRequestGaps } from "../../application/useAgentThreadRuntimeRequests";
 import type { AgentTurn } from "../../domain/agentThread";
 import { AgentRuntimeRequestsProvider } from "./AgentRuntimeRequestRow";
-import { AgentThreadRequestFeedContext } from "./agentThreadRequestFeedContext";
+import {
+  AgentThreadRequestsScopeContext,
+  AgentThreadRequestTurnsReportContext,
+} from "./agentThreadRequestsScopeContext";
+
+const TURN_SEPARATOR = "\u0001";
 
 export function AgentThreadTranscriptRequests({
   children,
@@ -19,20 +19,19 @@ export function AgentThreadTranscriptRequests({
   readonly thread: AgentThreadView;
   readonly turns: ReadonlyArray<AgentTurn>;
 }) {
-  const feed = useContext(AgentThreadRequestFeedContext);
-  const remote = thread.execution?.kind === "remote";
-  const { rootKey, ownerId: workspaceId } = thread.thread.owner;
+  const shared = useContext(AgentThreadRequestsScopeContext);
+  const report = useContext(AgentThreadRequestTurnsReportContext);
   const threadId = thread.thread.threadId;
-  const scope = useMemo<AgentThreadRequestScope | null>(
-    () => (remote ? null : { rootKey, ownerId: agentRootOwnerId(rootKey), threadId, workspaceId }),
-    [remote, rootKey, threadId, workspaceId],
-  );
-  const turnIds = useMemo(() => turns.map((turn) => turn.turnId), [turns]);
-  const requests = useAgentThreadRuntimeRequests(feed, scope, turnIds);
-  const note = agentRequestHistoryNote(requests.gaps);
-  if (feed === null || scope === null) return children;
+  const signature = turns.map((turn) => turn.turnId).join(TURN_SEPARATOR);
+  useLayoutEffect(() => {
+    if (report === null) return undefined;
+    report(threadId, signature === "" ? [] : signature.split(TURN_SEPARATOR));
+    return () => report(threadId, null);
+  }, [report, signature, threadId]);
+  if (shared === null || shared.threadId !== threadId) return children;
+  const note = agentRequestHistoryNote(shared.requests.gaps);
   return (
-    <AgentRuntimeRequestsProvider requests={requests.byTurn}>
+    <AgentRuntimeRequestsProvider requests={shared.requests.byTurn}>
       {note !== null && (
         <p className="agent-note" data-agent-request-history-note="" role="status">
           {note}

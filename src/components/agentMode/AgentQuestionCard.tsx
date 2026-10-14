@@ -28,6 +28,9 @@ export interface AgentQuestionCardProps {
   readonly request: AgentQuestionRequest;
   readonly pending: boolean;
   readonly error: string | null;
+  readonly disabled?: boolean;
+  readonly unavailableReason?: string | null;
+  readonly pendingLabel?: string | null;
   /** Resolve only after acceptance; reject on failure so the user can retry. */
   readonly onAnswer: (response: AgentQuestionResponse) => void | Promise<void>;
   readonly attachments?: AgentQuestionAttachments | null;
@@ -76,6 +79,8 @@ function unsupportedQuestionStatus(request: never): never {
 
 function AgentQuestionForm(props: AgentQuestionCardProps) {
   const { request, pending, error, onAnswer } = props;
+  const unavailableReason = props.unavailableReason ?? null;
+  const pendingLabel = props.pendingLabel ?? null;
   const controlId = useId();
   const dropRef = useRef<HTMLDivElement | null>(null);
   const [index, setIndex] = useState(0);
@@ -89,13 +94,15 @@ function AgentQuestionForm(props: AgentQuestionCardProps) {
   const question = request.questions[index];
   const answer = answers[index];
   const busy = pending || submitting || accepted;
+  const locked = busy || props.disabled === true || unavailableReason !== null;
+  const shownError = unavailableReason === null ? error || submitError : null;
   const questionAttachments = useAgentQuestionAttachments({
     capability: props.attachments ?? null,
     unavailableReason: props.attachmentsUnavailableReason ?? AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
     request,
     questionId: question.id,
     enabled: question.allowCustom,
-    busy,
+    busy: locked,
     picker: props.attachmentPicker ?? openAgentAttachmentPicker,
     dragDrop: props.attachmentDragDrop ?? subscribeAgentAttachmentDragDrop,
     dropTarget: dropRef,
@@ -124,7 +131,7 @@ function AgentQuestionForm(props: AgentQuestionCardProps) {
       : null;
   const last = index === request.questions.length - 1;
   const sendHint =
-    last && !busy && !sendable
+    last && !locked && !sendable
       ? agentQuestionSendHint(request, answers, questionAttachments.blockedQuestion, overflows)
       : null;
 
@@ -132,11 +139,12 @@ function AgentQuestionForm(props: AgentQuestionCardProps) {
     <section className="agent-question-card" aria-label="Agent question" aria-busy={busy}>
       <div className="agent-question-card__status">
         <span role="status">
-          {accepted
-            ? "Waiting for confirmation…"
-            : busy
-              ? "Sending answer…"
-              : "Waiting for your answer"}
+          {unavailableReason ??
+            (accepted
+              ? "Waiting for confirmation…"
+              : busy
+                ? (pendingLabel ?? "Sending answer…")
+                : "Waiting for your answer")}
         </span>
         <span aria-live="polite">
           {index + 1} of {request.questions.length}
@@ -145,7 +153,7 @@ function AgentQuestionForm(props: AgentQuestionCardProps) {
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (!sendable || busy || submittingRef.current || !last) return;
+          if (!sendable || locked || submittingRef.current || !last) return;
           submittingRef.current = true;
           setSubmitting(true);
           setSubmitError(null);
@@ -170,7 +178,7 @@ function AgentQuestionForm(props: AgentQuestionCardProps) {
           })();
         }}
       >
-        <fieldset disabled={busy}>
+        <fieldset disabled={locked}>
           <legend>{question.prompt}</legend>
           {question.multiple && question.options.length > 0 && (
             <p className="agent-question-card__hint">Choose one or more options.</p>
@@ -232,19 +240,19 @@ function AgentQuestionForm(props: AgentQuestionCardProps) {
             </>
           )}
         </fieldset>
-        {sendHint !== null && !(error || submitError) && (
+        {sendHint !== null && !shownError && (
           <p className="agent-question-card__hint" role="status">
             {sendHint}
           </p>
         )}
-        {(error || submitError) && (
+        {shownError && (
           <p className="agent-question-card__error" role="alert">
-            {error || submitError}
+            {shownError}
           </p>
         )}
         <div className="agent-question-card__actions">
           {index > 0 && (
-            <button type="button" disabled={busy} onClick={() => setIndex(index - 1)}>
+            <button type="button" disabled={locked} onClick={() => setIndex(index - 1)}>
               Back
             </button>
           )}
@@ -252,14 +260,14 @@ function AgentQuestionForm(props: AgentQuestionCardProps) {
             <button
               type="submit"
               className="agent-question-card__submit"
-              disabled={busy || !sendable}
+              disabled={locked || !sendable}
             >
               {accepted ? "Waiting…" : busy ? "Sending…" : "Send answer"}
             </button>
           ) : (
             <button
               type="button"
-              disabled={busy || !currentValid}
+              disabled={locked || !currentValid}
               onClick={() => setIndex(index + 1)}
             >
               Next

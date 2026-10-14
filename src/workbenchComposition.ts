@@ -24,6 +24,9 @@ import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnCha
 import { BrowserAgentSidebarRailPreference } from "./infrastructure/browserAgentSidebarRailPreference";
 import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentThreadRequestFeed } from "./infrastructure/tauriAgentThreadRequestFeed";
+import { TauriRemoteAgentThreadRequestGateway } from "./infrastructure/tauriRemoteAgentThreadRequestGateway";
+import { createRemoteAgentThreadRequestFeed } from "./application/remoteAgentThreadRequestFeed";
+import { createUnifiedAgentThreadRequestFeed } from "./application/unifiedAgentThreadRequestFeed";
 import { TauriAgentInlineImageGateway } from "./infrastructure/tauriAgentInlineImageGateway";
 import { TauriAgentProviderGateway } from "./infrastructure/tauriAgentProviderGateway";
 import { TauriAgentProviderSignInGateway } from "./infrastructure/tauriAgentProviderSignInGateway";
@@ -136,9 +139,15 @@ export function createWorkbenchComposition() {
     ) => agentAccountUsageStoreGateway.subscribeAgentAccountUsage(listener),
   });
 
+  const agentThreadRequestFeed = createUnifiedAgentThreadRequestFeed({
+    local: new TauriAgentThreadRequestFeed(),
+    remote: createRemoteAgentThreadRequestFeed(new TauriRemoteAgentThreadRequestGateway()),
+  });
+
   const agentControllerGateways = {
     agentCliDiscoveryGateway: new TauriAgentCliDiscoveryGateway(),
     agentQuestionGateway: new TauriAgentQuestionGateway(),
+    agentThreadRequestFeed,
     agentInlineImageGateway: new TauriAgentInlineImageGateway(),
     agentProviderGateway,
     agentProviderSignInGateway: new TauriAgentProviderSignInGateway(),
@@ -173,7 +182,7 @@ export function createWorkbenchComposition() {
       fileChanges: workspaceFileChangeGateway,
       worktreeFileChanges: workspaceFileChangeGateway,
       fileSearch: workspaceGateway,
-      threadRequestFeed: new TauriAgentThreadRequestFeed(),
+      threadRequestFeed: agentThreadRequestFeed,
     },
     indexProgressGateway: new TauriIndexProgressGateway(),
     javaScriptTypeScriptLanguageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(

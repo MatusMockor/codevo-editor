@@ -128,7 +128,7 @@ export interface WorkbenchControllerAgentsOptions {
     | "agentTaskGateway"
     | "agentThreadSessionGateway"
     | "turnChangesGateway"
-    | "agentQuestionGateway"
+    | "agentThreadRequestFeed"
     | "agentInlineImageGateway"
     | "gitWorktreeGateway"
   >;
@@ -282,7 +282,7 @@ export function useWorkbenchControllerAgents(
     agentTaskGateway: options.options.agentTaskGateway,
     agentThreadSessionGateway: options.options.agentThreadSessionGateway,
     turnChangesGateway: options.options.turnChangesGateway,
-    agentQuestionGateway: options.options.agentQuestionGateway,
+    agentThreadRequestFeed: options.options.agentThreadRequestFeed,
     agentInlineImageGateway: options.options.agentInlineImageGateway,
     agentThreadStoreGateway: options.agentThreadStoreGateway,
     gitWorktreeGateway: options.options.gitWorktreeGateway,

@@ -1,12 +1,22 @@
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useContext, useLayoutEffect, useMemo, useState } from "react";
+import { AgentThreadRequestDeliveryLedger } from "../../../application/agentThreadRequestDeliveryLedger";
 import { isAgentApprovalGateway } from "../../../application/agentApprovalPorts";
-import type { AgentPendingRequestAvailability } from "../../../application/agentPendingRequestPolling";
-import type {
-  AgentQuestionGateway,
-  AgentQuestionOwner,
-} from "../../../application/agentQuestionPorts";
-import { useAgentApprovals } from "../../../application/useAgentApprovals";
-import { useAgentQuestions } from "../../../application/useAgentQuestions";
+import type { AgentQuestionGateway } from "../../../application/agentQuestionPorts";
+import {
+  localAgentThreadRequestResponder,
+  remoteAgentThreadRequestResponder,
+  type AgentThreadRequestResponder,
+} from "../../../application/agentThreadRequestResponders";
+import type { AgentThreadRequestFeed } from "../../../application/agentThreadRequestPorts";
+import { remoteAgentThreadRequestControl } from "../../../application/unifiedAgentThreadRequestFeed";
+import { useAgentThreadPendingRequests } from "../../../application/useAgentThreadPendingRequests";
+import type { AgentRuntimeRequest } from "../../../domain/agentRuntimeRequest";
+import { AgentThreadRequestFeedContext } from "../agentThreadRequestFeedContext";
+import {
+  AgentThreadRequestDeliveriesContext,
+  AgentThreadRequestsScopeContext,
+  type AgentThreadRequestsScopeValue,
+} from "../agentThreadRequestsScopeContext";
 import {
   AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
   pickAgentComposerInteraction,
@@ -16,9 +26,7 @@ import {
 
 export interface AgentComposerInteractionSourceProps {
   readonly gateway: AgentQuestionGateway | null;
-  readonly owner: AgentQuestionOwner | null;
-  readonly running: boolean;
-  readonly availability?: AgentPendingRequestAvailability;
+  readonly threadId: string | null;
   readonly questionAttachments?: AgentComposerQuestionAttachmentTarget;
   onChange(interaction: AgentComposerInteraction | null): void;
 }
@@ -27,77 +35,65 @@ const NO_QUESTION_ATTACHMENTS: AgentComposerQuestionAttachmentTarget = {
   kind: "unavailable",
   reason: AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE,
 };
+const NO_OPEN_REQUESTS: readonly AgentRuntimeRequest[] = Object.freeze([]);
+const NO_TURN_IDS: ReadonlySet<string> = new Set();
 
 export function AgentComposerInteractionSource({
   gateway,
   onChange,
-  owner,
-  running,
-  availability = "available",
+  threadId,
   questionAttachments = NO_QUESTION_ATTACHMENTS,
 }: AgentComposerInteractionSourceProps) {
-  const [ownerLease] = useState(owner);
-  const {
-    requests: approvalRequests,
-    answering: approvalAnswering,
-    error: approvalError,
-    answer: answerApproval,
-  } = useAgentApprovals(
-    isAgentApprovalGateway(gateway) ? gateway : null,
-    ownerLease,
-    running,
-    availability,
-  );
-  const {
-    requests: questionRequests,
-    answering: questionAnswering,
-    error: questionError,
-    answer: answerQuestion,
-  } = useAgentQuestions(gateway, ownerLease, running, availability);
+  const feed = useContext(AgentThreadRequestFeedContext);
+  const shared = useContext(AgentThreadRequestsScopeContext);
+  const provided = useContext(AgentThreadRequestDeliveriesContext);
+  const [fallback] = useState(() => new AgentThreadRequestDeliveryLedger());
+  const owned = shared !== null && shared.threadId === threadId ? shared : null;
+  const ownerKey = owned === null ? null : JSON.stringify([owned.threadId, owned.scopeKey]);
+  const responder = useResponder(feed, gateway, owned);
+  const pending = useAgentThreadPendingRequests({
+    ledger: provided ?? fallback,
+    ownerKey,
+    open: owned?.requests.open ?? NO_OPEN_REQUESTS,
+    covered: owned?.requests.coveredTurnIds ?? NO_TURN_IDS,
+    responder,
+    reachable: owned?.reachable ?? false,
+  });
   const attachmentKind = questionAttachments.kind;
   const attachmentSubject = questionAttachmentSubject(questionAttachments);
   const attachments = useMemo(
     () => questionAttachmentTarget(attachmentKind, attachmentSubject),
     [attachmentKind, attachmentSubject],
   );
+  const { items, respond } = pending;
   const interaction = useMemo(
-    () =>
-      pickAgentComposerInteraction({
-        approvals: {
-          requests: approvalRequests,
-          answering: approvalAnswering,
-          error: approvalError,
-          answer: answerApproval,
-        },
-        questions: {
-          requests: questionRequests,
-          attachments,
-          answering: questionAnswering,
-          error: questionError,
-          answer: async (requestId, response) => {
-            await answerQuestion(requestId, response);
-          },
-        },
-        running,
-      }),
-    [
-      approvalRequests,
-      approvalAnswering,
-      approvalError,
-      answerApproval,
-      questionRequests,
-      questionAnswering,
-      questionError,
-      answerQuestion,
-      attachments,
-      running,
-    ],
+    () => pickAgentComposerInteraction({ requests: items, attachments, respond }),
+    [attachments, items, respond],
   );
   useLayoutEffect(() => {
     onChange(interaction);
   }, [interaction, onChange]);
   useLayoutEffect(() => () => onChange(null), [onChange]);
   return null;
+}
+
+function useResponder(
+  feed: AgentThreadRequestFeed | null,
+  gateway: AgentQuestionGateway | null,
+  owned: AgentThreadRequestsScopeValue | null,
+): AgentThreadRequestResponder | null {
+  const scope = owned?.scope ?? null;
+  const remote = owned?.remote ?? false;
+  return useMemo(() => {
+    if (scope === null) return null;
+    if (remote) {
+      const control = remoteAgentThreadRequestControl(feed);
+      return control === null ? null : remoteAgentThreadRequestResponder(control, scope);
+    }
+    if (gateway === null || !isAgentApprovalGateway(gateway) || scope.workspaceId === null)
+      return null;
+    return localAgentThreadRequestResponder(gateway, scope.workspaceId);
+  }, [feed, gateway, remote, scope]);
 }
 
 function questionAttachmentSubject(target: AgentComposerQuestionAttachmentTarget): string {

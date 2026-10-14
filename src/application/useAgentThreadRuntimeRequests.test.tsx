@@ -104,6 +104,7 @@ describe("useAgentThreadRuntimeRequests", () => {
         byTurn: new Map(),
         uncoveredTurnIds: new Set(),
         gaps: NO_AGENT_THREAD_REQUEST_GAPS,
+        open: [],
       }
     );
   }
@@ -313,6 +314,43 @@ describe("useAgentThreadRuntimeRequests", () => {
     await settle();
     expect(renders.length).toBe(again + 1);
     expect(latest()).toBe(renders[again - 1]);
+  });
+
+  it("exposes the open requests of the watched turns with stable identity and nothing while pending", async () => {
+    const feed = agentThreadRequestFeedFake();
+    const release = gated(feed, T2);
+    const pending = agentRuntimeRequestOf("pendingQuestion", { turnId: T2, id: "req-open" });
+    const submitting = agentRuntimeRequestOf("submittingApprovalWithoutResolution", {
+      turnId: T2,
+      id: "req-sending",
+    });
+    feed.record(
+      agentThreadRequestsOf(A, [
+        resolved(T1, "req-1"),
+        pending,
+        submitting,
+        agentRuntimeRequestOf("pendingQuestion", { turnId: T3, id: "req-unwatched" }),
+      ]),
+    );
+    show(feed, A, [T1, T2]);
+    await settle();
+    expect(latest().open).toEqual([]);
+
+    release();
+    await settle();
+    expect(latest().open.map((request) => request.id)).toEqual(["req-open", "req-sending"]);
+    const open = latest().open;
+
+    act(() => feed.push(agentThreadRequestsOf(A, [resolved(T1, "req-1", 3)])));
+    await settle();
+    expect(latest().open).toBe(open);
+
+    act(() => feed.publish(agentThreadRequestsOf(A, [resolved(T2, "req-open", 3)])));
+    await settle();
+    expect(latest().open.map((request) => request.id)).toEqual(["req-sending"]);
+
+    show(feed, B, [T1, T2]);
+    expect(latest().open).toEqual([]);
   });
 
   it("drops a turn's records when the turn is no longer shown and keeps the rest", async () => {

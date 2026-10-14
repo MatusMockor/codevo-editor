@@ -1,176 +1,146 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentApprovalOwner } from "../../../application/agentApprovalPorts";
-import type { AgentApprovalRequest } from "../../../domain/agentApproval";
-import type { AgentQuestionRequest } from "../../../domain/agentQuestion";
-import { waitForReact as waitFor } from "../../../test/reactTestLifecycle";
-import { FakeAgentInteractionGateway } from "../agentInteractionGatewayTestFixtures";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import type { AgentThreadView } from "../../../application/agentThreadPorts";
+import type { AgentRuntimeRequest } from "../../../domain/agentRuntimeRequest";
+import {
+  agentRuntimeRequestOf,
+  agentThreadRequestFeedFake,
+  agentThreadRequestsOf,
+  type AgentThreadRequestFeedFake,
+} from "../../../test/agentThreadRequestFeedFake";
+import { waitForReact } from "../../../test/reactTestLifecycle";
+import {
+  COMPOSER_REQUEST_TURN as TURN,
+  COMPOSER_REQUEST_WORKSPACE as WORKSPACE,
+  localAnswerGatewayFake,
+  localComposerThread,
+} from "../agentComposerRequestTestFixtures";
+import { AgentThreadRequestFeedContext } from "../agentThreadRequestFeedContext";
+import { AgentThreadRequestsScope } from "../AgentThreadRequestsScope";
 import type { AgentComposerInteraction } from "./agentComposerInteraction";
 import { AgentComposerInteractionSource } from "./AgentComposerInteractionSource";
 
-const owner: AgentApprovalOwner = {
-  kind: "local",
-  workspaceId: "workspace",
-  taskId: "task",
-};
-const feedOwner = { workspaceId: "workspace", taskId: "task" };
-const pending: AgentApprovalRequest = {
-  id: "a1",
-  taskId: "task",
-  provider: "codex",
-  kind: "command",
-  title: "Run a command?",
-  detail: "cargo test",
-  detailTruncated: false,
-  facts: [],
-  decisions: ["allowOnce", "deny"],
-  status: "pending",
-};
+const THREAD = "agt-thread-0001";
+const SCOPE = { threadId: THREAD, workspaceId: WORKSPACE };
 
-const question: AgentQuestionRequest = {
-  id: "q1",
-  taskId: "task",
-  provider: "claudeCode",
-  status: "pending",
-  questions: [
-    {
-      id: "question-0",
-      header: "",
-      prompt: "Which layout?",
-      options: [{ id: "option-0", label: "Sidebar", description: "" }],
-      multiple: false,
-      allowCustom: true,
-    },
-  ],
-};
+function approval(overrides: Record<string, unknown> = {}): AgentRuntimeRequest {
+  return agentRuntimeRequestOf("pendingApproval", { turnId: TURN, ...overrides });
+}
 
-let host: HTMLDivElement;
-let root: Root;
+describe("AgentComposerInteractionSource held in parent state", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let feed: AgentThreadRequestFeedFake;
+  let published: Array<AgentComposerInteraction | null>;
+  let consoleError: MockInstance<typeof console.error>;
 
-beforeEach(() => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  host = document.createElement("div");
-  document.body.append(host);
-  root = createRoot(host);
-});
+  beforeEach(() => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    feed = agentThreadRequestFeedFake();
+    published = [];
+    consoleError = vi.spyOn(console, "error");
+  });
 
-afterEach(() => {
-  act(() => root.unmount());
-  host.remove();
-});
+  afterEach(() => {
+    act(() => root.unmount());
+    expect(consoleError).not.toHaveBeenCalled();
+    host.remove();
+    vi.restoreAllMocks();
+  });
 
-describe("AgentComposerInteractionSource", () => {
-  it("publishes the owner's pending approval and clears it on unmount", async () => {
-    const seen: Array<AgentComposerInteraction | null> = [];
-    const gateway = new FakeAgentInteractionGateway();
-    gateway.stage(feedOwner, { approvals: [pending] });
-    const onChange = (next: AgentComposerInteraction | null) => seen.push(next);
+  function Parent({ sourceThreadId }: { readonly sourceThreadId: string }) {
+    const [interaction, setInteraction] = useState<AgentComposerInteraction | null>(null);
+    const publish = useCallback((next: AgentComposerInteraction | null) => {
+      published.push(next);
+      setInteraction(next);
+    }, []);
+    return (
+      <>
+        <AgentComposerInteractionSource
+          gateway={localAnswerGatewayFake()}
+          onChange={publish}
+          threadId={sourceThreadId}
+        />
+        <output>{interaction?.key ?? "none"}</output>
+      </>
+    );
+  }
+
+  function render(thread: AgentThreadView, sourceThreadId = thread.thread.threadId): void {
     act(() =>
       root.render(
-        <AgentComposerInteractionSource
-          gateway={gateway}
-          onChange={onChange}
-          owner={owner}
-          running
-        />,
+        <AgentThreadRequestFeedContext.Provider value={feed}>
+          <AgentThreadRequestsScope thread={thread}>
+            <Parent sourceThreadId={sourceThreadId} />
+          </AgentThreadRequestsScope>
+        </AgentThreadRequestFeedContext.Provider>,
       ),
     );
-    await waitFor(() => expect(seen[seen.length - 1]?.kind).toBe("approval"));
-    expect(gateway.list).not.toHaveBeenCalled();
+  }
+
+  function shown(): string | null {
+    return host.querySelector("output")?.textContent ?? null;
+  }
+
+  it("publishes the thread's pending approval and clears it on unmount", async () => {
+    feed.record(agentThreadRequestsOf(SCOPE, [approval()]));
+    render(localComposerThread());
+    await waitForReact(() => expect(shown()).toBe(`approval:${TURN}:req-0002`));
+
     act(() => root.render(<></>));
-    expect(seen[seen.length - 1]).toBeNull();
-    expect(gateway.subscribers).toBe(0);
+
+    expect(published[published.length - 1]).toBeNull();
   });
 
-  it("publishes an approval pushed after the owner is already shown", async () => {
-    const seen: Array<AgentComposerInteraction | null> = [];
-    const gateway = new FakeAgentInteractionGateway();
-    act(() =>
-      root.render(
-        <AgentComposerInteractionSource
-          gateway={gateway}
-          onChange={(next) => seen.push(next)}
-          owner={owner}
-          running
-        />,
-      ),
-    );
-    await waitFor(() => expect(gateway.subscribers).toBe(1));
-    expect(seen[seen.length - 1]).toBeNull();
+  it("hands the parent one interaction while the feed keeps pushing the same record", async () => {
+    render(localComposerThread());
+    await waitForReact(() => expect(feed.currentThreadRequests).toHaveBeenCalled());
+    const record = approval();
+    act(() => feed.publish(agentThreadRequestsOf(SCOPE, [record])));
+    await waitForReact(() => expect(shown()).toBe(`approval:${TURN}:req-0002`));
+    const count = published.length;
 
-    act(() => gateway.push(feedOwner, { approvals: [pending] }));
-    await waitFor(() => expect(seen[seen.length - 1]?.kind).toBe("approval"));
+    for (let push = 0; push < 5; push += 1)
+      act(() => feed.publish(agentThreadRequestsOf(SCOPE, [record])));
+    render(localComposerThread());
+    await act(async () => Promise.resolve());
 
-    act(() => gateway.push(feedOwner, {}));
-    await waitFor(() => expect(seen[seen.length - 1]).toBeNull());
-    expect(gateway.list).not.toHaveBeenCalled();
+    expect(published.length).toBe(count);
   });
 
-  it("clears the composer slab once the question is answered instead of pinning it", async () => {
-    const seen: Array<AgentComposerInteraction | null> = [];
-    const answered: AgentQuestionRequest = {
-      ...question,
-      status: "answered",
-      answers: [{ questionId: "question-0", optionIds: ["option-0"], text: "" }],
-    };
-    const gateway = new FakeAgentInteractionGateway();
-    gateway.stage(feedOwner, { questions: [question] });
-    gateway.answer.mockResolvedValue(answered);
+  it("hands the parent a new interaction when the pushed record changes", async () => {
+    render(localComposerThread());
+    act(() => feed.publish(agentThreadRequestsOf(SCOPE, [approval()])));
+    await waitForReact(() => expect(shown()).toBe(`approval:${TURN}:req-0002`));
+    const first = published[published.length - 1];
+
     act(() =>
-      root.render(
-        <AgentComposerInteractionSource
-          gateway={gateway}
-          onChange={(next) => seen.push(next)}
-          owner={owner}
-          running
-        />,
+      feed.publish(
+        agentThreadRequestsOf(SCOPE, [
+          approval({ version: 2, body: { ...approval().body, title: "Run the linter" } }),
+        ]),
       ),
     );
-    await waitFor(() => expect(seen[seen.length - 1]?.kind).toBe("question"));
-    const interaction = seen[seen.length - 1];
-    await act(async () => {
-      if (interaction?.kind === "question") await interaction.answer({ answers: answered.answers });
+
+    await waitForReact(() => {
+      const latest = published[published.length - 1];
+      expect(latest).not.toBe(first);
+      expect(latest?.kind === "approval" && latest.view.title).toBe("Run the linter");
     });
-    expect(gateway.answer).toHaveBeenCalledTimes(1);
-    expect(gateway.answer).toHaveBeenCalledWith(owner, "q1", { answers: answered.answers });
-    expect(seen[seen.length - 1]).toBeNull();
-
-    act(() => gateway.push(feedOwner, { questions: [answered] }));
-
-    expect(seen[seen.length - 1]).toBeNull();
-    expect(gateway.list).not.toHaveBeenCalled();
   });
 
-  it("publishes nothing for a local owner when the gateway can only be polled", async () => {
-    const onChange = vi.fn();
-    const gateway = { list: vi.fn().mockResolvedValue([question]), answer: vi.fn() };
-    act(() =>
-      root.render(
-        <AgentComposerInteractionSource
-          gateway={gateway}
-          onChange={onChange}
-          owner={owner}
-          running
-        />,
-      ),
-    );
-    await act(async () => {
-      await Promise.resolve();
-    });
+  it("publishes nothing for a thread that does not own the open request scope", async () => {
+    feed.record(agentThreadRequestsOf(SCOPE, [approval()]));
+    render(localComposerThread(), "agt-thread-other");
+    await waitForReact(() => expect(feed.currentThreadRequests).toHaveBeenCalled());
+    await act(async () => Promise.resolve());
 
-    expect(onChange).toHaveBeenLastCalledWith(null);
-    expect(gateway.list).not.toHaveBeenCalled();
-  });
-
-  it("publishes nothing without a gateway", () => {
-    const onChange = vi.fn();
-    act(() =>
-      root.render(
-        <AgentComposerInteractionSource gateway={null} onChange={onChange} owner={owner} running />,
-      ),
-    );
-    expect(onChange).toHaveBeenLastCalledWith(null);
+    expect(shown()).toBe("none");
+    expect(published.every((interaction) => interaction === null)).toBe(true);
   });
 });

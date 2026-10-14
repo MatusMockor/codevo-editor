@@ -5,6 +5,7 @@ import type { AgentTaskGateway } from "../domain/agentTask";
 import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
 import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import type { AgentThreadRequestFeed } from "./agentThreadRequestPorts";
 import type { AgentInlineImageGateway } from "./agentInlineImagePorts";
 import type { AgentSidebarRailPreferencePort } from "./useAgentWorkbenchLayout";
 import type { AgentProviderSignInGateway } from "../domain/agentProviderSignIn";
@@ -81,6 +82,7 @@ export interface WorkbenchControllerOptions {
   agentThreadSessionGateway?: AgentThreadSessionGateway;
   turnChangesGateway?: AgentTurnChangesGateway;
   agentQuestionGateway?: AgentQuestionGateway;
+  agentThreadRequestFeed?: AgentThreadRequestFeed;
   agentInlineImageGateway?: AgentInlineImageGateway;
   gitWorktreeGateway?: GitWorktreeGateway;
   javaScriptTypeScriptIncrementalLanguageServerDocumentSyncGateway?: IncrementalLanguageServerDocumentSyncGateway;

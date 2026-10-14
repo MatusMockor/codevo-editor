@@ -50,9 +50,12 @@ import {
   type AgentThreadsHookSurface,
 } from "./useAgentThreads";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
-import type { AgentInteractionFeed } from "./agentInteractionPorts";
-import type { AgentQuestionGateway } from "./agentQuestionPorts";
-import type { AgentQuestionRequest } from "../domain/agentQuestion";
+import type { AgentThreadRequestFeed } from "./agentThreadRequestPorts";
+import {
+  agentRuntimeRequestOf,
+  agentThreadRequestFeedFake,
+  agentThreadRequestsOf,
+} from "../test/agentThreadRequestFeedFake";
 
 const STOP_TRIGGER = agentTurnUiHalt("composerStopButton");
 
@@ -74,7 +77,7 @@ interface Environment {
   cliKind: AgentCliKind;
   repositoryRoots: ReadonlyArray<string>;
   externalSessionGateway?: ExternalSessionGateway;
-  agentQuestionGateway?: AgentQuestionGateway;
+  agentThreadRequestFeed?: AgentThreadRequestFeed;
   externalSessionImportGateway?: ExternalSessionImportGateway;
   agentThreadSessionGateway?: AgentThreadSessionGateway;
   onProviderTurnCompleted?: (provider: AgentCliKind) => void;
@@ -112,51 +115,30 @@ function gitStatusOf(rootPath: string, changeCount: number): GitStatus {
 
 describe("useAgentThreads facade", () => {
   it("keeps immediate steering until the exact running task's pending question is answered", async () => {
-    const currentInteractions = vi.fn<AgentInteractionFeed["currentInteractions"]>();
-    const gateway: AgentQuestionGateway & AgentInteractionFeed = {
-      list: vi.fn(),
-      answer: vi.fn(),
-      currentInteractions,
-      subscribeInteractions: vi.fn(),
-    };
-    const harness = renderThreads({ agentQuestionGateway: gateway });
+    const feed = agentThreadRequestFeedFake();
+    const harness = renderThreads({ agentThreadRequestFeed: feed });
     await waitForReact(() => expect(harness.store.loadAgentThreads).toHaveBeenCalled());
     const threadId = (await act(() => harness.hook().startThread(startRequest())))!.threadId;
     act(() => harness.emitStatus(threadId, 1, { kind: "running" }));
-    const question: AgentQuestionRequest = {
-      id: "question",
-      taskId: harness.turnIdOf(threadId),
-      provider: "claudeCode",
-      status: "pending",
-      questions: [
-        {
-          id: "q",
-          header: "Choose",
-          prompt: "Which?",
-          multiple: false,
-          allowCustom: true,
-          options: [{ id: "a", label: "A", description: "" }],
-        },
-      ],
-    };
-    const owner = { workspaceId: OWNER, taskId: harness.turnIdOf(threadId) };
-    currentInteractions.mockResolvedValue({
-      ...owner,
-      sequence: 1,
-      questions: [question],
-      approvals: [],
-    });
+    const turnId = harness.turnIdOf(threadId);
+    const scope = { threadId, workspaceId: OWNER };
+    feed.record(
+      agentThreadRequestsOf(scope, [
+        agentRuntimeRequestOf("pendingQuestion", { id: "req-question", turnId }),
+      ]),
+    );
     const request = { threadId, prompt: "Use the selected option", delivery: "immediate" as const };
     expect(await act(() => harness.hook().steer(request))).toBe("kept");
     expect(harness.agent.steerAgentTask).not.toHaveBeenCalled();
-    expect(currentInteractions).toHaveBeenCalledWith(owner);
-    expect(gateway.list).not.toHaveBeenCalled();
-    currentInteractions.mockResolvedValue({
-      ...owner,
-      sequence: 2,
-      questions: [],
-      approvals: [],
-    });
+    expect(feed.currentThreadRequests.mock.calls[0]?.slice(0, 2)).toEqual([
+      { rootKey: ROOT, ownerId: PERSISTENT_OWNER, threadId, workspaceId: OWNER },
+      [turnId],
+    ]);
+    feed.record(
+      agentThreadRequestsOf(scope, [
+        agentRuntimeRequestOf("resolvedQuestion", { id: "req-question", turnId, version: 3 }),
+      ]),
+    );
     expect(await act(() => harness.hook().steer(request))).toBe("sent");
     expect(harness.agent.steerAgentTask).toHaveBeenCalledTimes(1);
     harness.unmount();
@@ -566,7 +548,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
   function Harness() {
     const dependencies: AgentThreadsDependencies = {
       agentTaskGateway: agent as unknown as AgentTaskGateway,
-      agentQuestionGateway: environment.agentQuestionGateway,
+      agentThreadRequestFeed: environment.agentThreadRequestFeed,
       agentThreadSessionGateway: environment.agentThreadSessionGateway,
       agentThreadStoreGateway: store as unknown as AgentThreadStoreGateway,
       externalSessionGateway: environment.externalSessionGateway,

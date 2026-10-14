@@ -9,15 +9,19 @@ import {
   type AgentSystemAttentionPort,
   type AgentSystemNotification,
 } from "../../application/agentThreadNotificationCenter";
-import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
+import type { AgentThreadRequestFeed } from "../../application/agentThreadRequestPorts";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import type { AgentApprovalRequest } from "../../domain/agentApproval";
-import type { AgentProjectDescriptor } from "../../domain/agentProject";
+import { agentRootOwnerId, type AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTurn, AgentTurnStatus } from "../../domain/agentThread";
 import { unconfiguredAgentProviderManagement } from "../../test/agentProviderManagementFixture";
+import {
+  agentRuntimeRequestOf,
+  agentThreadRequestFeedFake,
+  agentThreadRequestsOf,
+} from "../../test/agentThreadRequestFeedFake";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
-import { FakeAgentInteractionGateway } from "./agentInteractionGatewayTestFixtures";
 import { surfaceThreadView } from "./agentSurfaceTestFixtures";
+import { AgentThreadRequestFeedContext } from "./agentThreadRequestFeedContext";
 import {
   fixtureRepository,
   projectFixture,
@@ -120,21 +124,6 @@ function threadIn(
   });
 }
 
-function pendingApproval(taskId: string, id: string): AgentApprovalRequest {
-  return {
-    id,
-    taskId,
-    provider: "codex",
-    kind: "command",
-    title: "Run a command?",
-    detail: "cargo test",
-    detailTruncated: false,
-    facts: [],
-    decisions: ["allowOnce", "deny"],
-    status: "pending",
-  };
-}
-
 const RUNNING = { kind: "running" } as const;
 const DONE = { kind: "exited", exitCode: 0 } as const;
 
@@ -168,11 +157,9 @@ describe("agent thread notifications in agent mode", () => {
 
   function props(
     threads: AgentThreadView[],
-    questionGateway: AgentQuestionGateway | null = null,
     projects?: AgentProjectDescriptor[],
   ): AgentModeViewProps {
     return {
-      questionGateway,
       agents: {
         ...threadsSurfaceFixture({
           threads,
@@ -201,18 +188,20 @@ describe("agent thread notifications in agent mode", () => {
     threads: AgentThreadView[],
     options: {
       readonly key?: string;
-      readonly gateway?: AgentQuestionGateway | null;
+      readonly feed?: AgentThreadRequestFeed | null;
       readonly projects?: AgentProjectDescriptor[];
       readonly notificationsVisible?: boolean;
     } = {},
   ): void {
     act(() =>
       root.render(
-        <AgentModeView
-          key={options.key ?? "view"}
-          {...props(threads, options.gateway ?? null, options.projects)}
-          threadNotificationsVisible={options.notificationsVisible ?? true}
-        />,
+        <AgentThreadRequestFeedContext.Provider value={options.feed ?? null}>
+          <AgentModeView
+            key={options.key ?? "view"}
+            {...props(threads, options.projects)}
+            threadNotificationsVisible={options.notificationsVisible ?? true}
+          />
+        </AgentThreadRequestFeedContext.Provider>,
       ),
     );
   }
@@ -351,8 +340,9 @@ describe("agent thread notifications in agent mode", () => {
 
   it("toasts a pushed approval without polling and does not repeat it after the agent view remounts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const gateway = new FakeAgentInteractionGateway();
-    const owner = { workspaceId: "agent-root:api-service", taskId: "b1-turn" };
+    const feed = agentThreadRequestFeedFake();
+    const scope = { threadId: "b1", workspaceId: "agent-root:api-service" };
+    const approval = agentRuntimeRequestOf("pendingApproval", { turnId: "b1-turn", id: "req-1" });
     const threads = [
       threadIn("a1", APP, "app", RUNNING),
       threadIn("b1", API, "api-service", RUNNING),
@@ -362,15 +352,26 @@ describe("agent thread notifications in agent mode", () => {
         await vi.advanceTimersByTimeAsync(ms);
       });
     };
-    render(threads, { key: "first", gateway });
+    render(threads, { key: "first", feed });
     clickRow("a1");
     await settle(0);
     expect(toasts()).toEqual([]);
 
-    act(() => gateway.push(owner, { approvals: [pendingApproval("b1-turn", "req-1")] }));
+    const reads = feed.currentThreadRequests.mock.calls.length;
+    act(() => feed.publish(agentThreadRequestsOf(scope, [approval])));
     expect(messages()).toEqual(["Approval needed | Thread b1 | api-service"]);
     expect(rowStatus("b1")).toBe("Approval");
-    expect(gateway.list).not.toHaveBeenCalled();
+    expect(feed.currentThreadRequests).toHaveBeenCalledWith(
+      {
+        rootKey: API,
+        ownerId: agentRootOwnerId(API),
+        threadId: "b1",
+        workspaceId: scope.workspaceId,
+      },
+      ["b1-turn"],
+      null,
+    );
+    expect(feed.currentThreadRequests).toHaveBeenCalledTimes(reads);
     act(() =>
       toasts()[0]
         ?.querySelector<HTMLButtonElement>('button[aria-label="Dismiss notification"]')
@@ -379,7 +380,7 @@ describe("agent thread notifications in agent mode", () => {
     expect(toasts()).toEqual([]);
 
     await settle(AGENT_THREAD_NOTIFICATION_DEBOUNCE_MS + 1);
-    render(threads, { key: "second", gateway });
+    render(threads, { key: "second", feed });
     await settle(0);
 
     expect(rowStatus("b1")).toBe("Approval");

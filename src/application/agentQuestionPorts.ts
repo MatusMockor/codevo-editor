@@ -17,7 +17,6 @@ export interface AgentRemoteQuestionOwner {
 export type AgentQuestionOwner = AgentLocalQuestionOwner | AgentRemoteQuestionOwner;
 
 export interface AgentQuestionGateway {
-  list(owner: AgentRemoteQuestionOwner): Promise<readonly AgentQuestionRequest[]>;
   answer(
     owner: AgentQuestionOwner,
     requestId: string,

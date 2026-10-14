@@ -8,12 +8,17 @@ import type {
   RemoteRunnerInventoryEvent,
   RemoteRunnerTask,
 } from "../../domain/remoteRunner";
-import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
+import type { AgentThreadRequestFeed } from "../../application/agentThreadRequestPorts";
+import { createRemoteAgentThreadRequestFeed } from "../../application/remoteAgentThreadRequestFeed";
+import { createUnifiedAgentThreadRequestFeed } from "../../application/unifiedAgentThreadRequestFeed";
 import {
-  AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD,
-  AGENT_PENDING_REQUEST_POLL_MS,
-} from "../../application/agentPendingRequestPolling";
-import type { AgentQuestionRequest } from "../../domain/agentQuestion";
+  agentRuntimeRequestOf,
+  agentThreadRequestFeedFake,
+} from "../../test/agentThreadRequestFeedFake";
+import {
+  remoteAgentThreadRequestGatewayFake,
+  type RemoteAgentThreadRequestGatewayFake,
+} from "../../test/remoteAgentThreadRequestGatewayFake";
 import { remoteAgentThreadKey } from "../../application/remoteAgentProjection";
 import { workbenchAgentPaletteProvider } from "../../application/commandPalette/commandPaletteProvider";
 import { unconfiguredAgentProviderManagement } from "../../test/agentProviderManagementFixture";
@@ -21,6 +26,7 @@ import { waitForReact } from "../../test/reactTestLifecycle";
 import { retryableLazy } from "../retryableLazy";
 import { RemoteRunnerProvider } from "../remoteRunner/RemoteRunnerProvider";
 import { AgentModeView } from "./AgentModeView";
+import { AgentThreadRequestFeedContext } from "./agentThreadRequestFeedContext";
 import { AGENT_SERVER_RECONNECTING_GRACE_MS } from "./agentServerReachabilityPresentation";
 import { SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
@@ -28,24 +34,10 @@ import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
 
 const THREAD_ID = remoteAgentThreadKey("linux", "runner", "first");
 const CREATED_AT = "2026-09-13T00:00:00Z";
-const QUESTION_NOTICE_AFTER_MS =
-  (AGENT_PENDING_REQUEST_FAILURE_NOTICE_THRESHOLD + 1) * AGENT_PENDING_REQUEST_POLL_MS + 500;
-const REMOTE_QUESTION: AgentQuestionRequest = {
-  id: "q1",
-  taskId: "first",
-  provider: "claudeCode",
-  status: "pending",
-  questions: [
-    {
-      id: "question-0",
-      header: "",
-      prompt: "Which layout?",
-      options: [{ id: "option-0", label: "Sidebar", description: "" }],
-      multiple: false,
-      allowCustom: true,
-    },
-  ],
-};
+const OUTAGE_MS = 5_000;
+const REMOTE_TARGET = { serverId: "linux", threadId: "first" };
+const REMOTE_QUESTION = agentRuntimeRequestOf("pendingQuestion", { id: "q1", turnId: "first" });
+const REMOTE_QUESTION_PROMPT = "Which scope should the change cover?";
 const LazyAgentWorkspace = retryableLazy<ComponentProps<typeof AgentModeView>>(
   () => Promise.resolve({ default: AgentModeView }),
   "agent workspace",
@@ -72,9 +64,8 @@ const SERVER = {
 
 class FakeRunner {
   up = true;
-  questionCalls = 0;
-  feedCalls = 0;
-  pendingQuestions: AgentQuestionRequest[] = [];
+  readonly requests: RemoteAgentThreadRequestGatewayFake = remoteAgentThreadRequestGatewayFake();
+  readonly local = agentThreadRequestFeedFake();
   tasks: RemoteRunnerTask[] = [
     {
       id: "first",
@@ -108,24 +99,21 @@ class FakeRunner {
     for (const listener of [...this.listeners]) listener({ type });
   }
 
-  questionGateway(): AgentQuestionGateway {
-    const gateway = {
-      list: () => {
-        this.questionCalls += 1;
-        return this.reach(() => this.pendingQuestions);
-      },
-      answer: vi.fn(),
-      answerApproval: vi.fn(),
-      currentInteractions: () => {
-        this.feedCalls += 1;
-        return Promise.reject(new Error("Remote turns are not pushed."));
-      },
-      subscribeInteractions: () => {
-        this.feedCalls += 1;
-        return Promise.resolve(() => undefined);
-      },
-    };
-    return gateway;
+  requestFeed(): AgentThreadRequestFeed {
+    return createUnifiedAgentThreadRequestFeed({
+      local: this.local,
+      remote: createRemoteAgentThreadRequestFeed(this.requests),
+    });
+  }
+
+  requestReads(): number {
+    return this.requests.threadRequests.mock.calls.length;
+  }
+
+  setUp(up: boolean): void {
+    this.up = up;
+    if (up) this.requests.connect();
+    if (!up) this.requests.disconnect();
   }
 
   gateway(): RemoteRunnerGateway {
@@ -241,27 +229,28 @@ describe("remote runner restart during a running turn", () => {
     vi.restoreAllMocks();
   });
 
-  async function mount(runner: FakeRunner, questionGateway: AgentQuestionGateway | null = null) {
+  async function mount(runner: FakeRunner, requestFeed: AgentThreadRequestFeed | null = null) {
     const gateway = runner.gateway();
     await act(async () =>
       root.render(
-        <RemoteRunnerProvider gateway={gateway}>
-          <LazyAgentWorkspace
-            agents={{
-              ...threadsSurfaceFixture(),
-              providerManagement: unconfiguredAgentProviderManagement(),
-            }}
-            projects={[projectFixture()]}
-            workspaceRoot={SURFACE_FIXTURE_ROOT}
-            overflowRootPaths={[]}
-            providerEnabled={{ claudeCode: true, codex: true }}
-            chrome={chromeFixture()}
-            questionGateway={questionGateway}
-            onTrustProject={() => undefined}
-            onReleaseProject={() => undefined}
-            onOpenEnvironmentSettings={() => undefined}
-          />
-        </RemoteRunnerProvider>,
+        <AgentThreadRequestFeedContext.Provider value={requestFeed}>
+          <RemoteRunnerProvider gateway={gateway}>
+            <LazyAgentWorkspace
+              agents={{
+                ...threadsSurfaceFixture(),
+                providerManagement: unconfiguredAgentProviderManagement(),
+              }}
+              projects={[projectFixture()]}
+              workspaceRoot={SURFACE_FIXTURE_ROOT}
+              overflowRootPaths={[]}
+              providerEnabled={{ claudeCode: true, codex: true }}
+              chrome={chromeFixture()}
+              onTrustProject={() => undefined}
+              onReleaseProject={() => undefined}
+              onOpenEnvironmentSettings={() => undefined}
+            />
+          </RemoteRunnerProvider>
+        </AgentThreadRequestFeedContext.Provider>,
       ),
     );
     await openRemoteThread();
@@ -320,7 +309,7 @@ describe("remote runner restart during a running turn", () => {
   function restartRunner(runner: FakeRunner): void {
     runner.tasks = runner.tasks.map((task) => ({ ...task, status: "interrupted" }));
     runner.lifecycle("task.interrupted");
-    runner.up = true;
+    runner.setUp(true);
     runner.emit("connected");
   }
 
@@ -362,30 +351,33 @@ describe("remote runner restart during a running turn", () => {
     expect(updateDepthErrors()).toEqual([]);
   }, 60_000);
 
-  it("keeps the agent workspace mounted while a running remote turn cannot refresh its questions", async () => {
+  it("keeps the agent workspace mounted while a running remote turn cannot read its requests", async () => {
     const runner = new FakeRunner({
       outputSteps: 5,
       backwardPaging: false,
       interactiveQuestions: true,
     });
-    await mount(runner, runner.questionGateway());
+    runner.requests.record(REMOTE_TARGET, [REMOTE_QUESTION]);
+    await mount(runner, runner.requestFeed());
     await settle(400);
     expect(fallback()).toBeNull();
-    expect(runner.questionCalls).toBeGreaterThan(0);
+    expect(runner.requestReads()).toBeGreaterThan(0);
+    expect(host.textContent).toContain(REMOTE_QUESTION_PROMPT);
 
-    runner.up = false;
+    runner.setUp(false);
     runner.emit("disconnected");
     await settle(700);
-    const questionCallsAtOutage = runner.questionCalls;
-    await settle(QUESTION_NOTICE_AFTER_MS);
+    const readsAtOutage = runner.requestReads();
+    await settle(OUTAGE_MS);
 
     expect(fallback()).toBeNull();
     expect(threadSection()).not.toBeNull();
     expect(updateDepthErrors()).toEqual([]);
     expect(host.textContent).toContain("Linux server is reconnecting…");
-    expect(host.textContent).not.toContain("Questions could not be refreshed. Reconnecting…");
-    expect(runner.questionCalls).toBe(questionCallsAtOutage);
-    expect(runner.feedCalls).toBe(0);
+    expect(host.textContent).not.toContain("Questions could not be refreshed");
+    expect(host.textContent).toContain(REMOTE_QUESTION_PROMPT);
+    expect(runner.requestReads()).toBe(readsAtOutage);
+    expect(runner.local.currentThreadRequests).not.toHaveBeenCalled();
 
     restartRunner(runner);
     await settle(700);
@@ -400,15 +392,15 @@ describe("remote runner restart during a running turn", () => {
       backwardPaging: false,
       interactiveQuestions: true,
     });
-    runner.pendingQuestions = [REMOTE_QUESTION];
-    await mount(runner, runner.questionGateway());
+    runner.requests.record(REMOTE_TARGET, [REMOTE_QUESTION]);
+    await mount(runner, runner.requestFeed());
     await settle(400);
 
     expect(fallback()).toBeNull();
     expect(updateDepthErrors()).toEqual([]);
-    expect(host.textContent).toContain("Which layout?");
-    expect(runner.questionCalls).toBeGreaterThan(0);
-    expect(runner.feedCalls).toBe(0);
+    expect(host.textContent).toContain(REMOTE_QUESTION_PROMPT);
+    expect(runner.requestReads()).toBeGreaterThan(0);
+    expect(runner.local.currentThreadRequests).not.toHaveBeenCalled();
   }, 60_000);
 
   const scenarios = [
@@ -427,7 +419,7 @@ describe("remote runner restart during a running turn", () => {
       const renderedStep = lastRenderedStep();
       expect(renderedStep).not.toBeNull();
 
-      runner.up = false;
+      runner.setUp(false);
       runner.emit("disconnected");
       await settle(700);
 

@@ -1,15 +1,22 @@
+import type { AgentThreadRequestReply } from "../../../application/agentThreadRequestResponders";
+import type {
+  AgentThreadPendingRequest,
+  AgentThreadPendingRequestState,
+} from "../../../application/useAgentThreadPendingRequests";
 import type { AgentApprovalDecision, AgentApprovalRequest } from "../../../domain/agentApproval";
 import type { AgentQuestionRequest, AgentQuestionResponse } from "../../../domain/agentQuestion";
-import {
-  presentAgentApproval,
-  visibleAgentApprovals,
-  type AgentApprovalView,
-} from "../agentApprovalPresenter";
+import type {
+  AgentRuntimeApprovalBody,
+  AgentRuntimeQuestionBody,
+  AgentRuntimeRequest,
+} from "../../../domain/agentRuntimeRequest";
+import { presentAgentApproval, type AgentApprovalView } from "../agentApprovalPresenter";
 
 export const AGENT_QUESTION_ATTACHMENTS_UNAVAILABLE =
   "Attachments can't be added to this answer. Describe the image in text instead.";
 export const AGENT_QUESTION_REMOTE_ATTACHMENTS_UNAVAILABLE =
   "Attachments aren't supported for answers on a remote server. Describe the image in text instead.";
+export const AGENT_REQUEST_CHECKING = "Checking whether your answer arrived…";
 
 export type AgentComposerQuestionAttachmentTarget =
   | { readonly kind: "thread"; readonly threadId: string }
@@ -22,6 +29,8 @@ export type AgentComposerInteraction =
       readonly view: AgentApprovalView;
       readonly pendingCount: number;
       readonly sending: boolean;
+      readonly disabled?: boolean;
+      readonly note?: string | null;
       readonly error: string | null;
       decide(decision: AgentApprovalDecision): Promise<void>;
     }
@@ -31,67 +40,157 @@ export type AgentComposerInteraction =
       readonly request: AgentQuestionRequest;
       readonly attachments: AgentComposerQuestionAttachmentTarget;
       readonly sending: boolean;
+      readonly disabled?: boolean;
+      readonly note?: string | null;
+      readonly pendingLabel?: string | null;
       readonly error: string | null;
       answer(response: AgentQuestionResponse): Promise<void>;
     }
   | { readonly kind: "notice"; readonly key: string; readonly text: string };
 
 export interface AgentComposerInteractionInputs {
-  readonly approvals: {
-    readonly requests: ReadonlyArray<AgentApprovalRequest>;
-    readonly answering: string | null;
-    readonly error: string | null;
-    answer(requestId: string, decision: AgentApprovalDecision): Promise<void>;
-  };
-  readonly questions: {
-    readonly requests: ReadonlyArray<AgentQuestionRequest>;
-    readonly attachments: AgentComposerQuestionAttachmentTarget;
-    readonly answering: string | null;
-    readonly error: string | null;
-    answer(requestId: string, response: AgentQuestionResponse): Promise<void>;
-  };
-  readonly running: boolean;
+  readonly requests: readonly AgentThreadPendingRequest[];
+  readonly attachments: AgentComposerQuestionAttachmentTarget;
+  respond(key: string, reply: AgentThreadRequestReply): Promise<void>;
 }
+
+interface Controls {
+  readonly sending: boolean;
+  readonly disabled: boolean;
+  readonly note: string | null;
+  readonly pendingLabel: string | null;
+}
+
+type ApprovalItem = AgentThreadPendingRequest & {
+  readonly request: AgentRuntimeRequest & { readonly body: AgentRuntimeApprovalBody };
+};
+type QuestionItem = AgentThreadPendingRequest & {
+  readonly request: AgentRuntimeRequest & { readonly body: AgentRuntimeQuestionBody };
+};
 
 export function pickAgentComposerInteraction(
   inputs: AgentComposerInteractionInputs,
 ): AgentComposerInteraction | null {
-  const visible = visibleAgentApprovals(inputs.approvals.requests);
-  const pending = visible.filter((request) => request.status === "pending");
-  const approval = pending[0];
-  if (approval !== undefined) {
-    return {
-      kind: "approval",
-      key: `approval:${approval.taskId}:${approval.id}`,
-      view: presentAgentApproval(approval),
-      pendingCount: pending.length,
-      sending: inputs.approvals.answering === approval.id,
-      error: inputs.approvals.error,
-      decide: (decision) => inputs.approvals.answer(approval.id, decision),
-    };
-  }
-  const question = inputs.questions.requests.find((request) => request.status === "pending");
-  if (question !== undefined) {
-    return {
-      kind: "question",
-      key: `question:${question.taskId}:${question.id}`,
-      request: question,
-      attachments: inputs.questions.attachments,
-      sending: inputs.questions.answering === question.id,
-      error: inputs.questions.error,
-      answer: (response) => inputs.questions.answer(question.id, response),
-    };
-  }
-  const settled = visible[0];
-  if (settled !== undefined) {
-    return {
-      kind: "notice",
-      key: `approval-notice:${settled.id}:${settled.status}`,
-      text: `${settled.title} · ${presentAgentApproval(settled).statusText}`,
-    };
-  }
-  if (inputs.questions.error !== null && inputs.running) {
-    return { kind: "notice", key: "question-error", text: inputs.questions.error };
-  }
+  const actionable = inputs.requests.filter(isActionable);
+  return (
+    pickFrom(actionable, inputs) ??
+    pickFrom(
+      inputs.requests.filter((item) => !isActionable(item)),
+      inputs,
+    )
+  );
+}
+
+function pickFrom(
+  requests: readonly AgentThreadPendingRequest[],
+  inputs: AgentComposerInteractionInputs,
+): AgentComposerInteraction | null {
+  const approvals = requests.filter(isApproval);
+  const approval = approvals[0];
+  if (approval !== undefined) return approvalInteraction(approval, approvals.length, inputs);
+  const question = requests.find(isQuestion);
+  if (question !== undefined) return questionInteraction(question, inputs);
   return null;
+}
+
+function isActionable(item: AgentThreadPendingRequest): boolean {
+  return item.state.kind !== "readOnly";
+}
+
+function approvalInteraction(
+  item: ApprovalItem,
+  pendingCount: number,
+  inputs: AgentComposerInteractionInputs,
+): AgentComposerInteraction {
+  const { request } = item;
+  const controls = controlsOf(item.state);
+  const view = presentAgentApproval(approvalRequestOf(request));
+  return {
+    kind: "approval",
+    key: `approval:${request.turnId}:${request.id}`,
+    view: controls.note === null ? view : { ...view, actions: [] },
+    pendingCount,
+    sending: controls.sending,
+    disabled: controls.disabled,
+    note: controls.note,
+    error: item.error,
+    decide: (decision) => inputs.respond(item.key, { kind: "approval", decision }),
+  };
+}
+
+function questionInteraction(
+  item: QuestionItem,
+  inputs: AgentComposerInteractionInputs,
+): AgentComposerInteraction {
+  const { request } = item;
+  const controls = controlsOf(item.state);
+  return {
+    kind: "question",
+    key: `question:${request.turnId}:${request.id}`,
+    request: questionRequestOf(request),
+    attachments: inputs.attachments,
+    sending: controls.sending,
+    disabled: controls.disabled,
+    note: controls.note,
+    pendingLabel: controls.pendingLabel,
+    error: item.error,
+    answer: (response) => inputs.respond(item.key, { kind: "question", answers: response.answers }),
+  };
+}
+
+function controlsOf(state: AgentThreadPendingRequestState): Controls {
+  switch (state.kind) {
+    case "answerable":
+      return { sending: false, disabled: false, note: null, pendingLabel: null };
+    case "sending":
+      return { sending: true, disabled: false, note: null, pendingLabel: null };
+    case "checking":
+      return { sending: true, disabled: false, note: null, pendingLabel: AGENT_REQUEST_CHECKING };
+    case "disabled":
+      return { sending: false, disabled: true, note: null, pendingLabel: null };
+    case "readOnly":
+      return { sending: false, disabled: true, note: state.reason, pendingLabel: null };
+    default: {
+      const exhaustive: never = state;
+      return exhaustive;
+    }
+  }
+}
+
+function isApproval(item: AgentThreadPendingRequest): item is ApprovalItem {
+  return item.request.body.kind === "approval";
+}
+
+function isQuestion(item: AgentThreadPendingRequest): item is QuestionItem {
+  return item.request.body.kind === "question";
+}
+
+function approvalRequestOf(
+  request: AgentRuntimeRequest & { readonly body: AgentRuntimeApprovalBody },
+): AgentApprovalRequest {
+  const { body } = request;
+  return {
+    id: request.id,
+    taskId: request.turnId,
+    provider: request.provider,
+    kind: body.approvalKind,
+    title: body.title,
+    detail: body.detail,
+    detailTruncated: body.detailTruncated,
+    facts: body.facts,
+    decisions: body.decisions,
+    status: "pending",
+  };
+}
+
+function questionRequestOf(
+  request: AgentRuntimeRequest & { readonly body: AgentRuntimeQuestionBody },
+): AgentQuestionRequest {
+  return {
+    id: request.id,
+    taskId: request.turnId,
+    provider: request.provider,
+    questions: request.body.questions,
+    status: "pending",
+  };
 }

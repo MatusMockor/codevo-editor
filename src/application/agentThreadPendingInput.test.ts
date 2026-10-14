@@ -1,14 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
-import type { AgentInteractionSnapshot } from "../domain/agentInteractionSnapshot";
-import type { AgentQuestionRequest } from "../domain/agentQuestion";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentRootOwnerId } from "../domain/agentProject";
 import type { AgentThread } from "../domain/agentThread";
-import type { AgentInteractionFeed } from "./agentInteractionPorts";
-import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import {
+  agentRuntimeRequestOf,
+  agentThreadRequestFeedFake,
+  agentThreadRequestsOf,
+} from "../test/agentThreadRequestFeedFake";
 import { agentThreadHasPendingInput } from "./agentThreadPendingInput";
+import { AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS } from "./agentThreadRequestStore";
 import { projectRemoteAgentThreads } from "./remoteAgentProjection";
 
 const WORKSPACE = "workspace";
 const TASK = "task";
+const ROOT = "/repo";
+const THREAD_SCOPE = { workspaceId: WORKSPACE };
 
 function thread(): AgentThread {
   const view = projectRemoteAgentThreads({
@@ -32,123 +37,100 @@ function thread(): AgentThread {
   })[0];
   return {
     ...view.thread,
-    owner: { rootKey: "/repo", ownerId: WORKSPACE, repositoryRoot: "/repo/nested" },
+    owner: { rootKey: ROOT, ownerId: WORKSPACE, repositoryRoot: "/repo/nested" },
   };
 }
 
-function question(status: "pending" | "cancelled" | "expired"): AgentQuestionRequest {
-  return {
-    id: `question-${status}`,
-    taskId: TASK,
-    provider: "claudeCode",
-    status,
-    questions: [
-      {
-        id: "q",
-        header: "Choose",
-        prompt: "Which?",
-        multiple: false,
-        allowCustom: true,
-        options: [{ id: "a", label: "A", description: "" }],
-      },
-    ],
-  };
+function scopeOf(subject: AgentThread) {
+  return { ...THREAD_SCOPE, threadId: subject.threadId };
 }
 
-function snapshot(
-  sequence: number,
-  questions: readonly AgentQuestionRequest[],
-): AgentInteractionSnapshot {
-  return { workspaceId: WORKSPACE, taskId: TASK, sequence, questions, approvals: [] };
-}
-
-function feedGateway(
-  currentInteractions: AgentInteractionFeed["currentInteractions"],
-): AgentQuestionGateway & AgentInteractionFeed {
-  return {
-    list: vi.fn(),
-    answer: vi.fn(),
-    currentInteractions: vi.fn(currentInteractions),
-    subscribeInteractions: vi.fn(),
-  };
+async function settle(): Promise<void> {
+  for (let round = 0; round < 20; round += 1) await vi.advanceTimersByTimeAsync(1);
 }
 
 describe("agentThreadHasPendingInput", () => {
-  it("reads the running turn once through the feed and reports its pending question", async () => {
-    const gateway = feedGateway(() =>
-      Promise.resolve(snapshot(3, [question("cancelled"), question("pending")])),
-    );
-    await expect(agentThreadHasPendingInput(gateway, thread())).resolves.toBe(true);
-    expect(gateway.currentInteractions).toHaveBeenCalledTimes(1);
-    expect(gateway.currentInteractions).toHaveBeenCalledWith({
-      workspaceId: WORKSPACE,
-      taskId: TASK,
-    });
-    expect(gateway.list).not.toHaveBeenCalled();
-    expect(gateway.subscribeInteractions).not.toHaveBeenCalled();
+  beforeEach(() => {
+    vi.useFakeTimers();
   });
 
-  it.each<{ readonly name: string; readonly observed: AgentInteractionSnapshot }>([
-    { name: "no question session", observed: snapshot(0, []) },
-    { name: "an empty list", observed: snapshot(4, []) },
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reads the running turn from the thread request store and reports its pending question", async () => {
+    const subject = thread();
+    const feed = agentThreadRequestFeedFake();
+    feed.record(
+      agentThreadRequestsOf(scopeOf(subject), [
+        agentRuntimeRequestOf("cancelledByProvider", { turnId: TASK }),
+        agentRuntimeRequestOf("pendingQuestion", { turnId: TASK }),
+      ]),
+    );
+
+    const answer = agentThreadHasPendingInput(feed, subject);
+    await settle();
+
+    await expect(answer).resolves.toBe(true);
+    expect(feed.currentThreadRequests.mock.calls[0]?.slice(0, 2)).toEqual([
+      {
+        rootKey: ROOT,
+        ownerId: agentRootOwnerId(ROOT),
+        threadId: subject.threadId,
+        workspaceId: WORKSPACE,
+      },
+      [TASK],
+    ]);
+    expect(feed.subscribers()).toBe(0);
+  });
+
+  it.each([
+    { name: "no records", records: [] },
     {
       name: "only settled questions",
-      observed: snapshot(5, [
-        question("cancelled"),
-        question("expired"),
-        {
-          ...question("pending"),
-          id: "question-answered",
-          status: "answered",
-          answers: [{ questionId: "q", optionIds: ["a"], text: "" }],
-        },
-      ]),
+      records: [
+        agentRuntimeRequestOf("cancelledByProvider", { turnId: TASK }),
+        agentRuntimeRequestOf("resolvedQuestion", { turnId: TASK }),
+      ],
     },
     {
       name: "only a pending approval",
-      observed: {
-        ...snapshot(6, []),
-        approvals: [
-          {
-            id: "approval",
-            taskId: TASK,
-            provider: "claudeCode",
-            kind: "command",
-            title: "Run a command?",
-            detail: "npm test",
-            detailTruncated: false,
-            facts: [],
-            decisions: ["allowOnce", "deny"],
-            status: "pending",
-          },
-        ],
-      },
+      records: [agentRuntimeRequestOf("pendingApproval", { turnId: TASK })],
     },
-  ])("reports no pending input for $name", async ({ observed }) => {
-    const gateway = feedGateway(() => Promise.resolve(observed));
-    await expect(agentThreadHasPendingInput(gateway, thread())).resolves.toBe(false);
+    {
+      name: "a pending question of another turn",
+      records: [agentRuntimeRequestOf("pendingQuestion", { turnId: "agt-turn-other" })],
+    },
+  ])("reports no pending input for $name", async ({ records }) => {
+    const subject = thread();
+    const feed = agentThreadRequestFeedFake();
+    feed.record(agentThreadRequestsOf(scopeOf(subject), records));
+
+    const answer = agentThreadHasPendingInput(feed, subject);
+    await settle();
+
+    await expect(answer).resolves.toBe(false);
   });
 
-  it("reports no pending input without a gateway or with a gateway that is not a feed", async () => {
-    const legacy: AgentQuestionGateway = { list: vi.fn(), answer: vi.fn() };
+  it("reports no pending input without a feed", async () => {
     await expect(agentThreadHasPendingInput(undefined, thread())).resolves.toBe(false);
-    await expect(agentThreadHasPendingInput(legacy, thread())).resolves.toBe(false);
-    expect(legacy.list).not.toHaveBeenCalled();
   });
 
   it("keeps the input when the thread or its running turn is missing", async () => {
-    const gateway = feedGateway(() => Promise.resolve(snapshot(0, [])));
-    await expect(agentThreadHasPendingInput(gateway, undefined)).resolves.toBe(true);
-    await expect(agentThreadHasPendingInput(gateway, { ...thread(), turns: [] })).resolves.toBe(
-      true,
-    );
-    expect(gateway.currentInteractions).not.toHaveBeenCalled();
+    const feed = agentThreadRequestFeedFake();
+    await expect(agentThreadHasPendingInput(feed, undefined)).resolves.toBe(true);
+    await expect(agentThreadHasPendingInput(feed, { ...thread(), turns: [] })).resolves.toBe(true);
+    expect(feed.currentThreadRequests).not.toHaveBeenCalled();
   });
 
-  it("propagates a rejected read", async () => {
-    const gateway = feedGateway(() => Promise.reject(new Error("Agent task is unavailable.")));
-    await expect(agentThreadHasPendingInput(gateway, thread())).rejects.toThrow(
-      "Agent task is unavailable.",
-    );
+  it("rejects when the store cannot read the thread's requests", async () => {
+    const feed = agentThreadRequestFeedFake();
+    feed.currentThreadRequests.mockRejectedValue(new Error("Agent task is unavailable."));
+
+    const answer = agentThreadHasPendingInput(feed, thread());
+    const settled = expect(answer).rejects.toThrow("Pending requests are unavailable.");
+    await vi.advanceTimersByTimeAsync(AGENT_THREAD_REQUEST_OPERATION_DEADLINE_MS);
+
+    await settled;
   });
 });

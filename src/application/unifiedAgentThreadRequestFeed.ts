@@ -8,20 +8,103 @@ import type {
   AgentThreadRequestScope,
   AgentThreadRequestsPage,
 } from "./agentThreadRequestPorts";
+import type {
+  RemoteAgentThreadRequestConfirmation,
+  RemoteAgentThreadRequestDescribeOutcome,
+  RemoteAgentThreadRequestDescription,
+  RemoteAgentThreadRequestFeed,
+  RemoteAgentThreadRequestRespondOutcome,
+} from "./remoteAgentThreadRequestFeed";
+import type { RemoteAgentThreadRequestResponse } from "./remoteAgentThreadRequestPorts";
+
+export type RemoteAgentThreadRequestControl = Pick<
+  RemoteAgentThreadRequestFeed,
+  "describe" | "release" | "respond" | "reconnected" | "confirm"
+>;
+
+export type UnifiedAgentThreadRequestFeed = AgentThreadRequestFeed &
+  RemoteAgentThreadRequestControl;
 
 export interface UnifiedAgentThreadRequestFeeds {
   readonly local: AgentThreadRequestFeed;
-  readonly remote: AgentThreadRequestFeed;
+  readonly remote: AgentThreadRequestFeed | RemoteAgentThreadRequestFeed;
 }
+
+const NOT_REMOTE: RemoteAgentThreadRequestDescribeOutcome = Object.freeze({
+  kind: "refused",
+  reason: "notRemote",
+});
+const UNCONFIRMED: RemoteAgentThreadRequestConfirmation = "unconfirmed";
+const NOT_DESCRIBED: RemoteAgentThreadRequestRespondOutcome = Object.freeze({
+  kind: "notSent",
+  reason: "notDescribed",
+});
 
 export function createUnifiedAgentThreadRequestFeed(
   feeds: UnifiedAgentThreadRequestFeeds,
-): AgentThreadRequestFeed {
-  return new UnifiedAgentThreadRequestFeed(feeds);
+): UnifiedAgentThreadRequestFeed {
+  return new RoutingAgentThreadRequestFeed(feeds);
 }
 
-class UnifiedAgentThreadRequestFeed implements AgentThreadRequestFeed {
-  constructor(private readonly feeds: UnifiedAgentThreadRequestFeeds) {}
+export function remoteAgentThreadRequestControl(
+  feed: AgentThreadRequestFeed | null,
+): RemoteAgentThreadRequestControl | null {
+  if (feed === null || !isRemoteAgentThreadRequestControl(feed)) return null;
+  return feed;
+}
+
+function isRemoteAgentThreadRequestControl(feed: object): feed is RemoteAgentThreadRequestControl {
+  const candidate = feed as Partial<RemoteAgentThreadRequestControl>;
+  return (
+    typeof candidate.describe === "function" &&
+    typeof candidate.release === "function" &&
+    typeof candidate.respond === "function" &&
+    typeof candidate.reconnected === "function" &&
+    typeof candidate.confirm === "function"
+  );
+}
+
+class RoutingAgentThreadRequestFeed implements UnifiedAgentThreadRequestFeed {
+  private readonly control: RemoteAgentThreadRequestControl | null;
+
+  constructor(private readonly feeds: UnifiedAgentThreadRequestFeeds) {
+    this.control = remoteAgentThreadRequestControl(feeds.remote);
+  }
+
+  describe(
+    scope: AgentThreadRequestScope,
+    description: RemoteAgentThreadRequestDescription,
+  ): RemoteAgentThreadRequestDescribeOutcome {
+    if (this.control === null) return NOT_REMOTE;
+    return this.control.describe(scope, description);
+  }
+
+  release(scope: AgentThreadRequestScope): void {
+    this.control?.release(scope);
+  }
+
+  respond(
+    scope: AgentThreadRequestScope,
+    turnId: string,
+    requestId: string,
+    response: RemoteAgentThreadRequestResponse,
+  ): Promise<RemoteAgentThreadRequestRespondOutcome> {
+    if (this.control === null) return Promise.resolve(NOT_DESCRIBED);
+    return this.control.respond(scope, turnId, requestId, response);
+  }
+
+  reconnected(serverId: string): void {
+    this.control?.reconnected(serverId);
+  }
+
+  confirm(
+    scope: AgentThreadRequestScope,
+    turnId: string,
+    requestId: string,
+  ): Promise<RemoteAgentThreadRequestConfirmation> {
+    if (this.control === null) return Promise.resolve(UNCONFIRMED);
+    return this.control.confirm(scope, turnId, requestId);
+  }
 
   currentThreadRequests(
     scope: AgentThreadRequestScope,

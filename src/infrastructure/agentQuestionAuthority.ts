@@ -1,4 +1,3 @@
-import type { AgentInteractionOwner } from "../application/agentInteractionPorts";
 import type {
   AgentQuestionOwner,
   AgentRemoteQuestionOwner,
@@ -20,8 +19,8 @@ export function agentQuestionIdentifier(value: string): void {
     throw new Error("Invalid question owner.");
 }
 
-export function agentInteractionAuthority(
-  owner: AgentInteractionOwner,
+function agentInteractionAuthority(
+  owner: AgentLocalInteractionAuthority,
 ): AgentLocalInteractionAuthority {
   if (owner === null || typeof owner !== "object") throw new Error("Invalid question owner.");
   agentQuestionIdentifier(owner.workspaceId);

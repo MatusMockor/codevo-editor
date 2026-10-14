@@ -67,7 +67,7 @@ import { useAgentProviderSignIn, type AgentProviderSignInSurface } from "./useAg
 import type { AgentProviderSignInRefreshOutcome } from "./useAgentProviderSignIn";
 import type { ReadyAgentProviderAdmissionAuthority } from "./agentProviderAdmissionAuthority";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
-import type { AgentQuestionGateway } from "./agentQuestionPorts";
+import type { AgentThreadRequestFeed } from "./agentThreadRequestPorts";
 import { agentTurnLogEvidence } from "./agentTurnLogStatusStore";
 import {
   defaultAgentAttachmentGateway,
@@ -93,7 +93,7 @@ export interface WorkbenchAgentsOptions {
   readonly turnChangesGateway?: AgentTurnChangesGateway;
   readonly agentTaskGateway?: AgentTaskGateway;
   readonly agentThreadSessionGateway?: AgentThreadSessionGateway;
-  readonly agentQuestionGateway?: AgentQuestionGateway;
+  readonly agentThreadRequestFeed?: AgentThreadRequestFeed;
   readonly agentAttachmentGateway?: AgentAttachmentGateway;
   readonly agentImageSurface?: AgentImageSurfacePort;
   readonly agentInlineImageGateway?: AgentInlineImageGateway;
@@ -512,7 +512,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     turnChangesGateway: options.turnChangesGateway,
     agentTaskGateway: options.agentTaskGateway ?? defaultAgentTaskGateway,
     agentThreadSessionGateway: options.agentThreadSessionGateway,
-    agentQuestionGateway: options.agentQuestionGateway,
+    agentThreadRequestFeed: options.agentThreadRequestFeed,
     agentAttachmentGateway: options.agentAttachmentGateway ?? defaultAgentAttachmentGateway,
     agentImageSurface: options.agentImageSurface ?? defaultAgentImageSurface,
     agentInlineImageGateway: options.agentInlineImageGateway,

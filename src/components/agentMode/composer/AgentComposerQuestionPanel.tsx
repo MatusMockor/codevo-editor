@@ -23,11 +23,14 @@ export function AgentComposerQuestionPanel({
       <AgentQuestionCard
         attachments={attachments}
         attachmentsUnavailableReason={target.kind === "unavailable" ? target.reason : undefined}
+        disabled={interaction.disabled}
         error={interaction.error}
         key={interaction.key}
         onAnswer={interaction.answer}
         pending={interaction.sending}
+        pendingLabel={interaction.pendingLabel}
         request={interaction.request}
+        unavailableReason={interaction.note}
       />
     </div>
   );

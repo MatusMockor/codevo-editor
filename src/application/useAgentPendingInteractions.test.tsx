@@ -1,37 +1,67 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect, useMemo, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentApprovalRequest } from "../domain/agentApproval";
-import type { AgentInteractionSnapshot } from "../domain/agentInteractionSnapshot";
-import type { AgentQuestionRequest } from "../domain/agentQuestion";
+import { agentRootOwnerId } from "../domain/agentProject";
+import type { AgentRuntimeRequest } from "../domain/agentRuntimeRequest";
+import type { RemoteRunnerReachability } from "../domain/remoteRunnerReachability";
 import {
-  agentInteractionFeedFake,
-  agentInteractionSnapshotOf,
-} from "../test/agentInteractionFeedFake";
-import type { AgentInteractionFeed, AgentInteractionOwner } from "./agentInteractionPorts";
+  agentRuntimeRequestOf,
+  agentThreadRequestFeedFake,
+  agentThreadRequestsOf,
+  type AgentThreadRequestFeedFake,
+} from "../test/agentThreadRequestFeedFake";
 import {
-  AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD,
-  AGENT_INTERACTION_RETRY_BASE_MS,
-} from "./agentInteractionStore";
-import type { AgentQuestionGateway } from "./agentQuestionPorts";
+  remoteAgentThreadRequestGatewayFake,
+  remoteAgentThreadRequestPending,
+  remoteAgentThreadRequestResolved,
+  remoteAgentThreadRequestScopeOf,
+  remoteAgentThreadRequestTurnOf,
+  type RemoteAgentThreadRequestGatewayFake,
+} from "../test/remoteAgentThreadRequestGatewayFake";
+import type { AgentThreadRequestFeed, AgentThreadRequestScope } from "./agentThreadRequestPorts";
+import {
+  AGENT_THREAD_REQUEST_FAILURE_NOTICE_THRESHOLD,
+  AGENT_THREAD_REQUEST_RETRY_BASE_MS,
+} from "./agentThreadRequestStore";
 import type { AgentThreadView } from "./agentThreadPorts";
 import {
+  createRemoteAgentThreadRequestFeed,
+  type RemoteAgentThreadRequestFeed,
+} from "./remoteAgentThreadRequestFeed";
+import { REMOTE_AGENT_THREAD_REQUEST_LEGACY_TICK_MS } from "./remoteAgentThreadRequestWatch";
+import {
+  createUnifiedAgentThreadRequestFeed,
+  type UnifiedAgentThreadRequestFeed,
+} from "./unifiedAgentThreadRequestFeed";
+import {
+  MAX_AGENT_PENDING_INTERACTION_DESCRIBED_LEGACY_THREADS,
+  MAX_AGENT_PENDING_INTERACTION_DESCRIBED_REMOTE_THREADS,
   MAX_AGENT_PENDING_INTERACTION_THREADS,
   useAgentPendingInteractionObservations,
   type AgentPendingInteractionObservations,
 } from "./useAgentPendingInteractions";
 
 const WORKSPACE = "ws";
-const RETRY_AFTER_UNAVAILABLE_MS =
-  AGENT_INTERACTION_RETRY_BASE_MS * 2 ** (AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD - 1);
-const UNAVAILABLE_AFTER_MS = RETRY_AFTER_UNAVAILABLE_MS - AGENT_INTERACTION_RETRY_BASE_MS;
+const ROOT = "/r";
+const STARTED_AT = 1_760_000_000_000;
+const RUNNER = "runner-1";
+const UNAVAILABLE_AFTER_MS =
+  AGENT_THREAD_REQUEST_RETRY_BASE_MS *
+  (2 ** (AGENT_THREAD_REQUEST_FAILURE_NOTICE_THRESHOLD - 1) - 1);
+const REACHABLE: RemoteRunnerReachability = { kind: "reachable" };
+const RECONNECTING: RemoteRunnerReachability = { kind: "reconnecting" };
+
+interface ViewOptions {
+  readonly provider?: "claudeCode" | "codex";
+  readonly workspaceId?: string;
+}
 
 function runningView(
   threadId: string,
   turnId: string,
   updatedAtEpochMs: number,
-  options: { readonly provider?: "claudeCode" | "codex"; readonly workspaceId?: string } = {},
+  options: ViewOptions = {},
 ): AgentThreadView {
   return {
     lifecycle: "running",
@@ -39,8 +69,15 @@ function runningView(
       threadId,
       updatedAtEpochMs,
       provider: { kind: options.provider ?? "claudeCode" },
-      owner: { rootKey: "/r", ownerId: options.workspaceId ?? WORKSPACE, repositoryRoot: "/r" },
-      turns: [{ turnId, status: { kind: "running" }, codexTransport: undefined }],
+      owner: { rootKey: ROOT, ownerId: options.workspaceId ?? WORKSPACE, repositoryRoot: ROOT },
+      turns: [
+        {
+          turnId,
+          status: { kind: "running" },
+          codexTransport: undefined,
+          startedAtEpochMs: STARTED_AT,
+        },
+      ],
     },
   } as unknown as AgentThreadView;
 }
@@ -57,73 +94,135 @@ function settledView(threadId: string, turnId: string): AgentThreadView {
   } as AgentThreadView;
 }
 
-interface PendingRequests {
-  readonly approval?: string;
-  readonly question?: string;
+interface RemoteViewOptions {
+  readonly serverId?: string;
+  readonly source?: "snapshot" | "legacy";
+  readonly sequence?: number | null;
+  readonly reachability?: RemoteRunnerReachability;
+  readonly interactiveQuestions?: boolean;
 }
 
-class FakeFeed implements AgentQuestionGateway, AgentInteractionFeed {
+function remoteView(
+  conversationId: string,
+  turnId: string,
+  updatedAtEpochMs: number,
+  options: RemoteViewOptions = {},
+): AgentThreadView {
+  const serverId = options.serverId ?? "srv-a";
+  const sequence = options.sequence ?? null;
+  return {
+    ...runningView(
+      `remote-thread:${serverId}:${RUNNER}:${conversationId}`,
+      turnId,
+      updatedAtEpochMs,
+    ),
+    execution: {
+      kind: "remote",
+      interactiveQuestions: options.interactiveQuestions ?? true,
+      serverId,
+      runnerId: RUNNER,
+      projectId: "project-1",
+      conversationId,
+      latestTaskId: turnId,
+      resume: null,
+      reachability: options.reachability ?? REACHABLE,
+      requests: {
+        source: options.source ?? "snapshot",
+        approvals: true,
+        sequences: sequence === null ? {} : { [turnId]: sequence },
+        awaitingApproval: [],
+      },
+    },
+  } as unknown as AgentThreadView;
+}
+
+function remoteThreadId(conversationId: string, serverId = "srv-a"): string {
+  return `remote-thread:${serverId}:${RUNNER}:${conversationId}`;
+}
+
+function localScope(threadId: string, workspaceId = WORKSPACE): AgentThreadRequestScope {
+  return { rootKey: ROOT, ownerId: agentRootOwnerId(ROOT), threadId, workspaceId };
+}
+
+function approval(turnId: string, id: string, version = 1): AgentRuntimeRequest {
+  return remoteAgentThreadRequestPending(turnId, id, version);
+}
+
+function question(turnId: string, id: string, version = 1): AgentRuntimeRequest {
+  return agentRuntimeRequestOf("pendingQuestion", { turnId, id, version, order: 1 });
+}
+
+function resolved(turnId: string, id: string, version = 3): AgentRuntimeRequest {
+  return remoteAgentThreadRequestResolved(turnId, id, version);
+}
+
+class LocalFeed {
+  readonly fake: AgentThreadRequestFeedFake = agentThreadRequestFeedFake();
   readonly unreadable = new Set<string>();
-  readonly listed: string[] = [];
   hold: Promise<void> | null = null;
-  private readonly feed = agentInteractionFeedFake();
-  private sequence = 0;
-  readonly subscribeInteractions = this.feed.subscribeInteractions;
 
-  get subscriptions(): number {
-    return this.feed.subscribeInteractions.mock.calls.length;
-  }
-
-  get subscribers(): number {
-    return this.feed.subscribers();
+  constructor() {
+    const read = this.fake.currentThreadRequests.getMockImplementation();
+    this.fake.currentThreadRequests.mockImplementation(async (scope, turnIds, cursor) => {
+      if (this.hold !== null) await this.hold;
+      if (this.unreadable.has(scope.threadId)) return Promise.reject(new Error("offline"));
+      expect(read).toBeDefined();
+      return read!(scope, turnIds, cursor);
+    });
   }
 
   get reads(): readonly string[] {
-    return this.feed.currentInteractions.mock.calls.map(
-      ([owner]) => `${owner.workspaceId}:${owner.taskId}`,
+    return this.fake.currentThreadRequests.mock.calls.map(
+      ([scope, turnIds]) => `${scope.workspaceId}:${scope.threadId}:${turnIds.join(",")}`,
     );
   }
 
-  async list(owner: { readonly taskId: string }): Promise<readonly AgentQuestionRequest[]> {
-    this.listed.push(owner.taskId);
-    return [];
+  readsOf(threadId: string, turnId: string, workspaceId = WORKSPACE): number {
+    return this.reads.filter((read) => read === `${workspaceId}:${threadId}:${turnId}`).length;
   }
 
-  answer(): Promise<never> {
-    return Promise.reject(new Error("unused"));
+  seed(threadId: string, requests: readonly AgentRuntimeRequest[], workspaceId = WORKSPACE) {
+    this.fake.record(agentThreadRequestsOf(localScope(threadId, workspaceId), requests));
   }
 
-  async currentInteractions(owner: AgentInteractionOwner): Promise<AgentInteractionSnapshot> {
-    const recorded = this.feed.currentInteractions(owner);
-    if (this.hold !== null) await this.hold;
-    if (this.unreadable.has(owner.taskId)) return Promise.reject(new Error("offline"));
-    return recorded;
-  }
-
-  seed(taskId: string, pending: PendingRequests, workspaceId = WORKSPACE): void {
-    this.feed.record(this.next({ workspaceId, taskId }, pending));
-  }
-
-  push(taskId: string, pending: PendingRequests, workspaceId = WORKSPACE): void {
-    this.feed.publish(this.next({ workspaceId, taskId }, pending));
-  }
-
-  readsOf(taskId: string, workspaceId = WORKSPACE): number {
-    return this.reads.filter((read) => read === `${workspaceId}:${taskId}`).length;
-  }
-
-  private next(owner: AgentInteractionOwner, pending: PendingRequests): AgentInteractionSnapshot {
-    this.sequence += 1;
-    return agentInteractionSnapshotOf(owner, this.sequence, {
-      approvals: requestsOf<AgentApprovalRequest>(owner, pending.approval),
-      questions: requestsOf<AgentQuestionRequest>(owner, pending.question),
-    });
+  push(threadId: string, requests: readonly AgentRuntimeRequest[], workspaceId = WORKSPACE) {
+    this.fake.publish(agentThreadRequestsOf(localScope(threadId, workspaceId), requests));
   }
 }
 
-function requestsOf<Request>(owner: AgentInteractionOwner, id: string | undefined): Request[] {
-  if (id === undefined) return [];
-  return [{ id, taskId: owner.taskId, status: "pending" } as Request];
+interface RemoteHarness {
+  readonly gateway: RemoteAgentThreadRequestGatewayFake;
+  readonly remote: RemoteAgentThreadRequestFeed;
+  readonly feed: UnifiedAgentThreadRequestFeed;
+}
+
+function remoteHarness(): RemoteHarness {
+  const gateway = remoteAgentThreadRequestGatewayFake();
+  const remote = createRemoteAgentThreadRequestFeed(gateway);
+  const feed = createUnifiedAgentThreadRequestFeed({ local: agentThreadRequestFeedFake(), remote });
+  return { gateway, remote, feed };
+}
+
+function target(conversationId: string, serverId = "srv-a") {
+  return { serverId, threadId: conversationId };
+}
+
+function recordedScopeOperations(remote: RemoteAgentThreadRequestFeed) {
+  const operations: Array<readonly [string, "describe" | "release"]> = [];
+  const describe = remote.describe.bind(remote);
+  const release = remote.release.bind(remote);
+  vi.spyOn(remote, "describe").mockImplementation((scope, description) => {
+    operations.push([scope.threadId, "describe"]);
+    return describe(scope, description);
+  });
+  vi.spyOn(remote, "release").mockImplementation((scope) => {
+    operations.push([scope.threadId, "release"]);
+    release(scope);
+  });
+  return {
+    last: (threadId: string) =>
+      operations.filter(([scoped]) => scoped === threadId).slice(-1)[0]?.[1] ?? null,
+  };
 }
 
 let host: HTMLDivElement;
@@ -133,16 +232,45 @@ let observations: AgentPendingInteractionObservations;
 let renders = 0;
 
 function Probe({
-  gateway,
+  children = null,
+  feed,
   pinned = null,
   views,
 }: {
-  readonly gateway: AgentQuestionGateway | null;
+  readonly children?: ReactNode;
+  readonly feed: AgentThreadRequestFeed | null;
   readonly pinned?: string | null;
   readonly views: ReadonlyArray<AgentThreadView>;
 }) {
-  observations = useAgentPendingInteractionObservations(gateway, views, pinned);
+  observations = useAgentPendingInteractionObservations(feed, views, pinned);
   renders += 1;
+  return children;
+}
+
+function OpenThreadDescriber({
+  feed,
+  turnId,
+  view,
+}: {
+  readonly feed: UnifiedAgentThreadRequestFeed;
+  readonly turnId: string;
+  readonly view: AgentThreadView;
+}) {
+  const { serverId, conversationId, requests } = view.execution!;
+  const sequence = requests?.sequences[turnId] ?? null;
+  const scope = useMemo(
+    () => remoteAgentThreadRequestScopeOf(serverId, conversationId),
+    [conversationId, serverId],
+  );
+  useEffect(() => () => feed.release(scope), [feed, scope]);
+  useEffect(() => {
+    feed.describe(scope, {
+      source: "snapshot",
+      reachable: true,
+      turns: [remoteAgentThreadRequestTurnOf(turnId, sequence)],
+      awaiting: [],
+    });
+  }, [feed, scope, sequence, turnId]);
   return null;
 }
 
@@ -159,7 +287,7 @@ function unmount() {
 async function settle() {
   for (let round = 0; round < 20; round += 1) {
     await act(async () => {
-      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1);
     });
   }
 }
@@ -171,13 +299,13 @@ async function elapse(milliseconds: number) {
 }
 
 async function push(
-  feed: FakeFeed,
-  taskId: string,
-  pending: PendingRequests,
+  feed: LocalFeed,
+  threadId: string,
+  requests: readonly AgentRuntimeRequest[],
   workspaceId?: string,
 ) {
   await act(async () => {
-    feed.push(taskId, pending, workspaceId);
+    feed.push(threadId, requests, workspaceId);
   });
 }
 
@@ -198,12 +326,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("useAgentPendingInteractionObservations", () => {
+describe("useAgentPendingInteractionObservations for local threads", () => {
   it("reports a pushed approval and a pushed question without any timer", async () => {
-    const feed = new FakeFeed();
+    const feed = new LocalFeed();
     render(
       <Probe
-        gateway={feed}
+        feed={feed.fake}
         views={[runningView("a", "turn-a", 2), runningView("b", "turn-b", 1)]}
       />,
     );
@@ -211,35 +339,34 @@ describe("useAgentPendingInteractionObservations", () => {
     expect(observations.observed.get("a")).toBeNull();
     expect(observations.observed.get("b")).toBeNull();
 
-    await push(feed, "turn-a", { approval: "req-1" });
-    await push(feed, "turn-b", { question: "q-1" });
+    await push(feed, "a", [approval("turn-a", "req-1")]);
+    await push(feed, "b", [question("turn-b", "q-1")]);
 
     expect(pending("a")).toBe("approval");
     expect(pending("b")).toBe("input");
     expect(observations.observed.get("a")).toEqual({ kind: "approval", id: "req-1" });
     expect(observations.observed.get("b")).toEqual({ kind: "input", id: "q-1" });
-    expect(feed.listed).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it("reports what is already pending when the thread starts being watched", async () => {
-    const feed = new FakeFeed();
-    feed.seed("turn-a", { question: "q-1" });
-    render(<Probe gateway={feed} views={[runningView("a", "turn-a", 1)]} />);
+    const feed = new LocalFeed();
+    feed.seed("a", [question("turn-a", "q-1")]);
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-a", 1)]} />);
     await settle();
 
     expect(pending("a")).toBe("input");
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("clears a pending interaction once it is resolved", async () => {
-    const feed = new FakeFeed();
-    render(<Probe gateway={feed} views={[runningView("a", "turn-a", 1)]} />);
+  it("clears a pending interaction once its record settles", async () => {
+    const feed = new LocalFeed();
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-a", 1)]} />);
     await settle();
-    await push(feed, "turn-a", { approval: "req-1" });
+    await push(feed, "a", [approval("turn-a", "req-1")]);
     expect(pending("a")).toBe("approval");
 
-    await push(feed, "turn-a", {});
+    await push(feed, "a", [resolved("turn-a", "req-1")]);
 
     expect(observations.pending.size).toBe(0);
     expect(observations.observed.get("a")).toBeNull();
@@ -247,21 +374,30 @@ describe("useAgentPendingInteractionObservations", () => {
   });
 
   it("prefers the approval while a question is pending too", async () => {
-    const feed = new FakeFeed();
-    render(<Probe gateway={feed} views={[runningView("a", "turn-a", 1)]} />);
+    const feed = new LocalFeed();
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-a", 1)]} />);
     await settle();
 
-    await push(feed, "turn-a", { approval: "req-1", question: "q-1" });
+    await push(feed, "a", [question("turn-a", "q-1"), approval("turn-a", "req-1")]);
 
     expect(observations.observed.get("a")).toEqual({ kind: "approval", id: "req-1" });
   });
 
-  it("does not report a thread while its interactions cannot be read and reports it once they can", async () => {
-    const feed = new FakeFeed();
-    feed.unreadable.add("turn-b");
+  it("ignores pending requests of an earlier turn of the same thread", async () => {
+    const feed = new LocalFeed();
+    feed.seed("a", [approval("turn-old", "req-old")]);
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-a", 1)]} />);
+    await settle();
+
+    expect(observations.observed.get("a")).toBeNull();
+  });
+
+  it("does not report a thread while its requests cannot be read and reports it once they can", async () => {
+    const feed = new LocalFeed();
+    feed.unreadable.add("b");
     render(
       <Probe
-        gateway={feed}
+        feed={feed.fake}
         views={[runningView("a", "turn-a", 2), runningView("b", "turn-b", 1)]}
       />,
     );
@@ -270,93 +406,97 @@ describe("useAgentPendingInteractionObservations", () => {
     expect(observations.observed.has("b")).toBe(false);
 
     await elapse(UNAVAILABLE_AFTER_MS);
-    expect(feed.readsOf("turn-b")).toBe(AGENT_INTERACTION_FAILURE_NOTICE_THRESHOLD);
+    expect(feed.readsOf("b", "turn-b")).toBe(AGENT_THREAD_REQUEST_FAILURE_NOTICE_THRESHOLD);
     expect(observations.observed.get("a")).toBeNull();
     expect(observations.observed.has("b")).toBe(false);
     expect(observations.pending.has("b")).toBe(false);
 
-    feed.unreadable.delete("turn-b");
-    feed.seed("turn-b", { approval: "req-b" });
-    await elapse(RETRY_AFTER_UNAVAILABLE_MS);
+    feed.unreadable.delete("b");
+    feed.seed("b", [approval("turn-b", "req-b")]);
+    await elapse(
+      AGENT_THREAD_REQUEST_RETRY_BASE_MS * 2 ** AGENT_THREAD_REQUEST_FAILURE_NOTICE_THRESHOLD,
+    );
+    await settle();
 
     expect(observations.observed.get("b")).toEqual({ kind: "approval", id: "req-b" });
-    expect(feed.readsOf("turn-a")).toBe(1);
+    expect(feed.readsOf("a", "turn-a")).toBe(1);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it("stops reporting a removed thread and ignores what is pushed for it afterwards", async () => {
-    const feed = new FakeFeed();
+    const feed = new LocalFeed();
     const a = runningView("a", "turn-a", 2);
     const b = runningView("b", "turn-b", 1);
-    render(<Probe gateway={feed} views={[a, b]} />);
+    render(<Probe feed={feed.fake} views={[a, b]} />);
     await settle();
-    await push(feed, "turn-b", { approval: "req-b" });
+    await push(feed, "b", [approval("turn-b", "req-b")]);
     expect(pending("b")).toBe("approval");
 
-    render(<Probe gateway={feed} views={[a]} />);
+    render(<Probe feed={feed.fake} views={[a]} />);
     expect(observations.observed.has("b")).toBe(false);
     await settle();
     const settled = observations;
     const rendersBefore = renders;
-    await push(feed, "turn-b", { approval: "req-b2" });
+    await push(feed, "b", [approval("turn-b", "req-b2")]);
 
     expect(observations).toBe(settled);
     expect(renders).toBe(rendersBefore);
-    expect(feed.readsOf("turn-a")).toBe(1);
+    expect(feed.readsOf("a", "turn-a")).toBe(1);
   });
 
   it("watches a returning thread afresh instead of replaying what it saw before", async () => {
-    const feed = new FakeFeed();
+    const feed = new LocalFeed();
     const a = runningView("a", "turn-a", 2);
     const b = runningView("b", "turn-b", 1);
-    render(<Probe gateway={feed} views={[a, b]} />);
+    render(<Probe feed={feed.fake} views={[a, b]} />);
     await settle();
-    await push(feed, "turn-b", { approval: "req-b" });
-    render(<Probe gateway={feed} views={[a]} />);
+    await push(feed, "b", [approval("turn-b", "req-b")]);
+    render(<Probe feed={feed.fake} views={[a]} />);
     await settle();
-    feed.seed("turn-b", {});
+    feed.seed("b", [resolved("turn-b", "req-b")]);
 
-    render(<Probe gateway={feed} views={[a, b]} />);
+    render(<Probe feed={feed.fake} views={[a, b]} />);
     expect(observations.observed.has("b")).toBe(false);
     await settle();
 
     expect(observations.observed.get("b")).toBeNull();
-    expect(feed.readsOf("turn-b")).toBe(2);
-    expect(feed.readsOf("turn-a")).toBe(1);
+    expect(feed.readsOf("b", "turn-b")).toBe(2);
+    expect(feed.readsOf("a", "turn-a")).toBe(1);
   });
 
   it("drops the previous turn at once and reports only the new turn of a thread", async () => {
-    const feed = new FakeFeed();
-    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
+    const feed = new LocalFeed();
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-1", 1)]} />);
     await settle();
-    await push(feed, "turn-1", { approval: "req-1" });
+    await push(feed, "a", [approval("turn-1", "req-1")]);
     expect(pending("a")).toBe("approval");
 
-    render(<Probe gateway={feed} views={[runningView("a", "turn-2", 2)]} />);
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-2", 2)]} />);
     expect(observations.observed.has("a")).toBe(false);
     await settle();
     expect(observations.observed.get("a")).toBeNull();
-    expect(feed.readsOf("turn-2")).toBe(1);
+    expect(feed.readsOf("a", "turn-2")).toBe(1);
 
-    await push(feed, "turn-1", { approval: "req-late" });
+    await push(feed, "a", [approval("turn-1", "req-late")]);
     expect(observations.observed.get("a")).toBeNull();
 
-    await push(feed, "turn-2", { question: "q-2" });
+    await push(feed, "a", [question("turn-2", "q-2")]);
     expect(observations.observed.get("a")).toEqual({ kind: "input", id: "q-2" });
   });
 
   it("never publishes a read that settles after its turn was replaced", async () => {
-    const feed = new FakeFeed();
-    feed.seed("turn-1", { approval: "req-1" });
+    const feed = new LocalFeed();
+    feed.seed("a", [approval("turn-1", "req-1")]);
     let release: () => void = () => undefined;
     feed.hold = new Promise<void>((done) => {
       release = done;
     });
-    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
-    await settle();
-    expect(feed.readsOf("turn-1")).toBe(1);
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-1", 1)]} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
 
-    render(<Probe gateway={feed} views={[runningView("a", "turn-2", 2)]} />);
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-2", 2)]} />);
     feed.hold = null;
     await act(async () => {
       release();
@@ -367,71 +507,72 @@ describe("useAgentPendingInteractionObservations", () => {
     expect(observations.observed.get("a")).toBeNull();
   });
 
-  it("treats workspace A, B and A again as separate owners of the same turn", async () => {
-    const feed = new FakeFeed();
+  it("treats workspace A, B and A again as separate owners of the same thread", async () => {
+    const feed = new LocalFeed();
     const inA = runningView("a", "turn-1", 1, { workspaceId: "ws-a" });
     const inB = runningView("a", "turn-1", 1, { workspaceId: "ws-b" });
-    render(<Probe gateway={feed} views={[inA]} />);
+    render(<Probe feed={feed.fake} views={[inA]} />);
     await settle();
-    await push(feed, "turn-1", { approval: "req-a" }, "ws-a");
+    await push(feed, "a", [approval("turn-1", "req-a")], "ws-a");
     expect(pending("a")).toBe("approval");
+    await push(feed, "a", [resolved("turn-1", "req-a")], "ws-a");
+    expect(observations.observed.get("a")).toBeNull();
 
-    render(<Probe gateway={feed} views={[inB]} />);
+    render(<Probe feed={feed.fake} views={[inB]} />);
     expect(observations.observed.has("a")).toBe(false);
     await settle();
     expect(observations.observed.get("a")).toBeNull();
-    await push(feed, "turn-1", { approval: "req-a2" }, "ws-a");
+    await push(feed, "a", [approval("turn-1", "req-a2")], "ws-a");
     expect(observations.observed.get("a")).toBeNull();
 
-    feed.seed("turn-1", {}, "ws-a");
-    render(<Probe gateway={feed} views={[inA]} />);
+    render(<Probe feed={feed.fake} views={[inA]} />);
     expect(observations.observed.has("a")).toBe(false);
     await settle();
 
-    expect(observations.observed.get("a")).toBeNull();
-    expect(feed.readsOf("turn-1", "ws-a")).toBe(2);
-    expect(feed.readsOf("turn-1", "ws-b")).toBe(1);
+    expect(observations.observed.get("a")).toEqual({ kind: "approval", id: "req-a2" });
+    expect(feed.readsOf("a", "turn-1", "ws-a")).toBe(2);
+    expect(feed.readsOf("a", "turn-1", "ws-b")).toBe(1);
   });
 
   it("keeps the result identity while nothing observable changes", async () => {
-    const feed = new FakeFeed();
-    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
+    const feed = new LocalFeed();
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-1", 1)]} />);
     await settle();
-    await push(feed, "turn-1", { approval: "req-1" });
+    await push(feed, "a", [approval("turn-1", "req-1")]);
     const first = observations;
     expect(first.pending.get("a")).toBe("approval");
 
-    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 5)]} />);
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-1", 5)]} />);
     expect(observations).toBe(first);
     expect(observations.pending).toBe(first.pending);
 
-    await push(feed, "turn-1", { approval: "req-1" });
+    await push(feed, "a", [approval("turn-1", "req-1")]);
     const rendersBefore = renders;
-    await push(feed, "turn-1", { approval: "req-1" });
+    await push(feed, "a", [approval("turn-1", "req-1")]);
     expect(observations).toBe(first);
     expect(renders).toBe(rendersBefore);
 
-    await push(feed, "turn-1", { question: "q-1" });
+    await push(feed, "a", [resolved("turn-1", "req-1"), question("turn-1", "q-1")]);
     expect(observations).not.toBe(first);
     expect(pending("a")).toBe("input");
   });
 
   it("keeps its watches when running threads only swap recency order", async () => {
-    const feed = new FakeFeed();
+    const feed = new LocalFeed();
     render(
       <Probe
-        gateway={feed}
+        feed={feed.fake}
         views={[runningView("t1", "turn-1", 1), runningView("t2", "turn-2", 2)]}
       />,
     );
     await settle();
-    await push(feed, "turn-1", { approval: "req-1" });
+    await push(feed, "t1", [approval("turn-1", "req-1")]);
     const before = observations;
     expect(feed.reads).toHaveLength(2);
 
     render(
       <Probe
-        gateway={feed}
+        feed={feed.fake}
         views={[runningView("t1", "turn-1", 3), runningView("t2", "turn-2", 2)]}
       />,
     );
@@ -442,113 +583,333 @@ describe("useAgentPendingInteractionObservations", () => {
   });
 
   it("watches at most the newest 8 running threads", async () => {
-    const feed = new FakeFeed();
+    const feed = new LocalFeed();
     const views = Array.from({ length: 12 }, (_, index) =>
       runningView(`t${index}`, `turn-${index}`, index),
     );
-    render(<Probe gateway={feed} views={views} />);
+    render(<Probe feed={feed.fake} views={views} />);
     await settle();
 
     expect(feed.reads).toHaveLength(MAX_AGENT_PENDING_INTERACTION_THREADS);
-    expect(feed.readsOf("turn-3")).toBe(0);
-    expect(feed.readsOf("turn-4")).toBe(1);
+    expect(feed.readsOf("t3", "turn-3")).toBe(0);
+    expect(feed.readsOf("t4", "turn-4")).toBe(1);
     expect(observations.observed.size).toBe(MAX_AGENT_PENDING_INTERACTION_THREADS);
 
-    await push(feed, "turn-0", { approval: "req-0" });
+    await push(feed, "t0", [approval("turn-0", "req-0")]);
     expect(observations.observed.has("t0")).toBe(false);
     expect(observations.pending.size).toBe(0);
   });
 
   it("always watches the open thread even when it is older than the newest 8", async () => {
-    const feed = new FakeFeed();
+    const feed = new LocalFeed();
     const views = Array.from({ length: 12 }, (_, index) =>
       runningView(`t${index}`, `turn-${index}`, index),
     );
-    render(<Probe gateway={feed} pinned="t0" views={views} />);
+    render(<Probe feed={feed.fake} pinned="t0" views={views} />);
     await settle();
 
     expect(feed.reads).toHaveLength(MAX_AGENT_PENDING_INTERACTION_THREADS);
-    expect(feed.readsOf("turn-0")).toBe(1);
-    expect(feed.readsOf("turn-4")).toBe(0);
+    expect(feed.readsOf("t0", "turn-0")).toBe(1);
+    expect(feed.readsOf("t4", "turn-4")).toBe(0);
 
-    await push(feed, "turn-0", { question: "q-0" });
+    await push(feed, "t0", [question("turn-0", "q-0")]);
     expect(pending("t0")).toBe("input");
   });
 
   it("clears a pending interaction once the thread stops running", async () => {
-    const feed = new FakeFeed();
-    feed.seed("turn-1", { question: "q-1" });
-    render(<Probe gateway={feed} views={[runningView("a", "turn-1", 1)]} />);
+    const feed = new LocalFeed();
+    feed.seed("a", [question("turn-1", "q-1")]);
+    render(<Probe feed={feed.fake} views={[runningView("a", "turn-1", 1)]} />);
     await settle();
     expect(pending("a")).toBe("input");
 
-    render(<Probe gateway={feed} views={[settledView("a", "turn-1")]} />);
+    render(<Probe feed={feed.fake} views={[settledView("a", "turn-1")]} />);
 
     expect(observations.pending.size).toBe(0);
     expect(observations.observed.size).toBe(0);
   });
 
-  it("skips remote threads and Codex exec turns that cannot hold interactions", async () => {
-    const feed = new FakeFeed();
-    const remote = {
-      ...runningView("remote", "turn-r", 3),
-      execution: { kind: "remote", interactiveQuestions: true },
-    } as unknown as AgentThreadView;
+  it("skips Codex exec turns, and remote threads when the feed cannot describe them", async () => {
+    const feed = new LocalFeed();
     render(
       <Probe
-        gateway={feed}
-        views={[remote, runningView("exec", "turn-x", 2, { provider: "codex" })]}
+        feed={feed.fake}
+        views={[
+          remoteView("conv-r", "turn-r", 3),
+          runningView("exec", "turn-x", 2, { provider: "codex" }),
+        ]}
       />,
     );
     await settle();
 
     expect(feed.reads).toEqual([]);
-    expect(feed.listed).toEqual([]);
-    expect(feed.subscriptions).toBe(0);
+    expect(feed.fake.subscribeThreadRequests).not.toHaveBeenCalled();
     expect(observations.observed.size).toBe(0);
   });
 
-  it("observes nothing without a gateway, without a feed or without running threads", async () => {
-    render(<Probe gateway={null} views={[runningView("a", "turn-1", 1)]} />);
+  it("observes nothing without a feed or without running threads", async () => {
+    render(<Probe feed={null} views={[runningView("a", "turn-1", 1)]} />);
     await settle();
     expect(observations.observed.size).toBe(0);
 
-    const list = vi.fn<AgentQuestionGateway["list"]>().mockResolvedValue([]);
-    const pollOnly: AgentQuestionGateway = { list, answer: vi.fn() };
-    render(<Probe gateway={pollOnly} views={[runningView("a", "turn-1", 1)]} />);
-    await settle();
-    expect(observations.observed.size).toBe(0);
-    expect(list).not.toHaveBeenCalled();
-
-    const feed = new FakeFeed();
-    render(<Probe gateway={feed} views={[settledView("a", "turn-1")]} />);
+    const feed = new LocalFeed();
+    render(<Probe feed={feed.fake} views={[settledView("a", "turn-1")]} />);
     await settle();
     expect(feed.reads).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it("releases every watch on unmount and schedules nothing afterwards", async () => {
-    const feed = new FakeFeed();
+    const feed = new LocalFeed();
     render(
       <Probe
-        gateway={feed}
+        feed={feed.fake}
         views={[runningView("a", "turn-a", 2), runningView("b", "turn-b", 1)]}
       />,
     );
     await settle();
-    expect(feed.subscriptions).toBe(1);
-    expect(feed.subscribers).toBe(1);
+    expect(feed.fake.subscribeThreadRequests).toHaveBeenCalledTimes(1);
+    expect(feed.fake.subscribers()).toBe(1);
     const reads = feed.reads.length;
     const rendersBefore = renders;
 
     unmount();
     await settle();
-    feed.push("turn-a", { approval: "req-1" });
+    feed.push("a", [approval("turn-a", "req-1")]);
     await settle();
 
-    expect(feed.subscribers).toBe(0);
+    expect(feed.fake.subscribers()).toBe(0);
     expect(feed.reads).toHaveLength(reads);
     expect(renders).toBe(rendersBefore);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("useAgentPendingInteractionObservations for remote threads", () => {
+  it("shows approval and input badges for running remote threads and clears a settled record", async () => {
+    const { gateway, feed } = remoteHarness();
+    gateway.record(target("conv-1"), [approval("turn-1", "req-1")]);
+    gateway.record(target("conv-2"), [question("turn-2", "q-2")]);
+    render(
+      <Probe
+        feed={feed}
+        views={[
+          remoteView("conv-1", "turn-1", 2, { sequence: 1 }),
+          remoteView("conv-2", "turn-2", 1, { sequence: 1 }),
+        ]}
+      />,
+    );
+    await settle();
+
+    expect(pending(remoteThreadId("conv-1"))).toBe("approval");
+    expect(pending(remoteThreadId("conv-2"))).toBe("input");
+
+    gateway.record(target("conv-1"), [resolved("turn-1", "req-1")]);
+    render(
+      <Probe
+        feed={feed}
+        views={[
+          remoteView("conv-1", "turn-1", 2, { sequence: 2 }),
+          remoteView("conv-2", "turn-2", 1, { sequence: 1 }),
+        ]}
+      />,
+    );
+    await settle();
+    expect(observations.observed.get(remoteThreadId("conv-1"))).toBeNull();
+    expect(pending(remoteThreadId("conv-2"))).toBe("input");
+  });
+
+  it("reads a snapshot runner once per sequence move and keeps no timer while idle", async () => {
+    const { gateway, feed } = remoteHarness();
+    render(<Probe feed={feed} views={[remoteView("conv-1", "turn-1", 1, { sequence: 1 })]} />);
+    await settle();
+    const reads = gateway.readsOf(target("conv-1")).length;
+    expect(observations.observed.get(remoteThreadId("conv-1"))).toBeNull();
+
+    await elapse(30_000);
+    expect(gateway.readsOf(target("conv-1"))).toHaveLength(reads);
+    expect(vi.getTimerCount()).toBe(0);
+
+    gateway.record(target("conv-1"), [approval("turn-1", "req-1")]);
+    render(<Probe feed={feed} views={[remoteView("conv-1", "turn-1", 1, { sequence: 2 })]} />);
+    await settle();
+
+    expect(gateway.readsOf(target("conv-1"))).toHaveLength(reads + 1);
+    expect(pending(remoteThreadId("conv-1"))).toBe("approval");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("releases a remote thread that stops being a target and stops its legacy ticks", async () => {
+    const { gateway, remote, feed } = remoteHarness();
+    const release = vi.spyOn(remote, "release");
+    const kept = runningView("local", "turn-l", 5);
+    const legacy = remoteView("conv-1", "turn-1", 1, { source: "legacy" });
+    render(<Probe feed={feed} views={[kept, legacy]} />);
+    await settle();
+    await elapse(REMOTE_AGENT_THREAD_REQUEST_LEGACY_TICK_MS * 2);
+    expect(gateway.readsOf(target("conv-1")).length).toBeGreaterThan(1);
+
+    render(<Probe feed={feed} views={[kept]} />);
+    await settle();
+    const reads = gateway.readsOf(target("conv-1")).length;
+    await elapse(REMOTE_AGENT_THREAD_REQUEST_LEGACY_TICK_MS * 5);
+
+    expect(release).toHaveBeenCalledWith(remoteAgentThreadRequestScopeOf("srv-a", "conv-1"));
+    expect(gateway.readsOf(target("conv-1"))).toHaveLength(reads);
+    expect(observations.observed.has(remoteThreadId("conv-1"))).toBe(false);
+  });
+
+  it("keeps the last badge of an unreachable remote thread without reading it", async () => {
+    const { gateway, feed } = remoteHarness();
+    gateway.record(target("conv-1"), [approval("turn-1", "req-1")]);
+    render(<Probe feed={feed} views={[remoteView("conv-1", "turn-1", 1, { source: "legacy" })]} />);
+    await settle();
+    expect(pending(remoteThreadId("conv-1"))).toBe("approval");
+
+    render(
+      <Probe
+        feed={feed}
+        views={[
+          remoteView("conv-1", "turn-1", 1, { source: "legacy", reachability: RECONNECTING }),
+        ]}
+      />,
+    );
+    await settle();
+    const reads = gateway.readsOf(target("conv-1")).length;
+    await elapse(REMOTE_AGENT_THREAD_REQUEST_LEGACY_TICK_MS * 10);
+
+    expect(gateway.readsOf(target("conv-1"))).toHaveLength(reads);
+    expect(pending(remoteThreadId("conv-1"))).toBe("approval");
+  });
+
+  it("describes at most the capped number of remote threads and of legacy threads", async () => {
+    const { remote, feed } = remoteHarness();
+    const describe = vi.spyOn(remote, "describe");
+    const snapshots = Array.from({ length: 6 }, (_, index) =>
+      remoteView(`conv-s${index}`, `turn-s${index}`, 100 + index),
+    );
+    const legacies = Array.from({ length: 3 }, (_, index) =>
+      remoteView(`conv-l${index}`, `turn-l${index}`, 200 + index, { source: "legacy" }),
+    );
+    render(<Probe feed={feed} views={[...snapshots, ...legacies]} />);
+    await settle();
+
+    const described = new Set(describe.mock.calls.map(([scope]) => scope.threadId));
+    expect(described.size).toBe(MAX_AGENT_PENDING_INTERACTION_DESCRIBED_REMOTE_THREADS);
+    expect([...described].filter((id) => id.startsWith("conv-l"))).toHaveLength(
+      MAX_AGENT_PENDING_INTERACTION_DESCRIBED_LEGACY_THREADS,
+    );
+    expect(observations.observed.size).toBe(MAX_AGENT_PENDING_INTERACTION_DESCRIBED_REMOTE_THREADS);
+  });
+
+  it("leaves the open remote thread to its own describer and still shows its badge", async () => {
+    const { gateway, remote, feed } = remoteHarness();
+    const describe = vi.spyOn(remote, "describe");
+    const release = vi.spyOn(remote, "release");
+    gateway.record(target("conv-open"), [approval("turn-o", "req-o")]);
+    const open = remoteView("conv-open", "turn-o", 1, { sequence: 1 });
+    render(
+      <Probe feed={feed} pinned={remoteThreadId("conv-open")} views={[open]}>
+        <OpenThreadDescriber feed={feed} turnId="turn-o" view={open} />
+      </Probe>,
+    );
+    await settle();
+
+    expect(pending(remoteThreadId("conv-open"))).toBe("approval");
+    expect(describe.mock.calls.map(([scope]) => scope.threadId)).toEqual(["conv-open"]);
+
+    unmount();
+    expect(release.mock.calls.map(([scope]) => scope.threadId)).toEqual(["conv-open"]);
+  });
+
+  it("keeps both scopes described when the selection swaps between two remote threads", async () => {
+    const { gateway, remote, feed } = remoteHarness();
+    const operations = recordedScopeOperations(remote);
+    const viewsAt = (sequence: number) => [
+      remoteView("conv-a", "turn-a", 2, { sequence }),
+      remoteView("conv-b", "turn-b", 1, { sequence }),
+    ];
+    const selected = (pinned: "conv-a" | "conv-b", sequence: number) => {
+      const views = viewsAt(sequence);
+      const open = pinned === "conv-a" ? views[0]! : views[1]!;
+      return (
+        <Probe feed={feed} pinned={remoteThreadId(pinned)} views={views}>
+          <OpenThreadDescriber
+            feed={feed}
+            turnId={pinned === "conv-a" ? "turn-a" : "turn-b"}
+            view={open}
+          />
+        </Probe>
+      );
+    };
+    render(selected("conv-a", 1));
+    await settle();
+    expect(observations.observed.get(remoteThreadId("conv-a"))).toBeNull();
+    expect(observations.observed.get(remoteThreadId("conv-b"))).toBeNull();
+
+    render(selected("conv-b", 1));
+    await settle();
+    expect(operations.last("conv-a")).toBe("describe");
+    expect(operations.last("conv-b")).toBe("describe");
+    gateway.record(target("conv-a"), [approval("turn-a", "req-a")]);
+    gateway.record(target("conv-b"), [question("turn-b", "q-b")]);
+    render(selected("conv-b", 2));
+    await settle();
+
+    expect(pending(remoteThreadId("conv-a"))).toBe("approval");
+    expect(pending(remoteThreadId("conv-b"))).toBe("input");
+
+    render(selected("conv-a", 2));
+    await settle();
+    expect(operations.last("conv-a")).toBe("describe");
+    expect(operations.last("conv-b")).toBe("describe");
+    gateway.record(target("conv-a"), [resolved("turn-a", "req-a")]);
+    gateway.record(target("conv-b"), [approval("turn-b", "req-b")]);
+    render(selected("conv-a", 3));
+    await settle();
+
+    expect(observations.observed.get(remoteThreadId("conv-a"))).toBeNull();
+    expect(pending(remoteThreadId("conv-b"))).toBe("approval");
+  });
+
+  it("does not watch a legacy remote thread whose runner has no interactive questions", async () => {
+    const { gateway, feed } = remoteHarness();
+    render(
+      <Probe
+        feed={feed}
+        views={[
+          remoteView("conv-1", "turn-1", 1, { source: "legacy", interactiveQuestions: false }),
+        ]}
+      />,
+    );
+    await settle();
+    await elapse(REMOTE_AGENT_THREAD_REQUEST_LEGACY_TICK_MS * 3);
+
+    expect(gateway.threadRequests).not.toHaveBeenCalled();
+    expect(observations.observed.size).toBe(0);
+  });
+
+  it("releases every described remote scope on unmount and schedules nothing afterwards", async () => {
+    const { remote, feed } = remoteHarness();
+    const release = vi.spyOn(remote, "release");
+    render(
+      <Probe
+        feed={feed}
+        views={[
+          remoteView("conv-1", "turn-1", 2, { sequence: 1 }),
+          remoteView("conv-2", "turn-2", 1, { source: "legacy" }),
+        ]}
+      />,
+    );
+    await settle();
+
+    unmount();
+    await settle();
+
+    expect(release.mock.calls.map(([scope]) => scope.threadId).sort()).toEqual([
+      "conv-1",
+      "conv-2",
+    ]);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

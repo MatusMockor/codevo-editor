@@ -10,7 +10,12 @@ import type {
 import { agentRootOwnerId } from "../../domain/agentProject";
 import { MAX_AGENT_THREAD_REQUESTS_RETAINED } from "../../domain/agentRuntimeRequest";
 import type { AgentTurn, AgentTurnEvent } from "../../domain/agentThread";
-import { TauriAgentThreadRequestFeed } from "../../infrastructure/tauriAgentThreadRequestFeed";
+import { createRemoteAgentThreadRequestFeed } from "../../application/remoteAgentThreadRequestFeed";
+import {
+  createUnifiedAgentThreadRequestFeed,
+  remoteAgentThreadRequestControl,
+} from "../../application/unifiedAgentThreadRequestFeed";
+import { remoteAgentThreadRequestGatewayFake } from "../../test/remoteAgentThreadRequestGatewayFake";
 import {
   agentRuntimeRequestOf,
   agentThreadRequestFeedFake,
@@ -18,6 +23,7 @@ import {
 } from "../../test/agentThreadRequestFeedFake";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { createWorkbenchComposition } from "../../workbenchComposition";
+import { AgentThreadRequestsScope } from "./AgentThreadRequestsScope";
 import { AgentThreadSession } from "./AgentThreadSession";
 import {
   AGENT_REQUEST_HISTORY_INCOMPLETE_NOTE,
@@ -133,12 +139,14 @@ describe("runtime request records in the open thread's transcript", () => {
 
   function session(view: AgentThreadView) {
     return (
-      <AgentThreadSession
-        thread={view}
-        composerRepositoryLabel="app"
-        onReviewInDiff={() => {}}
-        turnRenderProbe={(turnId) => turnRenders.push(turnId)}
-      />
+      <AgentThreadRequestsScope thread={view}>
+        <AgentThreadSession
+          thread={view}
+          composerRepositoryLabel="app"
+          onReviewInDiff={() => {}}
+          turnRenderProbe={(turnId) => turnRenders.push(turnId)}
+        />
+      </AgentThreadRequestsScope>
     );
   }
 
@@ -363,23 +371,36 @@ describe("runtime request records in the open thread's transcript", () => {
     expect(historyNotes()).toEqual([]);
   });
 
-  it("does not watch a thread that runs on a remote runner", async () => {
-    const turns = [turnOf(FIRST_TURN, QUESTION_EVENTS)];
-    render(threadView(turns, REMOTE));
-    const today = markup();
-    const feed = agentThreadRequestFeedFake();
-    feed.record(
-      agentThreadRequestsOf(SCOPE, [
-        agentRuntimeRequestOf("resolvedQuestion", { turnId: FIRST_TURN, anchorToolId: ASK_TOOL }),
-      ]),
-    );
+  it("shows history rows of a remote thread from the remote feed it describes", async () => {
+    const gateway = remoteAgentThreadRequestGatewayFake();
+    const remote = createRemoteAgentThreadRequestFeed(gateway);
+    const local = agentThreadRequestFeedFake();
+    const feed = createUnifiedAgentThreadRequestFeed({ local, remote });
+    const describe = vi.spyOn(remote, "describe");
+    const target = { serverId: REMOTE.serverId, threadId: REMOTE.conversationId };
+    gateway.record(target, [
+      agentRuntimeRequestOf("resolvedQuestion", { turnId: FIRST_TURN, anchorToolId: ASK_TOOL }),
+    ]);
+    const facts = {
+      source: "snapshot",
+      approvals: true,
+      sequences: { [FIRST_TURN]: 4 },
+      awaitingApproval: [],
+    } as const;
 
-    render(threadView(turns, REMOTE), feed);
-    await act(async () => Promise.resolve());
+    render(threadView([turnOf(FIRST_TURN, QUESTION_EVENTS)], { ...REMOTE, requests: facts }), feed);
 
-    expect(feed.subscribeThreadRequests).not.toHaveBeenCalled();
-    expect(feed.currentThreadRequests).not.toHaveBeenCalled();
-    expect(markup()).toBe(today);
+    await waitForReact(() => expect(requestIds()).toEqual(["req-0005"]));
+    expect(local.currentThreadRequests).not.toHaveBeenCalled();
+    expect(describe.mock.calls[0]?.[1]).toEqual({
+      source: "snapshot",
+      reachable: true,
+      turns: [
+        { turnId: FIRST_TURN, startedAtEpochMs: 1_000, interactionSequence: 4, terminal: true },
+      ],
+      awaiting: [],
+    });
+    expect(gateway.readsOf(target)[0]?.turns.map((turn) => turn.turnId)).toEqual([FIRST_TURN]);
   });
 
   it("never shows another thread's records after the open thread changes", async () => {
@@ -407,13 +428,15 @@ describe("runtime request records in the open thread's transcript", () => {
 });
 
 describe("the thread request feed in the app composition", () => {
-  it("is created once per workbench and handed to the agent surfaces", () => {
+  it("is one router per workbench, handed to the agent surfaces and the pre-dispatch check", () => {
     vi.stubGlobal("localStorage", window.localStorage);
     const composition = createWorkbenchComposition();
+    const other = createWorkbenchComposition();
     vi.unstubAllGlobals();
 
-    expect(composition.agentSurfaceGateways.threadRequestFeed).toBeInstanceOf(
-      TauriAgentThreadRequestFeed,
-    );
+    const feed = composition.agentSurfaceGateways.threadRequestFeed;
+    expect(remoteAgentThreadRequestControl(feed)).toBe(feed);
+    expect(composition.agentControllerGateways.agentThreadRequestFeed).toBe(feed);
+    expect(other.agentSurfaceGateways.threadRequestFeed).not.toBe(feed);
   });
 });

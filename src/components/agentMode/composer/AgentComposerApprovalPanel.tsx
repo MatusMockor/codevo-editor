@@ -22,6 +22,8 @@ export function AgentComposerApprovalPanel({
   const [moreOpen, setMoreOpen] = useState(false);
   const { view } = interaction;
   const busy = interaction.sending || sending;
+  const locked = busy || interaction.disabled === true;
+  const note = interaction.note ?? null;
   const primary = view.actions.find((action) => action.tone === "primary") ?? null;
   const danger = view.actions.find((action) => action.tone === "danger") ?? null;
   const secondary = view.actions.filter((action) => action.tone === "secondary");
@@ -30,7 +32,7 @@ export function AgentComposerApprovalPanel({
   useAgentComposerPanelFocus(rootRef);
 
   const decide = (decision: AgentApprovalDecision): void => {
-    if (busy || sendingRef.current) return;
+    if (locked || sendingRef.current) return;
     sendingRef.current = true;
     setSending(true);
     setSendError(null);
@@ -73,6 +75,7 @@ export function AgentComposerApprovalPanel({
             {fact.label}: {fact.value}
           </p>
         ))}
+        {note !== null && <p className="cv-composer-interaction__note">{note}</p>}
         {error !== null && (
           <p className="cv-composer-interaction__error" role="alert">
             {error}
@@ -92,7 +95,7 @@ export function AgentComposerApprovalPanel({
                 aria-haspopup="menu"
                 aria-label="More approval options"
                 className="cv-icon-button cv-icon-button--sm"
-                disabled={busy}
+                disabled={locked}
                 onClick={() => setMoreOpen((open) => !open)}
                 ref={moreRef}
                 title="More options"
@@ -118,12 +121,12 @@ export function AgentComposerApprovalPanel({
             </>
           )}
           {danger !== null && (
-            <Button disabled={busy} onClick={() => decide(danger.decision)}>
+            <Button disabled={locked} onClick={() => decide(danger.decision)}>
               {danger.label}
             </Button>
           )}
           {primary !== null && (
-            <Button disabled={busy} onClick={() => decide(primary.decision)} variant="primary">
+            <Button disabled={locked} onClick={() => decide(primary.decision)} variant="primary">
               {primary.label}
             </Button>
           )}
