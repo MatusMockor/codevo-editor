@@ -7,6 +7,40 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.119] - 2026-10-14
+
+### Added
+
+- Agent approvals on server threads can be answered from the composer, with
+  **Approve for this turn**. This requires an updated Codevo Runner with
+  interactive approval support; older runners keep denying approvals automatically.
+- Settings > MCP servers has a search field that filters by name, status and the
+  details shown in each row, ignoring case and diacritics.
+- Cmd+= and Cmd+- zoom the whole window like VS Code, from -8 to +8 levels in
+  20 percent steps, and Cmd+0 resets it. The level is remembered and applied
+  before the window appears.
+
+### Changed
+
+- Pending agent questions and approvals, their history rows and sidebar badges come
+  from a per-thread request history kept with the conversation, for local and
+  server threads alike. Cards survive restarts and stay readable when the history
+  cannot be read.
+- Cmd+Plus and Cmd+Minus zoom the window instead of the editor font. Editor font
+  size stays available as separate commands.
+
+### Fixed
+
+- Local threads in nested repositories no longer show "Questions could not be
+  refreshed. Reconnecting...".
+- The left sidebar no longer leaves a gap at the end until the window is resized.
+- A push rejected by the remote is no longer reported as a sign-in failure when the
+  remote path or branch name contains 403 or publickey.
+- Ignored files in nested repositories are dimmed according to that repository's
+  own .gitignore.
+- JavaScript test runs no longer pass open files of other workspaces to unrelated
+  processes, and no longer hang when another process holds their output pipe.
+
 ## [0.2.0-beta.118] - 2026-10-13
 
 ### Added
