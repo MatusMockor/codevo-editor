@@ -10,6 +10,7 @@ import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnCha
 import { TauriAgentTaskGateway } from "./infrastructure/tauriAgentTaskGateway";
 import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
 import { TauriAgentRootLeaseGateway } from "./infrastructure/tauriAgentRootLeaseGateway";
+import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
 import { TauriAppUpdaterGateway } from "./infrastructure/tauriAppUpdaterGateway";
 import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsAppUpdaterPreferencesGateway";
 import { BrowserTextClipboardGateway } from "./infrastructure/browserTextClipboardGateway";
@@ -149,6 +150,18 @@ describe("workbench live-document runtime composition", () => {
     expect(composition.agentSurfaceGateways.fileSearch).toBe(
       composition.workspaceGateways.fileSearch,
     );
+  });
+
+  it("owns one combined question and approval gateway per workbench for the agent surfaces", () => {
+    const first = createWorkbenchComposition();
+    const second = createWorkbenchComposition();
+    const gateway = first.agentSurfaceGateways.questionGateway;
+
+    expect(gateway).toBeInstanceOf(TauriAgentQuestionGateway);
+    expect(first.agentSurfaceGateways.questionGateway).toBe(gateway);
+    expect(gateway.answer).toBeTypeOf("function");
+    expect(gateway.answerApproval).toBeTypeOf("function");
+    expect(second.agentSurfaceGateways.questionGateway).not.toBe(gateway);
   });
 
   it("constructs one independent provider gateway per workbench", () => {

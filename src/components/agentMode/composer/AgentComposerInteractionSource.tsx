@@ -1,7 +1,6 @@
 import { useContext, useLayoutEffect, useMemo, useState } from "react";
 import { AgentThreadRequestDeliveryLedger } from "../../../application/agentThreadRequestDeliveryLedger";
-import { isAgentApprovalGateway } from "../../../application/agentApprovalPorts";
-import type { AgentQuestionGateway } from "../../../application/agentQuestionPorts";
+import type { AgentQuestionApprovalGateway } from "../../../application/agentApprovalPorts";
 import {
   localAgentThreadRequestResponder,
   remoteAgentThreadRequestResponder,
@@ -26,7 +25,7 @@ import {
 } from "./agentComposerInteraction";
 
 export interface AgentComposerInteractionSourceProps {
-  readonly gateway: AgentQuestionGateway | null;
+  readonly gateway: AgentQuestionApprovalGateway | null;
   readonly threadId: string | null;
   readonly questionAttachments?: AgentComposerQuestionAttachmentTarget;
   onChange(interaction: AgentComposerInteraction | null): void;
@@ -84,7 +83,7 @@ export function AgentComposerInteractionSource({
 
 function useResponder(
   feed: AgentThreadRequestFeed | null,
-  gateway: AgentQuestionGateway | null,
+  gateway: AgentQuestionApprovalGateway | null,
   owned: AgentThreadRequestsScopeValue | null,
 ): AgentThreadRequestResponder | null {
   const scope = owned?.scope ?? null;
@@ -95,8 +94,7 @@ function useResponder(
       const control = remoteAgentThreadRequestControl(feed);
       return control === null ? null : remoteAgentThreadRequestResponder(control, scope);
     }
-    if (gateway === null || !isAgentApprovalGateway(gateway) || scope.workspaceId === null)
-      return null;
+    if (gateway === null || scope.workspaceId === null) return null;
     return localAgentThreadRequestResponder(gateway, scope.workspaceId);
   }, [feed, gateway, remote, scope]);
 }

@@ -18,7 +18,6 @@ import type { AgentProjectCreationSession } from "./agentProjectCreationSession"
 import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
 import { TauriLocalProjectCloneGateway } from "../../infrastructure/tauriLocalProjectCloneGateway";
-import { TauriAgentQuestionGateway } from "../../infrastructure/tauriAgentQuestionGateway";
 import { TauriAgentArtifactGateway } from "../../infrastructure/tauriAgentArtifactGateway";
 import { TauriAgentArtifactPreviewGateway } from "../../infrastructure/tauriAgentArtifactPreviewGateway";
 import { TauriAgentArtifactFileGateway } from "../../infrastructure/tauriAgentArtifactFileGateway";
@@ -108,7 +107,7 @@ import {
   TauriRevealPathGateway,
   type RevealPathGateway,
 } from "../../infrastructure/tauriRevealPathGateway";
-import { AgentModeView } from "./AgentModeView";
+import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 import { AgentNewThreadDefaultsProvider } from "./AgentNewThreadDefaultsProvider";
 import { configuredProviderVersion } from "./agentModelProviderState";
 import {
@@ -183,6 +182,7 @@ export type AgentWorkbenchScreenWorkbench = Pick<
   };
 
 export interface AgentWorkbenchScreenProps {
+  readonly questionGateway?: AgentModeViewProps["questionGateway"];
   readonly workbench: AgentWorkbenchScreenWorkbench;
   readonly activeFileRevealSignal: number;
   readonly fileStatusesByPath: Record<string, GitChangeStatus>;
@@ -218,7 +218,6 @@ const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
 const DEFAULT_LOCAL_CLONE_GATEWAY = new TauriLocalProjectCloneGateway();
 const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
-const DEFAULT_QUESTION_GATEWAY = new TauriAgentQuestionGateway();
 const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
 const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
 const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
@@ -243,6 +242,7 @@ interface PersistedProviderProjection {
 }
 
 export function AgentWorkbenchScreen({
+  questionGateway = null,
   activeFileRevealSignal,
   directoryListingGateway = DEFAULT_DIRECTORY_LISTING_GATEWAY,
   localCloneGateway = DEFAULT_LOCAL_CLONE_GATEWAY,
@@ -804,7 +804,7 @@ export function AgentWorkbenchScreen({
             followUpBehavior={appSettings.agentFollowUpBehavior}
             dictationLanguage={appSettings.speechDictationLanguage}
             composerVisible={threadViewVisible && !rightPanelCoversThread(agentWorkbench.layout)}
-            questionGateway={DEFAULT_QUESTION_GATEWAY}
+            questionGateway={questionGateway}
             artifactLoader={DEFAULT_ARTIFACT_LOADER}
             artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
             imageSurface={DEFAULT_IMAGE_SURFACE}

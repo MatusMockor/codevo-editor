@@ -23,6 +23,7 @@ import { resolveTauriWorkspaceHome } from "./infrastructure/tauriHomeDirectory";
 import { TauriAgentTurnChangesGateway } from "./infrastructure/tauriAgentTurnChangesGateway";
 import { BrowserAgentSidebarRailPreference } from "./infrastructure/browserAgentSidebarRailPreference";
 import { TauriAgentThreadRequestFeed } from "./infrastructure/tauriAgentThreadRequestFeed";
+import { TauriAgentQuestionGateway } from "./infrastructure/tauriAgentQuestionGateway";
 import { TauriRemoteAgentThreadRequestGateway } from "./infrastructure/tauriRemoteAgentThreadRequestGateway";
 import { createRemoteAgentThreadRequestFeed } from "./application/remoteAgentThreadRequestFeed";
 import { createUnifiedAgentThreadRequestFeed } from "./application/unifiedAgentThreadRequestFeed";
@@ -181,6 +182,7 @@ export function createWorkbenchComposition() {
       worktreeFileChanges: workspaceFileChangeGateway,
       fileSearch: workspaceGateway,
       threadRequestFeed: agentThreadRequestFeed,
+      questionGateway: new TauriAgentQuestionGateway(),
     },
     indexProgressGateway: new TauriIndexProgressGateway(),
     javaScriptTypeScriptLanguageServerDiagnosticsGateway: new TauriLanguageServerDiagnosticsGateway(

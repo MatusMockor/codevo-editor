@@ -78,6 +78,8 @@ import { agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
 import type { AgentOutsideTextFile } from "../../application/agentOutsideLinkedFile";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { PREVIEW_REVEAL_DELAY_MS } from "./useDeferredPreviewReveal";
+import * as agentModeView from "./AgentModeView";
+import { localAnswerGatewayFake } from "./agentComposerRequestTestFixtures";
 import {
   ADD_PROJECT_REFUSED_REASON,
   AgentWorkbenchScreen,
@@ -144,6 +146,22 @@ describe("AgentWorkbenchScreen", () => {
     vi.unstubAllGlobals();
     dictationAudio?.restore();
     dictationAudio = null;
+  });
+
+  it("forwards the injected combined gateway and an explicit null to the agent view", () => {
+    const view = vi.spyOn(agentModeView, "AgentModeView");
+    const workbench = createWorkbench(ROOT_A);
+    const gateway = localAnswerGatewayFake();
+    act(() =>
+      root.render(<AgentWorkbenchScreen {...defaultProps(workbench)} questionGateway={gateway} />),
+    );
+    expect(view.mock.lastCall?.[0].questionGateway).toBe(gateway);
+
+    act(() =>
+      root.render(<AgentWorkbenchScreen {...defaultProps(workbench)} questionGateway={null} />),
+    );
+    expect(view.mock.lastCall?.[0].questionGateway).toBeNull();
+    view.mockRestore();
   });
 
   it("isolates a reused thread ID in another workspace and restores the original project selection", async () => {

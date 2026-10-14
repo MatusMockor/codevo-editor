@@ -24,7 +24,7 @@ import { AgentUnconfirmedMessageNotice } from "./AgentUnconfirmedMessageNotice";
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import type { SpeechLanguage } from "../../domain/speechDictation";
 import { useRemoteSurfaceContext } from "./useRemoteSurfaceContext";
-import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
+import type { AgentQuestionApprovalGateway } from "../../application/agentApprovalPorts";
 import { useAgentPendingInteractionObservations } from "./useAgentPendingInteractionObservations";
 import type {
   AgentArtifactLoader,
@@ -181,7 +181,7 @@ export interface AgentModeViewProps {
   readonly followUpBehavior?: AgentFollowUpBehavior;
   readonly dictationLanguage?: SpeechLanguage;
   readonly composerVisible?: boolean;
-  readonly questionGateway?: AgentQuestionGateway | null;
+  readonly questionGateway?: AgentQuestionApprovalGateway | null;
   readonly artifactLoader?: AgentArtifactLoader | null;
   readonly artifactPreview?: AgentArtifactPreviewPort | null;
   readonly imageSurface?: AgentImageSurfacePort | null;

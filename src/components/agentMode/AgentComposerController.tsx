@@ -1,6 +1,6 @@
 import type { AgentFollowUpBehavior } from "../../domain/agentFollowUpBehavior";
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
-import type { AgentQuestionGateway } from "../../application/agentQuestionPorts";
+import type { AgentQuestionApprovalGateway } from "../../application/agentApprovalPorts";
 import {
   agentThreadRequestScopeKey,
   agentThreadRequestViewScope,
@@ -31,7 +31,7 @@ import {
 } from "./useAgentComposerState";
 
 export interface AgentComposerInteractionsInput {
-  readonly gateway: AgentQuestionGateway | null;
+  readonly gateway: AgentQuestionApprovalGateway | null;
   readonly thread: AgentThreadView | null;
 }
 
