@@ -2,7 +2,11 @@ import { useMemo } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { ComposerScope } from "./agentComposerTarget";
-import { environmentComposerScope, projectRunsOn } from "./agentEnvironmentProjects";
+import {
+  environmentComposerScope,
+  missingServerCounterpart,
+  projectRunsOn,
+} from "./agentEnvironmentProjects";
 import type { AgentProjectGroup } from "./agentModePresentation";
 
 export interface AgentDraftEnvironmentOptions {
@@ -20,6 +24,7 @@ export interface AgentDraftEnvironment {
   readonly scope: ComposerScope | null;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly rootKey: string | null;
+  readonly counterpart: AgentProjectDescriptor | null;
 }
 
 export function useAgentDraftEnvironment({
@@ -49,10 +54,25 @@ export function useAgentDraftEnvironment({
     if (!drafting) return displayProjects;
     return displayProjects.filter((project) => projectRunsOn(project.rootKey, selectedServerId));
   }, [drafting, displayProjects, selectedServerId]);
+  const counterpart = useMemo(
+    () =>
+      drafting
+        ? missingServerCounterpart(
+            scope,
+            groups,
+            projects,
+            selectedServerId,
+            repositoryIdentities,
+            projectLinks,
+          )
+        : null,
+    [drafting, scope, groups, projects, selectedServerId, repositoryIdentities, projectLinks],
+  );
   return {
     scope: drafting ? draftScope : scope,
     projects: draftProjects,
     rootKey: draftRootKey(draftScope),
+    counterpart,
   };
 }
 

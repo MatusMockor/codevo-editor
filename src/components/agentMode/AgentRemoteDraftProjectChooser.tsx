@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import { Spinner } from "../../ui/foundation/Spinner";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
+import { AgentRemoteCounterpartRow } from "./AgentRemoteCounterpartRow";
 
 const FILTER_PROJECT_THRESHOLD = 6;
 const MAX_FILTER_CHARS = 120;
@@ -16,11 +17,15 @@ export function AgentRemoteDraftProjectChooser({
   projects,
   onSelect,
   onAddProject,
+  counterpart = null,
+  onAddCounterpart,
   cloneRunning = false,
 }: {
   readonly projects: Projects;
   readonly onSelect: (project: AgentProjectDescriptor) => void;
   readonly onAddProject?: () => void;
+  readonly counterpart?: AgentProjectDescriptor | null;
+  readonly onAddCounterpart?: (initialPath: string | null) => void;
   readonly cloneRunning?: boolean;
 }) {
   const serverName = useSelectedServerName();
@@ -30,6 +35,7 @@ export function AgentRemoteDraftProjectChooser({
   if (!filterable && filter !== "") setFilter("");
   const shared = sharedLabels(available);
   const matching = matchingProjects(available, filter, shared);
+  const offered = onAddCounterpart === undefined ? null : counterpart;
   return (
     <section
       className="agent-session__body agent-session__body--empty cv-no-projects agent-remote-project-choice"
@@ -43,10 +49,11 @@ export function AgentRemoteDraftProjectChooser({
           </p>
         )}
         <h2 className="cv-no-projects__title">Choose a project</h2>
-        <p className="cv-no-projects__text">
-          This thread will run on this server. Pick a project to start.
-        </p>
+        <ChoiceIntro counterpart={offered} others={available.length > 0} />
         <div className="agent-remote-project-choice__card">
+          {offered !== null && onAddCounterpart !== undefined && (
+            <AgentRemoteCounterpartRow onAdd={onAddCounterpart} project={offered} />
+          )}
           {filterable && <ProjectFilter value={filter} onChange={setFilter} />}
           <ProjectList
             emptyText={
@@ -79,6 +86,27 @@ export function AgentRemoteDraftProjectChooser({
         )}
       </div>
     </section>
+  );
+}
+
+function ChoiceIntro({
+  counterpart,
+  others,
+}: {
+  readonly counterpart: AgentProjectDescriptor | null;
+  readonly others: boolean;
+}) {
+  if (counterpart === null)
+    return (
+      <p className="cv-no-projects__text">
+        This thread will run on this server. Pick a project to start.
+      </p>
+    );
+  return (
+    <p className="cv-no-projects__text">
+      <strong>{counterpart.label}</strong> isn’t added on this server yet.
+      {others ? " Add it, or pick another project." : " Add it to start."}
+    </p>
   );
 }
 

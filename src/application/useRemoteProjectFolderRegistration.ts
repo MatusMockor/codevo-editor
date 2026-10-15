@@ -27,6 +27,7 @@ export type RemoteProjectFolderOwner = Readonly<{
   workspaceOwner: string | null;
   directoryGateway: DirectoryListingGateway | null;
   registrationGateway: RemoteProjectRegistrationGateway | null;
+  initialPath?: string;
 }>;
 
 export interface RemoteProjectFolderRegistrationOptions {
@@ -250,7 +251,16 @@ export function useRemoteProjectFolderRegistration(
 }
 
 function freshFlow(owner: RemoteProjectFolderOwner | null): FolderFlow {
-  return { owner, folder: INITIAL_REMOTE_ADD_PROJECT_FOLDER, adoption: null, described: 0 };
+  return { owner, folder: initialFolder(owner), adoption: null, described: 0 };
+}
+
+function initialFolder(owner: RemoteProjectFolderOwner | null): RemoteAddProjectFolderState {
+  const path = owner?.initialPath;
+  if (path === undefined) return INITIAL_REMOTE_ADD_PROJECT_FOLDER;
+  return reduceRemoteAddProjectFolder(INITIAL_REMOTE_ADD_PROJECT_FOLDER, {
+    kind: "chooseFolder",
+    path,
+  });
 }
 
 function describedFlow(
