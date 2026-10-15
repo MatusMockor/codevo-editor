@@ -17,6 +17,7 @@ import { WorkspaceTrustDialogHost } from "./components/projects/WorkspaceTrustDi
 import { QuickInputDialogHost } from "./components/QuickInputDialogHost";
 import { retryableLazy } from "./components/retryableLazy";
 import { useAppWorkbenchThemes } from "./components/useAppWorkbenchThemes";
+import { useTerminalSurfacesIdlePreload } from "./components/useTerminalSurfacesIdlePreload";
 import { WindowChrome } from "./components/WindowChrome";
 import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
 import { workbenchShellPlacement } from "./components/workbenchShellPlacement";
@@ -43,6 +44,7 @@ export interface AgentAppShellProps {
 export function AgentAppShell({ composition }: AgentAppShellProps) {
   const workbench = useAgentAppController(composition, { focusFileSearch: focusAgentFileSearch });
   const prefersLightTheme = usePrefersLightTheme();
+  useTerminalSurfacesIdlePreload();
   const { colorScheme, monacoTheme, terminalTheme } = useAppWorkbenchThemes(
     workbench.appSettings.appearance,
     prefersLightTheme,

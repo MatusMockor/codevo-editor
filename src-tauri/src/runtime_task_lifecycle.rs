@@ -54,7 +54,7 @@ pub(crate) fn shutdown_runtime_processes(app: &AppHandle) -> Result<(), String> 
         logins.shutdown();
     }
     if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
-        supervisor.stop_all();
+        supervisor.shutdown();
     }
     if let Some(provider_runtime) = app.try_state::<Arc<AgentProviderRuntimeRegistry>>() {
         if !provider_runtime.shutdown_operations(Duration::from_secs(2)) {
@@ -94,7 +94,7 @@ pub(crate) fn shutdown_runtime_processes(app: &AppHandle) -> Result<(), String> 
         registry.stop_all();
     }
     if let Some(supervisor) = app.try_state::<TerminalSupervisor>() {
-        supervisor.stop_all();
+        supervisor.shutdown();
     }
     Ok(())
 }

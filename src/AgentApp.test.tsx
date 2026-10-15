@@ -14,6 +14,7 @@ import {
   unmountAgentAppHarnesses,
 } from "./test/agentAppTestHarness";
 import { waitForReact } from "./test/reactTestLifecycle";
+import { fakeTerminalGateway } from "./components/agentMode/agentSurfaceTerminalTestSupport";
 
 const APP_SETTINGS = {
   ...defaultAppSettings(),
@@ -93,6 +94,24 @@ describe("AgentApp", () => {
     expect(app.host.querySelector(".bottom-panel-terminal-title")?.textContent).toContain(
       "Terminal",
     );
+  });
+
+  it("hides the terminal panel synchronously while the shell stop is still pending", async () => {
+    const terminalGateway = fakeTerminalGateway();
+    terminalGateway.stop.mockImplementation(() => new Promise<never>(() => undefined));
+    const app = await renderOpenedApp({ terminalGateway });
+
+    await actAndSettle(() => pressShortcut("j"));
+    await waitForReact(() => expect(terminalGateway.acknowledgeStart).toHaveBeenCalledWith(1));
+    const hide = app.host.querySelector<HTMLButtonElement>('button[aria-label="Hide panel"]');
+    expect(hide).not.toBeNull();
+
+    act(() => hide?.click());
+
+    expect(app.host.querySelector('section[aria-label="Panel"]')).toBeNull();
+    expect(terminalGateway.stop).toHaveBeenCalledTimes(1);
+    expect(terminalGateway.stop).toHaveBeenCalledWith(1);
+    expect(terminalGateway.start).toHaveBeenCalledTimes(1);
   });
 
   it("opens the settings surface and closes it again", async () => {

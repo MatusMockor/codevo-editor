@@ -1,5 +1,6 @@
 import { Maximize2, Minimize2, PanelBottom, PanelRight, X } from "lucide-react";
 import { IconButton } from "../../ui/foundation/IconButton";
+import { preloadTerminalTabsPanel } from "../terminalTabsPanelChunk";
 import {
   agentControlTooltip,
   defaultAgentPanelLayoutShortcuts,
@@ -43,6 +44,8 @@ export function AgentPanelLayoutControls({
         icon={<PanelBottom size={16} />}
         label={TOGGLE_BOTTOM_PANEL_LABEL}
         onClick={onToggleBottomPanel}
+        onFocus={preloadTerminalTabsPanel}
+        onPointerEnter={preloadTerminalTabsPanel}
         pressed={bottomPanelOpen}
         title={agentControlTooltip(TOGGLE_BOTTOM_PANEL_LABEL, chords.bottomPanel)}
       />

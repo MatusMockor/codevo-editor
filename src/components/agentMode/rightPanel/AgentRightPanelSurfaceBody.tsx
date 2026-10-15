@@ -10,6 +10,7 @@ import {
   isRemoteGitShipThread,
   type AgentSurfaceScope,
 } from "../agentSurfacePolicy";
+import { LazyAgentSurfaceTerminal } from "../agentSurfaceTerminalChunk";
 import { AgentDiffSurfaceContainer } from "./diff/AgentDiffSurfaceContainer";
 import { AgentFilesSurface } from "./files/AgentFilesSurface";
 import { AgentGitSurfaceContainer } from "./git/AgentGitSurfaceContainer";
@@ -26,9 +27,6 @@ const PullRequestSurface = memo(AgentPullRequestSurfaceContainer);
 
 const LazyAgentSurfaceHistory = lazy(() =>
   import("../AgentSurfaceHistory").then((module) => ({ default: module.AgentSurfaceHistory })),
-);
-const LazyAgentSurfaceTerminal = lazy(() =>
-  import("../AgentSurfaceTerminal").then((module) => ({ default: module.AgentSurfaceTerminal })),
 );
 
 export type AgentSurfaceTerminalPanelProps = Omit<

@@ -22,6 +22,7 @@ impl TerminalSupervisor {
                 profile,
                 shell_integration_base_dir,
                 size,
+                ticket: self.start_ticket(),
             },
             spawner,
             sink,
@@ -88,6 +89,8 @@ impl TerminalSupervisor {
             cwd,
             workspace_root,
         } = roots;
+        let ticket = options.ticket;
+        let _start_lease = self.admission.begin_start(ticket, &workspace_root)?;
         let session_id = self.next_session_id.fetch_add(1, Ordering::SeqCst);
         #[cfg(test)]
         let fault = options.fault;
@@ -166,6 +169,12 @@ impl TerminalSupervisor {
                 return Err(error.to_string());
             }
         };
+        if let Err(error) = self.admission.admit(ticket, &workspace_root) {
+            drop(sessions);
+            drop(child_tx);
+            abort_unpublished_start(child, reader, Some(waiter), &start_gate, &stop_requested);
+            return Err(error);
+        }
         let child = child.take();
         if let Err(error) = child_tx.send(child) {
             abort_unpublished_start(

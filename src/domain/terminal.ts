@@ -29,6 +29,12 @@ export interface TerminalProfile {
   label: string;
 }
 
+export const DEFAULT_TERMINAL_PROFILE_ID = "default";
+
+export function terminalProfileKey(profileId: string | null): string {
+  return profileId || DEFAULT_TERMINAL_PROFILE_ID;
+}
+
 export type TerminalUnsubscribeFn = () => void;
 
 export type TerminalLaunchTarget =

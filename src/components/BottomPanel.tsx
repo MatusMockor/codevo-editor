@@ -1,12 +1,17 @@
 import { ShieldCheck, Terminal, X } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent } from "react";
 import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
+import {
+  cachedTerminalProfiles,
+  loadTerminalProfiles,
+} from "../application/terminalProfileCatalog";
 import type { WorkbenchNotice } from "../domain/workbenchNotice";
 import type { TerminalTheme } from "../domain/settings";
 import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
 import { workspaceRelativePath } from "../domain/pathDerivation";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import { LazyTerminalTabsPanel } from "./terminalTabsPanelChunk";
 
 export interface BottomPanelProps {
   onClose(): void;
@@ -24,12 +29,6 @@ export interface BottomPanelProps {
   workspaceTrusted: boolean;
 }
 
-const LazyTerminalTabsPanel = lazy(() =>
-  import("./TerminalTabsPanel").then((module) => ({
-    default: module.TerminalTabsPanel,
-  })),
-);
-
 export function BottomPanel({
   onClose,
   onOpenProblem,
@@ -45,8 +44,12 @@ export function BottomPanel({
   workspaceRoot,
   workspaceTrusted,
 }: BottomPanelProps) {
-  const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([]);
-  const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<string | null>(null);
+  const [terminalProfiles, setTerminalProfiles] = useState<readonly TerminalProfile[]>(
+    () => cachedTerminalProfiles(terminalGateway) ?? [],
+  );
+  const [selectedTerminalProfileId, setSelectedTerminalProfileId] = useState<string | null>(() =>
+    preferredTerminalProfileId(cachedTerminalProfiles(terminalGateway) ?? [], null),
+  );
   const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
   const [terminalToolbarHost, setTerminalToolbarHost] = useState<HTMLDivElement | null>(null);
   const workspaceRootRef = useRef(workspaceRoot);
@@ -59,21 +62,14 @@ export function BottomPanel({
   useEffect(() => {
     let cancelled = false;
 
-    terminalGateway
-      .listProfiles()
+    loadTerminalProfiles(terminalGateway)
       .then((profiles) => {
         if (cancelled) {
           return;
         }
 
         setTerminalProfiles(profiles);
-        setSelectedTerminalProfileId((current) => {
-          if (profiles.some((profile) => profile.id === current)) {
-            return current;
-          }
-
-          return profiles[0]?.id ?? null;
-        });
+        setSelectedTerminalProfileId((current) => preferredTerminalProfileId(profiles, current));
       })
       .catch(() => {
         if (cancelled) {
@@ -218,6 +214,17 @@ export function BottomPanel({
       </div>
     </section>
   );
+}
+
+function preferredTerminalProfileId(
+  profiles: readonly TerminalProfile[],
+  current: string | null,
+): string | null {
+  if (profiles.some((profile) => profile.id === current)) {
+    return current;
+  }
+
+  return profiles[0]?.id ?? null;
 }
 
 function terminalTabsOwnerKey(ownerKey: string | null, rootPath: string | null): string {

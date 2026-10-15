@@ -13,7 +13,7 @@ use crate::{
     terminal::{AppHandleTerminalEventSink, TerminalProfile, TerminalRuntimeStatus, TerminalSize},
     terminal_session::{
         LocalTerminalProfileProvider, PortablePtySpawner, TerminalLaunchRoots,
-        TerminalProfileProvider, TerminalStartOptions, TerminalSupervisor,
+        TerminalProfileProvider, TerminalStartOptions, TerminalStartTicket, TerminalSupervisor,
     },
     trust::WorkspaceTrustService,
     workspace_registry::WorkspaceRegistry,
@@ -172,18 +172,51 @@ fn while_workspace_trusted<T>(
     result
 }
 
-#[allow(clippy::too_many_arguments)]
+async fn run_off_ui_runtime<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("Terminal command worker failed: {error}"))?
+}
+
 #[tauri::command]
-pub(crate) fn start_terminal_session(
+pub(crate) async fn start_terminal_session(
     root_path: String,
     profile_id: Option<String>,
     terminal_shell_integration_enabled: bool,
     size: TerminalSize,
     target: Option<TerminalLaunchTarget>,
     app: AppHandle,
-    registry: State<'_, WorkspaceRegistry>,
-    supervisor: State<'_, TerminalSupervisor>,
 ) -> Result<TerminalRuntimeStatus, String> {
+    let ticket = app.state::<TerminalSupervisor>().start_ticket();
+    run_off_ui_runtime(move || {
+        start_terminal_session_blocking(
+            root_path,
+            profile_id,
+            terminal_shell_integration_enabled,
+            size,
+            target,
+            ticket,
+            &app,
+        )
+    })
+    .await
+}
+
+fn start_terminal_session_blocking(
+    root_path: String,
+    profile_id: Option<String>,
+    terminal_shell_integration_enabled: bool,
+    size: TerminalSize,
+    target: Option<TerminalLaunchTarget>,
+    ticket: TerminalStartTicket,
+    app: &AppHandle,
+) -> Result<TerminalRuntimeStatus, String> {
+    let registry = app.state::<WorkspaceRegistry>();
+    let supervisor = app.state::<TerminalSupervisor>();
     let trust = app.state::<Mutex<WorkspaceTrustService>>();
     let executable_environment = app
         .state::<Arc<AgentCliDiscovery>>()
@@ -215,6 +248,7 @@ pub(crate) fn start_terminal_session(
                 profile: profile_provider.resolve_profile(profile_id.as_deref())?,
                 shell_integration_base_dir,
                 size,
+                ticket,
             },
             &PortablePtySpawner,
             Arc::new(AppHandleTerminalEventSink::new(app.clone())),
@@ -559,7 +593,7 @@ pub(crate) fn list_terminal_profiles() -> Result<Vec<TerminalProfile>, String> {
 }
 
 #[tauri::command]
-pub(crate) fn acknowledge_terminal_session_start(
+pub(crate) async fn acknowledge_terminal_session_start(
     session_id: u64,
     supervisor: State<'_, TerminalSupervisor>,
 ) -> Result<(), String> {
@@ -585,44 +619,97 @@ pub(crate) fn resize_terminal_session(
 }
 
 #[tauri::command]
-pub(crate) fn stop_terminal_session(
+pub(crate) async fn stop_terminal_session(
     session_id: u64,
     app: AppHandle,
-    tasks: State<'_, NodePackageTaskRegistry>,
-    supervisor: State<'_, TerminalSupervisor>,
 ) -> Result<TerminalRuntimeStatus, String> {
-    tasks.request_stop_session(
-        session_id,
-        &crate::node_package_tasks::AppNodePackageTaskEventSink(app),
-    );
-    supervisor.stop(session_id)
-}
-
-#[tauri::command]
-pub(crate) fn stop_terminal_sessions_for_root(
-    root_path: String,
-    app: AppHandle,
-    registry: State<'_, WorkspaceRegistry>,
-    tasks: State<'_, NodePackageTaskRegistry>,
-    supervisor: State<'_, TerminalSupervisor>,
-) -> Result<(), String> {
-    let root = canonicalize_workspace_root(&root_path)?;
-    if let Ok(descriptor) = registry.descriptor_for_registered_path(&root) {
-        tasks.request_stop_workspace_with_sink(
-            &descriptor.workspace_id,
+    run_off_ui_runtime(move || {
+        app.state::<NodePackageTaskRegistry>().request_stop_session(
+            session_id,
             &crate::node_package_tasks::AppNodePackageTaskEventSink(app.clone()),
         );
-    }
-    supervisor.stop_root(&root)
+        app.state::<TerminalSupervisor>().stop(session_id)
+    })
+    .await
 }
 
 #[tauri::command]
-pub(crate) fn stop_all_terminal_sessions(
+pub(crate) async fn stop_terminal_sessions_for_root(
+    root_path: String,
     app: AppHandle,
-    tasks: State<'_, NodePackageTaskRegistry>,
-    supervisor: State<'_, TerminalSupervisor>,
 ) -> Result<(), String> {
-    tasks.request_stop_all(&crate::node_package_tasks::AppNodePackageTaskEventSink(app));
-    supervisor.stop_all();
-    Ok(())
+    run_off_ui_runtime(move || {
+        let root = canonicalize_workspace_root(&root_path)?;
+        if let Ok(descriptor) = app
+            .state::<WorkspaceRegistry>()
+            .descriptor_for_registered_path(&root)
+        {
+            app.state::<NodePackageTaskRegistry>()
+                .request_stop_workspace_with_sink(
+                    &descriptor.workspace_id,
+                    &crate::node_package_tasks::AppNodePackageTaskEventSink(app.clone()),
+                );
+        }
+        app.state::<TerminalSupervisor>().stop_root(&root)
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn stop_all_terminal_sessions(app: AppHandle) -> Result<(), String> {
+    run_off_ui_runtime(move || {
+        app.state::<NodePackageTaskRegistry>()
+            .request_stop_all(&crate::node_package_tasks::AppNodePackageTaskEventSink(
+                app.clone(),
+            ));
+        app.state::<TerminalSupervisor>().stop_all();
+        Ok(())
+    })
+    .await
+}
+
+#[cfg(test)]
+mod off_ui_runtime_tests {
+    use super::run_off_ui_runtime;
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn a_slow_terminal_command_does_not_block_a_concurrent_command() {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let slow = tauri::async_runtime::spawn(run_off_ui_runtime(move || {
+            entered_tx.send(()).map_err(|error| error.to_string())?;
+            release_rx
+                .recv_timeout(Duration::from_secs(5))
+                .map_err(|error| error.to_string())
+        }));
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("slow discovery entered");
+
+        let started = Instant::now();
+        let fast = tauri::async_runtime::block_on(run_off_ui_runtime(|| Ok(7_u8)));
+
+        assert_eq!(fast, Ok(7));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        release_tx.send(()).expect("release slow discovery");
+        assert_eq!(
+            tauri::async_runtime::block_on(slow).expect("slow command task"),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_panicking_terminal_command_reports_an_error_instead_of_unwinding() {
+        let result = tauri::async_runtime::block_on(run_off_ui_runtime(|| -> Result<(), String> {
+            panic!("injected terminal command panic")
+        }));
+
+        assert!(result
+            .expect_err("panic becomes an error")
+            .starts_with("Terminal command worker failed"));
+    }
 }

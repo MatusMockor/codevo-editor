@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import type { TerminalTheme } from "../domain/settings";
-import type { TerminalGateway } from "../domain/terminal";
+import { terminalProfileKey, type TerminalGateway } from "../domain/terminal";
 import type { TerminalRuntimeStatus, TerminalSize } from "../domain/terminal";
 import { createTerminalSession, type TerminalSession } from "./terminalSession";
 import "@xterm/xterm/css/xterm.css";
@@ -71,6 +71,9 @@ export function TerminalPanel({
   const semanticSessionRef = useRef(semanticSession);
   semanticSessionRef.current = semanticSession;
   const semanticSessionKey = semanticSession?.key ?? null;
+  const profileIdRef = useRef(profileId);
+  profileIdRef.current = profileId;
+  const sessionProfileKey = terminalProfileKey(profileId);
 
   useEffect(() => {
     const host = terminalHostRef.current;
@@ -134,7 +137,7 @@ export function TerminalPanel({
         void mountedSemanticSession?.settle(sessionId, exitCode);
       },
       onSessionStartFailed: () => mountedSemanticSession?.cancelStart(),
-      profileId,
+      profileId: profileIdRef.current,
       rootPath,
       shellIntegrationEnabled,
       startSession: mountedSemanticSession
@@ -205,7 +208,7 @@ export function TerminalPanel({
       onSessionReadyRef.current?.(null);
       onCwdChangeRef.current?.(null);
     };
-  }, [profileId, rootPath, semanticSessionKey, shellIntegrationEnabled, terminalGateway]);
+  }, [rootPath, semanticSessionKey, sessionProfileKey, shellIntegrationEnabled, terminalGateway]);
 
   useEffect(() => {
     const terminal = terminalRef.current;

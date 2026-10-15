@@ -20,6 +20,7 @@ fn process_tree_terminator_escalates_without_blocking_on_stuck_waiter() {
         Box::new(signal_sender),
         Duration::from_millis(10),
         Duration::from_millis(10),
+        Duration::from_millis(10),
     );
     let waiter_gate = Arc::new((Mutex::new(false), Condvar::new()));
     let waiter_thread_gate = Arc::clone(&waiter_gate);
@@ -44,7 +45,7 @@ fn process_tree_terminator_escalates_without_blocking_on_stuck_waiter() {
         .expect("termination remained blocked on the independently gated waiter");
     assert_eq!(
         signals.lock().expect("signals").as_slice(),
-        &[(42, libc::SIGTERM), (42, libc::SIGKILL)]
+        &[(42, libc::SIGHUP), (42, libc::SIGTERM), (42, libc::SIGKILL)]
     );
     assert_eq!(*killed.lock().expect("killed"), 0);
     waiter_release.release();

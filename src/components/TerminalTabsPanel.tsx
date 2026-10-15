@@ -17,7 +17,7 @@ import {
   type TerminalTabSet,
 } from "../domain/terminalTabSet";
 import type { TerminalTheme } from "../domain/settings";
-import type { TerminalGateway } from "../domain/terminal";
+import { terminalProfileKey, type TerminalGateway } from "../domain/terminal";
 import type {
   AgentProviderSignInSurface,
   AgentProviderSignInTerminalIntent,
@@ -245,7 +245,11 @@ export function TerminalTabsPanel(props: TerminalTabsPanelProps) {
     const tabId = activeTabIdRef.current;
     if (!tabId || !liveTabIdsRef.current.has(tabId)) return;
     const current = runtimeRef.current.get(tabId);
-    if (!current || current.signInIntent !== undefined || current.profileId === props.profileId)
+    if (
+      !current ||
+      current.signInIntent !== undefined ||
+      terminalProfileKey(current.profileId) === terminalProfileKey(props.profileId)
+    )
       return;
     const next = new Map(runtimeRef.current);
     next.set(tabId, {

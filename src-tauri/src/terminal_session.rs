@@ -73,6 +73,7 @@ pub(crate) struct TerminalStartOptions<'a> {
     #[cfg(test)]
     pub(crate) fault: Option<TerminalStartFault>,
     pub(crate) profile: TerminalProfile,
+    pub(crate) ticket: TerminalStartTicket,
     pub(crate) shell_integration_base_dir: Option<PathBuf>,
     pub(crate) size: TerminalSize,
 }
@@ -170,17 +171,26 @@ const TERMINAL_THREAD_JOIN_TIMEOUT: Duration = Duration::from_millis(250);
 pub struct TerminalSupervisor {
     next_session_id: AtomicU64,
     next_task_id: AtomicU64,
+    admission: start_admission::TerminalStartAdmission,
+    reapers: Arc<reaper::TerminalReaperTracker>,
     sessions: Arc<Mutex<HashMap<u64, RunningTerminalSession>>>,
 }
 
 #[path = "terminal_session/start.rs"]
 mod start;
+#[path = "terminal_session/reaper.rs"]
+mod reaper;
+#[path = "terminal_session/start_admission.rs"]
+mod start_admission;
+pub(crate) use start_admission::TerminalStartTicket;
 
 impl TerminalSupervisor {
     pub fn new() -> Self {
         Self {
             next_session_id: AtomicU64::new(1),
             next_task_id: AtomicU64::new(1),
+            admission: start_admission::TerminalStartAdmission::default(),
+            reapers: Arc::default(),
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -206,6 +216,7 @@ impl TerminalSupervisor {
                     label: "Semantic operation".to_string(),
                 },
                 shell_integration_base_dir: None,
+                ticket: self.start_ticket(),
                 size,
             },
             spawner,
@@ -222,39 +233,6 @@ impl TerminalSupervisor {
             Arc::clone(&session.start_gate)
         };
         start_gate.release();
-        Ok(())
-    }
-
-    pub fn stop_root(&self, root: &Path) -> Result<(), String> {
-        let sessions = {
-            let mut sessions = self.sessions.lock().map_err(|error| error.to_string())?;
-            let session_ids = sessions
-                .iter()
-                .filter_map(|(session_id, session)| {
-                    if session.workspace_root == root {
-                        Some(*session_id)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            session_ids
-                .into_iter()
-                .filter_map(|session_id| {
-                    sessions
-                        .remove(&session_id)
-                        .map(|session| (session_id, session))
-                })
-                .collect::<Vec<_>>()
-        };
-
-        for (session_id, session) in sessions {
-            let sink = Arc::clone(&session.sink);
-            terminate_session(session);
-            sink.emit_status(TerminalRuntimeStatus::Stopped { session_id });
-        }
-
         Ok(())
     }
 
@@ -327,44 +305,12 @@ impl TerminalSupervisor {
         session.resizer.resize(size)
     }
 
-    pub fn stop(&self, session_id: u64) -> Result<TerminalRuntimeStatus, String> {
-        let session = match self.take_session(session_id) {
-            Some(session) => session,
-            None => {
-                return Ok(TerminalRuntimeStatus::Stopped { session_id });
-            }
-        };
-        let sink = Arc::clone(&session.sink);
-        terminate_session(session);
-        let status = TerminalRuntimeStatus::Stopped { session_id };
-        sink.emit_status(status.clone());
-        Ok(status)
-    }
-
-    pub fn stop_all(&self) {
-        let sessions = match self.sessions.lock() {
-            Ok(mut sessions) => sessions
-                .drain()
-                .map(|(_, session)| session)
-                .collect::<Vec<_>>(),
-            Err(_) => Vec::new(),
-        };
-
-        for session in sessions {
-            terminate_session(session);
-        }
-    }
-
     fn session_writer(&self, session_id: u64) -> Option<Arc<Mutex<Box<dyn Write + Send>>>> {
         self.sessions
             .lock()
             .ok()?
             .get(&session_id)
             .map(|session| Arc::clone(&session.writer))
-    }
-
-    fn take_session(&self, session_id: u64) -> Option<RunningTerminalSession> {
-        self.sessions.lock().ok()?.remove(&session_id)
     }
 }
 
@@ -376,7 +322,7 @@ impl Default for TerminalSupervisor {
 
 impl Drop for TerminalSupervisor {
     fn drop(&mut self) {
-        self.stop_all();
+        self.shutdown();
     }
 }
 
@@ -635,7 +581,52 @@ fn validate_private_directory(path: &Path, metadata: &fs::Metadata) -> io::Resul
     Ok(())
 }
 
+fn owned_file_has_contents(path: &Path, contents: &str) -> bool {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() != contents.len() as u64
+    {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.permissions().mode() & 0o777 != 0o600
+        {
+            return false;
+        }
+    }
+
+    let mut options = OpenOptions::new();
+    options.read(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+
+    let Ok(file) = options.open(path) else {
+        return false;
+    };
+    let mut existing = Vec::with_capacity(contents.len());
+    file.take(contents.len() as u64 + 1)
+        .read_to_end(&mut existing)
+        .is_ok()
+        && existing == contents.as_bytes()
+}
+
 fn write_owned_file(path: PathBuf, contents: &str) -> io::Result<()> {
+    if owned_file_has_contents(&path, contents) {
+        return Ok(());
+    }
+
     match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             return Err(io::Error::new(
@@ -738,6 +729,8 @@ fn shell_label(shell: &str) -> String {
 mod tests {
     #[path = "terminal_session_ownership_tests.rs"]
     mod ownership_tests;
+    #[path = "terminal_session_reaper_tests.rs"]
+    mod reaper_tests;
     #[path = "terminal_session_stuck_waiter_tests.rs"]
     mod stuck_waiter_tests;
 
@@ -1257,6 +1250,43 @@ mod tests {
         let _ = std::fs::remove_dir_all(app_data);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn shell_integration_rewrites_only_missing_or_changed_rc_files() {
+        let app_data = shell_integration_test_data_dir("cache");
+        let directory = prepare_shell_integration(&app_data).expect("shell integration directory");
+        let bash_rc = directory.join("editor-shell-integration.bash");
+        let zshrc = directory.join(".zshrc");
+        let original = std::fs::read_to_string(&bash_rc).expect("bash rc contents");
+        let marker = std::time::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&bash_rc)
+            .expect("open bash rc")
+            .set_modified(marker)
+            .expect("mark bash rc");
+        std::fs::write(&zshrc, "tampered").expect("tamper zshrc");
+
+        prepare_shell_integration(&app_data).expect("prepared again");
+
+        assert_eq!(
+            std::fs::metadata(&bash_rc)
+                .expect("bash rc metadata")
+                .modified()
+                .expect("bash rc mtime"),
+            marker
+        );
+        assert_eq!(
+            std::fs::read_to_string(&bash_rc).expect("bash rc contents"),
+            original
+        );
+        assert_ne!(
+            std::fs::read_to_string(&zshrc).expect("zshrc contents"),
+            "tampered"
+        );
+        let _ = std::fs::remove_dir_all(app_data);
+    }
+
     fn shell_integration_test_data_dir(name: &str) -> PathBuf {
         std::env::current_dir()
             .expect("current directory")
@@ -1475,6 +1505,10 @@ mod tests {
                 .expect("signals")
                 .push((process_group_id, signal));
             Ok(())
+        }
+
+        fn group_exists(&self, _process_group_id: i32) -> bool {
+            true
         }
     }
 

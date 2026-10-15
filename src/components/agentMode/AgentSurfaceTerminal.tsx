@@ -1,6 +1,7 @@
-import { Suspense, lazy, useMemo } from "react";
+import { Suspense, useMemo } from "react";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { TerminalTabsExternalStrip } from "../TerminalTabsPanel";
+import { LazyTerminalTabsPanel } from "../terminalTabsPanelChunk";
 import type { TerminalTheme } from "../../domain/settings";
 import {
   DEFAULT_TERMINAL_LAUNCH_TARGET,
@@ -20,10 +21,6 @@ export const SURFACE_TERMINAL_GONE_MESSAGE = "This thread's checkout is gone.";
 export const SURFACE_TERMINAL_UNTRUSTED_MESSAGE =
   "Project unavailable. Reopen it or check its workspace settings.";
 export const SURFACE_TERMINAL_FOREIGN_ROOT_MESSAGE = SURFACE_FOREIGN_ROOT_TERMINAL_REASON;
-
-const LazyTerminalTabsPanel = lazy(() =>
-  import("../TerminalTabsPanel").then((module) => ({ default: module.TerminalTabsPanel })),
-);
 
 export interface AgentSurfaceTerminalProps {
   readonly thread: AgentThreadView | null;
