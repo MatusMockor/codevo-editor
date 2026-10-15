@@ -7,11 +7,39 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.126] - 2026-10-15
+
+### Added
+
+- The Files tab opens files in a built-in read-only viewer with syntax
+  highlighting, line numbers, word wrap, copy actions, and a rendered/source
+  toggle for Markdown. The file tree stays on the right of the viewer at every
+  panel width and can be hidden from the header. Files larger than 1 MB show the
+  first 1 MB with a note, and binary files show a notice.
+- Syntax highlighting runs in the background and is shared by the Files viewer,
+  the Diff tab, code blocks in the chat, and tool output. Dockerfiles, YAML,
+  TOML, Python, Rust, Go, shell scripts, SCSS, XML, and JSONC are now colored.
+- The Diff tab highlights code in both unified and side-by-side layouts and
+  remembers the layout and word wrap.
+- JSON tool output is shown indented and colored, without changing its values.
+- The right panel remembers its open tabs for each thread.
+
 ### Changed
 
 - The app is now called Codevo instead of Codevo Editor. The window title, the
   menu bar, the Dock, and the release names say "Codevo", and a fresh download
   installs `Codevo.app`.
+
+### Fixed
+
+- Closing the terminal with X hides it immediately; the shell is stopped in the
+  background instead of stalling the window for up to a second and a half.
+- Opening the terminal starts its shell once instead of twice, and the terminal
+  loads faster.
+- YAML keys, HTML tags and attributes, TOML and .env keys, Markdown headings, and
+  diff lines get their own colors instead of the string or text color.
+- A file opened in maximized mode no longer appears underneath the panel and keeps
+  its highlighting.
 
 ### Removed
 
