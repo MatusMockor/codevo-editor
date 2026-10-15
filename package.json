@@ -1,7 +1,7 @@
 {
   "name": "codevo-editor",
   "private": true,
-  "version": "0.2.0-beta.126",
+  "version": "0.2.0-beta.127",
   "description": "Codevo is a desktop app for running Claude Code and Codex agents on your projects",
   "type": "module",
   "scripts": {
