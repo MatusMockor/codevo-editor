@@ -7,6 +7,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.124] - 2026-10-15
+
+### Added
+
+- Settings > MCP servers shows a **Check again** button in the header of each
+  provider, next to the time of its last check. It re-checks that provider only,
+  stays disabled with a **Checking** note while the check runs, and is available
+  after a failed first check as well.
+
 ## [0.2.0-beta.123] - 2026-10-15
 
 ### Fixed
