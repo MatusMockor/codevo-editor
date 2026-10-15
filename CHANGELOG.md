@@ -7,6 +7,19 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.128] - 2026-10-16
+
+### Changed
+
+- The Files panel is quieter and more compact, in the style of T3 Code. The file
+  tree uses the same font size as the rest of the interface instead of the code
+  font size, with shorter rows, chevrons for folders, and icons only for files.
+  The viewer header shows only word wrap, the file tree toggle, and a **...** menu
+  with Copy path, Copy contents, Reload file, and Collapse all folders. The file
+  search field no longer shows a shortcut badge (Cmd+P still focuses it).
+- Code in the Files viewer still follows **Settings > General > Code font size**,
+  with slightly more line spacing and dimmer line numbers.
+
 ## [0.2.0-beta.127] - 2026-10-15
 
 ### Added
