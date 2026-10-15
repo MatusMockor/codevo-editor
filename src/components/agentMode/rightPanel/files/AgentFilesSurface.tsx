@@ -1,4 +1,4 @@
-import { ChevronsDownUp, RefreshCw, Search } from "lucide-react";
+import { ListChevronsDownUp, RefreshCw, Search } from "lucide-react";
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   MAX_CHECKOUT_FILE_STATUSES,
@@ -22,7 +22,11 @@ import {
 } from "../agentRightPanelContext";
 import { useAgentFileViewerSessions } from "../../../../application/rightPanel/useAgentFileViewerSessions";
 import { AgentFileViewer } from "../fileViewer/AgentFileViewer";
-import { FILE_VIEWER_TREE_BESIDE_MIN_WIDTH_PX } from "../fileViewer/fileViewerModel";
+import {
+  FILE_VIEWER_WIDE_MIN_WIDTH_PX,
+  FILES_TIGHT_BELOW_WIDTH_PX,
+} from "../fileViewer/fileViewerModel";
+import { useFileViewerTreeShown } from "../fileViewer/useFileViewerWrap";
 import { AgentFilesSearchResults } from "./AgentFilesSearchResults";
 import { useAgentFilesViewer, type AgentFilesReveal } from "./useAgentFilesViewer";
 import { useSurfaceWidth } from "./useSurfaceWidth";
@@ -110,7 +114,7 @@ export function AgentFilesSurface({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
   const width = useSurfaceWidth(sectionRef);
-  const [treeBeside, setTreeBeside] = useState(true);
+  const [treeBeside, toggleTreeBeside] = useFileViewerTreeShown();
   const rootPath = fileTree?.tree.rootPath ?? null;
   const searchable = treeShown && fileTree !== null && fileTree.searchFiles !== null;
   const search = useAgentFilesSearch({
@@ -120,8 +124,9 @@ export function AgentFilesSurface({
   });
   const querying = searchable && query.trim() !== "";
   const target = treeShown && fileTree !== null ? viewer.target : null;
-  const wide = width >= FILE_VIEWER_TREE_BESIDE_MIN_WIDTH_PX;
-  const treeColumn = treeShown && fileTree !== null && (target === null || (wide && treeBeside));
+  const narrow = width > 0 && width < FILE_VIEWER_WIDE_MIN_WIDTH_PX;
+  const tight = width > 0 && width < FILES_TIGHT_BELOW_WIDTH_PX;
+  const treeColumn = treeShown && fileTree !== null && (target === null || treeBeside);
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape" && query !== "") {
@@ -139,7 +144,7 @@ export function AgentFilesSurface({
   };
 
   return (
-    <section aria-label="Files" className="cv-files" ref={sectionRef}>
+    <section aria-label="Files" className={surfaceClassName(narrow, tight)} ref={sectionRef}>
       <div
         className={
           target === null
@@ -147,6 +152,22 @@ export function AgentFilesSurface({
             : "cv-files__split cv-files__split--viewer agent-surface__files"
         }
       >
+        {target !== null && (
+          <div className="cv-files__column cv-files__column--main">
+            <AgentFileViewer
+              copyText={context.copyText}
+              onBack={viewer.close}
+              onMarkdownModeChange={viewer.setMarkdownMode}
+              onRefresh={refreshFiles}
+              onRevealDirectory={viewer.revealDirectory}
+              onScrollTopChange={viewer.rememberScroll}
+              owner={viewer.owner}
+              refreshKey={statusRevision + statusRefreshes}
+              target={target}
+              treeToggle={{ shown: treeBeside, onToggle: toggleTreeBeside }}
+            />
+          </div>
+        )}
         {treeColumn && fileTree !== null && (
           <div
             className={
@@ -186,7 +207,7 @@ export function AgentFilesSurface({
                 />
                 <IconButton
                   disabled={querying || fileTree.tree.expandedDirectories.size === 0}
-                  icon={<ChevronsDownUp size={14} />}
+                  icon={<ListChevronsDownUp size={14} />}
                   label="Collapse all folders"
                   onClick={() => collapseAll(fileTree)}
                   size="xs"
@@ -209,27 +230,14 @@ export function AgentFilesSurface({
             {!querying && <AgentSurfaceFileTree {...fileTree} />}
           </div>
         )}
-        {target !== null && (
-          <div className="cv-files__column cv-files__column--main">
-            <AgentFileViewer
-              copyText={context.copyText}
-              onBack={viewer.close}
-              onMarkdownModeChange={viewer.setMarkdownMode}
-              onRefresh={refreshFiles}
-              onRevealDirectory={viewer.revealDirectory}
-              onScrollTopChange={viewer.rememberScroll}
-              owner={viewer.owner}
-              refreshKey={statusRevision + statusRefreshes}
-              target={target}
-              treeToggle={
-                wide ? { shown: treeBeside, onToggle: () => setTreeBeside(!treeBeside) } : null
-              }
-            />
-          </div>
-        )}
       </div>
     </section>
   );
+}
+
+function surfaceClassName(narrow: boolean, tight: boolean): string {
+  if (tight) return "cv-files cv-files--narrow cv-files--tight";
+  return narrow ? "cv-files cv-files--narrow" : "cv-files";
 }
 
 function viewerOwner(context: AgentRightPanelContextValue): string {

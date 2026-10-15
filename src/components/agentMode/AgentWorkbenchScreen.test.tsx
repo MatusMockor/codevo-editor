@@ -116,6 +116,9 @@ describe("AgentWorkbenchScreen", () => {
 
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    if (typeof Element.prototype.scrollIntoView !== "function") {
+      Element.prototype.scrollIntoView = () => undefined;
+    }
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);

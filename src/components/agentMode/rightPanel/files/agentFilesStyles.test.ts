@@ -13,6 +13,15 @@ function declarations(selector: string): ReadonlyMap<string, string> {
   );
 }
 
+function viewerDeclarations(selector: string): ReadonlyMap<string, string> {
+  const rule = viewerRules.find(
+    (candidate) => candidate.selector.replace(/\s+/g, " ") === selector,
+  );
+  return new Map(
+    rule?.declarations.map((declaration) => [declaration.property, declaration.value]) ?? [],
+  );
+}
+
 describe("files surface layout", () => {
   it("fills the surface with the tree and results, with no editor preview", () => {
     expect(declarations(".cv-files__results").get("flex")).toBe("1 1 auto");
@@ -43,6 +52,43 @@ describe("files surface layout", () => {
         )
         .map((rule) => rule.selector),
     ).toEqual([]);
+  });
+
+  it("puts the tree column on the viewer's end side with a start-edge divider", () => {
+    expect(declarations(".cv-files__column--tree").get("width")).toBe("260px");
+    expect(declarations(".cv-files__column--tree").get("box-shadow")).toBe(
+      "var(--cv-edge-start-divider)",
+    );
+    expect(declarations(".cv-files--narrow .cv-files__column--tree").get("width")).toBe("210px");
+    expect(declarations(".cv-files--tight .cv-files__column--tree").get("width")).toBe("180px");
+    expect(rules.some((rule) => rule.declarations.some((item) => item.property === "order"))).toBe(
+      false,
+    );
+  });
+
+  it("keeps the breadcrumb separator outside the clipped crumb", () => {
+    const separator = viewerDeclarations(".cv-file-viewer__crumb-separator");
+    expect(separator.get("flex")).toBe("none");
+    expect(separator.has("overflow")).toBe(false);
+    expect(viewerRules.filter((rule) => rule.selector.includes("::after"))).toEqual([]);
+    expect(viewerDeclarations(".cv-file-viewer__crumb").get("flex-shrink")).toBe("100");
+    expect(viewerDeclarations(".cv-file-viewer__crumb").get("min-width")).toBe("2.5em");
+    expect(viewerDeclarations(".cv-file-viewer__head").get("padding-left")).toBe(
+      "var(--cv-space-3)",
+    );
+  });
+
+  it("clips the viewer header so its tools never spill over the tree", () => {
+    const head = viewerDeclarations(".cv-file-viewer__head");
+    expect(head.get("min-width")).toBe("0");
+    expect(head.get("overflow")).toBe("hidden");
+    expect(viewerDeclarations(".cv-file-viewer__notice").get("flex")).toBe("none");
+  });
+
+  it("pads the line-number gutter away from the edge and the code", () => {
+    expect(
+      viewerDeclarations(".cv-file-viewer__code .highlighted-code__gutter").get("padding"),
+    ).toBe("0 var(--cv-space-4) 0 var(--cv-space-5)");
   });
 
   it("keeps result file names whole and only shortens the directory", () => {

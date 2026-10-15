@@ -33,6 +33,7 @@ let ui: MountedUi | null = null;
 beforeEach(() => {
   vi.useFakeTimers();
   installResizeObserver();
+  window.localStorage.clear();
   if (typeof Element.prototype.scrollIntoView !== "function") {
     Element.prototype.scrollIntoView = () => undefined;
   }
@@ -399,7 +400,7 @@ describe("AgentFilesSurface", () => {
     act(() => option.click());
     expect(viewerPath(host)).toBe("src/app.ts");
 
-    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Back to files"]')?.click());
+    expect(host.querySelector('[aria-label="Back to files"]')).toBeNull();
     const second = host.querySelectorAll<HTMLElement>('[role="option"]')[1];
     if (second === undefined) return;
     press(second, "Enter");
@@ -478,6 +479,7 @@ describe("AgentFilesSurface", () => {
     const host = render({ fileTree: fileTree({ tree: { ...tree(), toggleDirectory } }) });
     const collapse = host.querySelector<HTMLButtonElement>('[aria-label="Collapse all folders"]');
     expect(collapse?.disabled).toBe(false);
+    expect(collapse?.querySelector("svg")?.classList).toContain("lucide-list-chevrons-down-up");
 
     act(() => collapse?.click());
 
@@ -543,7 +545,7 @@ describe("AgentFilesSurface", () => {
     expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
   });
 
-  it("opens a clicked tree file in the viewer in place of the tree on a narrow panel", () => {
+  it("opens a clicked tree file in the viewer with the tree kept after it", () => {
     const onPreviewFile = vi.fn();
     const onOpenFile = vi.fn();
     const host = render({ fileTree: fileTree({ onOpenFile, onPreviewFile }) });
@@ -552,8 +554,10 @@ describe("AgentFilesSurface", () => {
 
     expect(viewerPath(host)).toBe("src/app.ts");
     expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
-    expect(host.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
-    expect(searchField(host)).toBeNull();
+    const columns = [...host.querySelectorAll(".cv-files__split > .cv-files__column")];
+    expect(columns[0]?.querySelector(".cv-file-viewer")).not.toBeNull();
+    expect(columns[1]?.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
+    expect(columns[1]?.contains(searchField(host))).toBe(true);
     expect(onPreviewFile).not.toHaveBeenCalled();
     expect(onOpenFile).not.toHaveBeenCalled();
   });

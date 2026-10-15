@@ -1,14 +1,5 @@
-import {
-  ArrowLeft,
-  ClipboardCopy,
-  Code2,
-  Eye,
-  FolderTree,
-  Link2,
-  RefreshCw,
-  WrapText,
-} from "lucide-react";
-import { useEffect, useState, type KeyboardEvent } from "react";
+import { ArrowLeft } from "lucide-react";
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   useAgentFilePreview,
   type AgentFilePreviewState,
@@ -21,8 +12,10 @@ import {
 } from "../../../../application/rightPanel/useAgentFileViewerSessions";
 import { codeLanguageForPath } from "../../../../domain/codeHighlight/codeLanguage";
 import { IconButton } from "../../../../ui/foundation/IconButton";
+import { useSurfaceWidth } from "../files/useSurfaceWidth";
 import { FileViewerPreviewBody } from "./FileViewerPreviewBody";
-import { fileViewerCrumbs } from "./fileViewerModel";
+import { FileViewerToolbar, type FileViewerToolbarTreeToggle } from "./FileViewerToolbar";
+import { fileViewerCrumbs, fileViewerToolbarMode } from "./fileViewerModel";
 import { useFileViewerWrap } from "./useFileViewerWrap";
 import "./fileViewer.css";
 
@@ -31,10 +24,7 @@ export const FILE_VIEWER_EXTERNAL_NOTE =
   "Read-only snapshot of a file outside this project's files.";
 const COPY_NOTICE_MS = 1_500;
 
-export interface AgentFileViewerTreeToggle {
-  readonly shown: boolean;
-  onToggle(): void;
-}
+export type AgentFileViewerTreeToggle = FileViewerToolbarTreeToggle;
 
 export interface AgentFileViewerProps {
   readonly owner: string | null;
@@ -71,6 +61,9 @@ export function AgentFileViewer(props: AgentFileViewerProps) {
   const markdownMode = target.markdownMode;
   const preview = state.kind === "loaded" ? state.preview : null;
   const copyable = preview?.kind === "text" && !preview.truncated ? preview.contents : null;
+  const backShown = props.treeToggle === null || !props.treeToggle.shown;
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const toolbarMode = fileViewerToolbarMode(useSurfaceWidth(sectionRef));
 
   useEffect(() => {
     if (notice === null) return undefined;
@@ -98,74 +91,42 @@ export function AgentFileViewer(props: AgentFileViewerProps) {
       data-file-viewer-document={document.kind}
       data-file-viewer-path={label}
       onKeyDown={onKeyDown}
+      ref={sectionRef}
     >
       <header className="cv-rp-sub cv-file-viewer__head">
-        <IconButton
-          icon={<ArrowLeft size={14} />}
-          label="Back to files"
-          onClick={props.onBack}
-          size="xs"
+        {backShown && (
+          <IconButton
+            icon={<ArrowLeft size={14} />}
+            label="Back to files"
+            onClick={props.onBack}
+            size="xs"
+          />
+        )}
+        <FileViewerCrumbs
+          currentOnly={toolbarMode === "minimal"}
+          document={document}
+          onRevealDirectory={props.onRevealDirectory}
         />
-        <FileViewerCrumbs document={document} onRevealDirectory={props.onRevealDirectory} />
-        <div className="cv-rp-sub__tools">
-          {notice !== null && (
-            <span className="cv-file-viewer__notice" role="status">
-              {notice}
-            </span>
-          )}
-          {props.treeToggle !== null && (
-            <IconButton
-              icon={<FolderTree size={14} />}
-              label={props.treeToggle.shown ? "Hide file tree" : "Show file tree"}
-              onClick={props.treeToggle.onToggle}
-              pressed={props.treeToggle.shown}
-              size="xs"
-            />
-          )}
-          {markdown && (
-            <IconButton
-              icon={markdownMode === "rendered" ? <Code2 size={14} /> : <Eye size={14} />}
-              label={
-                markdownMode === "rendered" ? "Show Markdown source" : "Show rendered Markdown"
-              }
-              onClick={() =>
-                props.onMarkdownModeChange(markdownMode === "rendered" ? "source" : "rendered")
-              }
-              size="xs"
-            />
-          )}
-          <IconButton
-            icon={<WrapText size={14} />}
-            label="Wrap lines"
-            onClick={toggleWrap}
-            pressed={wrap}
-            size="xs"
-          />
-          <IconButton
-            icon={<Link2 size={14} />}
-            label="Copy path"
-            onClick={() => copy(absolutePath(document), "Path copied.")}
-            size="xs"
-          />
-          <IconButton
-            disabled={copyable === null}
-            icon={<ClipboardCopy size={14} />}
-            label="Copy contents"
-            onClick={() => {
-              if (copyable !== null) copy(copyable, "Contents copied.");
-            }}
-            size="xs"
-          />
-          {workspace !== null && (
-            <IconButton
-              icon={<RefreshCw size={14} />}
-              label="Reload file"
-              onClick={props.onRefresh}
-              size="xs"
-            />
-          )}
-        </div>
+        <FileViewerToolbar
+          canCopyContents={copyable !== null}
+          markdownMode={markdown ? markdownMode : null}
+          mode={toolbarMode}
+          onCopyContents={() => {
+            if (copyable !== null) copy(copyable, "Contents copied.");
+          }}
+          onCopyPath={() => copy(absolutePath(document), "Path copied.")}
+          onMarkdownModeChange={props.onMarkdownModeChange}
+          onReload={workspace === null ? null : props.onRefresh}
+          onToggleWrap={toggleWrap}
+          treeToggle={props.treeToggle}
+          wrap={wrap}
+        />
       </header>
+      {notice !== null && (
+        <p className="cv-file-viewer__notice" role="status">
+          {notice}
+        </p>
+      )}
       {document.kind === "external" && (
         <p className="cv-file-viewer__note" role="note">
           {FILE_VIEWER_EXTERNAL_NOTE}
@@ -202,9 +163,11 @@ export function AgentFileViewer(props: AgentFileViewerProps) {
 }
 
 function FileViewerCrumbs({
+  currentOnly,
   document,
   onRevealDirectory,
 }: {
+  readonly currentOnly: boolean;
   readonly document: AgentFileViewerDocument;
   onRevealDirectory(directory: string): void;
 }) {
@@ -224,21 +187,31 @@ function FileViewerCrumbs({
         const key = `${index}:${crumb.label}`;
         if (directory === null) {
           return (
-            <span aria-current="page" className="cv-file-viewer__crumb-current" key={key}>
+            <span
+              aria-current="page"
+              className="cv-file-viewer__crumb-current"
+              key={key}
+              title={currentOnly ? document.relativePath : undefined}
+            >
               {crumb.label}
             </span>
           );
         }
+        if (currentOnly) return null;
         return (
-          <button
-            className="cv-file-viewer__crumb"
-            key={key}
-            onClick={() => onRevealDirectory(directory)}
-            title={directory}
-            type="button"
-          >
-            {crumb.label}
-          </button>
+          <Fragment key={key}>
+            <button
+              className="cv-file-viewer__crumb"
+              onClick={() => onRevealDirectory(directory)}
+              title={directory}
+              type="button"
+            >
+              {crumb.label}
+            </button>
+            <span aria-hidden="true" className="cv-file-viewer__crumb-separator">
+              ›
+            </span>
+          </Fragment>
         );
       })}
     </nav>

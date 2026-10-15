@@ -71,8 +71,16 @@
 
 .cv-files__column--tree {
   flex: none;
-  width: 280px;
-  box-shadow: var(--cv-edge-end-divider);
+  width: 260px;
+  box-shadow: var(--cv-edge-start-divider);
+}
+
+.cv-files--narrow .cv-files__column--tree {
+  width: 210px;
+}
+
+.cv-files--tight .cv-files__column--tree {
+  width: 180px;
 }
 
 .cv-files__column--main {

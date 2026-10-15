@@ -7,7 +7,14 @@
 }
 
 .cv-file-viewer__head {
+  min-width: 0;
+  overflow: hidden;
   gap: var(--cv-space-1);
+  padding-left: var(--cv-space-3);
+}
+
+.cv-file-viewer__tools {
+  flex: none;
 }
 
 .cv-file-viewer__crumbs {
@@ -22,15 +29,16 @@
 
 .cv-file-viewer__crumb,
 .cv-file-viewer__crumb-current {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .cv-file-viewer__crumb {
-  min-width: 0;
-  flex-shrink: 1;
+  min-width: 2.5em;
+  flex-shrink: 100;
   padding: 0 var(--cv-space-1);
   border: 0;
   border-radius: var(--cv-r-control);
@@ -50,9 +58,9 @@
   box-shadow: var(--cv-ring-focus);
 }
 
-.cv-file-viewer__crumb::after {
-  content: "/";
-  margin-left: var(--cv-space-1);
+.cv-file-viewer__crumb-separator {
+  flex: none;
+  padding: 0 var(--cv-space-1);
   color: var(--cv-fg-subtle);
 }
 
@@ -62,8 +70,15 @@
 }
 
 .cv-file-viewer__notice {
+  flex: none;
+  margin: 0;
+  padding: var(--cv-space-1) var(--cv-space-3);
+  overflow: hidden;
   font-size: var(--cv-t-xs);
   color: var(--cv-fg-subtle);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  box-shadow: var(--cv-edge-bottom-hair);
 }
 
 .cv-file-viewer__body {
@@ -142,6 +157,7 @@
 
 .cv-file-viewer__code .highlighted-code__gutter {
   width: calc(var(--file-viewer-gutter-chars) * 1ch);
+  padding: 0 var(--cv-space-4) 0 var(--cv-space-5);
 }
 
 .cv-file-viewer__markdown {

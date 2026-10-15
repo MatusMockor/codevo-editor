@@ -61,6 +61,9 @@ describe("AgentSurfaceHost", () => {
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     installResizeObserver();
+    if (typeof Element.prototype.scrollIntoView !== "function") {
+      Element.prototype.scrollIntoView = () => undefined;
+    }
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -485,6 +488,7 @@ describe("AgentSurfaceHost", () => {
 
       act(() => row.click());
       await waitForReact(() => expect(viewerFor("users.ts")).not.toBeNull());
+      expect(row.isConnected).toBe(true);
       expect(layout.actions).toEqual([]);
 
       act(() => {

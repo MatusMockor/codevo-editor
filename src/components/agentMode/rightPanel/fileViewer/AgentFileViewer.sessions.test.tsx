@@ -2,6 +2,7 @@
 
 import { act } from "react";
 import { describe, expect, it } from "vitest";
+import { press } from "../../../../ui/foundation/foundationTestSupport";
 import type { AgentThreadView } from "../../../../application/agentThreadPorts";
 import {
   createAgentFileViewerSessions,
@@ -13,7 +14,6 @@ import { rightPanelTestContext } from "../agentRightPanelTestSupport";
 import type { AgentFilesReveal } from "../files/AgentFilesSurface";
 import {
   ROOT,
-  button,
   deferred,
   entry,
   fileTree,
@@ -142,7 +142,7 @@ describe("viewer state per thread", () => {
     const host = render({ reader, sessions, reveal });
     await settle();
     expect(viewerPath(host)).toBe("src/app.ts");
-    act(() => button(host, "Back to files").click());
+    press(host.querySelector<HTMLElement>(".cv-file-viewer") as HTMLElement, "Escape");
 
     unmountSurface();
     const reopened = render({ reader, sessions, reveal });

@@ -1,14 +1,23 @@
 import { useCallback, useState } from "react";
 
 export const FILE_VIEWER_WRAP_STORAGE_KEY = "codevo.fileViewer.wrap";
+export const FILE_VIEWER_TREE_STORAGE_KEY = "codevo.fileViewer.tree";
 
 export function useFileViewerWrap(): readonly [boolean, () => void] {
-  const [wrap, setWrap] = useState(readWrap);
+  return useStoredFlag(FILE_VIEWER_WRAP_STORAGE_KEY, false);
+}
+
+export function useFileViewerTreeShown(): readonly [boolean, () => void] {
+  return useStoredFlag(FILE_VIEWER_TREE_STORAGE_KEY, true);
+}
+
+function useStoredFlag(key: string, fallback: boolean): readonly [boolean, () => void] {
+  const [value, setValue] = useState(() => readFlag(key, fallback));
   const toggle = useCallback(() => {
-    writeWrap(!wrap);
-    setWrap(!wrap);
-  }, [wrap]);
-  return [wrap, toggle] as const;
+    writeFlag(key, !value);
+    setValue(!value);
+  }, [key, value]);
+  return [value, toggle] as const;
 }
 
 function storage(): Storage | null {
@@ -19,17 +28,20 @@ function storage(): Storage | null {
   }
 }
 
-function readWrap(): boolean {
+function readFlag(key: string, fallback: boolean): boolean {
   try {
-    return storage()?.getItem(FILE_VIEWER_WRAP_STORAGE_KEY) === "true";
+    const stored = storage()?.getItem(key);
+    if (stored === "true") return true;
+    if (stored === "false") return false;
+    return fallback;
   } catch {
-    return false;
+    return fallback;
   }
 }
 
-function writeWrap(wrap: boolean): void {
+function writeFlag(key: string, value: boolean): void {
   try {
-    storage()?.setItem(FILE_VIEWER_WRAP_STORAGE_KEY, wrap ? "true" : "false");
+    storage()?.setItem(key, value ? "true" : "false");
   } catch {
     return;
   }

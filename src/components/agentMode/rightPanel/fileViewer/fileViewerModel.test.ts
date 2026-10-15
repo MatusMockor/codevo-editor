@@ -5,6 +5,7 @@ import {
   estimatedBlockHeight,
   fileViewerBlockCount,
   fileViewerCrumbs,
+  fileViewerToolbarMode,
   fileViewerWindow,
   formatFileSize,
   relativePathInTree,
@@ -87,5 +88,18 @@ describe("file viewer sizes", () => {
     expect(truncatedPreviewNote(5 * 1024 * 1024)).toBe(
       "Preview limited to the first 1 MB of a 5 MB file.",
     );
+  });
+});
+
+describe("fileViewerToolbarMode", () => {
+  it.each([
+    [0, "full"],
+    [180, "minimal"],
+    [299, "minimal"],
+    [300, "compact"],
+    [479, "compact"],
+    [480, "full"],
+  ] as const)("budgets a %ipx viewer as %s", (width, mode) => {
+    expect(fileViewerToolbarMode(width)).toBe(mode);
   });
 });

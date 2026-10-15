@@ -27,12 +27,12 @@ import {
   until,
   viewerText,
 } from "./fileViewerTestSupport";
-import { FILE_VIEWER_WRAP_STORAGE_KEY } from "./useFileViewerWrap";
+import { FILE_VIEWER_TREE_STORAGE_KEY, FILE_VIEWER_WRAP_STORAGE_KEY } from "./useFileViewerWrap";
 
 installViewerTestEnvironment();
 
 describe("Files viewer", () => {
-  it("opens a clicked file in the built-in viewer with highlighting and goes back to the tree", async () => {
+  it("opens a clicked file in the built-in viewer beside the tree with highlighting", async () => {
     const { reader, calls } = memoryReader({
       "src/app.ts": text("src/app.ts", "const answer: number = 42;\nexport { answer };\n"),
     });
@@ -42,11 +42,23 @@ describe("Files viewer", () => {
     await settle();
 
     expect(calls).toEqual([{ root: ROOT, path: "src/app.ts" }]);
-    expect(host.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
-    const crumbs = [...host.querySelectorAll('nav[aria-label="File path"] > *')].map(
-      (crumb) => crumb.textContent,
-    );
+    expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
+    const crumbs = [
+      ...host.querySelectorAll('nav[aria-label="File path"] > :not([aria-hidden="true"])'),
+    ].map((crumb) => crumb.textContent);
     expect(crumbs).toEqual(["repo", "src", "app.ts"]);
+    const separators = [
+      ...host.querySelectorAll('nav[aria-label="File path"] > .cv-file-viewer__crumb-separator'),
+    ];
+    expect(separators.map((separator) => separator.textContent)).toEqual(["›", "›"]);
+    expect(separators.every((separator) => separator.getAttribute("aria-hidden") === "true")).toBe(
+      true,
+    );
+    expect(
+      [...host.querySelectorAll(".cv-file-viewer__crumb")].every(
+        (crumb) => crumb.querySelector(".cv-file-viewer__crumb-separator") === null,
+      ),
+    ).toBe(true);
     expect(viewerText(host)).toContain("const answer: number = 42;");
     await until(() => {
       expect(
@@ -55,6 +67,7 @@ describe("Files viewer", () => {
     });
     expect(host.querySelector('[data-line="1"] .highlighted-code__gutter')?.textContent).toBe("1");
 
+    act(() => button(host, "Hide file tree").click());
     act(() => button(host, "Back to files").click());
     expect(host.querySelector(".cv-file-viewer")).toBeNull();
     expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
@@ -151,14 +164,12 @@ describe("Files viewer", () => {
     );
     expect(button(host, "Copy contents").disabled).toBe(true);
 
-    act(() => button(host, "Back to files").click());
     act(() => row(host, `${ROOT}/src/big.ts`).click());
     await settle();
     expect(host.querySelector(".cv-file-viewer__body")?.textContent).toBe(
       "Binary file (2 KB) is not shown.",
     );
 
-    act(() => button(host, "Back to files").click());
     act(() => row(host, `${ROOT}/README.md`).click());
     await settle();
     expect(host.querySelector('.cv-file-viewer [role="alert"]')?.textContent).toBe(
@@ -298,20 +309,164 @@ describe("Files viewer", () => {
     expect(host.querySelector(".cv-file-viewer__notice")?.textContent).toBe("Contents copied.");
   });
 
-  it("keeps the tree beside the viewer when the panel is wide", async () => {
+  it.each([
+    ["narrow", 500],
+    ["wide", 900],
+  ])("keeps the tree after the viewer on a %s panel", async (_label, width) => {
+    StubResizeObserver.width = width;
+    const { reader } = memoryReader({ "src/app.ts": text("src/app.ts", "x") });
+    const host = render({ reader });
+    act(() => row(host, `${ROOT}/src/app.ts`).click());
+    await settle();
+
+    const files = host.querySelector(".cv-files");
+    expect(files?.classList.contains("cv-files--narrow")).toBe(width < 760);
+    const columns = [...host.querySelectorAll(".cv-files__split > .cv-files__column")];
+    expect(columns.map((column) => column.className)).toEqual([
+      "cv-files__column cv-files__column--main",
+      "cv-files__column cv-files__column--tree",
+    ]);
+    expect(columns[0]?.querySelector(".cv-file-viewer")).not.toBeNull();
+    expect(columns[1]?.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
+    expect(row(host, `${ROOT}/src/app.ts`).classList).toContain("active");
+    expect(button(host, "Hide file tree").getAttribute("aria-pressed")).toBe("true");
+    expect(host.querySelector('button[aria-label="Back to files"]')).toBeNull();
+  });
+
+  it("collapses the tree from the header, offers Back only then, and remembers it", async () => {
+    StubResizeObserver.width = 500;
+    const { reader } = memoryReader({ "src/app.ts": text("src/app.ts", "x") });
+    const host = render({ reader });
+    act(() => row(host, `${ROOT}/src/app.ts`).click());
+    await settle();
+
+    act(() => button(host, "Hide file tree").click());
+    expect(host.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
+    expect(host.querySelectorAll(".cv-files__column")).toHaveLength(1);
+    expect(button(host, "Show file tree").getAttribute("aria-pressed")).toBe("false");
+    expect(button(host, "Back to files")).not.toBeNull();
+    expect(window.localStorage.getItem(FILE_VIEWER_TREE_STORAGE_KEY)).toBe("false");
+
+    unmountSurface();
+    const reopened = render({ reader });
+    act(() => row(reopened, `${ROOT}/src/app.ts`).click());
+    await settle();
+    expect(reopened.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
+    expect(button(reopened, "Show file tree")).not.toBeNull();
+
+    act(() => button(reopened, "Show file tree").click());
+    expect(reopened.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
+    expect(reopened.querySelector('button[aria-label="Back to files"]')).toBeNull();
+    expect(window.localStorage.getItem(FILE_VIEWER_TREE_STORAGE_KEY)).toBe("true");
+  });
+
+  it("moves copy path and reload into a More menu when the viewer is narrow", async () => {
+    StubResizeObserver.width = 400;
+    const copyText = vi.fn(async () => undefined);
+    const { reader, calls } = memoryReader({ "src/app.ts": text("src/app.ts", "body") });
+    const host = render({ reader, context: rightPanelTestContext({ copyText }) });
+    act(() => row(host, `${ROOT}/src/app.ts`).click());
+    await settle();
+
+    expect(host.querySelector('button[aria-label="Copy path"]')).toBeNull();
+    expect(host.querySelector('button[aria-label="Reload file"]')).toBeNull();
+    expect(button(host, "Copy contents")).not.toBeNull();
+    const more = button(host, "More file actions");
+    expect(more.getAttribute("aria-haspopup")).toBe("menu");
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => more.click());
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    const menu = document.body.querySelector('[role="menu"][aria-label="More file actions"]');
+    expect(menu).not.toBeNull();
+    expect(
+      [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])].map((item) => item.textContent),
+    ).toEqual(["Copy path", "Reload file"]);
+    act(() => menuItem("Copy path").click());
+    await settle();
+    expect(copyText.mock.calls).toEqual([[`${ROOT}/src/app.ts`]]);
+    expect(document.body.querySelector('[role="menu"]')).toBeNull();
+    const notice = host.querySelector(".cv-file-viewer__notice");
+    expect(notice?.textContent).toBe("Path copied.");
+    expect(notice?.closest("header")).toBeNull();
+    expect(notice?.previousElementSibling?.tagName).toBe("HEADER");
+
+    act(() => more.click());
+    act(() => menuItem("Reload file").click());
+    await settle();
+    expect(calls).toHaveLength(2);
+  });
+
+  it("keeps only the tree toggle and More in a minimal viewer header", async () => {
+    StubResizeObserver.width = 280;
+    const copyText = vi.fn(async () => undefined);
+    const { reader } = memoryReader({ "README.md": text("README.md", "# Title") });
+    const host = render({ reader, context: rightPanelTestContext({ copyText }) });
+    act(() => row(host, `${ROOT}/README.md`).click());
+    await until(() =>
+      expect(host.querySelector(".cv-file-viewer__markdown h1")?.textContent).toBe("Title"),
+    );
+
+    expect(host.querySelector(".cv-files")?.classList).toContain("cv-files--tight");
+    expect(
+      [...host.querySelectorAll(".cv-file-viewer__head button[aria-label]")].map((item) =>
+        item.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Hide file tree", "More file actions"]);
+    const crumbs = [...host.querySelectorAll('nav[aria-label="File path"] > *')];
+    expect(crumbs.map((crumb) => crumb.textContent)).toEqual(["README.md"]);
+    expect(crumbs[0]?.getAttribute("title")).toBe("README.md");
+
+    const more = button(host, "More file actions");
+    act(() => more.click());
+    const items = [...document.body.querySelectorAll('[role="menu"] [role^="menuitem"]')];
+    expect(items.map((item) => [item.textContent, item.getAttribute("role")])).toEqual([
+      ["Show Markdown source", "menuitem"],
+      ["Wrap lines", "menuitemcheckbox"],
+      ["Copy path", "menuitem"],
+      ["Copy contents", "menuitem"],
+      ["Reload file", "menuitem"],
+    ]);
+    expect(items[1]?.getAttribute("aria-checked")).toBe("false");
+
+    act(() => menuItem("Wrap lines").click());
+    expect(window.localStorage.getItem(FILE_VIEWER_WRAP_STORAGE_KEY)).toBe("true");
+    act(() => more.click());
+    expect(menuItem("Wrap lines").getAttribute("aria-checked")).toBe("true");
+    act(() => menuItem("Copy contents").click());
+    await settle();
+    expect(copyText.mock.calls).toEqual([["# Title"]]);
+
+    act(() => more.click());
+    act(() => menuItem("Show Markdown source").click());
+    expect(host.querySelector(".cv-file-viewer__markdown")).toBeNull();
+    expect(viewerText(host)).toContain("# Title");
+  });
+
+  it("closes the More menu on Escape without closing the viewer", async () => {
+    StubResizeObserver.width = 280;
+    const { reader } = memoryReader({ "src/app.ts": text("src/app.ts", "x") });
+    const host = render({ reader });
+    act(() => row(host, `${ROOT}/src/app.ts`).click());
+    await settle();
+
+    act(() => button(host, "More file actions").click());
+    press(menuItem("Copy path"), "Escape");
+
+    expect(document.body.querySelector('[role="menu"]')).toBeNull();
+    expect(host.querySelector(".cv-file-viewer")).not.toBeNull();
+  });
+
+  it("keeps copy path and reload in the header on a wide panel", async () => {
     StubResizeObserver.width = 900;
     const { reader } = memoryReader({ "src/app.ts": text("src/app.ts", "x") });
     const host = render({ reader });
     act(() => row(host, `${ROOT}/src/app.ts`).click());
     await settle();
 
-    expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
-    expect(host.querySelector(".cv-file-viewer")).not.toBeNull();
-    expect(row(host, `${ROOT}/src/app.ts`).classList).toContain("active");
-
-    act(() => button(host, "Hide file tree").click());
-    expect(host.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
-    expect(button(host, "Show file tree").getAttribute("aria-pressed")).toBe("false");
+    expect(button(host, "Copy path")).not.toBeNull();
+    expect(button(host, "Reload file")).not.toBeNull();
+    expect(host.querySelector('button[aria-label="More file actions"]')).toBeNull();
   });
 
   it("renders Markdown and switches to its source", async () => {
@@ -398,3 +553,11 @@ describe("Files viewer", () => {
     );
   });
 });
+
+function menuItem(label: string): HTMLButtonElement {
+  const item = [...document.body.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find(
+    (candidate) => candidate.textContent === label,
+  );
+  if (item === undefined) throw new Error(`No menu item ${label}`);
+  return item;
+}
