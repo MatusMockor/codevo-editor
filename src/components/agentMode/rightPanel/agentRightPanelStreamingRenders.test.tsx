@@ -209,7 +209,6 @@ function hostProps(): AgentSurfaceHostProps {
     workspaceId: "ws-1",
     workspaceTrusted: true,
     fileTree: {
-      editorFontSize: 18,
       files: { readDirectory: async (): Promise<FileEntry[]> => [] },
       fileChanges: null,
       activePath: null,

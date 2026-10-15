@@ -5,8 +5,6 @@ import type { ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileTree, TREE_ROW_HEIGHT } from "./FileTree";
-import { treeRowHeight } from "../domain/fileTreeLayout";
-import { normalizeEditorFontSize } from "../domain/settings";
 import type { FileEntry } from "../domain/workspace";
 
 describe("FileTree", () => {
@@ -54,65 +52,46 @@ describe("FileTree", () => {
     return props;
   }
 
-  it("keeps default row geometry compatible", () => {
-    expect(treeRowHeight(14)).toBe(TREE_ROW_HEIGHT);
-    expect(treeRowHeight(12)).toBe(24);
-    expect(treeRowHeight(18)).toBe(30);
-    renderTree();
-    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("14px");
-  });
+  it("uses compact fixed rows that do not follow a code font size", () => {
+    expect(TREE_ROW_HEIGHT).toBe(22);
+    renderTree({ entriesByDirectory: { "/workspace": phpFileEntries(80) } });
 
-  it("uses the editor font size for rows and virtual content", () => {
-    renderTree({
-      fontSize: 18,
-      entriesByDirectory: { "/workspace": phpFileEntries(80) },
-    });
-
-    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("18px");
+    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("");
     expect(host.querySelector<HTMLElement>(".tree-virtual-content")?.style.height).toBe(
-      `${80 * treeRowHeight(18) + 6 + 10}px`,
+      `${80 * TREE_ROW_HEIGHT + 6 + 10}px`,
     );
-    expect(host.querySelectorAll(".tree-row")).toHaveLength(28);
     for (const row of host.querySelectorAll<HTMLElement>(".tree-row")) {
-      expect(row.style.height).toBe(`${treeRowHeight(18)}px`);
+      expect(row.style.height).toBe(`${TREE_ROW_HEIGHT}px`);
       expect(row.closest<HTMLElement>(".tree-row-shell")?.style.height).toBe(
-        `${treeRowHeight(18)}px`,
+        `${TREE_ROW_HEIGHT}px`,
       );
     }
   });
 
-  it("uses font-sized geometry to reveal and window a distant active row", () => {
+  it("uses the compact row geometry to reveal and window a distant active row", () => {
     renderTree({
-      fontSize: 18,
       entriesByDirectory: { "/workspace": phpFileEntries(80) },
       activePath: "/workspace/File50.php",
       revealActivePath: true,
     });
 
-    expect(host.querySelector<HTMLElement>(".file-tree")?.scrollTop).toBe(
-      6 + 50 * treeRowHeight(18),
-    );
+    expect(host.querySelector<HTMLElement>(".file-tree")?.scrollTop).toBe(6 + 50 * TREE_ROW_HEIGHT);
     expect(host.querySelector<HTMLElement>(".tree-virtual-window")?.style.transform).toBe(
-      `translateY(${42 * treeRowHeight(18)}px)`,
+      `translateY(${42 * TREE_ROW_HEIGHT}px)`,
     );
     expect(rowByLabel("File50.php").classList.contains("active")).toBe(true);
   });
 
-  it.each([-100, 10000, Number.NaN, Number.POSITIVE_INFINITY])(
-    "normalizes invalid font size %s before rendering and virtualizing",
-    (fontSize) => {
-      renderTree({ fontSize, entriesByDirectory: { "/workspace": phpFileEntries(80) } });
-      const normalized = normalizeEditorFontSize(fontSize);
-      expect(treeRowHeight(fontSize)).toBe(treeRowHeight(normalized));
-      expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe(`${normalized}px`);
-      expect(host.querySelector<HTMLElement>(".tree-row")?.style.height).toBe(
-        `${treeRowHeight(normalized)}px`,
-      );
-      expect(host.querySelector<HTMLElement>(".tree-virtual-content")?.style.height).toBe(
-        `${80 * treeRowHeight(normalized) + 16}px`,
-      );
-    },
-  );
+  it("shows only a chevron for folders and a file-type icon for files", () => {
+    renderTree();
+
+    const folder = rowByLabel("src");
+    expect(folder.querySelector(".tree-chevron")).not.toBeNull();
+    expect(folder.querySelector(".tree-entry-icon")).toBeNull();
+    const file = rowByLabel("User.php");
+    expect(file.querySelector(".tree-chevron")).toBeNull();
+    expect(file.querySelector(".tree-entry-icon-file")).not.toBeNull();
+  });
 
   it("opens a file pinned on Enter and still toggles a directory on Enter", () => {
     const onOpenFile = vi.fn();
@@ -406,7 +385,7 @@ describe("FileTree", () => {
         },
       });
 
-      expect(host.querySelectorAll(".tree-row")).toHaveLength(30);
+      expect(host.querySelectorAll(".tree-row")).toHaveLength(33);
 
       measuredHeight = 960;
 
@@ -414,7 +393,7 @@ describe("FileTree", () => {
         animationFrame.flush();
       });
 
-      expect(host.querySelectorAll(".tree-row")).toHaveLength(53);
+      expect(host.querySelectorAll(".tree-row")).toHaveLength(60);
     } finally {
       animationFrame.restore();
       viewport.restore();

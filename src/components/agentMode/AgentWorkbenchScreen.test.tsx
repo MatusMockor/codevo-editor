@@ -74,7 +74,7 @@ import {
   composerAttachmentsSurfaceFixture,
   externalSessionsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
-import { agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
+import { ariaKeyShortcuts } from "./agentWorkbenchChrome";
 import type { AgentOutsideTextFile } from "../../application/agentOutsideLinkedFile";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
 import { PREVIEW_REVEAL_DELAY_MS } from "./useDeferredPreviewReveal";
@@ -558,7 +558,7 @@ describe("AgentWorkbenchScreen", () => {
     expect(other.showTerminalPanel).not.toHaveBeenCalled();
   });
 
-  it("hints the Quick Open chord on the Files surface search field", () => {
+  it("exposes the Quick Open chord on the Files surface search field without a chip", () => {
     const layout = recordedLayoutState({
       rightPanel: "open",
       openSurfaces: ["files"],
@@ -568,9 +568,11 @@ describe("AgentWorkbenchScreen", () => {
     render(workbench);
     click('[data-thread-id="agt-1"]');
 
-    expect(host.querySelector('input[aria-label="Search workspace files"]')).not.toBeNull();
-    expect(host.querySelector(".cv-files__search .cv-kbd")?.textContent).toBe(
-      agentShortcutGlyphs(shortcutForCommand(defaultAppSettings().keymap, SEARCH_FILES_COMMAND)),
+    const input = host.querySelector('input[aria-label="Search workspace files"]');
+    expect(input).not.toBeNull();
+    expect(host.querySelector(".cv-files__search .cv-kbd")).toBeNull();
+    expect(input?.getAttribute("aria-keyshortcuts")).toBe(
+      ariaKeyShortcuts(shortcutForCommand(defaultAppSettings().keymap, SEARCH_FILES_COMMAND)),
     );
     expect(workbench.runCommand).not.toHaveBeenCalledWith(SEARCH_FILES_COMMAND);
     expect(layout.actions).toEqual([]);

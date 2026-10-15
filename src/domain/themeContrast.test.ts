@@ -3,6 +3,7 @@ import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CLASSIC_SYNTAX_THEME_IDS, PALETTE_IDS, RESOLVED_COLOR_SCHEMES } from "./appearance";
 import { paletteTokens, surfaceColor } from "./appearancePalettes";
+import { SCHEME_SHELL_STATES, compositeOver } from "./appearanceShellStates";
 import { classicTerminalTheme, type TerminalTheme } from "./editorColorThemes";
 import { contrastRatio } from "./themeContrast";
 
@@ -45,16 +46,19 @@ describe("contrastRatio", () => {
     const appCss = readFileSync("src/agentApp.css", "utf8");
     const active = cssBlock(appCss, ".tree-row.active");
 
-    expect(cssDeclaration(active, "background")).toBe("var(--cv-accent-soft)");
+    expect(cssDeclaration(active, "background")).toBe("var(--cv-row-active)");
     expect(cssDeclaration(active, "color")).toBe("var(--cv-fg-strong)");
     for (const palette of PALETTE_IDS) {
       for (const scheme of RESOLVED_COLOR_SCHEMES) {
         const tokens = paletteTokens(palette, scheme);
         for (const role of ["canvas", "side"] as const) {
-          const fill = compositeRgba(tokens.accentSoft, surfaceColor(palette, scheme, role));
+          const fill =
+            scheme === "light"
+              ? surfaceColor(palette, scheme, "raised")
+              : compositeOver(SCHEME_SHELL_STATES.dark.tint3, surfaceColor(palette, scheme, role));
           expect(
             contrastRatio(tokens.fgStrong, fill),
-            `${palette}/${scheme}: active text on accent-soft over ${role} ${fill}`,
+            `${palette}/${scheme}: active text on row-active over ${role} ${fill}`,
           ).toBeGreaterThanOrEqual(minimumTextContrast);
         }
       }

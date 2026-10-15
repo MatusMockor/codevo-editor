@@ -7,28 +7,28 @@
 
 .cv-files__sub {
   gap: var(--cv-space-1);
+  padding: 0 var(--cv-space-3);
 }
 
 .cv-files__search {
   flex: 1;
   min-width: 0;
-  height: 28px;
+  height: 26px;
   display: flex;
   align-items: center;
-  gap: var(--cv-space-2);
-  padding: 0 var(--cv-space-2);
+  padding: 0 var(--cv-space-3);
   border-radius: var(--cv-r-control);
   color: var(--cv-fg-subtle);
-  font-size: var(--cv-t-xs);
+  font-size: var(--cv-t-md);
 }
 
-.cv-files__search:hover,
 .cv-files__search:focus-within {
   background: var(--cv-tint-1);
+  box-shadow: var(--cv-ring-hair-strong);
 }
 
-.cv-files__search:focus-within {
-  box-shadow: var(--cv-ring-hair-strong);
+.cv-files__tools {
+  gap: 0;
 }
 
 .cv-files__search input {

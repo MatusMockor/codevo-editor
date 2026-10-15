@@ -11,7 +11,7 @@ const SOURCE_PATH = `${ROOT_PATH}/src`;
 const DIRECTORY_COUNT = 200;
 const FILES_PER_DIRECTORY = 99;
 const DESCENDANT_COUNT = DIRECTORY_COUNT + DIRECTORY_COUNT * FILES_PER_DIRECTORY;
-const FALLBACK_WINDOW_ROW_LIMIT = 30;
+const FALLBACK_WINDOW_ROW_LIMIT = 33;
 const EXPANDED_TREE_DIRECTORY_READS = DIRECTORY_COUNT + 2;
 const TREE_VERTICAL_PADDING = 16;
 const EXPANDED_TREE_CONTENT_HEIGHT =
@@ -45,7 +45,7 @@ describe("FileTree large-tree performance contracts", () => {
     expect(visibleRows()).toHaveLength(FALLBACK_WINDOW_ROW_LIMIT);
     expect(directoryReadCount(fixture.directoryReads)).toBe(EXPANDED_TREE_DIRECTORY_READS);
     expect(virtualContent().style.height).toBe(`${EXPANDED_TREE_CONTENT_HEIGHT}px`);
-    expect(EXPANDED_TREE_CONTENT_HEIGHT).toBe(520_042);
+    expect(EXPANDED_TREE_CONTENT_HEIGHT).toBe(440_038);
   });
 
   it("bounds traversal and mounted rows across repeated expand and collapse operations", () => {

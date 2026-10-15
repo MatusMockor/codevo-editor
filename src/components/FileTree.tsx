@@ -2,8 +2,7 @@ import { ChevronRight } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
 import { gitStatusLabel, gitStatusTitle, type GitChangeStatus } from "../domain/git";
-import { defaultEditorFontSize } from "../domain/settings";
-import { normalizeTreeFontSize, treeRowHeight } from "../domain/fileTreeLayout";
+import { TREE_ROW_HEIGHT } from "../domain/fileTreeLayout";
 export { TREE_ROW_HEIGHT } from "../domain/fileTreeLayout";
 import type { FileEntry } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/pathDerivation";
@@ -28,7 +27,6 @@ interface VisibleTreeState {
 }
 
 interface FileTreeProps {
-  readonly fontSize?: number;
   rootPath: string | null;
   entriesByDirectory: Record<string, FileEntry[]>;
   fileStatusesByPath?: Record<string, GitChangeStatus>;
@@ -50,7 +48,6 @@ interface FileTreeProps {
 }
 
 function FileTreeComponent({
-  fontSize = defaultEditorFontSize,
   rootPath,
   entriesByDirectory,
   fileStatusesByPath,
@@ -70,8 +67,7 @@ function FileTreeComponent({
   onPrefetchFile,
   onCancelPrefetchFile,
 }: FileTreeProps) {
-  const normalizedFontSize = normalizeTreeFontSize(fontSize);
-  const rowHeight = treeRowHeight(normalizedFontSize);
+  const rowHeight = TREE_ROW_HEIGHT;
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
   const pendingRevealKeyRef = useRef<string | null>(null);
   const pendingScrollTopRef = useRef(0);
@@ -324,7 +320,6 @@ function FileTreeComponent({
     <nav
       aria-label="Workspace files"
       className="file-tree"
-      style={{ fontSize: `${normalizedFontSize}px` }}
       onScroll={handleScroll}
       ref={treeContainerRef}
     >
@@ -515,12 +510,15 @@ const TreeRow = memo(function TreeRow({
         title={title}
         type="button"
       >
-        <ChevronRight
-          aria-hidden="true"
-          className={getChevronClassName(isExpandable, isExpanded)}
-          size={15}
-        />
-        <TreeEntryIcon kind={entry.kind} expanded={isExpanded} name={entry.name} />
+        {isDirectory ? (
+          <ChevronRight
+            aria-hidden="true"
+            className={isExpanded ? "tree-chevron expanded" : "tree-chevron"}
+            size={13}
+          />
+        ) : (
+          <TreeEntryIcon name={entry.name} />
+        )}
         <span>{entry.name}</span>
         {isLoading ? (
           <small aria-live="polite" className="tree-row-meta" role="status">
@@ -608,18 +606,6 @@ function getVisibleTreeRows({
     indexByPath,
     rows,
   };
-}
-
-function getChevronClassName(isExpandable: boolean, isExpanded: boolean): string {
-  if (!isExpandable) {
-    return "tree-chevron placeholder";
-  }
-
-  if (isExpanded) {
-    return "tree-chevron expanded";
-  }
-
-  return "tree-chevron";
 }
 
 function handleDoubleClick(

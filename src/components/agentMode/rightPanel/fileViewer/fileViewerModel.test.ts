@@ -5,7 +5,7 @@ import {
   estimatedBlockHeight,
   fileViewerBlockCount,
   fileViewerCrumbs,
-  fileViewerToolbarMode,
+  fileViewerCrumbsCompact,
   fileViewerWindow,
   formatFileSize,
   relativePathInTree,
@@ -70,8 +70,8 @@ describe("file viewer window", () => {
     expect(top).toMatchObject({ firstBlock: 0, lastBlock: 1, before: 0 });
 
     const middle = fileViewerWindow({ heights, scrollTop: 200_000, viewportHeight: 600 });
-    expect(middle.firstBlock).toBe(155);
-    expect(middle.lastBlock).toBe(157);
+    expect(middle.firstBlock).toBe(141);
+    expect(middle.lastBlock).toBe(143);
     expect(middle.before + middle.after + 3 * (heights[0] ?? 0)).toBe(total);
 
     const end = fileViewerWindow({ heights, scrollTop: total * 2, viewportHeight: 600 });
@@ -91,15 +91,14 @@ describe("file viewer sizes", () => {
   });
 });
 
-describe("fileViewerToolbarMode", () => {
+describe("fileViewerCrumbsCompact", () => {
   it.each([
-    [0, "full"],
-    [180, "minimal"],
-    [299, "minimal"],
-    [300, "compact"],
-    [479, "compact"],
-    [480, "full"],
-  ] as const)("budgets a %ipx viewer as %s", (width, mode) => {
-    expect(fileViewerToolbarMode(width)).toBe(mode);
+    [0, false],
+    [180, true],
+    [299, true],
+    [300, false],
+    [920, false],
+  ] as const)("compacts the breadcrumb of a %ipx viewer: %s", (width, compact) => {
+    expect(fileViewerCrumbsCompact(width)).toBe(compact);
   });
 });

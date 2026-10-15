@@ -14,8 +14,12 @@ import { codeLanguageForPath } from "../../../../domain/codeHighlight/codeLangua
 import { IconButton } from "../../../../ui/foundation/IconButton";
 import { useSurfaceWidth } from "../files/useSurfaceWidth";
 import { FileViewerPreviewBody } from "./FileViewerPreviewBody";
-import { FileViewerToolbar, type FileViewerToolbarTreeToggle } from "./FileViewerToolbar";
-import { fileViewerCrumbs, fileViewerToolbarMode } from "./fileViewerModel";
+import {
+  FileViewerToolbar,
+  type FileViewerToolbarCollapseFolders,
+  type FileViewerToolbarTreeToggle,
+} from "./FileViewerToolbar";
+import { fileViewerCrumbs, fileViewerCrumbsCompact } from "./fileViewerModel";
 import { useFileViewerWrap } from "./useFileViewerWrap";
 import "./fileViewer.css";
 
@@ -25,12 +29,14 @@ export const FILE_VIEWER_EXTERNAL_NOTE =
 const COPY_NOTICE_MS = 1_500;
 
 export type AgentFileViewerTreeToggle = FileViewerToolbarTreeToggle;
+export type AgentFileViewerCollapseFolders = FileViewerToolbarCollapseFolders;
 
 export interface AgentFileViewerProps {
   readonly owner: string | null;
   readonly target: AgentFileViewerTarget;
   readonly refreshKey: number;
   readonly treeToggle: AgentFileViewerTreeToggle | null;
+  readonly collapseFolders?: AgentFileViewerCollapseFolders | null;
   onBack(): void;
   onRefresh(): void;
   onRevealDirectory(directory: string): void;
@@ -63,7 +69,7 @@ export function AgentFileViewer(props: AgentFileViewerProps) {
   const copyable = preview?.kind === "text" && !preview.truncated ? preview.contents : null;
   const backShown = props.treeToggle === null || !props.treeToggle.shown;
   const sectionRef = useRef<HTMLElement | null>(null);
-  const toolbarMode = fileViewerToolbarMode(useSurfaceWidth(sectionRef));
+  const crumbsCompact = fileViewerCrumbsCompact(useSurfaceWidth(sectionRef));
 
   useEffect(() => {
     if (notice === null) return undefined;
@@ -103,14 +109,14 @@ export function AgentFileViewer(props: AgentFileViewerProps) {
           />
         )}
         <FileViewerCrumbs
-          currentOnly={toolbarMode === "minimal"}
+          currentOnly={crumbsCompact}
           document={document}
           onRevealDirectory={props.onRevealDirectory}
         />
         <FileViewerToolbar
           canCopyContents={copyable !== null}
+          collapseFolders={props.collapseFolders ?? null}
           markdownMode={markdown ? markdownMode : null}
-          mode={toolbarMode}
           onCopyContents={() => {
             if (copyable !== null) copy(copyable, "Contents copied.");
           }}

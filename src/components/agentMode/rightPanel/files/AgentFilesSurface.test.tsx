@@ -14,6 +14,7 @@ import { mountUi, press, type MountedUi } from "../../../../ui/foundation/founda
 import type { AgentSurfaceFileTreeProps } from "../../AgentSurfaceFileTree";
 import { installResizeObserver } from "../../agentSurfaceTerminalTestSupport";
 import { surfaceThreadView } from "../../agentSurfaceTestFixtures";
+import { focusAgentFileSearch } from "../../../agentApp/agentFileSearchFocus";
 import type { AgentRightPanelContextValue } from "../agentRightPanelContext";
 import {
   WithRightPanelContext,
@@ -73,7 +74,6 @@ function tree(): AgentSurfaceFileTreeSurface {
 
 function fileTree(overrides: Partial<AgentSurfaceFileTreeProps> = {}): AgentSurfaceFileTreeProps {
   return {
-    fontSize: 14,
     source: "thread",
     tree: tree(),
     unavailable: null,
@@ -137,6 +137,42 @@ function render(
   return ui.host;
 }
 
+function treeRow(host: HTMLElement, label: string): HTMLButtonElement {
+  const row = [...host.querySelectorAll<HTMLButtonElement>(".tree-row")].find(
+    (candidate) => candidate.textContent?.includes(label) === true,
+  );
+  if (row === undefined) throw new Error(`No tree row ${label}`);
+  return row;
+}
+
+function headerButtons(host: HTMLElement): ReadonlyArray<string | null> {
+  return [...host.querySelectorAll(".cv-files__sub button[aria-label]")].map((item) =>
+    item.getAttribute("aria-label"),
+  );
+}
+
+function headerButton(host: HTMLElement, label: string): HTMLButtonElement {
+  const button = host.querySelector<HTMLButtonElement>(
+    `.cv-files__sub button[aria-label="${label}"]`,
+  );
+  if (button === null) throw new Error(`No header button ${label}`);
+  return button;
+}
+
+function moreButton(host: HTMLElement): HTMLButtonElement {
+  const button = host.querySelector<HTMLButtonElement>('button[aria-label="More file actions"]');
+  if (button === null) throw new Error("No More file actions button");
+  return button;
+}
+
+function menuItem(label: string): HTMLButtonElement {
+  const item = [...document.body.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find(
+    (candidate) => candidate.textContent === label,
+  );
+  if (item === undefined) throw new Error(`No menu item ${label}`);
+  return item;
+}
+
 function viewerPath(host: HTMLElement): string | null {
   return host.querySelector(".cv-file-viewer")?.getAttribute("data-file-viewer-path") ?? null;
 }
@@ -160,12 +196,19 @@ async function typeQuery(host: HTMLElement, value: string): Promise<void> {
 }
 
 describe("AgentFilesSurface", () => {
-  it("renders the search field with the quick-open hint above the real tree", () => {
+  it("renders a quiet search field with refresh and collapse icons above the real tree", () => {
     const host = render({});
 
     const input = searchField(host);
     expect(input?.placeholder).toBe("Search files");
-    expect(host.querySelector(".cv-files__search .cv-kbd")?.textContent).toBe("⌘P");
+    expect(input?.getAttribute("aria-keyshortcuts")).toBe("Meta+P");
+    expect(host.querySelector(".cv-files__search .cv-kbd")).toBeNull();
+    expect(host.querySelector(".cv-files__search svg")).toBeNull();
+    expect(
+      [...host.querySelectorAll(".cv-files__sub button[aria-label]")].map((item) =>
+        item.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Refresh workspace files", "Collapse all folders"]);
     expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
     expect(host.querySelector('[role="listbox"]')).toBeNull();
   });
@@ -474,36 +517,73 @@ describe("AgentFilesSurface", () => {
     expect(onOpenFile).not.toHaveBeenCalled();
   });
 
-  it("collapses every expanded folder from the surface header", () => {
+  it("collapses every expanded folder from the viewer's More menu", () => {
     const toggleDirectory = vi.fn();
     const host = render({ fileTree: fileTree({ tree: { ...tree(), toggleDirectory } }) });
-    const collapse = host.querySelector<HTMLButtonElement>('[aria-label="Collapse all folders"]');
-    expect(collapse?.disabled).toBe(false);
-    expect(collapse?.querySelector("svg")?.classList).toContain("lucide-list-chevrons-down-up");
+    act(() => treeRow(host, "README.md").click());
+    expect(viewerPath(host)).toBe("README.md");
 
-    act(() => collapse?.click());
+    act(() => moreButton(host).click());
+    const collapse = menuItem("Collapse all folders");
+    expect(collapse.getAttribute("aria-disabled")).toBeNull();
+    expect(collapse.querySelector("svg")?.classList).toContain("lucide-list-chevrons-down-up");
+    act(() => collapse.click());
 
     expect(toggleDirectory).toHaveBeenCalledExactlyOnceWith(`${ROOT}/src`);
+  });
+
+  it("offers Collapse all folders in the tree header only while no file is open", () => {
+    const toggleDirectory = vi.fn();
+    const host = render({ fileTree: fileTree({ tree: { ...tree(), toggleDirectory } }) });
+    expect(headerButtons(host)).toEqual(["Refresh workspace files", "Collapse all folders"]);
+
+    act(() => headerButton(host, "Collapse all folders").click());
+    expect(toggleDirectory).toHaveBeenCalledExactlyOnceWith(`${ROOT}/src`);
+
+    act(() => treeRow(host, "README.md").click());
+    expect(viewerPath(host)).toBe("README.md");
+    expect(headerButtons(host)).toEqual(["Refresh workspace files"]);
+
+    const viewer = host.querySelector<HTMLElement>(".cv-file-viewer");
+    expect(viewer).not.toBeNull();
+    if (viewer !== null) press(viewer, "Escape");
+    expect(viewerPath(host)).toBeNull();
+    expect(headerButtons(host)).toEqual(["Refresh workspace files", "Collapse all folders"]);
+  });
+
+  it("disables the tree header Collapse all folders when nothing is expanded", () => {
+    const host = render({
+      fileTree: fileTree({ tree: { ...tree(), expandedDirectories: new Set() } }),
+    });
+
+    expect(headerButton(host, "Collapse all folders").disabled).toBe(true);
   });
 
   it("disables Collapse all folders when nothing is expanded", () => {
     const host = render({
       fileTree: fileTree({ tree: { ...tree(), expandedDirectories: new Set() } }),
     });
-    expect(
-      host.querySelector<HTMLButtonElement>('[aria-label="Collapse all folders"]')?.disabled,
-    ).toBe(true);
+    act(() => treeRow(host, "README.md").click());
+    act(() => moreButton(host).click());
+
+    expect(menuItem("Collapse all folders").getAttribute("aria-disabled")).toBe("true");
   });
 
-  it("focuses the inline search field from the quick-open hint", () => {
+  it("still focuses the search field from the quick-open shortcut without a hint chip", () => {
     const host = render({});
-    const hint = host.querySelector<HTMLElement>(".cv-files__search .cv-kbd");
-    expect(hint).not.toBeNull();
-
-    act(() =>
-      hint?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true })),
-    );
-    act(() => hint?.click());
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+    try {
+      focusAgentFileSearch();
+      act(() => frames.shift()?.(0));
+    } finally {
+      raf.mockRestore();
+    }
 
     expect(document.activeElement).toBe(searchField(host));
   });

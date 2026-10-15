@@ -10,11 +10,22 @@
   min-width: 0;
   overflow: hidden;
   gap: var(--cv-space-1);
-  padding-left: var(--cv-space-3);
+  padding-left: var(--cv-space-4);
 }
 
 .cv-file-viewer__tools {
   flex: none;
+  gap: var(--cv-space-1);
+}
+
+.cv-file-viewer__tools .cv-icon-button[aria-pressed="true"] {
+  background: var(--cv-tint-1);
+  color: var(--cv-fg);
+}
+
+.cv-file-viewer__tools .cv-icon-button:hover:not(:disabled) {
+  background: var(--cv-tint-2);
+  color: var(--cv-fg-strong);
 }
 
 .cv-file-viewer__crumbs {
@@ -66,7 +77,8 @@
 
 .cv-file-viewer__crumb-current {
   padding: 0 var(--cv-space-1);
-  color: var(--cv-fg-strong);
+  color: var(--cv-fg);
+  font-weight: 500;
 }
 
 .cv-file-viewer__notice {
@@ -122,7 +134,7 @@
 
 .cv-file-viewer__code {
   --file-viewer-gutter-chars: 1;
-  --file-viewer-line-height: 20px;
+  --file-viewer-line-height: 22px;
   font-family: var(--cv-font-mono);
   font-size: var(--cv-t-sm);
   min-width: 0;
@@ -157,7 +169,12 @@
 
 .cv-file-viewer__code .highlighted-code__gutter {
   width: calc(var(--file-viewer-gutter-chars) * 1ch);
-  padding: 0 var(--cv-space-4) 0 var(--cv-space-5);
+  padding: 0 var(--cv-space-6) 0 var(--cv-space-5);
+  color: var(--cv-fg-disabled);
+}
+
+.cv-file-viewer__code .highlighted-code__line.is-current .highlighted-code__gutter {
+  color: var(--cv-fg-muted);
 }
 
 .cv-file-viewer__markdown {

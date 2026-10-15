@@ -1,4 +1,4 @@
-import { ListChevronsDownUp, RefreshCw, Search } from "lucide-react";
+import { ListChevronsDownUp, RefreshCw } from "lucide-react";
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   MAX_CHECKOUT_FILE_STATUSES,
@@ -13,9 +13,8 @@ import {
 import type { GitChangeStatus } from "../../../../domain/git";
 import type { FileEntry, FileSearchResult } from "../../../../domain/workspace";
 import { IconButton } from "../../../../ui/foundation/IconButton";
-import { Kbd } from "../../../../ui/foundation/Kbd";
 import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "../../AgentSurfaceFileTree";
-import { agentShortcutGlyphs } from "../../agentThreadHeaderPresentation";
+import { ariaKeyShortcuts } from "../../agentWorkbenchChrome";
 import {
   useAgentRightPanelContext,
   type AgentRightPanelContextValue,
@@ -127,6 +126,13 @@ export function AgentFilesSurface({
   const narrow = width > 0 && width < FILE_VIEWER_WIDE_MIN_WIDTH_PX;
   const tight = width > 0 && width < FILES_TIGHT_BELOW_WIDTH_PX;
   const treeColumn = treeShown && fileTree !== null && (target === null || treeBeside);
+  const collapseFolders =
+    fileTree === null
+      ? null
+      : {
+          disabled: querying || fileTree.tree.expandedDirectories.size === 0,
+          run: () => collapseAll(fileTree),
+        };
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape" && query !== "") {
@@ -165,6 +171,7 @@ export function AgentFilesSurface({
               refreshKey={statusRevision + statusRefreshes}
               target={target}
               treeToggle={{ shown: treeBeside, onToggle: toggleTreeBeside }}
+              collapseFolders={collapseFolders}
             />
           </div>
         )}
@@ -177,14 +184,9 @@ export function AgentFilesSurface({
             }
           >
             <div className="cv-rp-sub cv-files__sub">
-              <label
-                className="cv-files__search"
-                onClick={(event) => {
-                  if (event.target !== inputRef.current) inputRef.current?.focus();
-                }}
-              >
-                <Search aria-hidden="true" size={14} />
+              <label className="cv-files__search">
                 <input
+                  aria-keyshortcuts={searchShortcut(fileTree) || undefined}
                   aria-label="Search workspace files"
                   disabled={!searchable}
                   onChange={(event) => setQuery(event.currentTarget.value)}
@@ -195,23 +197,24 @@ export function AgentFilesSurface({
                   type="text"
                   value={query}
                 />
-                {shortcutGlyphs(fileTree) !== "" && <Kbd>{shortcutGlyphs(fileTree)}</Kbd>}
               </label>
-              <div className="cv-rp-sub__tools">
+              <div className="cv-rp-sub__tools cv-files__tools">
                 <IconButton
                   disabled={fileTree.unavailable !== null || rootPath === null}
-                  icon={<RefreshCw size={14} />}
+                  icon={<RefreshCw size={13} />}
                   label="Refresh workspace files"
                   onClick={refreshFiles}
                   size="xs"
                 />
-                <IconButton
-                  disabled={querying || fileTree.tree.expandedDirectories.size === 0}
-                  icon={<ListChevronsDownUp size={14} />}
-                  label="Collapse all folders"
-                  onClick={() => collapseAll(fileTree)}
-                  size="xs"
-                />
+                {target === null && collapseFolders !== null && (
+                  <IconButton
+                    disabled={collapseFolders.disabled}
+                    icon={<ListChevronsDownUp size={13} />}
+                    label="Collapse all folders"
+                    onClick={collapseFolders.run}
+                    size="xs"
+                  />
+                )}
               </div>
             </div>
             {statusNote !== null && (
@@ -278,9 +281,9 @@ function collapseAll(fileTree: AgentSurfaceFileTreeProps): void {
   for (const path of [...fileTree.tree.expandedDirectories]) fileTree.tree.toggleDirectory(path);
 }
 
-function shortcutGlyphs(fileTree: AgentSurfaceFileTreeProps): string {
+function searchShortcut(fileTree: AgentSurfaceFileTreeProps): string {
   if (fileTree.searchFiles === null) return "";
-  return agentShortcutGlyphs(fileTree.searchFiles.shortcut);
+  return ariaKeyShortcuts(fileTree.searchFiles.shortcut);
 }
 
 function resultEntry(result: FileSearchResult): FileEntry {

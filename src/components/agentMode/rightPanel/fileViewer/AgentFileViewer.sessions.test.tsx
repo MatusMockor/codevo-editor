@@ -14,6 +14,7 @@ import { rightPanelTestContext } from "../agentRightPanelTestSupport";
 import type { AgentFilesReveal } from "../files/AgentFilesSurface";
 import {
   ROOT,
+  button,
   deferred,
   entry,
   fileTree,
@@ -292,7 +293,13 @@ describe("reveal requests report whether the viewer accepted them", () => {
       FILE_VIEWER_EXTERNAL_NOTE,
     );
     expect(viewerText(view.host)).toContain("outside notes");
-    expect(view.host.querySelector('[aria-label="Reload file"]')).toBeNull();
+    act(() => button(view.host, "More file actions").click());
+    expect(
+      [...document.body.querySelectorAll('[role="menu"] [role^="menuitem"]')].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual(["Copy path", "Copy contents", "Collapse all folders"]);
+    act(() => button(view.host, "More file actions").click());
 
     const again = view.reveal("/home/me/notes.txt");
     view.show(again.reveal);
@@ -311,7 +318,7 @@ describe("code font and wrapped reveal", () => {
     const element = scroller(host);
     expect(element.style.fontFamily).toContain("Fira Code");
     expect(element.style.fontSize).toBe("15px");
-    expect(element.style.getPropertyValue("--file-viewer-line-height")).toBe("23px");
+    expect(element.style.getPropertyValue("--file-viewer-line-height")).toBe("24px");
   });
 
   it("re-centres a revealed line after wrapped rows above it are measured", async () => {

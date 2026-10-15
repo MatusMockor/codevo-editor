@@ -28,7 +28,6 @@ import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 import type { VscodeProcessTasksPanelProps } from "../VscodeProcessTasksPanel";
 
 export interface AgentWorkbenchFileTreeChrome {
-  readonly editorFontSize: number;
   readonly files: AgentSurfaceFileTreeDependencies["files"];
   readonly fileChanges: AgentSurfaceFileTreeDependencies["fileChanges"];
   readonly activePath: string | null;

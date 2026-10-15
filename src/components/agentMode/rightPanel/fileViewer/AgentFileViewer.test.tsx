@@ -162,7 +162,9 @@ describe("Files viewer", () => {
     expect(host.querySelector('.cv-file-viewer [role="note"]')?.textContent).toBe(
       "Preview limited to the first 1 MB of a 5 MB file.",
     );
-    expect(button(host, "Copy contents").disabled).toBe(true);
+    act(() => button(host, "More file actions").click());
+    expect(menuItem("Copy contents").getAttribute("aria-disabled")).toBe("true");
+    press(menuItem("Copy contents"), "Escape");
 
     act(() => row(host, `${ROOT}/src/big.ts`).click());
     await settle();
@@ -285,7 +287,8 @@ describe("Files viewer", () => {
     expect(viewerText(host)).toContain("version 1");
 
     version = 2;
-    act(() => button(host, "Reload file").click());
+    act(() => button(host, "More file actions").click());
+    act(() => menuItem("Reload file").click());
     expect(viewerText(host)).toContain("version 1");
     await settle();
 
@@ -300,9 +303,11 @@ describe("Files viewer", () => {
     act(() => row(host, `${ROOT}/src/app.ts`).click());
     await settle();
 
-    act(() => button(host, "Copy path").click());
+    act(() => button(host, "More file actions").click());
+    act(() => menuItem("Copy path").click());
     await settle();
-    act(() => button(host, "Copy contents").click());
+    act(() => button(host, "More file actions").click());
+    act(() => menuItem("Copy contents").click());
     await settle();
 
     expect(copyText.mock.calls).toEqual([[`${ROOT}/src/app.ts`], ["body"]]);
@@ -360,44 +365,44 @@ describe("Files viewer", () => {
     expect(window.localStorage.getItem(FILE_VIEWER_TREE_STORAGE_KEY)).toBe("true");
   });
 
-  it("moves copy path and reload into a More menu when the viewer is narrow", async () => {
-    StubResizeObserver.width = 400;
-    const copyText = vi.fn(async () => undefined);
-    const { reader, calls } = memoryReader({ "src/app.ts": text("src/app.ts", "body") });
-    const host = render({ reader, context: rightPanelTestContext({ copyText }) });
-    act(() => row(host, `${ROOT}/src/app.ts`).click());
-    await settle();
+  it.each([180, 400, 900])(
+    "keeps only wrap, the tree toggle and More in a %ipx viewer header",
+    async (width) => {
+      StubResizeObserver.width = width;
+      const copyText = vi.fn(async () => undefined);
+      const { reader, calls } = memoryReader({ "src/app.ts": text("src/app.ts", "body") });
+      const host = render({ reader, context: rightPanelTestContext({ copyText }) });
+      act(() => row(host, `${ROOT}/src/app.ts`).click());
+      await settle();
 
-    expect(host.querySelector('button[aria-label="Copy path"]')).toBeNull();
-    expect(host.querySelector('button[aria-label="Reload file"]')).toBeNull();
-    expect(button(host, "Copy contents")).not.toBeNull();
-    const more = button(host, "More file actions");
-    expect(more.getAttribute("aria-haspopup")).toBe("menu");
-    expect(more.getAttribute("aria-expanded")).toBe("false");
+      expect(headerButtons(host)).toEqual(["Wrap lines", "Hide file tree", "More file actions"]);
+      const more = button(host, "More file actions");
+      expect(more.getAttribute("aria-haspopup")).toBe("menu");
+      expect(more.getAttribute("aria-expanded")).toBe("false");
 
-    act(() => more.click());
-    expect(more.getAttribute("aria-expanded")).toBe("true");
-    const menu = document.body.querySelector('[role="menu"][aria-label="More file actions"]');
-    expect(menu).not.toBeNull();
-    expect(
-      [...(menu?.querySelectorAll('[role="menuitem"]') ?? [])].map((item) => item.textContent),
-    ).toEqual(["Copy path", "Reload file"]);
-    act(() => menuItem("Copy path").click());
-    await settle();
-    expect(copyText.mock.calls).toEqual([[`${ROOT}/src/app.ts`]]);
-    expect(document.body.querySelector('[role="menu"]')).toBeNull();
-    const notice = host.querySelector(".cv-file-viewer__notice");
-    expect(notice?.textContent).toBe("Path copied.");
-    expect(notice?.closest("header")).toBeNull();
-    expect(notice?.previousElementSibling?.tagName).toBe("HEADER");
+      act(() => more.click());
+      expect(more.getAttribute("aria-expanded")).toBe("true");
+      const menu = document.body.querySelector('[role="menu"][aria-label="More file actions"]');
+      expect(
+        [...(menu?.querySelectorAll('[role^="menuitem"]') ?? [])].map((item) => item.textContent),
+      ).toEqual(["Copy path", "Copy contents", "Reload file", "Collapse all folders"]);
+      act(() => menuItem("Copy path").click());
+      await settle();
+      expect(copyText.mock.calls).toEqual([[`${ROOT}/src/app.ts`]]);
+      expect(document.body.querySelector('[role="menu"]')).toBeNull();
+      const notice = host.querySelector(".cv-file-viewer__notice");
+      expect(notice?.textContent).toBe("Path copied.");
+      expect(notice?.closest("header")).toBeNull();
+      expect(notice?.previousElementSibling?.tagName).toBe("HEADER");
 
-    act(() => more.click());
-    act(() => menuItem("Reload file").click());
-    await settle();
-    expect(calls).toHaveLength(2);
-  });
+      act(() => more.click());
+      act(() => menuItem("Reload file").click());
+      await settle();
+      expect(calls).toHaveLength(2);
+    },
+  );
 
-  it("keeps only the tree toggle and More in a minimal viewer header", async () => {
+  it("keeps a quiet Markdown toggle and only the file name in a tight viewer header", async () => {
     StubResizeObserver.width = 280;
     const copyText = vi.fn(async () => undefined);
     const { reader } = memoryReader({ "README.md": text("README.md", "# Title") });
@@ -408,37 +413,25 @@ describe("Files viewer", () => {
     );
 
     expect(host.querySelector(".cv-files")?.classList).toContain("cv-files--tight");
-    expect(
-      [...host.querySelectorAll(".cv-file-viewer__head button[aria-label]")].map((item) =>
-        item.getAttribute("aria-label"),
-      ),
-    ).toEqual(["Hide file tree", "More file actions"]);
+    expect(headerButtons(host)).toEqual([
+      "Show Markdown source",
+      "Wrap lines",
+      "Hide file tree",
+      "More file actions",
+    ]);
     const crumbs = [...host.querySelectorAll('nav[aria-label="File path"] > *')];
     expect(crumbs.map((crumb) => crumb.textContent)).toEqual(["README.md"]);
     expect(crumbs[0]?.getAttribute("title")).toBe("README.md");
 
-    const more = button(host, "More file actions");
-    act(() => more.click());
-    const items = [...document.body.querySelectorAll('[role="menu"] [role^="menuitem"]')];
-    expect(items.map((item) => [item.textContent, item.getAttribute("role")])).toEqual([
-      ["Show Markdown source", "menuitem"],
-      ["Wrap lines", "menuitemcheckbox"],
-      ["Copy path", "menuitem"],
-      ["Copy contents", "menuitem"],
-      ["Reload file", "menuitem"],
-    ]);
-    expect(items[1]?.getAttribute("aria-checked")).toBe("false");
-
-    act(() => menuItem("Wrap lines").click());
+    act(() => button(host, "Wrap lines").click());
     expect(window.localStorage.getItem(FILE_VIEWER_WRAP_STORAGE_KEY)).toBe("true");
-    act(() => more.click());
-    expect(menuItem("Wrap lines").getAttribute("aria-checked")).toBe("true");
+    expect(button(host, "Wrap lines").getAttribute("aria-pressed")).toBe("true");
+    act(() => button(host, "More file actions").click());
     act(() => menuItem("Copy contents").click());
     await settle();
     expect(copyText.mock.calls).toEqual([["# Title"]]);
 
-    act(() => more.click());
-    act(() => menuItem("Show Markdown source").click());
+    act(() => button(host, "Show Markdown source").click());
     expect(host.querySelector(".cv-file-viewer__markdown")).toBeNull();
     expect(viewerText(host)).toContain("# Title");
   });
@@ -455,18 +448,6 @@ describe("Files viewer", () => {
 
     expect(document.body.querySelector('[role="menu"]')).toBeNull();
     expect(host.querySelector(".cv-file-viewer")).not.toBeNull();
-  });
-
-  it("keeps copy path and reload in the header on a wide panel", async () => {
-    StubResizeObserver.width = 900;
-    const { reader } = memoryReader({ "src/app.ts": text("src/app.ts", "x") });
-    const host = render({ reader });
-    act(() => row(host, `${ROOT}/src/app.ts`).click());
-    await settle();
-
-    expect(button(host, "Copy path")).not.toBeNull();
-    expect(button(host, "Reload file")).not.toBeNull();
-    expect(host.querySelector('button[aria-label="More file actions"]')).toBeNull();
   });
 
   it("renders Markdown and switches to its source", async () => {
@@ -553,6 +534,12 @@ describe("Files viewer", () => {
     );
   });
 });
+
+function headerButtons(host: HTMLElement): ReadonlyArray<string | null> {
+  return [...host.querySelectorAll(".cv-file-viewer__head button[aria-label]")].map((item) =>
+    item.getAttribute("aria-label"),
+  );
+}
 
 function menuItem(label: string): HTMLButtonElement {
   const item = [...document.body.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find(

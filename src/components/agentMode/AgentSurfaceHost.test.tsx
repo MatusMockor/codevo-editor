@@ -18,7 +18,6 @@ import {
   surfaceThreadView,
 } from "./agentSurfaceTestFixtures";
 import { fakeTerminalGateway, installResizeObserver } from "./agentSurfaceTerminalTestSupport";
-import { agentShortcutGlyphs } from "./agentThreadHeaderPresentation";
 import {
   UNAVAILABLE_AGENT_SCRIPT_RUNNER,
   type AgentWorkbenchChrome,
@@ -556,9 +555,8 @@ describe("AgentSurfaceHost", () => {
       'input[aria-label="Search workspace files"]',
     );
     expect(enabled?.disabled).toBe(false);
-    expect(host.querySelector(".cv-files__search .cv-kbd")?.textContent).toBe(
-      agentShortcutGlyphs("Ctrl+P"),
-    );
+    expect(host.querySelector(".cv-files__search .cv-kbd")).toBeNull();
+    expect(enabled?.getAttribute("aria-keyshortcuts")).toBe("Control+P");
     act(() => {
       if (enabled === null) return;
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
@@ -954,7 +952,6 @@ function filesChrome(
     ...chrome(fakeTerminalGateway()),
     layout,
     fileTree: {
-      editorFontSize: 18,
       files: { readDirectory: listing },
       fileChanges: null,
       activePath: null,

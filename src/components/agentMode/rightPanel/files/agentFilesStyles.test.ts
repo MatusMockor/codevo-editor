@@ -74,7 +74,7 @@ describe("files surface layout", () => {
     expect(viewerDeclarations(".cv-file-viewer__crumb").get("flex-shrink")).toBe("100");
     expect(viewerDeclarations(".cv-file-viewer__crumb").get("min-width")).toBe("2.5em");
     expect(viewerDeclarations(".cv-file-viewer__head").get("padding-left")).toBe(
-      "var(--cv-space-3)",
+      "var(--cv-space-4)",
     );
   });
 
@@ -85,10 +85,34 @@ describe("files surface layout", () => {
     expect(viewerDeclarations(".cv-file-viewer__notice").get("flex")).toBe("none");
   });
 
-  it("pads the line-number gutter away from the edge and the code", () => {
-    expect(
-      viewerDeclarations(".cv-file-viewer__code .highlighted-code__gutter").get("padding"),
-    ).toBe("0 var(--cv-space-4) 0 var(--cv-space-5)");
+  it("pads a dim line-number gutter away from the edge and the code", () => {
+    const gutter = viewerDeclarations(".cv-file-viewer__code .highlighted-code__gutter");
+    expect(gutter.get("padding")).toBe("0 var(--cv-space-6) 0 var(--cv-space-5)");
+    expect(gutter.get("color")).toBe("var(--cv-fg-disabled)");
+    expect(gutter.has("background")).toBe(false);
+    expect(gutter.has("box-shadow")).toBe(false);
+    expect(viewerDeclarations(".cv-file-viewer__code").get("--file-viewer-line-height")).toBe(
+      "22px",
+    );
+  });
+
+  it("keeps viewer header toggles quiet with only a subtle active state", () => {
+    const pressed = viewerDeclarations(
+      '.cv-file-viewer__tools .cv-icon-button[aria-pressed="true"]',
+    );
+    expect(pressed.get("background")).toBe("var(--cv-tint-1)");
+    expect(pressed.get("color")).toBe("var(--cv-fg)");
+    expect(viewerDeclarations(".cv-file-viewer__crumb").get("color")).toBe("var(--cv-fg-subtle)");
+    expect(viewerDeclarations(".cv-file-viewer__crumb-current").get("color")).toBe("var(--cv-fg)");
+  });
+
+  it("keeps the tree search field borderless at rest with no shortcut chip", () => {
+    const search = declarations(".cv-files__search");
+    expect(search.has("border")).toBe(false);
+    expect(search.has("box-shadow")).toBe(false);
+    expect(search.has("background")).toBe(false);
+    expect(declarations(".cv-files__search:hover").size).toBe(0);
+    expect(rules.some((rule) => rule.selector.includes(".cv-kbd"))).toBe(false);
   });
 
   it("keeps result file names whole and only shortens the directory", () => {
@@ -113,5 +137,29 @@ describe("files git markers", () => {
     expect(added?.declarations.find((item) => item.property === "color")?.value).toBe(
       "var(--cv-ok)",
     );
+  });
+});
+
+describe("files tree typography", () => {
+  const appSheet = "agentApp.css";
+  const appRules = parseCssRules(readStyleSheet(appSheet).source, appSheet).rules;
+  const app = (selector: string): ReadonlyMap<string, string> =>
+    new Map(
+      appRules
+        .find((rule) => rule.selector.replace(/\s+/g, " ") === selector)
+        ?.declarations.map((item) => [item.property, item.value]) ?? [],
+    );
+
+  it("sets the tree in the UI font at the sidebar thread size, not the code font", () => {
+    expect(app(".file-tree").get("font-family")).toBe("var(--cv-font-ui)");
+    expect(app(".file-tree").get("font-size")).toBe("var(--cv-t-sm)");
+    expect(app(".tree-row").get("font")).toBe("inherit");
+  });
+
+  it("highlights rows subtly across the full width with rounded corners", () => {
+    expect(app(".tree-row").get("border-radius")).toBe("var(--cv-r-control)");
+    expect(app(".tree-row.active").get("background")).toBe("var(--cv-row-active)");
+    expect(app(".tree-row:hover").get("background")).toBe("var(--cv-row-hover)");
+    expect(app(".tree-row").get("grid-template-columns")).toBe("16px minmax(0, 1fr) auto auto");
   });
 });

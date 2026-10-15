@@ -18,7 +18,6 @@ describe("file tree selected-project action ownership", () => {
   const read = vi.fn(async () => []);
   const chrome = chromeFixture({
     fileTree: {
-      editorFontSize: 18,
       files: { readDirectory: read },
       fileChanges: null,
       activePath: "/a/index.ts",

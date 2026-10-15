@@ -69,7 +69,6 @@ describe("surface tree follows exact owner identity", () => {
   );
   const chrome = chromeFixture({
     fileTree: {
-      editorFontSize: 18,
       files: { readDirectory },
       fileChanges: null,
       activePath: null,
@@ -123,7 +122,7 @@ describe("surface tree follows exact owner identity", () => {
     return (current?.tree.entriesByDirectory[rootPath] ?? []).map((entry) => entry.path);
   }
 
-  it("renders the editor font size from workbench chrome in FileTree", async () => {
+  it("does not size the tree with the code font size from workbench chrome", async () => {
     installResizeObserver();
     function FontHarness() {
       const fileTree = useAgentSurfaceScopeTree({
@@ -141,7 +140,8 @@ describe("surface tree follows exact owner identity", () => {
 
     await act(async () => root.render(<FontHarness />));
 
-    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("18px");
+    expect(host.querySelector<HTMLElement>(".file-tree")).not.toBeNull();
+    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("");
   });
 
   it("treats thread A after B as a new owner and drops the first A's late results", async () => {

@@ -215,7 +215,7 @@ describe("editor preview interactions", () => {
       tree.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
 
-    expect(host.querySelectorAll(".tree-row")).toHaveLength(53);
+    expect(host.querySelectorAll(".tree-row")).toHaveLength(60);
   });
 
   function renderFileTree({

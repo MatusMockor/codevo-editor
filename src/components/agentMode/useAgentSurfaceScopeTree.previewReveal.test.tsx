@@ -34,7 +34,6 @@ describe("Files preview reveal double-click window", () => {
   const revealEditor = vi.fn();
   const chrome = chromeFixture({
     fileTree: {
-      editorFontSize: 18,
       files: { readDirectory: async () => [] },
       fileChanges: null,
       activePath: null,

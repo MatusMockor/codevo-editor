@@ -174,7 +174,6 @@ export function useAgentSurfaceScopeTree({
       };
     const unavailable = agentSurfaceTreeUnavailable(thread, scope, scopeAction);
     return {
-      fontSize: fileTreeChrome.editorFontSize,
       source,
       tree,
       unavailable,

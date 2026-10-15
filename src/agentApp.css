@@ -296,6 +296,9 @@ button {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  font-family: var(--cv-font-ui);
+  font-size: var(--cv-t-sm);
+  line-height: 1.2;
 }
 
 .empty-tree {
@@ -350,17 +353,18 @@ button {
 
 .tree-row {
   display: grid;
-  width: calc(100% - 16px);
-  grid-template-columns: 16px 18px minmax(0, 1fr) auto auto;
+  width: calc(100% - 12px);
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 4px;
-  margin: 1px 8px;
+  gap: 6px;
+  margin: 0 6px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--cv-r-control);
   background: transparent;
   color: var(--cv-fg);
   cursor: pointer;
-  padding: 0 8px 0 calc(8px + var(--tree-level) * 16px);
+  font: inherit;
+  padding: 0 6px 0 calc(6px + var(--tree-level) * 14px);
   text-align: left;
   transition:
     background-color var(--cv-motion-fast) var(--cv-ease),
@@ -396,12 +400,12 @@ button {
 }
 
 .tree-row:hover {
-  background: var(--cv-tint-2);
+  background: var(--cv-row-hover);
   color: var(--cv-fg-strong);
 }
 
 .tree-row.active {
-  background: var(--cv-accent-soft);
+  background: var(--cv-row-active);
   color: var(--cv-fg-strong);
 }
 
@@ -425,11 +429,11 @@ button {
 
 .tree-row-virtual {
   margin: 0;
-  width: calc(100% - 16px);
+  width: calc(100% - 12px);
 }
 
 .tree-row-shell > .tree-row {
-  margin: 0;
+  margin: 0 6px;
 }
 
 .tree-virtual-window {
@@ -446,8 +450,8 @@ button {
 
 .tree-entry-icon {
   display: inline-grid;
-  width: 18px;
-  min-width: 18px;
+  width: 16px;
+  min-width: 16px;
   place-items: center;
   color: var(--cv-fg-muted);
 }
@@ -506,12 +510,9 @@ button {
 }
 
 .tree-chevron {
-  opacity: 1;
+  justify-self: center;
+  color: var(--cv-fg-subtle);
   transition: transform 0.12s ease;
-}
-
-.tree-chevron.placeholder {
-  opacity: 0;
 }
 
 .tree-chevron.expanded {

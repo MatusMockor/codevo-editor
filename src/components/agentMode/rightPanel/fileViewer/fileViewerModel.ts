@@ -1,19 +1,14 @@
-export const FILE_VIEWER_LINE_HEIGHT_PX = 20;
+export const FILE_VIEWER_LINE_HEIGHT_PX = 22;
+export const FILE_VIEWER_LINE_HEIGHT_RATIO = 1.6;
 export const FILE_VIEWER_BLOCK_LINES = 64;
 export const FILE_VIEWER_OVERSCAN_BLOCKS = 1;
 export const FILE_VIEWER_FALLBACK_VIEWPORT_PX = 640;
 export const FILE_VIEWER_WIDE_MIN_WIDTH_PX = 760;
 export const FILES_TIGHT_BELOW_WIDTH_PX = 480;
-export const FILE_VIEWER_COMPACT_BELOW_WIDTH_PX = 480;
-export const FILE_VIEWER_MINIMAL_BELOW_WIDTH_PX = 300;
+export const FILE_VIEWER_CRUMBS_COMPACT_BELOW_WIDTH_PX = 300;
 
-export type FileViewerToolbarMode = "full" | "compact" | "minimal";
-
-export function fileViewerToolbarMode(width: number): FileViewerToolbarMode {
-  if (width <= 0) return "full";
-  if (width < FILE_VIEWER_MINIMAL_BELOW_WIDTH_PX) return "minimal";
-  if (width < FILE_VIEWER_COMPACT_BELOW_WIDTH_PX) return "compact";
-  return "full";
+export function fileViewerCrumbsCompact(width: number): boolean {
+  return width > 0 && width < FILE_VIEWER_CRUMBS_COMPACT_BELOW_WIDTH_PX;
 }
 
 export interface FileViewerCrumb {

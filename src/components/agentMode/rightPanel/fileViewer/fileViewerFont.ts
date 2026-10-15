@@ -1,4 +1,5 @@
 import { createContext } from "react";
+import { FILE_VIEWER_LINE_HEIGHT_PX, FILE_VIEWER_LINE_HEIGHT_RATIO } from "./fileViewerModel";
 
 export interface FileViewerFont {
   readonly family: string | null;
@@ -12,8 +13,8 @@ export const FileViewerFontContext = createContext<FileViewerFont>({ family: nul
 
 export function fileViewerLineHeight(font: FileViewerFont): number {
   const size = fileViewerFontSize(font);
-  if (size === null) return 20;
-  return Math.max(16, Math.round(size * 1.5));
+  if (size === null) return FILE_VIEWER_LINE_HEIGHT_PX;
+  return Math.max(16, Math.round(size * FILE_VIEWER_LINE_HEIGHT_RATIO));
 }
 
 export function fileViewerFontSize(font: FileViewerFont): number | null {

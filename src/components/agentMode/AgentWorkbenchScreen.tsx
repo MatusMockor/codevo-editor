@@ -604,7 +604,6 @@ export function AgentWorkbenchScreen({
       liveCheckoutBranches,
       threadBranchMemory: DEFAULT_THREAD_BRANCH_MEMORY,
       fileTree: {
-        editorFontSize: appSettings.editorFontSize,
         files,
         fileChanges,
         activePath: viewerActivePath,
