@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.123] - 2026-10-15
+
+### Fixed
+
+- Cmd+Shift+N creates a thread in the current project again, and Cmd+N opens the
+  project picker. Keymaps where an earlier migration put both commands on
+  Cmd+Shift+N are repaired once on start; a custom binding already on Cmd+N is kept.
+
 ## [0.2.0-beta.122] - 2026-10-15
 
 ### Changed
