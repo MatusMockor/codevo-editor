@@ -25,7 +25,7 @@ function Harness(props: ComposerPaletteBindingOptions) {
 describe("useComposerPaletteBinding", () => {
   it("publishes the current provider models with the current one marked and selects by key", () => {
     const selectModel = vi.fn();
-    const launch = defaultAgentComposerLaunch("claudeCode");
+    const launch = { ...defaultAgentComposerLaunch("claudeCode"), model: "claude-opus-5" as const };
     ui = mountUi();
     ui.render(
       <Harness
@@ -42,11 +42,31 @@ describe("useComposerPaletteBinding", () => {
     const models = workbenchComposerPaletteModels.current();
     expect(models?.options.length).toBeGreaterThan(0);
     expect(models?.options.filter((option) => option.current)).toHaveLength(1);
+    expect(models?.options.find((option) => option.current)?.key).toBe("claudeCode:claude-opus-5");
     const target = models?.options.find((option) => !option.current);
     expect(target).toBeDefined();
     expect(models?.selectModel(target?.key ?? "")).toBe(true);
     expect(selectModel).toHaveBeenCalledTimes(1);
     expect(models?.selectModel("nope")).toBe(false);
+  });
+
+  it("publishes the provider models with none current for an unresolved default", () => {
+    ui = mountUi();
+    ui.render(
+      <Harness
+        catalog={BUNDLED_CLAUDE_MODEL_MANIFEST}
+        codexCatalog={BUNDLED_CODEX_MODEL_CATALOG}
+        disabled={false}
+        launch={defaultAgentComposerLaunch("claudeCode")}
+        providerEnabled={null}
+        providerManagement={null}
+        providerSwitchable={false}
+        selectModel={vi.fn()}
+      />,
+    );
+    const models = workbenchComposerPaletteModels.current();
+    expect(models?.options.length).toBeGreaterThan(0);
+    expect(models?.options.filter((option) => option.current)).toHaveLength(0);
   });
 
   it("does not publish while disabled", () => {

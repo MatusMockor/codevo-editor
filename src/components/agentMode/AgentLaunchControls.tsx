@@ -9,6 +9,7 @@ import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agen
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentLaunchModelHint,
+  agentLaunchForDispatch,
   agentLaunchWithMode,
   agentLaunchWithModel,
   type AgentModelChoice,
@@ -135,7 +136,13 @@ export function AgentLaunchControls({
       />
     </>
   );
-  const modelHint = agentLaunchModelHint(launch, configuredModel, catalog, codexCatalog);
+  const modelHint = agentLaunchModelHint(
+    launch,
+    configuredModel,
+    catalog,
+    codexCatalog,
+    executionTarget,
+  );
   return (
     <div className="agent-composer__launch" data-presentation={presentation.kind}>
       <AgentModelPicker
@@ -144,9 +151,14 @@ export function AgentLaunchControls({
         describedBy={modelHint === null ? null : `${MODEL_ID}-hint`}
         disabled={disabled}
         favorites={favorites}
+        executionTarget={executionTarget}
         id={MODEL_ID}
         label="Agent model"
-        launch={effectiveLaunch}
+        launch={
+          effectiveLaunch.provider === "codex"
+            ? agentLaunchForDispatch(effectiveLaunch, configuredModel, catalog, codexCatalog)
+            : effectiveLaunch
+        }
         onSelect={selectModel}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}

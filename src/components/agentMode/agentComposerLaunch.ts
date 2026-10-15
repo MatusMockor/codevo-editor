@@ -1,4 +1,8 @@
-import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agentLaunch";
+import type {
+  AgentExecutionTarget,
+  AgentLaunchOptions,
+  ClaudeModelChoice,
+} from "../../domain/agentLaunch";
 import type {
   AgentNewThreadDefaults,
   AgentNewThreadLaunchSource,
@@ -73,6 +77,40 @@ export function availableNewThreadDefaults(
     agentClaudeModelChoiceForVersion(model, claudeCliVersion, claudeCatalog) ?? "default";
   if (offered === model) return defaults;
   return { ...defaults, claudeCode: { model: offered, effort } };
+}
+
+export interface ClaudeNewThreadModelFallback {
+  readonly requested: ClaudeModelChoice;
+  readonly offered: ClaudeModelChoice;
+  readonly minVersion: string | null;
+}
+
+export function newThreadClaudeModelFallback(
+  requested: AgentNewThreadDefaults,
+  offered: AgentNewThreadDefaults,
+  catalog: ClaudeModelManifest,
+): ClaudeNewThreadModelFallback | null {
+  if (requested.claudeCode.model === offered.claudeCode.model) return null;
+  const model = catalog.claudeCode.find((entry) => entry.choice === requested.claudeCode.model);
+  return {
+    requested: requested.claudeCode.model,
+    offered: offered.claudeCode.model,
+    minVersion: model?.minVersion ?? null,
+  };
+}
+
+export function claudeUnavailableModelNotice(
+  fallback: ClaudeNewThreadModelFallback | null,
+  catalog: ClaudeModelManifest,
+): string | null {
+  if (fallback === null) return null;
+  const model = catalog.claudeCode.find((entry) => entry.choice === fallback.requested);
+  const label = model?.label ?? fallback.requested;
+  const reason =
+    fallback.minVersion === null
+      ? `${label} is unavailable in this version of Claude Code.`
+      : `${label} needs Claude Code ${fallback.minVersion} or newer.`;
+  return `${reason} This turn uses your Claude Code default model instead.`;
 }
 
 export function launchScopeExecutionTarget(scope: LaunchScope): AgentExecutionTarget {

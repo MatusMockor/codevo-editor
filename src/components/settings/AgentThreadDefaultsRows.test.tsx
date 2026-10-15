@@ -232,7 +232,7 @@ describe("AgentThreadDefaultsRows", () => {
     render();
 
     expect(optionLabels(select("Claude Code model"))).toEqual([
-      "CLI default (Claude Sonnet 5)",
+      "CLI default",
       "Claude Opus 5.5",
       "Claude Sonnet 5",
     ]);
@@ -250,6 +250,35 @@ describe("AgentThreadDefaultsRows", () => {
     ]);
     expect(select("Claude Code model").value).toBe("claude-opus-5-5");
     expect(optionValues(select("Claude Code effort"))).toContain("ultracode");
+  });
+
+  it("names the configured Claude model in the default option and preview", () => {
+    render({
+      management: newThreadManagementFixture(
+        {},
+        {
+          claudeCode: {
+            kind: "detected",
+            path: "/bin/claude",
+            version: "2.4.1",
+            configuredModel: "opus",
+          },
+          codex: { kind: "notFound" },
+        },
+      ),
+    });
+
+    expect(select("Claude Code model").value).toBe("default");
+    expect(optionLabels(select("Claude Code model"))).toEqual([
+      "CLI default (Claude Opus 5.5)",
+      "Claude Opus 5.5",
+      "Claude Sonnet 5",
+    ]);
+    expect(previewChips()).toEqual(["Claude Code", "Claude Opus 5.5", "High", "1M context"]);
+    expect(previewSummary()).toBe(
+      "New thread preview: Claude Code, Claude Opus 5.5, High effort, 1M context",
+    );
+    expect(onChangeNewThreadDefaults).not.toHaveBeenCalled();
   });
 
   it("resets an effort the newly chosen model does not support in the same write", () => {
@@ -362,7 +391,7 @@ describe("AgentThreadDefaultsRows", () => {
     expect(model.value).toBe("claude-retired-1");
     expect(stored?.textContent).toBe("claude-retired-1 (unavailable)");
     expect(stored?.disabled).toBe(true);
-    expect(previewChips()).toEqual(["Claude Code", "Claude Sonnet 5", "Max", "1M context"]);
+    expect(previewChips()).toEqual(["Claude Code", "Claude Code default", "Max", "1M context"]);
     expect(select("Claude Code effort").value).toBe("max");
     expect(onChangeNewThreadDefaults).not.toHaveBeenCalled();
   });
@@ -436,7 +465,7 @@ describe("AgentThreadDefaultsRows", () => {
     expect(model.value).toBe("claude-opus-5-5");
     expect(stored?.textContent).toBe("Claude Opus 5.5 (unavailable)");
     expect(stored?.disabled).toBe(true);
-    expect(previewChips()).toEqual(["Claude Code", "Claude Sonnet 5", "Max", "1M context"]);
+    expect(previewChips()).toEqual(["Claude Code", "Claude Code default", "Max", "1M context"]);
     expect(select("Claude Code effort").value).toBe("max");
     expect(optionValues(select("Claude Code effort"))).not.toContain("ultracode");
     expect(onChangeNewThreadDefaults).not.toHaveBeenCalled();
@@ -451,7 +480,7 @@ describe("AgentThreadDefaultsRows", () => {
 
     expect(select("Claude Code model").value).toBe("claude-opus-5-5");
     expect(optionLabels(select("Claude Code model"))).toEqual([
-      "CLI default (Claude Sonnet 5)",
+      "CLI default",
       "Claude Opus 5.5",
       "Claude Sonnet 5",
     ]);
@@ -486,11 +515,7 @@ describe("AgentThreadDefaultsRows", () => {
 
     expect(model.value).toBe("claude-sonnet-5");
     expect(model.selectedOptions[0]?.textContent).toBe("Claude Sonnet 5");
-    expect(optionLabels(model)).toEqual([
-      "CLI default (Claude Sonnet 5)",
-      "Claude Opus 5.5",
-      "Claude Sonnet 5",
-    ]);
+    expect(optionLabels(model)).toEqual(["CLI default", "Claude Opus 5.5", "Claude Sonnet 5"]);
     expect(previewChips()).toEqual(["Claude Code", "Claude Sonnet 5", "High", "1M context"]);
     expect(onChangeNewThreadDefaults).not.toHaveBeenCalled();
   });
@@ -532,9 +557,9 @@ describe("AgentThreadDefaultsRows", () => {
 
     expect(host.textContent).toContain("A new thread opens like this");
     expect(previewSummary()).toBe(
-      "New thread preview: Claude Code, Claude Sonnet 5, High effort, 1M context",
+      "New thread preview: Claude Code, Claude Code default, High effort, 1M context",
     );
-    expect(previewChips()).toEqual(["Claude Code", "Claude Sonnet 5", "High", "1M context"]);
+    expect(previewChips()).toEqual(["Claude Code", "Claude Code default", "High", "1M context"]);
 
     setSelect(select("Claude Code model"), "claude-opus-5-5");
     setSelect(select("Claude Code effort"), "max");
@@ -559,13 +584,13 @@ describe("AgentThreadDefaultsRows", () => {
 
     expect(chips.map((chip) => chip.getAttribute("title"))).toEqual([
       "Claude Code",
-      "Claude Sonnet 5",
+      "Claude Code default",
       "High",
       "1M context",
     ]);
     expect(
       chips.map((chip) => chip.querySelector(".settings-thread-preview__chip-label")?.textContent),
-    ).toEqual(["Claude Code", "Claude Sonnet 5", "High", "1M context"]);
+    ).toEqual(["Claude Code", "Claude Code default", "High", "1M context"]);
   });
 
   it("keeps the preview out of the tab order and hides its parts from assistive tech", () => {

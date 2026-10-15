@@ -13,6 +13,8 @@ import {
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   availableNewThreadDefaults,
+  claudeUnavailableModelNotice,
+  newThreadClaudeModelFallback,
   defaultAgentComposerLaunch,
   launchScopeExecutionTarget,
   newThreadComposerLaunch,
@@ -441,6 +443,49 @@ describe("availableNewThreadDefaults", () => {
   );
 });
 
+describe("Claude new-thread model fallback", () => {
+  const requested: AgentNewThreadDefaults = {
+    ...CONFIGURED,
+    claudeCode: { model: "claude-opus-5-5", effort: "high" },
+  };
+
+  it("explains a local CLI version fallback with the requested model and minimum version", () => {
+    const offered = availableNewThreadDefaults(requested, BUNDLED_CLAUDE_MODEL_MANIFEST, "2.1.200");
+    const fallback = newThreadClaudeModelFallback(
+      requested,
+      offered,
+      BUNDLED_CLAUDE_MODEL_MANIFEST,
+    );
+
+    expect(fallback).toEqual({
+      requested: "claude-opus-5-5",
+      offered: "default",
+      minVersion: "2.1.280",
+    });
+    expect(claudeUnavailableModelNotice(fallback, BUNDLED_CLAUDE_MODEL_MANIFEST)).toBe(
+      "Claude Opus 5.5 needs Claude Code 2.1.280 or newer. This turn uses your Claude Code default model instead.",
+    );
+  });
+
+  it("does not report a fallback when the requested model remains available", () => {
+    expect(
+      newThreadClaudeModelFallback(requested, requested, BUNDLED_CLAUDE_MODEL_MANIFEST),
+    ).toBeNull();
+    expect(claudeUnavailableModelNotice(null, BUNDLED_CLAUDE_MODEL_MANIFEST)).toBeNull();
+  });
+
+  it("explains unavailable models without a minimum version", () => {
+    expect(
+      claudeUnavailableModelNotice(
+        { requested: "claude-retired-9", offered: "default", minVersion: null },
+        BUNDLED_CLAUDE_MODEL_MANIFEST,
+      ),
+    ).toBe(
+      "claude-retired-9 is unavailable in this version of Claude Code. This turn uses your Claude Code default model instead.",
+    );
+  });
+});
+
 describe("launchScopeExecutionTarget", () => {
   it("treats only a remote project scope as a server draft", () => {
     expect(launchScopeExecutionTarget(DRAFT)).toBe("local");
@@ -601,11 +646,7 @@ describe("stale new-thread defaults", () => {
       null,
       BUNDLED_CLAUDE_MODEL_MANIFEST,
     );
-    const offered = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find(
-      (entry) => entry.choice === dispatched.model,
-    );
-
-    expect(offered?.isDefault).toBe(true);
+    expect(dispatched.model).toBe("default");
     expect(dispatched).toMatchObject({ provider: "claudeCode", effort: "max" });
     expect(
       agentLaunchForDispatch(

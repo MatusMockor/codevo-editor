@@ -3,10 +3,11 @@ import {
   defaultAgentNewThreadDefaults,
   type AgentNewThreadDefaults,
 } from "../../domain/agentNewThreadDefaults";
-import { availableNewThreadDefaults } from "./agentComposerLaunch";
+import { availableNewThreadDefaults, newThreadClaudeModelFallback } from "./agentComposerLaunch";
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import {
   AgentNewThreadDefaultsContext,
+  AgentNewThreadModelFallbackContext,
   type AgentNewThreadDefaultsByTarget,
 } from "./useAgentNewThreadDefaults";
 
@@ -44,9 +45,15 @@ export function AgentNewThreadDefaultsProvider({
     [server, catalog, localClaudeCliVersion],
   );
   const value = useMemo<AgentNewThreadDefaultsByTarget>(() => ({ local, server }), [local, server]);
+  const fallback = useMemo(
+    () => ({ local: newThreadClaudeModelFallback(server, local, catalog), server: null }),
+    [server, local, catalog],
+  );
   return (
     <AgentNewThreadDefaultsContext.Provider value={value}>
-      {children}
+      <AgentNewThreadModelFallbackContext.Provider value={fallback}>
+        {children}
+      </AgentNewThreadModelFallbackContext.Provider>
     </AgentNewThreadDefaultsContext.Provider>
   );
 }

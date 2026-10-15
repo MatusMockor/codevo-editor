@@ -74,7 +74,7 @@ describe("new thread model options", () => {
     const defaults = defaultAgentNewThreadDefaults();
 
     expect(newThreadModelOptions("claudeCode", defaults, context)).toEqual([
-      { label: "CLI default (Claude Sonnet 5)", value: "default" },
+      { label: "CLI default", value: "default" },
       { label: "Claude Opus 5.5", value: "claude-opus-5-5" },
       { label: "Claude Sonnet 5", value: "claude-sonnet-5" },
     ]);
@@ -97,6 +97,12 @@ describe("new thread model options", () => {
     expect(newThreadModelOptions("codex", defaults, configured)[0]?.label).toBe(
       "Config default (GPT-6-Luna)",
     );
+    expect(chipLabels(newThreadPreview("claudeCode", defaults, configured))).toEqual([
+      "Claude Code",
+      "Claude Opus 5.5",
+      "High",
+      "1M context",
+    ]);
   });
 
   it("does not name a model when the Codex configuration points outside the catalog", () => {
@@ -151,14 +157,14 @@ describe("new thread model options", () => {
     const defaults = defaultsWith({ claudeCode: { model: "claude-opus-5-5", effort: "max" } });
 
     expect(newThreadModelOptions("claudeCode", defaults, gated)).toEqual([
-      { label: "CLI default (Claude Sonnet 5)", value: "default" },
+      { label: "CLI default", value: "default" },
       { label: "Claude Sonnet 5", value: "claude-sonnet-5" },
       { disabled: true, label: "Claude Opus 5.5 (unavailable)", value: "claude-opus-5-5" },
     ]);
     expect(newThreadModelValue("claudeCode", defaults, gated)).toBe("claude-opus-5-5");
     expect(chipLabels(newThreadPreview("claudeCode", defaults, gated))).toEqual([
       "Claude Code",
-      "Claude Sonnet 5",
+      "Claude Code default",
       "Max",
       "1M context",
     ]);
@@ -175,7 +181,7 @@ describe("new thread model options", () => {
       const gated = gatedContext(version);
 
       expect(newThreadModelOptions("claudeCode", defaults, gated)).toEqual([
-        { label: "CLI default (Claude Sonnet 5)", value: "default" },
+        { label: "CLI default", value: "default" },
         { label: "Claude Opus 5.5", value: "claude-opus-5-5" },
         { label: "Claude Sonnet 5", value: "claude-sonnet-5" },
       ]);
@@ -195,7 +201,7 @@ describe("new thread model options", () => {
 
     expect(newThreadModelValue("claudeCode", sonnet, context)).toBe("claude-sonnet-5");
     expect(newThreadModelOptions("claudeCode", sonnet, context)).toEqual([
-      { label: "CLI default (Claude Sonnet 5)", value: "default" },
+      { label: "CLI default", value: "default" },
       { label: "Claude Opus 5.5", value: "claude-opus-5-5" },
       { label: "Claude Sonnet 5", value: "claude-sonnet-5" },
     ]);
@@ -229,7 +235,7 @@ describe("new thread model options", () => {
     });
     expect(chipLabels(newThreadPreview("claudeCode", defaults, gated))).toEqual([
       "Claude Code",
-      "Claude Sonnet 5",
+      "Claude Code default",
       "High",
       "1M context",
     ]);
@@ -545,12 +551,12 @@ describe("new thread preview", () => {
     expect(preview.provider).toBe("claudeCode");
     expect(preview.chips).toEqual([
       { kind: "provider", label: "Claude Code" },
-      { kind: "model", label: "Claude Sonnet 5" },
+      { kind: "model", label: "Claude Code default" },
       { kind: "effort", label: "High" },
       { kind: "context", label: "1M context" },
     ]);
     expect(preview.summary).toBe(
-      "New thread preview: Claude Code, Claude Sonnet 5, High effort, 1M context",
+      "New thread preview: Claude Code, Claude Code default, High effort, 1M context",
     );
   });
 
@@ -655,7 +661,7 @@ describe("new thread preview", () => {
       "Max",
       "1M context",
     ]);
-    expect(chipLabels(preview)).toContain("Claude Sonnet 5");
+    expect(chipLabels(preview)).toContain("Claude Code default");
     expect(newThreadModelValue("claudeCode", defaults, context)).toBe("claude-retired-1");
     expect(last(newThreadModelOptions("claudeCode", defaults, context))).toEqual({
       disabled: true,

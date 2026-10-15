@@ -89,6 +89,87 @@ fn codex_with_effort(
 }
 
 #[test]
+fn default_model_ignores_manifest_default_version_gates() {
+    let mut catalog = (*crate::claude_model_manifest::snapshot().unwrap()).clone();
+    for entry in &mut catalog.claude_code {
+        entry.is_default = Some(false);
+    }
+    let entry = &mut catalog.claude_code[0];
+    entry.is_default = Some(true);
+    entry.min_version = Some("2.1.257".into());
+    entry.max_version_exclusive = Some("2.1.258".into());
+    entry.efforts = vec!["high".into()];
+    entry.context_windows = vec!["1m".into()];
+    let explicit_model =
+        serde_json::from_value::<ClaudeModelChoice>(entry.choice.clone().into()).unwrap();
+    let mut launch = claude_with_effort(
+        ClaudeModelChoice::Default,
+        ClaudePermissionMode::Default,
+        ClaudeEffortChoice::High,
+    );
+    if let AgentLaunchOptions::ClaudeCode { context, .. } = &mut launch {
+        *context = ClaudeContextChoice::OneM;
+    }
+    for version in [Some("2.1.219"), None, Some("3.0.0")] {
+        assert!(launch
+            .validate_version_requirement(&catalog, version)
+            .is_ok());
+        assert!(launch.validate_manifest(&catalog, version).is_ok());
+    }
+    if let AgentLaunchOptions::ClaudeCode { model, .. } = &mut launch {
+        *model = explicit_model;
+    }
+    assert!(launch
+        .validate_version_requirement(&catalog, Some("2.1.219"))
+        .is_err());
+    assert!(launch.validate_version_requirement(&catalog, None).is_err());
+}
+
+#[test]
+fn default_model_validates_capabilities_against_manifest_union() {
+    let mut catalog = (*crate::claude_model_manifest::snapshot().unwrap()).clone();
+    catalog.claude_code.truncate(2);
+    for entry in &mut catalog.claude_code {
+        entry.is_default = Some(false);
+        entry.efforts = vec!["high".into()];
+        entry.context_windows = vec!["200k".into()];
+        entry.fast_mode = false;
+        entry.thinking_mode = false;
+    }
+    catalog.claude_code[0].is_default = Some(true);
+    let mut launch = claude_with_effort(
+        ClaudeModelChoice::Default,
+        ClaudePermissionMode::Default,
+        ClaudeEffortChoice::Max,
+    );
+    assert!(launch.validate_version_requirement(&catalog, None).is_err());
+    catalog.claude_code[1].efforts.push("max".into());
+    assert!(launch.validate_version_requirement(&catalog, None).is_ok());
+    if let AgentLaunchOptions::ClaudeCode {
+        context,
+        fast_mode,
+        thinking_mode,
+        ..
+    } = &mut launch
+    {
+        *context = ClaudeContextChoice::OneM;
+        *fast_mode = true;
+        *thinking_mode = true;
+    }
+    catalog.claude_code[1].context_windows.push("1m".into());
+    catalog.claude_code[1].fast_mode = true;
+    assert!(launch.validate_manifest(&catalog, None).is_err());
+    catalog.claude_code[1].thinking_mode = true;
+    assert!(launch.validate_manifest(&catalog, None).is_ok());
+    catalog.claude_code[1].context_windows.clear();
+    assert!(launch.validate_manifest(&catalog, None).is_err());
+    catalog.claude_code[0].context_windows.clear();
+    assert!(launch.validate_manifest(&catalog, None).is_ok());
+    catalog.claude_code[1].fast_mode = false;
+    assert!(launch.validate_manifest(&catalog, None).is_err());
+}
+
+#[test]
 fn catalog_model_without_a_code_variant_launches_and_enforces_its_constraints() {
     let mut catalog = (*crate::claude_model_manifest::snapshot().unwrap()).clone();
     let mut future = catalog.claude_code[0].clone();

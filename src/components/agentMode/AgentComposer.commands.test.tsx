@@ -115,15 +115,22 @@ describe("composer command integration", () => {
     expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
-  it("selects plan mode locally without overwriting model choice", () => {
-    mount("/plan");
-    key("Tab");
-    expect(props.onLaunchChange).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: "claudeCode", model: "opus", mode: "plan" }),
-    );
-    expect(props.onSubmit).not.toHaveBeenCalled();
-    expect(textarea().value).toBe("");
-  });
+  it.each(["opus", "default"] as const)(
+    "selects plan mode without overwriting model %s",
+    (model) => {
+      props = {
+        ...props,
+        launch: { provider: "claudeCode", model, mode: "default", effort: "default" },
+      };
+      mount("/plan");
+      key("Tab");
+      expect(props.onLaunchChange).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: "claudeCode", model, mode: "plan" }),
+      );
+      expect(props.onSubmit).not.toHaveBeenCalled();
+      expect(textarea().value).toBe("");
+    },
+  );
 
   it("keeps provider settings reachable when providers are disabled", () => {
     props = { ...props, providerEnabled: { claudeCode: false, codex: false }, submitBlocked: true };

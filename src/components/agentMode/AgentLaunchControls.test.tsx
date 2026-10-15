@@ -114,6 +114,46 @@ describe("AgentLaunchControls", () => {
     });
   });
 
+  it("keeps the CLI default choice while editing capabilities and access for its configured model", () => {
+    const onLaunchChange = vi.fn();
+    const base = disabledClaudeManagement();
+    const providerManagement: AgentProviderManagementSurface = {
+      ...base,
+      cliDiscovery: {
+        ...base.cliDiscovery,
+        claudeCode: {
+          kind: "detected",
+          path: "/bin/claude",
+          version: "2.1.284",
+          configuredModel: "claude-opus-5",
+        },
+      },
+    };
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "bypassPermissions",
+      effort: "high",
+      context: "1m",
+    };
+    renderControls(launch, onLaunchChange, false, providerManagement);
+
+    expect(trigger("agent-launch-model").textContent).toBe("Claude Opus 5");
+    open("agent-launch-effort");
+    expect(menuRadioLabels()).toContain("Max");
+    act(() => menuRadio("Max")?.click());
+    expect(onLaunchChange).toHaveBeenLastCalledWith({ ...launch, effort: "max" });
+    open("agent-launch-effort");
+    act(() => menuRadio("200k")?.click());
+    expect(onLaunchChange).toHaveBeenLastCalledWith({ ...launch, context: "200k" });
+
+    open("agent-launch-mode");
+    act(() => menuRadio("Plan mode")?.click());
+    expect(onLaunchChange).toHaveBeenLastCalledWith({ ...launch, mode: "plan" });
+    expect(trigger("agent-launch-model").textContent).toBe("Claude Opus 5");
+    expect(onLaunchChange).toHaveBeenCalledTimes(3);
+  });
+
   it("shows the 1M default and applies the Claude model suffix selection", () => {
     const onLaunchChange = vi.fn();
     renderControls(
@@ -167,7 +207,7 @@ describe("AgentLaunchControls", () => {
       expect(trigger(id).classList.contains("agent-picker__trigger--ghost")).toBe(true);
       expect(trigger(id).querySelector(".agent-picker__prefix")).toBeNull();
     }
-    expect(trigger("agent-launch-model").textContent).toBe("Claude Sonnet 5");
+    expect(trigger("agent-launch-model").textContent).toBe("Claude Code default");
     expect(trigger("agent-launch-effort").textContent).toBe("High · 1M");
     expect(trigger("agent-launch-mode").textContent).toBe("Full access");
     const dividers = host.querySelectorAll(".agent-composer__divider");
@@ -250,7 +290,9 @@ describe("AgentLaunchControls", () => {
 
     const modelHint = trigger("agent-launch-model").getAttribute("aria-describedby") ?? "";
     const modeHint = trigger("agent-launch-mode").getAttribute("aria-describedby") ?? "";
-    expect(host.querySelector(`#${modelHint}`)?.textContent).toContain("Claude model catalog");
+    expect(host.querySelector(`#${modelHint}`)?.textContent).toBe(
+      "Uses the model configured in Claude Code.",
+    );
     expect(host.querySelector(`#${modeHint}`)?.textContent).toContain("Asks before commands");
     expect(host.querySelector(`#${modeHint}`)?.className).toBe("agent-visually-hidden");
   });

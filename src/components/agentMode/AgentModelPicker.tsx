@@ -15,7 +15,7 @@ import {
 import { ChevronDown, ChevronRight, Search, Star } from "lucide-react";
 import type { AgentModelFavorites } from "../../application/useAgentModelFavorites";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
-import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agentLaunch";
 import type { AgentCliKind } from "../../domain/agentTask";
 import {
   agentLegacyModelsSummary,
@@ -52,6 +52,7 @@ export interface AgentModelPickerProps {
   readonly id: string;
   readonly label: string;
   readonly launch: AgentLaunchOptions;
+  readonly executionTarget?: AgentExecutionTarget;
   readonly disabled: boolean;
   readonly openRequest?: object | null;
   onOpenRequestHandled?(): void;
@@ -80,6 +81,7 @@ export function AgentModelPicker({
   id,
   label,
   launch,
+  executionTarget = "local",
   onSelect,
   providerEnabled = null,
   providerManagement = null,
@@ -255,6 +257,7 @@ export function AgentModelPicker({
             configuredProviderModel(providerManagement, launch.provider),
             catalog,
             codexCatalog,
+            executionTarget,
           ) ??
           undefined
         }
@@ -269,6 +272,7 @@ export function AgentModelPicker({
             configuredProviderModel(providerManagement, launch.provider),
             catalog,
             codexCatalog,
+            executionTarget,
           )}
         </span>
         <ChevronDown aria-hidden="true" className="agent-picker__chevron" size={14} />

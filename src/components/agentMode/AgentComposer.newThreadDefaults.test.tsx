@@ -281,8 +281,11 @@ describe("composer launch controls with configured new-thread defaults", () => {
     };
     render({ settings, localClaudeCliVersion: "2.1.283" });
 
-    expect(displayedModel()).toBe("claude-sonnet-5");
-    expect(submittedLaunch()).toMatchObject({ model: "claude-sonnet-5", effort: "max" });
+    expect(displayedModel()).toBe("default");
+    expect(host.textContent).toContain(
+      "Claude Sonnet 5.5 needs Claude Code 2.1.284 or newer. This turn uses your Claude Code default model instead.",
+    );
+    expect(submittedLaunch()).toMatchObject({ model: "default", effort: "max" });
 
     render({ settings, localClaudeCliVersion: "2.1.284" });
 
@@ -304,6 +307,55 @@ describe("composer launch controls with configured new-thread defaults", () => {
 
     expect(displayedModel()).toBe("claude-sonnet-5-5");
     expect(submittedLaunch()).toMatchObject({ model: "claude-sonnet-5-5", effort: "max" });
+  });
+
+  it("submits the Claude server default and displays Server default", () => {
+    render({
+      settings: { ...CONFIGURED, claudeCode: { model: "default", effort: "high" } },
+      executionServerId: "server",
+    });
+
+    expect(host.querySelector("button#agent-launch-model")?.textContent).toContain(
+      "Server default",
+    );
+    expect(submittedLaunch()).toMatchObject({
+      provider: "claudeCode",
+      model: "default",
+      effort: "high",
+    });
+  });
+
+  it.each([
+    ["default", "default", "Claude Code default"],
+    ["claude-opus-5", "claude-opus-5", "Claude Opus 5"],
+  ] as const)(
+    "still resolves the configured Claude %s model for a local composer",
+    (model, resolved, label) => {
+      render({
+        settings: { ...CONFIGURED, claudeCode: { model, effort: "high" } },
+      });
+
+      expect(displayedModel()).toBe(resolved);
+      expect(host.querySelector("button#agent-launch-model")?.textContent).toContain(label);
+      expect(submittedLaunch()).toMatchObject({
+        provider: "claudeCode",
+        model: resolved,
+        effort: "high",
+      });
+    },
+  );
+
+  it("keeps the default model when changing effort on a draft", () => {
+    render({ settings: { ...CONFIGURED, claudeCode: { model: "default", effort: "high" } } });
+
+    click('[aria-label="Model capabilities"]');
+    const low = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')).find(
+      (item) => item.textContent === "Low",
+    );
+    expect(low).toBeDefined();
+    act(() => low?.click());
+
+    expect(composerLaunch()).toMatchObject({ model: "default", effort: "low" });
   });
 
   it("dispatches the Codex default and says so when the configured Codex model disappeared", () => {
@@ -343,10 +395,10 @@ describe("composer launch controls with configured new-thread defaults", () => {
       settings: { ...CONFIGURED, claudeCode: { model: "claude-retired-9", effort: "max" } },
     });
 
-    expect(displayedModel()).toBe("claude-sonnet-5");
+    expect(displayedModel()).toBe("default");
     expect(submittedLaunch()).toEqual({
       ...CONFIGURED_CLAUDE,
-      model: "claude-sonnet-5",
+      model: "default",
       effort: "max",
     });
   });
@@ -364,8 +416,8 @@ describe("composer launch controls with configured new-thread defaults", () => {
 
     render({ settings: CONFIGURED, claudeCatalog: withoutOpus });
 
-    expect(displayedModel()).toBe("claude-sonnet-5");
-    expect(submittedLaunch()).toMatchObject({ provider: "claudeCode", model: "claude-sonnet-5" });
+    expect(displayedModel()).toBe("default");
+    expect(submittedLaunch()).toMatchObject({ provider: "claudeCode", model: "default" });
   });
 
   it("replaces a configured Claude effort the configured model does not support", () => {
