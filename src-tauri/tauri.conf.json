@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Codevo Editor",
+  "productName": "Codevo",
   "version": "0.2.0-beta.125",
   "identifier": "dev.mockor.editor",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Codevo Editor",
+        "title": "Codevo",
         "backgroundColor": "#151616",
         "visible": false,
         "width": 1280,

@@ -1,4 +1,4 @@
-# Codevo Editor release process
+# Codevo release process
 
 The macOS release workflow is manual and publishes only an existing tag whose name
 matches the version in `package.json`. It preserves version tags. After publishing a
@@ -75,7 +75,7 @@ tag:
 git switch main
 git pull --ff-only origin main
 npm run check
-git tag -a v0.2.0-beta.1 -m "Codevo Editor 0.2.0-beta.1"
+git tag -a v0.2.0-beta.1 -m "Codevo 0.2.0-beta.1"
 git push origin v0.2.0-beta.1
 ```
 
@@ -145,10 +145,10 @@ dmg_path="$(find "$release_dir" -maxdepth 1 -name '*.dmg' -print -quit)"
 mount_dir="$(mktemp -d)"
 hdiutil attach "$dmg_path" -nobrowse -mountpoint "$mount_dir"
 mkdir -p "$HOME/Applications"
-ditto "$mount_dir/Codevo Editor.app" "$HOME/Applications/Codevo Editor.app"
+ditto "$mount_dir/Codevo.app" "$HOME/Applications/Codevo.app"
 hdiutil detach "$mount_dir"
 rmdir "$mount_dir"
-open "$HOME/Applications/Codevo Editor.app"
+open "$HOME/Applications/Codevo.app"
 ```
 
 Prefer an Apple-signed release for normal installation. An unsigned beta is clearly

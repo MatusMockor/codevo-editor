@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-pub(super) const INITIAL_REQUEST: &str = "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo Editor\",\"version\":\"0.2.0\"}}}\n";
+pub(super) const INITIAL_REQUEST: &str = "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo\",\"version\":\"0.2.0\"}}}\n";
 const REQUESTS: [&str; 3] = [
     "{\"method\":\"initialized\",\"params\":{}}\n{\"method\":\"account/read\",\"id\":2,\"params\":{\"refreshToken\":false}}\n",
     "{\"method\":\"account/rateLimits/read\",\"id\":1}\n",

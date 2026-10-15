@@ -63,9 +63,9 @@ These artifacts are not release artifacts.
 The debug `.app`/`.dmg` produced by `smoke` mode is ad-hoc signed (no Developer ID, no notarization). macOS Gatekeeper blocks it by default when downloaded from a browser or CI artifact zip (`com.apple.quarantine` extended attribute). To run it locally:
 
 1. Download and unzip the `codevo-editor-macos-debug` artifact from the workflow run.
-2. Either right-click (or Control-click) `Codevo Editor.app` in Finder, choose "Open", then confirm "Open" in the Gatekeeper dialog, or clear the quarantine flag from a terminal:
+2. Either right-click (or Control-click) `Codevo.app` in Finder, choose "Open", then confirm "Open" in the Gatekeeper dialog, or clear the quarantine flag from a terminal:
    ```sh
-   xattr -dr com.apple.quarantine "Codevo Editor.app"
+   xattr -dr com.apple.quarantine "Codevo.app"
    ```
 3. This is a debug build for smoke-testing packaging only; it is not a distributable release artifact.
 

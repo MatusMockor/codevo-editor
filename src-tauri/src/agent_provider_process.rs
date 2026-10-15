@@ -30,7 +30,7 @@ pub const AGENT_PROVIDER_UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
 pub const AGENT_PROVIDER_MODEL_CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
 pub const AGENT_PROVIDER_MODEL_CATALOG_OUTPUT_BYTES: usize = 256 * 1024;
 const CODEX_APP_SERVER_HANDSHAKE: &str = concat!(
-    "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo Editor\",\"version\":\"0.2.0\"}}}\n",
+    "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo\",\"version\":\"0.2.0\"}}}\n",
     "{\"method\":\"initialized\",\"params\":{}}\n",
 );
 #[path = "agent_provider_usage_probe.rs"]

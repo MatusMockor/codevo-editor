@@ -117,8 +117,8 @@ describe("release quality gates", () => {
       const result = verifyBundleSeals(appleSigning);
       expect(result.status).toBe(0);
       expect(result.calls.filter((line) => line.startsWith("codesign --verify"))).toHaveLength(3);
-      expect(result.calls.some((line) => line.includes("/updater/Codevo Editor.app"))).toBe(true);
-      expect(result.calls.some((line) => line.includes("/dmg/Codevo Editor.app"))).toBe(true);
+      expect(result.calls.some((line) => line.includes("/updater/Codevo.app"))).toBe(true);
+      expect(result.calls.some((line) => line.includes("/dmg/Codevo.app"))).toBe(true);
       expect(result.calls.some((line) => line.startsWith("spctl "))).toBe(appleSigning === "true");
       expect(result.calls.some((line) => line.startsWith("xcrun stapler"))).toBe(
         appleSigning === "true",
@@ -215,10 +215,10 @@ describe("macOS microphone permission", () => {
 function verifyBundleSeals(appleSigning, failure = "") {
   const directory = mkdtempSync(path.join(os.tmpdir(), "codevo-bundle-seals-"));
   workspaces.push(directory);
-  const app = path.join(directory, "Codevo Editor.app");
+  const app = path.join(directory, "Codevo.app");
   mkdirSync(app);
   const archive = path.join(directory, "updater.tar.gz");
-  execFileSync("tar", ["-czf", archive, "-C", directory, "Codevo Editor.app"]);
+  execFileSync("tar", ["-czf", archive, "-C", directory, "Codevo.app"]);
   const verification = job("release-build")
     .split("# Every distribution needs")[1]
     .split('          hdiutil imageinfo "$dmg_path"')[0];
@@ -234,7 +234,7 @@ function verifyBundleSeals(appleSigning, failure = "") {
     hdiutil() {
       printf 'hdiutil %s\n' "$*" >> "$CALLS"
       if [ "$1" = attach ]; then
-        mkdir "$dmg_mount/Codevo Editor.app"
+        mkdir "$dmg_mount/Codevo.app"
         touch "$RUNNER_TEMP/mounted"
       elif [ "$1" = detach ]; then
         rm -f "$RUNNER_TEMP/mounted"

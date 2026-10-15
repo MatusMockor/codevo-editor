@@ -15,7 +15,7 @@ pub(crate) fn application_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry
     let close_tab = MenuItemBuilder::with_id(CLOSE_ACTIVE_TAB_MENU_ID, "Close")
         .accelerator("CmdOrCtrl+W")
         .build(app)?;
-    let quit = MenuItemBuilder::with_id(QUIT_APPLICATION_MENU_ID, "Quit Codevo Editor")
+    let quit = MenuItemBuilder::with_id(QUIT_APPLICATION_MENU_ID, "Quit Codevo")
         .accelerator("CmdOrCtrl+Q")
         .build(app)?;
     let file = SubmenuBuilder::new(app, "File")

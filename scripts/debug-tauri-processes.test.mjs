@@ -11,6 +11,15 @@ const macosBundleExecutable = path.join(
   debugRoot,
   "bundle",
   "macos",
+  "Codevo.app",
+  "Contents",
+  "MacOS",
+  "codevo-editor",
+);
+const legacyCodevoBundleExecutable = path.join(
+  debugRoot,
+  "bundle",
+  "macos",
   "Codevo Editor.app",
   "Contents",
   "MacOS",
@@ -43,6 +52,7 @@ describe("debugAppExecutables", () => {
       path.join(debugRoot, "codevo-editor"),
       path.join(debugRoot, "codevo-editor.exe"),
       macosBundleExecutable,
+      legacyCodevoBundleExecutable,
       path.join(debugRoot, "mockor-editor"),
       path.join(
         debugRoot,

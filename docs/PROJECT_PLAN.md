@@ -1,4 +1,4 @@
-# Codevo Editor Project Plan
+# Codevo Project Plan
 
 Date: 2026-10-15
 

@@ -508,7 +508,7 @@ fn client_params_round_trip() {
         client_info: ClientInfo {
             name: "codevo".to_string(),
             version: "0.2.0".to_string(),
-            title: Some("Codevo Editor".to_string()),
+            title: Some("Codevo".to_string()),
         },
         capabilities: Some(InitializeCapabilities {
             experimental_api: true,

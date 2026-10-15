@@ -27,7 +27,7 @@ Codevo is an agent app. The code editor, language servers (PHPactor, Intelephens
 
 ## Product And Bundle
 
-- Product name: `Codevo Editor`
+- Product name: `Codevo`
 - Identifier: `dev.mockor.editor`
 - Executable: `Contents/MacOS/codevo-editor`
 - Icon resource: `Contents/Resources/icon.icns`
@@ -36,6 +36,8 @@ Codevo is an agent app. The code editor, language servers (PHPactor, Intelephens
 ### One-Time Bundle Rename Migration
 
 `Codevo Editor.app` has a different bundle name from the previous `Mockor Editor.app`. Before the first Codevo-branded release or any manual upgrade to it, remove the existing `Mockor Editor.app` from `/Applications` and install `Codevo Editor.app` from the new DMG. Copying the new bundle without removing the old one can leave both applications installed and launchable. This is a one-time manual replacement; no release or updater migration machinery is implemented.
+
+The later rename from `Codevo Editor` to `Codevo` changes the bundle name again, to `Codevo.app`. The in-app updater replaces the running bundle in place, so an updated install keeps the folder name `Codevo Editor.app` while the app itself reports `Codevo`. A fresh DMG install creates a separate `Codevo.app` with the same identifier and settings; remove the old `Codevo Editor.app` after the new one opens. This is a one-time manual step.
 
 Verified `Info.plist` fields:
 
@@ -141,7 +143,7 @@ Release follow-up:
 
 1. Build the release bundle and verify both `.app` and `.dmg` outputs.
 2. Inspect the DMG with `hdiutil imageinfo`.
-3. Launch `Codevo Editor.app` from Finder and verify title, icon, and executable.
+3. Launch `Codevo.app` from Finder and verify title, icon, and executable.
 4. Open an untrusted project and verify agents, terminal, and scripts are blocked until trust is granted.
 5. Verify provider discovery from a Finder launch, with and without each CLI installed.
 6. Start a Claude Code or Codex thread in the local checkout and in an isolated worktree.

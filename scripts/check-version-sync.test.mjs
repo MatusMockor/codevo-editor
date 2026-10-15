@@ -17,7 +17,7 @@ async function createManifests(overrides = {}) {
     "src-tauri/Cargo.toml": '[package]\nname = "codevo-editor"\nversion = "0.2.0-beta.1"\n',
     "src-tauri/Cargo.lock":
       'version = 4\n\n[[package]]\nname = "codevo-editor"\nversion = "0.2.0-beta.1"\n',
-    "src-tauri/tauri.conf.json": '{"productName":"Codevo Editor","version":"0.2.0-beta.1"}',
+    "src-tauri/tauri.conf.json": '{"productName":"Codevo","version":"0.2.0-beta.1"}',
     ...overrides,
   };
   await Promise.all(
@@ -75,7 +75,7 @@ describe("version synchronization", () => {
     ],
     [
       "Tauri config",
-      { "src-tauri/tauri.conf.json": '{"productName":"Codevo Editor","version":"0.2.0"}' },
+      { "src-tauri/tauri.conf.json": '{"productName":"Codevo","version":"0.2.0"}' },
       "src-tauri/tauri.conf.json version 0.2.0 does not match package.json 0.2.0-beta.1",
     ],
   ])("fails closed when the %s version differs", async (_label, overrides, expectedError) => {

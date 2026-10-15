@@ -146,7 +146,7 @@ async function bootstrap(): Promise<void> {
   // (not just inside the git diff view) now renders a recoverable fallback
   // instead of unmounting the whole tree to a blank screen.
   const appTree = React.createElement(ErrorBoundary, {
-    title: "Codevo Editor hit an unexpected error",
+    title: "Codevo hit an unexpected error",
     children: React.createElement(RemoteRunnerProvider, {
       gateway: remoteRunnerGateway,
       speechDictation: createSpeechDictationPorts(remoteRunnerGateway),

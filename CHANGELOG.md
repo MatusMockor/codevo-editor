@@ -1,11 +1,17 @@
 # Changelog
 
-All notable changes to Codevo Editor are documented in this file.
+All notable changes to Codevo are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- The app is now called Codevo instead of Codevo Editor. The window title, the
+  menu bar, the Dock, and the release names say "Codevo", and a fresh download
+  installs `Codevo.app`.
 
 ### Removed
 
@@ -19,6 +25,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Notes
 
+- One-time note for the rename: an install that updates itself in the app keeps
+  its folder name `Codevo Editor.app` in `/Applications` (Finder and Spotlight
+  still show "Codevo Editor"). Installing from a fresh DMG creates a separate
+  `Codevo.app` next to it. Both use the same settings, projects, and threads, so
+  you can remove the old `Codevo Editor.app` after the new one opens.
 - Data that only the removed features used stays on disk and is no longer read.
   You can delete it manually:
   - in the app config folder (on macOS

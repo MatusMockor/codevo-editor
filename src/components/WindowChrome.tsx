@@ -274,7 +274,7 @@ function fileMenuItems(
     commandMenuItem(commandsById, context, "file.quickOpen", "Go to File"),
     commandMenuItem(commandsById, context, "workbench.closeActive", "Close", true),
     {
-      label: "Quit Codevo Editor",
+      label: "Quit Codevo",
       onSelect: onQuitApplication,
       separatorBefore: true,
       shortcut: platform === "mac" ? "Cmd+Q" : "Ctrl+Q",

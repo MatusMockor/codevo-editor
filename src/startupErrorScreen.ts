@@ -1,4 +1,4 @@
-export const STARTUP_ERROR_TITLE = "Codevo Editor failed to start";
+export const STARTUP_ERROR_TITLE = "Codevo failed to start";
 export const STARTUP_ERROR_CLASS = "startup-error";
 export const STARTUP_ERROR_TITLE_CLASS = "startup-error__title";
 export const STARTUP_ERROR_DETAILS_CLASS = "startup-error__details";

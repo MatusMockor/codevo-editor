@@ -12,7 +12,7 @@ use std::{
 };
 
 const MAX_STREAM: usize = 256 * 1024;
-const INITIAL: &str = "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo Editor\",\"version\":\"0.2.0\"},\"capabilities\":{\"experimentalApi\":true}}}\n";
+const INITIAL: &str = "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo\",\"version\":\"0.2.0\"},\"capabilities\":{\"experimentalApi\":true}}}\n";
 type Authority = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
 #[derive(Debug, Default)]

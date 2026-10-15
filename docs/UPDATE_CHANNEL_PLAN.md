@@ -3,7 +3,7 @@
 Date: 2026-06-16
 Status: First-release update channel decision documented
 
-This plan decides how `Codevo Editor` should publish and update packaged desktop releases.
+This plan decides how `Codevo` should publish and update packaged desktop releases.
 
 ## Source Baseline
 
@@ -174,14 +174,14 @@ Key rotation rules:
 
 Manual first release artifacts:
 
-- `Codevo Editor_0.1.0_aarch64.dmg`
+- `Codevo_0.1.0_aarch64.dmg`
 - release notes
 - checksum file if release process adds one
 
 Future macOS updater artifacts:
 
-- `Codevo Editor.app.tar.gz`
-- `Codevo Editor.app.tar.gz.sig`
+- `Codevo.app.tar.gz`
+- `Codevo.app.tar.gz.sig`
 - static `latest.json`
 - signed, notarized, stapled DMG for fresh installs
 
@@ -245,7 +245,7 @@ Manual release smoke:
 2. Sign, notarize, staple, and Gatekeeper-check the DMG.
 3. Download or copy the DMG as a fresh user would.
 4. For an upgrade smoke, install `Mockor Editor.app`, remove it, then install `Codevo Editor.app`; verify only the Codevo bundle remains in `/Applications`.
-5. Install and launch Codevo Editor from Finder.
+5. Install and launch Codevo from Finder.
 6. Confirm release notes state both the manual update policy and the one-time bundle replacement step.
 
 Future updater smoke:

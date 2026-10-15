@@ -4,7 +4,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Codevo Editor",
+        "title": "Codevo",
         "backgroundColor": "#151616",
         "visible": false,
         "width": 1280,

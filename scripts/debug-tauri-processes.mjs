@@ -32,6 +32,7 @@ export function debugAppExecutables(repoRoot) {
   return [
     path.join(debugRoot, "codevo-editor"),
     path.join(debugRoot, "codevo-editor.exe"),
+    macosBundleExecutable(repoRoot, "Codevo", "codevo-editor"),
     macosBundleExecutable(repoRoot, "Codevo Editor", "codevo-editor"),
     path.join(debugRoot, "mockor-editor"),
     macosBundleExecutable(repoRoot, "Mockor Editor", "mockor-editor"),

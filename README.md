@@ -1,4 +1,4 @@
-# Codevo Editor
+# Codevo
 
 A native desktop app for running coding agents against your projects.
 
@@ -51,7 +51,7 @@ Codevo is under active development. Published desktop builds currently target
 
 1. Open [Releases](https://github.com/MatusMockor/codevo-editor/releases) and choose
    a versioned beta release.
-2. Download its `.dmg`, open it, and copy **Codevo Editor.app** to Applications.
+2. Download its `.dmg`, open it, and copy **Codevo.app** to Applications.
 3. Launch Codevo and open a project folder.
 
 Builds labelled **unsigned** are not Apple Developer ID signed or notarized, and

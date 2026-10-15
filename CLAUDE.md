@@ -1,4 +1,4 @@
-# Codevo Editor — Project Instructions
+# Codevo — Project Instructions
 
 These project rules take precedence over global Claude instructions where they conflict.
 

@@ -277,11 +277,11 @@ describe("startup skeleton", () => {
     const skeletons = [...startupDocument.querySelectorAll(STARTUP_SKELETON_SELECTOR)];
     expect(skeletons).toHaveLength(1);
     expect(skeletons[0]?.getAttribute("role")).toBe("status");
-    expect(skeletons[0]?.getAttribute("aria-label")).toBe("Starting Codevo Editor");
+    expect(skeletons[0]?.getAttribute("aria-label")).toBe("Starting Codevo");
 
     const text = startupDocument.body.textContent ?? "";
     expect(text.trim()).toBe("");
-    expect(documentSource).not.toContain("Starting Codevo Editor...");
+    expect(documentSource).not.toContain("Starting Codevo...");
     expect(documentSource).not.toContain("CODEVO");
     expect(startupStyle).not.toContain("border-radius: 50%");
     expect(startupStyle).not.toMatch(/spin|spinner|pulse/i);

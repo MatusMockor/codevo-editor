@@ -643,10 +643,10 @@ jobs:
           label="$(tr -d '\r\n' < release-assets/release-label.txt)"
           case "$label" in
             signed)
-              title="Codevo Editor $tag"
+              title="Codevo $tag"
               ;;
             unsigned)
-              title="Codevo Editor $tag (unsigned macOS beta)"
+              title="Codevo $tag (unsigned macOS beta)"
               ;;
             *)
               echo "::error::unknown release label: $label"
@@ -786,8 +786,8 @@ jobs:
             exit 0
           fi
 
-          beta_title="Codevo Editor beta channel"
-          beta_notes="Tracks the latest published Codevo Editor beta release: $tag."
+          beta_title="Codevo beta channel"
+          beta_notes="Tracks the latest published Codevo beta release: $tag."
           beta_pending_title="$beta_title [pending:$tag]"
           beta_pending_notes="Managed pending beta channel publication for $tag."
           beta_release_exists=false

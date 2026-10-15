@@ -17,6 +17,6 @@ describe("formatAgentModeWindowTitle", () => {
     const title = formatAgentModeWindowTitle("/projects/myproject");
 
     expect(title).not.toContain("•");
-    expect(title).not.toContain("Codevo Editor");
+    expect(title).not.toContain("Codevo");
   });
 });

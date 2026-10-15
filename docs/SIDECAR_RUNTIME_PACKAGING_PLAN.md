@@ -3,7 +3,7 @@
 Date: 2026-10-15
 Status: Runtime policy for the agent app
 
-This plan decides how `Codevo Editor` handles agent CLIs, Git, package managers, terminal shells, and app data in packaged desktop builds.
+This plan decides how `Codevo` handles agent CLIs, Git, package managers, terminal shells, and app data in packaged desktop builds.
 
 Codevo is an agent app. The code editor and its runtimes (PHP, PHPactor, Intelephense, the TypeScript language server, Watchman, ripgrep-based text search, test runners, the SQLite workspace index, and tree-sitter parsing) were removed by owner decision, so they are no longer part of the packaging policy. Earlier versions of this plan covered them; that history is kept in Git.
 
