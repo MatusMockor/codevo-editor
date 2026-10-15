@@ -1,7 +1,8 @@
 import type { AgentMcpServerManagementSupport } from "../../../application/agentMcpServerManagementGateway";
-import type {
-  AgentMcpServersSnapshot,
-  AgentMcpServersState,
+import {
+  agentMcpServersSnapshot,
+  type AgentMcpServersSnapshot,
+  type AgentMcpServersState,
 } from "../../../application/agentMcpServersStore";
 import { agentMcpServerActions } from "../../../domain/agentMcpServerActions";
 import {
@@ -23,6 +24,8 @@ export const MCP_NO_PROJECT_NOTICE = "Open a project to see its MCP servers.";
 export const MCP_UNAVAILABLE_NOTICE = "MCP server status is not available in this window.";
 export const MCP_TRUNCATED_NOTICE = "Some servers are not shown.";
 export const MCP_REFRESH_LABEL = "Check MCP servers";
+export const MCP_CHECK_AGAIN_LABEL = "Check again";
+export const MCP_CHECKING_LABEL = "Checking…";
 export const MCP_SEARCH_LABEL = "Search MCP servers";
 export const MCP_CLEAR_SEARCH_LABEL = "Clear search";
 export const MCP_NO_MATCH_LEAD = "No MCP servers match";
@@ -209,6 +212,27 @@ export function mcpServerCountLabel(count: number): string {
 
 export function mcpCheckedLabel(checkedAtMs: number, nowMs: number): string {
   return `Checked ${elapsedLabel(checkedAtMs, nowMs)}`;
+}
+
+export function mcpCheckAgainLabel(provider: AgentCliKind): string {
+  return `${MCP_CHECK_AGAIN_LABEL} for ${agentProviderLabel(provider)}`;
+}
+
+export function mcpCheckNote(state: AgentMcpServersState, nowMs: number): string | null {
+  switch (state.kind) {
+    case "loading":
+      return MCP_CHECKING_LABEL;
+    case "idle":
+    case "loaded":
+    case "failed": {
+      const snapshot = agentMcpServersSnapshot(state);
+      return snapshot === null ? null : mcpCheckedLabel(snapshot.checkedAtMs, nowMs);
+    }
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
 }
 
 export function mcpCopySignInLabel(serverName: string): string {

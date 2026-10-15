@@ -27,7 +27,7 @@ import { SettingsPageActions } from "../SettingsPageActions";
 import type { SettingsEnvironment } from "../settingsPageProps";
 import { SettingsPageHost } from "../settingsPages";
 import type { SettingsSectionId } from "../settingsRegistry";
-import { mcpErrorMessage } from "./mcpServersPresentation";
+import { mcpCheckAgainLabel, mcpErrorMessage } from "./mcpServersPresentation";
 import { settingsPagePropsFixture } from "./settingsPageTestSupport";
 
 const APP = "/work/app";
@@ -180,6 +180,12 @@ describe("McpServersSettingsPage", () => {
 
   function refreshButton(): HTMLButtonElement | null {
     return host.querySelector<HTMLButtonElement>('button[aria-label="Check MCP servers"]');
+  }
+
+  function providerRefreshButton(provider: AgentCliKind): HTMLButtonElement | null {
+    return section(provider).querySelector<HTMLButtonElement>(
+      `button[aria-label="${mcpCheckAgainLabel(provider)}"]`,
+    );
   }
 
   function projectSelect(): HTMLSelectElement | null {
@@ -625,11 +631,68 @@ describe("McpServersSettingsPage", () => {
     expect(section("claudeCode").querySelector(".settings-section__note")?.textContent).toBe(
       "Checked 5m ago",
     );
-    expect(section("codex").querySelector(".settings-section__note")).toBeNull();
+    expect(section("codex").querySelector(".settings-section__note")?.textContent).toBe(
+      "Checking…",
+    );
 
     checkedAgoMs = 0;
     await answer(request(APP, "codex"), codexPair);
     expect(section("codex").querySelector(".settings-section__note")?.textContent).toBe(
+      "Checked just now",
+    );
+  });
+
+  it("checks one provider again and updates only its header while pending", async () => {
+    show();
+    checkedAgoMs = 5 * 60_000 + 30_000;
+    await answerBoth();
+    const codexHeader = section("codex").querySelector("header")?.innerHTML;
+    const button = providerRefreshButton("claudeCode");
+    expect(button?.textContent).toBe("Check again");
+    expect(button?.disabled).toBe(false);
+
+    act(() => button?.click());
+
+    expect(gateway.requests().slice(2)).toEqual([request(APP, "claudeCode")]);
+    expect(button?.disabled).toBe(true);
+    expect(button?.getAttribute("aria-busy")).toBe("true");
+    expect(section("claudeCode").querySelector(".settings-section__note")?.textContent).toBe(
+      "Checking…",
+    );
+    expect(section("codex").querySelector("header")?.innerHTML).toBe(codexHeader);
+    act(() => button?.click());
+    expect(gateway.requests()).toHaveLength(3);
+
+    checkedAgoMs = 0;
+    await answer(request(APP, "claudeCode"), claudeMixed);
+
+    expect(button?.disabled).toBe(false);
+    expect(button?.getAttribute("aria-busy")).toBe("false");
+    expect(section("claudeCode").querySelector(".settings-section__note")?.textContent).toBe(
+      "Checked just now",
+    );
+    expect(section("codex").querySelector("header")?.innerHTML).toBe(codexHeader);
+  });
+
+  it("offers a provider check again after its first check fails without a snapshot", async () => {
+    show();
+    await answer(request(APP, "claudeCode"), wireContract.errors.unavailable);
+    await answer(request(APP, "codex"), codexPair);
+    expect(section("claudeCode").querySelector(".settings-section__note")).toBeNull();
+    const button = providerRefreshButton("claudeCode");
+    expect(button?.disabled).toBe(false);
+
+    act(() => button?.click());
+
+    expect(gateway.requests().slice(2)).toEqual([request(APP, "claudeCode")]);
+    expect(button?.disabled).toBe(true);
+    expect(button?.getAttribute("aria-busy")).toBe("true");
+    expect(section("claudeCode").querySelector(".settings-section__note")?.textContent).toBe(
+      "Checking…",
+    );
+    await answer(request(APP, "claudeCode"), claudeMixed);
+    expect(button?.disabled).toBe(false);
+    expect(section("claudeCode").querySelector(".settings-section__note")?.textContent).toBe(
       "Checked just now",
     );
   });

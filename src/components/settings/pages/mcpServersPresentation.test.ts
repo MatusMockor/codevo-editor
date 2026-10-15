@@ -7,8 +7,11 @@ import {
 } from "../../../domain/agentMcpServers";
 import { agentMcpServersFixture } from "../../../test/agentMcpServersTestSupport";
 import {
+  MCP_CHECK_AGAIN_LABEL,
   compareMcpNames,
   mcpAddServerLead,
+  mcpCheckAgainLabel,
+  mcpCheckNote,
   mcpCheckNotice,
   mcpCheckedLabel,
   mcpCopySignInLabel,
@@ -233,6 +236,26 @@ describe("MCP provider summary", () => {
 });
 
 describe("MCP labels", () => {
+  it("names the provider in the check again action and keeps its visible text", () => {
+    expect(mcpCheckAgainLabel("claudeCode")).toBe("Check again for Claude Code");
+    expect(mcpCheckAgainLabel("codex")).toBe("Check again for Codex");
+    expect(mcpCheckAgainLabel("codex").startsWith(MCP_CHECK_AGAIN_LABEL)).toBe(true);
+  });
+
+  it("notes a pending check, the age of the last one, or nothing", () => {
+    const snapshot = { result: agentMcpServersFixture("claudeCode", []), checkedAtMs: 0 };
+    expect(mcpCheckNote({ kind: "idle" }, 60_000)).toBeNull();
+    expect(mcpCheckNote({ kind: "loading", previous: null }, 60_000)).toBe("Checking…");
+    expect(mcpCheckNote({ kind: "loading", previous: snapshot }, 60_000)).toBe("Checking…");
+    expect(mcpCheckNote({ kind: "loaded", snapshot }, 60_000)).toBe("Checked 1m ago");
+    expect(mcpCheckNote({ kind: "failed", error: "timedOut", previous: snapshot }, 60_000)).toBe(
+      "Checked 1m ago",
+    );
+    expect(
+      mcpCheckNote({ kind: "failed", error: "unavailable", previous: null }, 60_000),
+    ).toBeNull();
+  });
+
   it("words the age of a check like the usage page words its updates", () => {
     expect(mcpCheckedLabel(1_000, 1_000)).toBe("Checked just now");
     expect(mcpCheckedLabel(0, 5 * 60_000)).toBe("Checked 5m ago");

@@ -1,5 +1,9 @@
+import { RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { agentMcpServersSnapshot } from "../../../application/agentMcpServersStore";
+import {
+  agentMcpServersSnapshot,
+  type AgentMcpServersStore,
+} from "../../../application/agentMcpServersStore";
 import type { AgentMcpServersSurface } from "../../../application/agentMcpServersSurface";
 import { useAgentMcpServerManagementSupport } from "../../../application/useAgentMcpServerManagement";
 import {
@@ -8,6 +12,7 @@ import {
 } from "../../../application/useAgentMcpServers";
 import type { AgentMcpServer } from "../../../domain/agentMcpServers";
 import type { AgentCliKind } from "../../../domain/agentTask";
+import { Button } from "../../../ui/foundation/Button";
 import { AgentProviderGlyph } from "../../agentMode/AgentProviderGlyph";
 import { agentProviderLabel } from "../../agentMode/agentSidebarPresentation";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
@@ -20,9 +25,11 @@ import {
   mcpServerLayoutHasEntries,
 } from "./mcpServerGroupsPresentation";
 import {
+  MCP_CHECK_AGAIN_LABEL,
   MCP_TRUNCATED_NOTICE,
   mcpAddServerLead,
-  mcpCheckedLabel,
+  mcpCheckAgainLabel,
+  mcpCheckNote,
   mcpProviderSummary,
   type McpProjectPlace,
   type McpProviderSummary,
@@ -126,6 +133,7 @@ function McpProviderGroup({
   nowMs,
   onCopy,
   place,
+  surface,
 }: McpServerGroupsProps & {
   readonly filtering: boolean;
   readonly layout: McpProviderModel["layout"];
@@ -142,13 +150,7 @@ function McpProviderGroup({
   const summary = mcpProviderSummary(state, provider);
   return (
     <SettingsSectionHeading
-      actions={
-        snapshot === null ? undefined : (
-          <span className="settings-section__note">
-            {mcpCheckedLabel(snapshot.checkedAtMs, nowMs)}
-          </span>
-        )
-      }
+      actions={<McpProviderCheck model={model} nowMs={nowMs} store={surface.store} />}
       bare
       title={agentProviderLabel(provider)}
     >
@@ -176,6 +178,38 @@ function McpProviderGroup({
         ) : null}
       </div>
     </SettingsSectionHeading>
+  );
+}
+
+function McpProviderCheck({
+  model,
+  nowMs,
+  store,
+}: {
+  readonly model: McpProviderModel;
+  readonly nowMs: number;
+  readonly store: AgentMcpServersStore;
+}) {
+  const { provider, state, target } = model;
+  const checking = state.kind === "loading";
+  const note = mcpCheckNote(state, nowMs);
+  return (
+    <>
+      {note === null ? null : <span className="settings-section__note">{note}</span>}
+      {target === null ? null : (
+        <Button
+          aria-busy={checking}
+          aria-label={mcpCheckAgainLabel(provider)}
+          disabled={checking}
+          icon={<RefreshCw aria-hidden="true" size={14} />}
+          onClick={() => store.refresh(target)}
+          size="sm"
+          variant="ghost"
+        >
+          {MCP_CHECK_AGAIN_LABEL}
+        </Button>
+      )}
+    </>
   );
 }
 
