@@ -5,6 +5,8 @@ import type { ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FileTree, TREE_ROW_HEIGHT } from "./FileTree";
+import { treeRowHeight } from "../domain/fileTreeLayout";
+import { normalizeEditorFontSize } from "../domain/settings";
 import type { FileEntry } from "../domain/workspace";
 
 describe("FileTree", () => {
@@ -51,6 +53,66 @@ describe("FileTree", () => {
 
     return props;
   }
+
+  it("keeps default row geometry compatible", () => {
+    expect(treeRowHeight(14)).toBe(TREE_ROW_HEIGHT);
+    expect(treeRowHeight(12)).toBe(24);
+    expect(treeRowHeight(18)).toBe(30);
+    renderTree();
+    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("14px");
+  });
+
+  it("uses the editor font size for rows and virtual content", () => {
+    renderTree({
+      fontSize: 18,
+      entriesByDirectory: { "/workspace": phpFileEntries(80) },
+    });
+
+    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("18px");
+    expect(host.querySelector<HTMLElement>(".tree-virtual-content")?.style.height).toBe(
+      `${80 * treeRowHeight(18) + 6 + 10}px`,
+    );
+    expect(host.querySelectorAll(".tree-row")).toHaveLength(28);
+    for (const row of host.querySelectorAll<HTMLElement>(".tree-row")) {
+      expect(row.style.height).toBe(`${treeRowHeight(18)}px`);
+      expect(row.closest<HTMLElement>(".tree-row-shell")?.style.height).toBe(
+        `${treeRowHeight(18)}px`,
+      );
+    }
+  });
+
+  it("uses font-sized geometry to reveal and window a distant active row", () => {
+    renderTree({
+      fontSize: 18,
+      entriesByDirectory: { "/workspace": phpFileEntries(80) },
+      activePath: "/workspace/File50.php",
+      revealActivePath: true,
+    });
+
+    expect(host.querySelector<HTMLElement>(".file-tree")?.scrollTop).toBe(
+      6 + 50 * treeRowHeight(18),
+    );
+    expect(host.querySelector<HTMLElement>(".tree-virtual-window")?.style.transform).toBe(
+      `translateY(${42 * treeRowHeight(18)}px)`,
+    );
+    expect(rowByLabel("File50.php").classList.contains("active")).toBe(true);
+  });
+
+  it.each([-100, 10000, Number.NaN, Number.POSITIVE_INFINITY])(
+    "normalizes invalid font size %s before rendering and virtualizing",
+    (fontSize) => {
+      renderTree({ fontSize, entriesByDirectory: { "/workspace": phpFileEntries(80) } });
+      const normalized = normalizeEditorFontSize(fontSize);
+      expect(treeRowHeight(fontSize)).toBe(treeRowHeight(normalized));
+      expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe(`${normalized}px`);
+      expect(host.querySelector<HTMLElement>(".tree-row")?.style.height).toBe(
+        `${treeRowHeight(normalized)}px`,
+      );
+      expect(host.querySelector<HTMLElement>(".tree-virtual-content")?.style.height).toBe(
+        `${80 * treeRowHeight(normalized) + 16}px`,
+      );
+    },
+  );
 
   it("opens a file pinned on Enter and still toggles a directory on Enter", () => {
     const onOpenFile = vi.fn();

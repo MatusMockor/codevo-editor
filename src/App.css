@@ -362,7 +362,6 @@ button {
 .tree-row {
   display: grid;
   width: calc(100% - 16px);
-  min-height: 26px;
   grid-template-columns: 16px 18px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;

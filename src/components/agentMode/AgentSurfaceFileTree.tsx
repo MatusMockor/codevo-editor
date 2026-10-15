@@ -32,6 +32,7 @@ export type AgentSurfaceTreeUnavailable =
     };
 
 export interface AgentSurfaceFileTreeProps {
+  readonly fontSize: number;
   readonly source: AgentSurfaceTreeSource;
   readonly tree: AgentSurfaceFileTreeSurface;
   readonly unavailable: AgentSurfaceTreeUnavailable | null;
@@ -149,6 +150,7 @@ function RootErrorNote({
 export function AgentSurfaceFileTree({
   activePath,
   fileStatusesByPath,
+  fontSize,
   onOpenFile,
   onPreviewFile,
   revealActivePathSignal,
@@ -184,6 +186,7 @@ export function AgentSurfaceFileTree({
             expandedDirectories={tree.expandedDirectories}
             failedDirectories={tree.failedDirectories}
             fileStatusesByPath={fileStatusesByPath}
+            fontSize={fontSize}
             loadingDirectories={tree.loadingDirectories}
             onOpenFile={onOpenFile}
             onPreviewFile={onPreviewFile}

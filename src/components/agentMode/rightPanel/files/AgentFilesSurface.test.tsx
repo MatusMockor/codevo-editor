@@ -69,6 +69,7 @@ function tree(): AgentSurfaceFileTreeSurface {
 
 function fileTree(overrides: Partial<AgentSurfaceFileTreeProps> = {}): AgentSurfaceFileTreeProps {
   return {
+    fontSize: 14,
     source: "thread",
     tree: tree(),
     unavailable: null,

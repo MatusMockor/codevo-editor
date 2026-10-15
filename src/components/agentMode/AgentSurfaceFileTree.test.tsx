@@ -46,6 +46,12 @@ describe("AgentSurfaceFileTree", () => {
     ).not.toBeNull();
   });
 
+  it("renders the editor font size in FileTree", () => {
+    render({ fontSize: 18 });
+
+    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("18px");
+  });
+
   it("drops the viewport once the checkout is gone", () => {
     render({ tree: { ...tree(), rootPath: null } });
     expect(host.querySelector(".agent-note--warning")?.textContent).toBe(SURFACE_TREE_GONE_MESSAGE);
@@ -160,6 +166,7 @@ function tree(): AgentSurfaceFileTreeSurface {
 
 function defaultProps(): AgentSurfaceFileTreeProps {
   return {
+    fontSize: 14,
     source: "thread",
     tree: tree(),
     unavailable: null,

@@ -713,6 +713,7 @@ export function AgentWorkbenchScreen({
               ],
             },
       fileTree: {
+        editorFontSize: appSettings.editorFontSize,
         files,
         fileChanges,
         activePath: workbench.activePath,
