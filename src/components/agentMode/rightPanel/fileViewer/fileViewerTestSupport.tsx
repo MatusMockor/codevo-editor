@@ -86,6 +86,7 @@ export function fileTree(
 ): AgentSurfaceFileTreeProps {
   return {
     source: "thread",
+    fontSize: 13,
     tree: tree(),
     unavailable: null,
     activePath: null,
