@@ -49,6 +49,7 @@ export default defineConfig(async ({ mode }) => {
     // authority process-only before it can reach import.meta.env or HTML.
     envDir: false,
     base: "./",
+    worker: { format: "es" },
 
     build: {
       rolldownOptions: {

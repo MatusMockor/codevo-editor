@@ -8,6 +8,7 @@ import {
   type AgentSurfaceKind,
   type AgentWorkbenchLayout,
 } from "../../domain/agentWorkbenchLayout";
+import type { AgentFileViewerReveal } from "../../domain/agentWorkbenchLayoutFileReveal";
 import {
   isAgentRemoteSurfaceKind,
   type AgentRemoteSurfaceKind,
@@ -19,7 +20,6 @@ import {
 } from "./rightPanel/agentRightPanelSurfaceCatalog";
 import {
   agentRightPanelTabEntries,
-  type AgentRightPanelEditorDocuments,
   type AgentTerminalSessionCommand,
 } from "./rightPanel/agentRightPanelTabEntries";
 import { useAgentTerminalStrip } from "./rightPanel/useAgentTerminalStrip";
@@ -39,11 +39,9 @@ import {
   type AgentSurfaceScope,
 } from "./agentSurfacePolicy";
 import {
-  agentSurfaceEditorSlot,
   agentSurfaceServes,
   effectiveAgentSurface,
   servedAgentSurfaces,
-  withoutEmptyEditorSurface,
   type AgentSurfaceActivation,
 } from "../../domain/agentSurfaceActivation";
 import { remoteSurfaceCapabilities, type AgentRemoteSurface } from "./agentRemoteSurface";
@@ -89,11 +87,11 @@ export interface AgentSurfacePanelProps {
   readonly hidden: boolean;
   readonly chooserAutoFocus: boolean;
   readonly fileTree: AgentSurfaceFileTreeProps | null;
+  readonly fileReveal?: AgentFileViewerReveal | null;
   readonly remoteMonacoTheme?: AgentSurfaceDiffPanelProps["monacoTheme"];
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
   readonly history?: AgentSurfaceHistoryProps | null;
   readonly agentsPanel?: ReactNode;
-  readonly editorDocuments?: AgentRightPanelEditorDocuments | null;
   onOpenSurface(surface: AgentSurfaceKind): void;
   onActivateSurface(surface: AgentSurfaceKind): void;
   onCloseSurfaceTab(surface: AgentSurfaceKind): void;
@@ -104,7 +102,6 @@ export interface AgentSurfacePanelProps {
 
 export function AgentSurfacePanel({
   agentsPanel = null,
-  editorDocuments = null,
   unavailable = null,
   remote = false,
   remoteSurface = null,
@@ -113,6 +110,7 @@ export function AgentSurfacePanel({
   chooserAutoFocus,
   remoteMonacoTheme,
   fileTree,
+  fileReveal = null,
   hidden,
   history = null,
   layout,
@@ -153,14 +151,8 @@ export function AgentSurfacePanel({
     unavailable: unavailable !== null,
     hidden,
   };
-  const selection = withoutEmptyEditorSurface(
-    layout.openSurfaces,
-    layout.activeSurface,
-    editorDocuments !== null && editorDocuments.documents.length > 0,
-  );
-  const openSurfaces = servedAgentSurfaces(activation, selection.openSurfaces);
-  const activeSurface = effectiveAgentSurface(activation, selection.activeSurface);
-  const editorSlot = agentSurfaceEditorSlot(activation, selection.activeSurface);
+  const openSurfaces = servedAgentSurfaces(activation, layout.openSurfaces);
+  const activeSurface = effectiveAgentSurface(activation, layout.activeSurface);
   const treeShown =
     !server && !hidden && unavailable === null && activeSurface === "files" && fileTree !== null;
   const chooserShown = activeSurface === null;
@@ -170,7 +162,6 @@ export function AgentSurfacePanel({
     <aside
       aria-label="Thread surface"
       className="agent-surface"
-      data-editor-slot={editorSlot}
       data-surface={activeSurface ?? "empty"}
       ref={panelRef}
     >
@@ -203,12 +194,10 @@ export function AgentSurfacePanel({
           addableSurfaces={AGENT_RIGHT_PANEL_ADD_MENU_ORDER.filter((kind) =>
             agentSurfaceServes(activation, kind),
           )}
-          editorDocuments={editorDocuments}
           entries={agentRightPanelTabEntries({
             openSurfaces,
             activeSurface,
             terminal: terminalStrip.state,
-            editorDocuments,
           })}
           onActivateSurface={onActivateSurface}
           onAddSurface={(kind) =>
@@ -263,6 +252,7 @@ export function AgentSurfacePanel({
                 <AgentRightPanelSurfaceBody
                   active={!hidden && activeSurface === kind}
                   agentsPanel={agentsPanel}
+                  fileReveal={fileReveal}
                   fileTree={fileTree}
                   history={history}
                   kind={kind}
@@ -312,8 +302,6 @@ function agentSurfaceMask(surface: AgentSurfaceKind): number {
       return 64;
     case "agents":
       return 128;
-    case "editor":
-      return 512;
   }
 }
 

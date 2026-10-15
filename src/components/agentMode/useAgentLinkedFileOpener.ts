@@ -7,10 +7,8 @@ import {
   openOutsideLinkedFile,
   type AgentOutsideTextFilePort,
 } from "../../application/agentOutsideLinkedFile";
-import type { OpenProblemNoticeOptions } from "../../application/useWorkbenchNavigation";
-import type { WorkbenchNotice, WorkbenchNoticePosition } from "../../domain/workbenchNotice";
+import type { AgentFileViewerOwner } from "../../application/rightPanel/useAgentFileRevealRequests";
 import { normalizedWorkspaceRootKey } from "../../domain/workspaceRootKey";
-import { openThenRevealFiles } from "./openThenRevealFiles";
 import type { AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 
 export interface AgentLinkedFileOpenerWorkspace {
@@ -24,16 +22,27 @@ export interface AgentLinkedFileOpenerDependencies {
   readonly files: LinkedFileDirectoryReader;
   readonly outsideFiles: AgentOutsideTextFilePort;
   readonly workspace: AgentLinkedFileOpenerWorkspace;
-  openProblemNotice(notice: WorkbenchNotice, options?: OpenProblemNoticeOptions): Promise<boolean>;
-  revealEditorSurface(): void;
+  revealFileInViewer(
+    path: string,
+    line: number | null,
+    owner?: AgentFileViewerOwner,
+  ): Promise<boolean>;
+  showExternalFileInViewer?(
+    path: string,
+    contents: string,
+    line: number | null,
+    owner?: AgentFileViewerOwner,
+  ): Promise<boolean>;
+  captureViewerOwner?(): AgentFileViewerOwner;
 }
 
 export function useAgentLinkedFileOpener({
   files,
   outsideFiles,
   workspace,
-  openProblemNotice,
-  revealEditorSurface,
+  revealFileInViewer,
+  showExternalFileInViewer,
+  captureViewerOwner,
 }: AgentLinkedFileOpenerDependencies): AgentFileLocationOpener {
   const rootKey = normalizedWorkspaceRootKey(workspace.root);
   const { workspaceId, admissionToken } = workspace;
@@ -53,14 +62,11 @@ export function useAgentLinkedFileOpener({
   );
   return useCallback<AgentFileLocationOpener>(
     ({ location, root }) => {
-      const position = { column: location.column ?? 1, lineNumber: location.line ?? 1 };
-      const open = (path: string, options?: OpenProblemNoticeOptions) =>
-        openThenRevealFiles(
-          () => openLinkNotice(openProblemNotice, linkNotice(path, position), options),
-          revealEditorSurface,
-        );
+      const line = location.line ?? null;
+      const owner = captureViewerOwner?.();
+      const reveal = (path: string): Promise<boolean> => revealFileInViewer(path, line, owner);
       if (root !== null) {
-        return openOrClassifyLinkedFile(() => open(location.path), location.path, root, files);
+        return openOrClassifyLinkedFile(() => reveal(location.path), location.path, root, files);
       }
       const requested = generationRef.current;
       const isCurrent = () => requested !== null && generationRef.current === requested;
@@ -69,30 +75,15 @@ export function useAgentLinkedFileOpener({
         directories: files,
         workspace: () => workspaceRef.current,
         isCurrent,
-        open: (path) => open(path, { shouldCommit: isCurrent }),
-        openSnapshot: (path, read) =>
-          open(path, { readOnlySnapshot: read, shouldCommit: isCurrent }),
+        open: (path) => (isCurrent() ? reveal(path) : Promise.resolve(false)),
+        openSnapshot: async (path, read) => {
+          if (showExternalFileInViewer === undefined) return false;
+          const contents = await read();
+          if (contents === null || !isCurrent()) return false;
+          return showExternalFileInViewer(path, contents, line, owner);
+        },
       });
     },
-    [files, openProblemNotice, outsideFiles, revealEditorSurface],
+    [captureViewerOwner, files, outsideFiles, revealFileInViewer, showExternalFileInViewer],
   );
-}
-
-function openLinkNotice(
-  openProblemNotice: AgentLinkedFileOpenerDependencies["openProblemNotice"],
-  notice: WorkbenchNotice,
-  options: OpenProblemNoticeOptions | undefined,
-): Promise<boolean> {
-  if (options === undefined) return openProblemNotice(notice);
-  return openProblemNotice(notice, options);
-}
-
-function linkNotice(path: string, position: WorkbenchNoticePosition): WorkbenchNotice {
-  return {
-    id: `agent-link:${path}:${position.lineNumber}:${position.column}`,
-    message: path,
-    navigationTarget: { path, range: { end: position, start: position } },
-    severity: "info",
-    source: "Agent",
-  };
 }

@@ -1,21 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  agentWorkbenchLayoutReducer,
-  agentWorkbenchLayoutSnapshotsEqual,
-  agentWorkbenchLayoutsEqual,
   initialAgentWorkbenchLayout,
   parseAgentWorkbenchLayout,
   parsePersistedAgentBottomPanel,
-  serializeAgentWorkbenchLayout,
   type AgentRailState,
   type AgentWorkbenchLayout,
-  type AgentWorkbenchLayoutAction,
   type AgentWorkbenchLayoutMode,
-  type AgentWorkbenchLayoutPersisted,
 } from "../domain/agentWorkbenchLayout";
+import type { AgentFileViewerReveal } from "../domain/agentWorkbenchLayoutFileReveal";
+import {
+  NO_AGENT_THREAD_LAYOUTS,
+  agentWorkbenchSessionSnapshotsEqual,
+  findAgentThreadSurfaceLayout,
+  isAgentThreadLayoutKey,
+  parseAgentThreadSurfaceLayouts,
+  serializeAgentWorkbenchSession,
+  withAgentThreadSurfaceLayout,
+  type AgentWorkbenchSessionPersisted,
+} from "../domain/agentWorkbenchLayoutThreads";
+import {
+  applyAgentWorkbenchCommand,
+  type AgentWorkbenchCommand,
+  type OwnedAgentWorkbenchLayout,
+} from "./useAgentWorkbenchLayoutCommands";
+
+export type { AgentWorkbenchCommand } from "./useAgentWorkbenchLayoutCommands";
 
 export interface AgentWorkbenchLayoutPersistencePort {
-  write(ownerKey: string, layout: AgentWorkbenchLayoutPersisted): Promise<void>;
+  write(ownerKey: string, layout: AgentWorkbenchSessionPersisted): Promise<void>;
 }
 
 export interface AgentSidebarRailPreferencePort {
@@ -43,23 +55,14 @@ export interface AgentWorkbenchLayoutState {
   readonly layout: AgentWorkbenchLayout;
   readonly effectiveLayout: AgentWorkbenchLayoutMode;
   readonly persistedBottomPanel: boolean;
-  dispatch(action: AgentWorkbenchLayoutAction): void;
+  readonly fileReveal?: AgentFileViewerReveal | null;
+  dispatch(action: AgentWorkbenchCommand): void;
+  bindThread?(threadId: string | null): void;
 }
 
 export interface AgentWorkbenchLayoutSurface {
   readonly agentModeActive: boolean;
   readonly agentWorkbench: AgentWorkbenchLayoutState;
-}
-
-type OwnedLayoutSource = "owner" | "hydration" | "dispatch";
-
-interface OwnedAgentWorkbenchLayout {
-  readonly ownerKey: string | null;
-  readonly generation: number;
-  readonly hydrated: boolean;
-  readonly layout: AgentWorkbenchLayout;
-  readonly persistedBottomPanel: boolean;
-  readonly source: OwnedLayoutSource;
 }
 
 export const AGENT_WORKBENCH_LAYOUT_PERSISTENCE_SOURCE = "Agent Layout";
@@ -84,50 +87,40 @@ export function useAgentWorkbenchLayout(
   reportErrorRef.current = options.reportError;
   const persistedRef = useRef<{
     readonly ownerKey: string;
-    readonly snapshot: AgentWorkbenchLayoutPersisted;
+    readonly snapshot: AgentWorkbenchSessionPersisted;
   } | null>(null);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const threadIdRef = useRef(threadId);
+  const revealSequenceRef = useRef(0);
 
-  const [owned, setOwned] = useState<OwnedAgentWorkbenchLayout>({
-    ownerKey,
-    generation: 0,
-    hydrated: false,
-    layout: initialAgentWorkbenchLayout,
-    persistedBottomPanel: false,
-    source: "owner",
-  });
+  const [owned, setOwned] = useState<OwnedAgentWorkbenchLayout>(() => initialOwned(ownerKey, 0));
 
   if (owned.ownerKey !== ownerKey) {
-    setOwned({
-      ownerKey,
-      generation: owned.generation + 1,
-      hydrated: false,
-      layout: initialAgentWorkbenchLayout,
-      persistedBottomPanel: false,
-      source: "owner",
-    });
+    setOwned(initialOwned(ownerKey, owned.generation + 1));
   }
 
   const ownedGeneration = owned.generation;
+  const bindThread = useCallback((candidate: string | null) => {
+    const next = isAgentThreadLayoutKey(candidate) ? candidate : null;
+    threadIdRef.current = next;
+    setThreadId(next);
+  }, []);
   const sidebarRail = useGlobalSidebarRail(options.sidebarPreference ?? null, reportErrorRef);
   const toggleSidebarRail = sidebarRail.toggle;
 
   const dispatch = useCallback(
-    (action: AgentWorkbenchLayoutAction) => {
-      if (action.kind === "toggleRail") {
+    (command: AgentWorkbenchCommand) => {
+      if (command.kind === "toggleRail") {
         toggleSidebarRail();
         return;
       }
+      const boundThreadId = threadIdRef.current;
+      const sequence = command.kind === "revealFile" ? ++revealSequenceRef.current : 0;
       setOwned((current) => {
         if (current.ownerKey !== ownerKey || current.generation !== ownedGeneration) {
           return current;
         }
-
-        const layout = agentWorkbenchLayoutReducer(current.layout, action);
-        if (current.hydrated && agentWorkbenchLayoutsEqual(current.layout, layout)) {
-          return current;
-        }
-
-        return { ...current, hydrated: true, layout, source: "dispatch" };
+        return applyAgentWorkbenchCommand(current, command, boundThreadId, sequence);
       });
     },
     [ownedGeneration, ownerKey, toggleSidebarRail],
@@ -144,6 +137,7 @@ export function useAgentWorkbenchLayout(
 
     const layout: AgentWorkbenchLayout = parseAgentWorkbenchLayout(hydration.layout);
     const persistedBottomPanel = parsePersistedAgentBottomPanel(hydration.layout);
+    const threadLayouts = parseAgentThreadSurfaceLayouts(hydration.layout);
     setOwned((current) => {
       if (current.ownerKey !== owned.ownerKey || current.generation !== owned.generation) {
         return current;
@@ -153,7 +147,14 @@ export function useAgentWorkbenchLayout(
         return current;
       }
 
-      return { ...current, hydrated: true, layout, persistedBottomPanel, source: "hydration" };
+      return {
+        ...current,
+        hydrated: true,
+        layout,
+        threadLayouts,
+        persistedBottomPanel,
+        source: "hydration",
+      };
     });
   }, [hydration, owned]);
 
@@ -166,7 +167,11 @@ export function useAgentWorkbenchLayout(
       return;
     }
 
-    const snapshot = serializeAgentWorkbenchLayout(owned.layout, bottomPanelVisible);
+    const snapshot = serializeAgentWorkbenchSession(
+      owned.layout,
+      bottomPanelVisible,
+      owned.threadLayouts,
+    );
     const previous = persistedRef.current;
 
     if (previous === null || previous.ownerKey !== persistOwnerKey) {
@@ -174,7 +179,7 @@ export function useAgentWorkbenchLayout(
       return;
     }
 
-    if (agentWorkbenchLayoutSnapshotsEqual(previous.snapshot, snapshot)) {
+    if (agentWorkbenchSessionSnapshotsEqual(previous.snapshot, snapshot)) {
       return;
     }
 
@@ -210,17 +215,32 @@ export function useAgentWorkbenchLayout(
 
   const { persistedBottomPanel } = owned;
   const ownedLayout = owned.layout;
+  const threadLayout = findAgentThreadSurfaceLayout(owned.threadLayouts, threadId);
+  const fileReveal = threadId === null ? owned.draftFileReveal : (threadLayout?.fileReveal ?? null);
   const rail = sidebarRail.rail;
-  const layout = useMemo<AgentWorkbenchLayout>(
-    () => (ownedLayout.rail === rail ? ownedLayout : { ...ownedLayout, rail }),
-    [ownedLayout, rail],
-  );
+  const layout = useMemo<AgentWorkbenchLayout>(() => {
+    const shown = withAgentThreadSurfaceLayout(ownedLayout, threadLayout);
+    return shown.rail === rail ? shown : { ...shown, rail };
+  }, [ownedLayout, rail, threadLayout]);
   const agentWorkbench = useMemo<AgentWorkbenchLayoutState>(
-    () => ({ dispatch, effectiveLayout, layout, persistedBottomPanel }),
-    [dispatch, effectiveLayout, layout, persistedBottomPanel],
+    () => ({ bindThread, dispatch, effectiveLayout, fileReveal, layout, persistedBottomPanel }),
+    [bindThread, dispatch, effectiveLayout, fileReveal, layout, persistedBottomPanel],
   );
 
   return { agentModeActive: effectiveLayout === "agent", agentWorkbench };
+}
+
+function initialOwned(ownerKey: string | null, generation: number): OwnedAgentWorkbenchLayout {
+  return {
+    ownerKey,
+    generation,
+    hydrated: false,
+    layout: initialAgentWorkbenchLayout,
+    threadLayouts: NO_AGENT_THREAD_LAYOUTS,
+    draftFileReveal: null,
+    persistedBottomPanel: false,
+    source: "owner",
+  };
 }
 
 function useGlobalSidebarRail(

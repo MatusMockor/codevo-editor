@@ -15,12 +15,9 @@ import {
 import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { WorkbenchShellFrame } from "../WorkbenchShellFrame";
-import {
-  WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE,
-  WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR,
-  workbenchShellPlacement,
-  type WorkbenchShellPlacement,
-} from "../workbenchShellPlacement";
+import { workbenchShellPlacement } from "../workbenchShellPlacement";
+import type { FilePreviewReader } from "../../application/filePreview/filePreviewReader";
+import { FilePreviewReaderContext } from "../../application/rightPanel/useAgentFilePreview";
 import {
   WorkbenchFrameEditorStateContext,
   type WorkbenchFrameEditorState,
@@ -33,7 +30,6 @@ import {
 } from "./rightPanel/agentRightPanelTestSupport";
 import { AGENT_SURFACE_HOTKEYS, agentSurfaceForHotkey } from "./agentSurfaceHotkeys";
 import { AgentSurfacePanel, type AgentSurfacePanelProps } from "./AgentSurfacePanel";
-import type { AgentRightPanelEditorDocuments } from "./rightPanel/agentRightPanelTabEntries";
 import {
   SURFACE_FILES_THREAD_DESCRIPTION,
   SURFACE_FILES_PROJECT_DESCRIPTION,
@@ -199,69 +195,13 @@ describe("AgentSurfacePanel", () => {
 
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-surface")).toBe("files");
-    expect(aside?.getAttribute("data-editor-slot")).toBe("none");
+    expect(aside?.hasAttribute("data-editor-slot")).toBe(false);
     expect(aside?.hasAttribute("data-tree")).toBe(false);
     expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
     expect(host.querySelector('input[aria-label="Search workspace files"]')).not.toBeNull();
     expect(host.querySelector('[aria-label="Toggle file tree"]')).toBeNull();
     expect(host.querySelector(".cv-editor-slot")).toBeNull();
     expect(host.querySelector(".cv-files__preview")).toBeNull();
-  });
-
-  it("hosts the editor slot only on the Editor surface", () => {
-    render({ layout: open(["files", "editor"], "editor") }, "documents");
-
-    const aside = host.querySelector("aside.agent-surface");
-    expect(aside?.getAttribute("data-editor-slot")).toBe("open");
-    const slot = host.querySelector(
-      '#agent-surface-panel-editor > .cv-editor-slot[data-editor-slot="open"]',
-    );
-    expect(slot).not.toBeNull();
-    expect(slot?.childElementCount).toBe(0);
-    expect(host.querySelector("[data-agent-surface-tree]")).toBeNull();
-    expect(host.querySelector(".monaco-editor")).toBeNull();
-
-    render({ layout: open(["files", "editor"], "files") }, "documents");
-    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-editor-slot")).toBe(
-      "none",
-    );
-  });
-
-  it("never shows an Editor surface without documents and falls back to the next surface", () => {
-    const empty = { ...EDITOR_DOCUMENTS, documents: [], activeDocumentId: null };
-    render({ layout: open(["files", "editor", "diff"], "editor"), editorDocuments: empty });
-
-    const aside = host.querySelector("aside.agent-surface");
-    expect(aside?.getAttribute("data-surface")).toBe("diff");
-    expect(aside?.getAttribute("data-editor-slot")).toBe("none");
-    expect(host.querySelector("#agent-surface-panel-editor")).toBeNull();
-    expect(host.querySelector(".cv-editor-slot")).toBeNull();
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("title")).toBe(
-      "Diff",
-    );
-
-    render({ layout: open(["editor"], "editor"), editorDocuments: null });
-    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-surface")).toBe("empty");
-    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-
-    render({ layout: open(["files", "editor", "diff"], "editor") });
-    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-surface")).toBe("editor");
-    expect(host.querySelector(".cv-editor-slot")).not.toBeNull();
-  });
-
-  it("never serves the Editor surface to a remote thread", () => {
-    render({
-      layout: open(["editor"], "editor"),
-      remote: true,
-      remoteSurface: null,
-      thread: null,
-    });
-
-    expect(host.querySelector("aside.agent-surface")?.getAttribute("data-editor-slot")).toBe(
-      "none",
-    );
-    expect(host.querySelector(".cv-editor-slot")).toBeNull();
-    expect(host.querySelector("#agent-surface-panel-editor")).toBeNull();
   });
 
   it("reports the tree hidden when the Files surface has no tree or is not active", () => {
@@ -872,30 +812,10 @@ function tree(): AgentSurfaceFileTreeSurface {
   };
 }
 
-const EDITOR_DOCUMENTS: AgentRightPanelEditorDocuments = {
-  documents: [
-    {
-      documentId: "/workspace/app/src/app.ts",
-      title: "app.ts",
-      path: "/workspace/app/src/app.ts",
-      dirty: false,
-      preview: false,
-      gitStatus: null,
-    },
-  ],
-  activeDocumentId: "/workspace/app/src/app.ts",
-  surfaceActive: true,
-  onActivate: () => undefined,
-  onClose: () => undefined,
-  onOpenFile: () => undefined,
-  onPin: () => undefined,
-};
-
 function defaultProps(): AgentSurfacePanelProps {
   const thread = surfaceThreadView();
   return {
     layout: open([], null),
-    editorDocuments: EDITOR_DOCUMENTS,
     thread,
     scope: surfaceRepositoryScope(),
     workspaceRoot: "/workspace/app",
@@ -948,7 +868,7 @@ function cssRule(source: string, selector: string): string {
   return source.slice(bodyStart + 1, end);
 }
 
-describe("surface editor slot and the shell frame", () => {
+describe("maximized right panel and the shell frame", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -965,138 +885,97 @@ describe("surface editor slot and the shell frame", () => {
     host.remove();
   });
 
-  it("keeps the canvas overlay out of a remote pane that persisted the Editor surface", () => {
-    const placement = renderFrame(
-      { openSurfaces: ["editor"], activeSurface: "editor" },
-      { layout: open([], null), remote: true, remoteSurface: null, thread: null },
-    );
-
-    expect(placement.editorHidden).toBe(false);
-    expect(editorSlot()).toBe("none");
-    expect(overlayYields()).toBe(true);
-    expect(host.querySelector(".agent-surface-empty__title")?.textContent).toBe("Open a surface");
-    expect(frame()?.hasAttribute("data-tree")).toBe(false);
-  });
-
-  it("keeps the canvas overlay out of a remote pane whose Editor surface is demoted", () => {
-    renderFrame(
-      { openSurfaces: ["editor"], activeSurface: "editor" },
-      {
-        layout: open(["editor"], "editor"),
-        remote: true,
-        remoteSurface: null,
-        thread: null,
-        unavailable: <p className="agent-note">Server surfaces are unavailable.</p>,
+  it("renders a revealed file inside the maximized panel itself, with the editor layer hidden", async () => {
+    const reads: string[] = [];
+    const reader: FilePreviewReader = {
+      read: async (workspaceRoot, relativePath) => {
+        reads.push(`${workspaceRoot}|${relativePath}`);
+        return {
+          kind: "text",
+          relativePath,
+          contents: "export const answer = 42;\n",
+          byteLength: 26,
+          truncated: false,
+        };
       },
-    );
-
-    expect(surface()?.getAttribute("data-surface")).toBe("empty");
-    expect(editorSlot()).toBe("none");
-    expect(overlayYields()).toBe(true);
-  });
-
-  it("keeps the canvas overlay out of an unavailable local scope", () => {
-    renderFrame(
-      { openSurfaces: ["editor"], activeSurface: "editor" },
-      {
-        layout: open(["editor"], "editor"),
-        unavailable: <p className="agent-note">Opening project…</p>,
-      },
-    );
-
-    expect(editorSlot()).toBe("none");
-    expect(overlayYields()).toBe(true);
-  });
-
-  it("leaves the local Editor surface hosting the editor", () => {
-    const placement = renderFrame(
-      { openSurfaces: ["editor"], activeSurface: "editor" },
-      { layout: open(["editor"], "editor") },
-    );
-
-    expect(placement.editorHidden).toBe(false);
-    expect(editorSlot()).toBe("open");
-    expect(overlayYields()).toBe(false);
-    expect(frame()?.hasAttribute("data-tree")).toBe(false);
-  });
-
-  it("restores the editor slot after a remote pane and back", () => {
-    const local = {
-      base: { openSurfaces: ["editor"], activeSurface: "editor" } as const,
-      panel: { layout: open(["editor"], "editor") },
     };
-    renderFrame(local.base, local.panel);
-    expect(editorSlot()).toBe("open");
-
-    renderFrame(local.base, {
-      layout: open([], null),
-      remote: true,
-      remoteSurface: null,
-      thread: null,
+    renderFrame(reader, {
+      layout: openLayout(["files", "diff"], "files", true),
+      fileReveal: { path: `${SURFACE_FIXTURE_WORKTREE}/src/answer.ts`, line: 1, sequence: 1 },
     });
-    expect(editorSlot()).toBe("none");
-    expect(frame()?.hasAttribute("data-tree")).toBe(false);
 
-    renderFrame(local.base, local.panel);
-    expect(editorSlot()).toBe("open");
-    expect(overlayYields()).toBe(false);
-    expect(frame()?.hasAttribute("data-tree")).toBe(false);
+    expect(frame()?.getAttribute("data-right-panel")).toBe("maximized");
+    const editorLayer = host.querySelector<HTMLElement>('[data-slot="editor"]');
+    expect(editorLayer?.hidden).toBe(true);
+    expect(editorLayer?.childElementCount).toBe(0);
+    expect(host.querySelector("[data-editor-slot]")).toBeNull();
+
+    await waitForReact(() =>
+      expect(
+        host.querySelector('.cv-file-viewer[data-file-viewer-path="src/answer.ts"]'),
+      ).not.toBeNull(),
+    );
+    const viewer = host.querySelector(".cv-file-viewer");
+    expect(viewer?.closest('[data-surface-panel="files"]')).not.toBeNull();
+    expect(viewer?.closest('[data-slot="surface"]')).not.toBeNull();
+    expect(viewer?.closest('[data-slot="editor"]')).toBeNull();
+    expect(reads).toEqual([`${SURFACE_FIXTURE_WORKTREE}|src/answer.ts`]);
   });
 
-  it("yields the canvas overlay to a local Files surface", () => {
-    const placement = renderFrame(
-      { openSurfaces: ["files", "editor"], activeSurface: "files" },
-      { layout: open(["files", "editor"], "files") },
-    );
-
-    expect(placement.editorHidden).toBe(true);
-    expect(editorSlot()).toBe("none");
-    expect(overlayYields()).toBe(true);
-    expect(host.querySelector("[data-agent-surface-tree]")).not.toBeNull();
+  it("keeps the editor layer hidden for every agent surface, docked or maximized", () => {
+    for (const rightPanelMaximized of [false, true]) {
+      for (const kind of ["files", "diff", "terminal"] as const) {
+        renderFrame(null, { layout: openLayout([kind], kind, rightPanelMaximized) });
+        expect(host.querySelector<HTMLElement>('[data-slot="editor"]')?.hidden).toBe(true);
+      }
+    }
   });
 
   function renderFrame(
-    base: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">,
-    overrides: Partial<AgentSurfacePanelProps>,
-  ): WorkbenchShellPlacement {
+    reader: FilePreviewReader | null,
+    overrides: Partial<AgentSurfacePanelProps> & { readonly layout: AgentWorkbenchLayout },
+  ): void {
     const placement = workbenchShellPlacement({
       bottomPanelVisible: false,
       effectiveLayout: "agent",
-      layout: { ...initialAgentWorkbenchLayout, rightPanel: "open", ...base },
+      layout: overrides.layout,
     });
     act(() =>
       root.render(
-        <WorkbenchShellFrame
-          agent={
-            <div className="agent-surface-host" data-slot="surface">
-              <WithRightPanelContext value={rightPanelTestContext()}>
-                <AgentSurfacePanel {...defaultProps()} chooserAutoFocus={false} {...overrides} />
-              </WithRightPanelContext>
-            </div>
-          }
-          bottom={null}
-          chrome={null}
-          editor={null}
-          placement={placement}
-        />,
+        <FilePreviewReaderContext.Provider value={reader}>
+          <WorkbenchShellFrame
+            agent={
+              <div className="agent-surface-host" data-slot="surface">
+                <WithRightPanelContext value={rightPanelTestContext()}>
+                  <AgentSurfacePanel {...defaultProps()} chooserAutoFocus={false} {...overrides} />
+                </WithRightPanelContext>
+              </div>
+            }
+            bottom={null}
+            chrome={null}
+            editor={null}
+            placement={placement}
+          />
+        </FilePreviewReaderContext.Provider>,
       ),
     );
-    return placement;
   }
 
   function frame(): HTMLElement | null {
     return host.querySelector<HTMLElement>(".workbench-frame");
   }
 
-  function surface(): HTMLElement | null {
-    return host.querySelector<HTMLElement>(".agent-surface");
-  }
-
-  function editorSlot(): string | null {
-    return surface()?.getAttribute(WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE) ?? null;
-  }
-
-  function overlayYields(): boolean {
-    return frame()?.matches(WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR) ?? false;
+  function openLayout(
+    openSurfaces: ReadonlyArray<AgentSurfaceKind>,
+    activeSurface: AgentSurfaceKind,
+    rightPanelMaximized: boolean,
+  ): AgentWorkbenchLayout {
+    return {
+      ...initialAgentWorkbenchLayout,
+      rightPanel: "open",
+      openSurfaces,
+      activeSurface,
+      rightPanelMaximized,
+    };
   }
 });

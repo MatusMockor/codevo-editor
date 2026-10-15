@@ -28,6 +28,25 @@
   overflow-wrap: anywhere;
 }
 
+.agent-tool-row__output-frame {
+  position: relative;
+  min-width: 0;
+}
+
+.agent-tool-row__output-actions {
+  position: absolute;
+  top: var(--cv-space-2);
+  right: var(--cv-space-2);
+  display: flex;
+  opacity: 0;
+  transition: opacity var(--cv-motion-fast) var(--cv-ease);
+}
+
+.agent-tool-row__output-frame:hover > .agent-tool-row__output-actions,
+.agent-tool-row__output-actions:has(:focus-visible) {
+  opacity: 1;
+}
+
 .agent-tool-row__empty {
   margin: 0;
   color: var(--cv-fg-subtle);

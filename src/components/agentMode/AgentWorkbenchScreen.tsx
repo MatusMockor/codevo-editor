@@ -1,5 +1,6 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
+import { workbenchPanelPlacement } from "../../domain/editorDrawer";
 import { rightPanelCoversThread } from "../workbenchShellPlacement";
 import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
 import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/browserAgentRailProjectCollapsePreference";
@@ -122,12 +123,18 @@ import {
   type AgentWorkbenchChrome,
   type AgentWorkbenchThreadActivityChrome,
 } from "./agentWorkbenchChrome";
-import { openThenRevealFiles } from "./openThenRevealFiles";
 import type { AgentOutsideTextFilePort } from "../../application/agentOutsideLinkedFile";
 import { TauriAgentLinkedFileGateway } from "../../infrastructure/tauriAgentLinkedFileGateway";
 import { useAgentLinkedFileOpener } from "./useAgentLinkedFileOpener";
-import { revealingFileOpeners } from "../editorPanel/revealingFileOpeners";
-import { useEditorSurfaceReveal } from "../editorPanel/useEditorSurfaceReveal";
+import type { CodeHighlighter } from "../../application/codeHighlight/codeHighlighter";
+import type { FilePreviewReader } from "../../application/filePreview/filePreviewReader";
+import { AgentFileViewerProvider } from "./rightPanel/fileViewer/AgentFileViewerProvider";
+import { CodeHighlighterProvider } from "../../infrastructure/codeHighlight/CodeHighlighterProvider";
+import { createTauriFilePreviewReader } from "../../infrastructure/tauriFilePreviewReader";
+import {
+  useAgentFileViewerLayout,
+  useAgentFileViewerOpeners,
+} from "./AgentWorkbenchScreenFileViewer";
 
 type Workbench = ReturnType<typeof useWorkbenchController>;
 
@@ -206,6 +213,8 @@ export interface AgentWorkbenchScreenProps {
   readonly localCloneGateway?: LocalProjectCloneGateway | null;
   readonly rightPanelGateways?: AgentRightPanelGateways;
   readonly fileSearch?: FileSearchGateway;
+  readonly filePreviewReader?: FilePreviewReader;
+  readonly codeHighlighter?: CodeHighlighter;
   onTrustWorkspace(): void;
   onResizeRightPanelStart(event: PointerEvent<HTMLDivElement>): void;
 }
@@ -214,6 +223,7 @@ export { ADD_PROJECT_REFUSED_REASON } from "./useAgentWorkbenchProjectOpening";
 export const SEARCH_FILES_COMMAND = "file.quickOpen";
 const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
 const DEFAULT_OUTSIDE_LINKED_FILES: AgentOutsideTextFilePort = new TauriAgentLinkedFileGateway();
+const DEFAULT_FILE_PREVIEW_READER: FilePreviewReader = createTauriFilePreviewReader();
 const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
   new TauriDirectoryListingGateway();
 const DEFAULT_LOCAL_CLONE_GATEWAY = new TauriLocalProjectCloneGateway();
@@ -259,6 +269,8 @@ export function AgentWorkbenchScreen({
   outsideLinkedFiles = DEFAULT_OUTSIDE_LINKED_FILES,
   rightPanelGateways: injectedRightPanelGateways,
   fileSearch = UNAVAILABLE_AGENT_FILE_SEARCH,
+  filePreviewReader = DEFAULT_FILE_PREVIEW_READER,
+  codeHighlighter,
   terminalGateway,
   terminalTheme,
   textClipboard = DEFAULT_TEXT_CLIPBOARD,
@@ -307,7 +319,6 @@ export function AgentWorkbenchScreen({
     }),
     [persistedProviderProjection.selectedProvider, workbench.agents],
   );
-  const { openPinnedFile, openProblemNotice, previewFile } = workbench;
   const { openWorkspaceRootWithReceipt } = workbench;
   const { openSettingsSection } = workbench;
   const openEnvironmentSettings = useCallback(() => {
@@ -438,12 +449,8 @@ export function AgentWorkbenchScreen({
     [nodePackageScripts],
   );
 
-  const { dispatch: dispatchAgentWorkbench } = agentWorkbench;
-  const revealEditorSurface = useEditorSurfaceReveal(dispatchAgentWorkbench);
-  const treeFileOpeners = useMemo(
-    () => revealingFileOpeners({ openPinnedFile, previewFile }, revealEditorSurface),
-    [openPinnedFile, previewFile, revealEditorSurface],
-  );
+  const fileViewer = useAgentFileViewerOpeners(agentWorkbench.dispatch);
+  const viewerLayout = useAgentFileViewerLayout(agentWorkbench, fileViewer.sessions);
 
   const openScriptsView = useCallback(() => {
     agentWorkbench.dispatch({ kind: "openSurface", surface: "scripts" });
@@ -467,13 +474,14 @@ export function AgentWorkbenchScreen({
     [nodePackageScripts, showTerminalPanel, vscodeProcessTasks],
   );
 
+  const terminalVisible = workbenchPanelPlacement(bottomPanelView, bottomPanelVisible).terminal;
   const onToggleBottomPanel = useCallback(() => {
-    if (bottomPanelVisible) {
+    if (terminalVisible) {
       hideBottomPanel();
       return;
     }
     showTerminalPanel();
-  }, [bottomPanelVisible, hideBottomPanel, showTerminalPanel]);
+  }, [hideBottomPanel, showTerminalPanel, terminalVisible]);
 
   const intentRef = useRef(initialAgentTerminalPanelIntentState);
   const { persistedBottomPanel } = agentWorkbench;
@@ -511,50 +519,29 @@ export function AgentWorkbenchScreen({
     [revealPathGateway, revealRoots],
   );
 
+  const revealFileInViewer = fileViewer.revealFileInViewer;
   const artifactSupport = useMemo<AgentArtifactSupport>(
     () => ({
       files: createAgentArtifactFilePort(
         DEFAULT_ARTIFACT_FILE_LOCATOR,
         {
           openFile: async (location, shouldCommit) => {
-            const opened = await openThenRevealFiles(
-              () =>
-                openPinnedFile(
-                  {
-                    kind: "file",
-                    name: location.filePath.slice(location.filePath.lastIndexOf("/") + 1),
-                    path: location.filePath,
-                  },
-                  shouldCommit,
-                ),
-              revealEditorSurface,
-            );
-            if (!opened) throw new Error(AGENT_ARTIFACT_OPEN_FAILED);
+            if (!shouldCommit()) throw new Error(AGENT_ARTIFACT_OPEN_FAILED);
+            if (!(await revealFileInViewer(location.filePath))) {
+              throw new Error(AGENT_ARTIFACT_OPEN_FAILED);
+            }
           },
         },
         { activeWorkspaceRoot: () => activeWorkspaceRootRef.current },
       ),
       reportError: reportAgentArtifactFailure,
     }),
-    [openPinnedFile, revealEditorSurface],
+    [revealFileInViewer],
   );
 
   const openTerminalLink = useCallback(
-    (path: string, line?: number, column?: number) => {
-      const position = { column: column ?? 1, lineNumber: line ?? 1 };
-      void openThenRevealFiles(
-        () =>
-          openProblemNotice({
-            id: `agent-terminal:${path}:${position.lineNumber}:${position.column}`,
-            message: path,
-            navigationTarget: { path, range: { end: position, start: position } },
-            severity: "info",
-            source: "Terminal",
-          }),
-        revealEditorSurface,
-      );
-    },
-    [openProblemNotice, revealEditorSurface],
+    (path: string, line?: number) => void revealFileInViewer(path, line ?? null),
+    [revealFileInViewer],
   );
 
   const openFileLocation = useAgentLinkedFileOpener({
@@ -566,8 +553,9 @@ export function AgentWorkbenchScreen({
       workspaceId,
       admissionToken,
     },
-    openProblemNotice,
-    revealEditorSurface,
+    revealFileInViewer,
+    showExternalFileInViewer: fileViewer.showExternalFileInViewer,
+    captureViewerOwner: fileViewer.captureViewerOwner,
   });
 
   const localCloneSession = useRef<LocalProjectCloneSession["current"]>(null);
@@ -687,8 +675,8 @@ export function AgentWorkbenchScreen({
     () => ({
       workspaceActivation,
       rightPanel,
-      layout: agentWorkbench,
-      bottomPanelVisible,
+      layout: viewerLayout,
+      bottomPanelVisible: terminalVisible,
       shortcuts,
       scripts,
       scriptsSurface,
@@ -719,9 +707,9 @@ export function AgentWorkbenchScreen({
         revealActivePathSignal: activeFileRevealSignal,
         fileStatusesByPath,
         searchFilesShortcut,
-        onOpenFile: treeFileOpeners.onOpenFile,
-        onPreviewFile: treeFileOpeners.onPreviewFile,
-        revealEditor: treeFileOpeners.revealEditor,
+        onOpenFile: fileViewer.onOpenFile,
+        onPreviewFile: fileViewer.onPreviewFile,
+        revealEditor: fileViewer.revealEditor,
       },
       diff: {
         monacoTheme,
@@ -750,7 +738,7 @@ export function AgentWorkbenchScreen({
       workspaceActivation,
       rightPanel,
       addProject,
-      agentWorkbench,
+      viewerLayout,
       appSettings.editorFontFamily,
       appSettings.editorFontLigatures,
       appSettings.editorFontSize,
@@ -781,71 +769,83 @@ export function AgentWorkbenchScreen({
       terminalGateway,
       terminalTheme,
       threadActivity,
-      treeFileOpeners,
+      fileViewer,
       workbench.activePath,
-      bottomPanelVisible,
+      terminalVisible,
       workspaceId,
       workspaceTrusted,
     ],
   );
 
   return (
-    <AgentArtifactSupportProvider value={artifactSupport}>
-      <AgentTranscriptPositionProvider value={restoredSession.transcriptPositions}>
-        <AgentNewThreadDefaultsProvider
-          settings={appSettings.agentNewThreadDefaults}
-          localClaudeCliVersion={configuredProviderVersion(
-            workbench.agents.providerManagement,
-            "claudeCode",
-          )}
-        >
-          <AgentModeView
-            monacoTheme={monacoTheme}
-            followUpBehavior={appSettings.agentFollowUpBehavior}
-            dictationLanguage={appSettings.speechDictationLanguage}
-            composerVisible={threadViewVisible && !rightPanelCoversThread(agentWorkbench.layout)}
-            questionGateway={questionGateway}
-            artifactLoader={DEFAULT_ARTIFACT_LOADER}
-            artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
-            imageSurface={DEFAULT_IMAGE_SURFACE}
-            agents={agents}
-            chrome={chrome}
-            navigationKey={navigationBoundary.key}
-            navigationSession={navigationSession}
-            modelFavoritesPersistence={modelFavoritesPersistence}
-            onOpenSourceControl={openSourceControl}
-            onOpenEnvironmentSettings={
-              openSettingsSection === undefined ? undefined : openEnvironmentSettings
-            }
-            onOpenUsageSettings={openSettingsSection === undefined ? undefined : openUsageSettings}
-            onOpenMcpSettings={openSettingsSection === undefined ? undefined : openMcpSettings}
-            onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
-            onActivateWorkspaceTab={activateWorkspaceTab}
-            onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
-            onTrustProject={(projectRootKey, origin) =>
-              void (projects.grantProjectTrust ?? projects.trustProject)(
-                projectRootKey,
-                origin ?? null,
-              )
-            }
-            overflowRootPaths={projects.overflowRootPaths}
-            providerEnabled={providerEnabled}
-            projects={projects.projects}
-            projectsLoaded={projects.projectsLoaded}
-            textClipboard={textClipboard}
-            projectCollapsePreference={projectCollapsePreference}
-            projectFocusPreference={projectFocusPreference}
-            workingSectionPreference={workingSectionPreference}
-            newThreadPicker={newThreadPicker}
-            viewCommands={workbenchAgentViewCommandBridge}
-            threadNotifications={threadNotifications}
-            threadNotificationsVisible={workbench.settingsOpen !== true}
-            remotePortPreview={remotePortPreview}
-            workspaceRoot={workspaceRoot}
-          />
-        </AgentNewThreadDefaultsProvider>
-      </AgentTranscriptPositionProvider>
-    </AgentArtifactSupportProvider>
+    <CodeHighlighterProvider highlighter={codeHighlighter} theme={monacoTheme}>
+      <AgentFileViewerProvider
+        fontFamily={appSettings.editorFontFamily}
+        fontSize={appSettings.editorFontSize}
+        reader={filePreviewReader}
+        sessions={fileViewer.sessions}
+      >
+        <AgentArtifactSupportProvider value={artifactSupport}>
+          <AgentTranscriptPositionProvider value={restoredSession.transcriptPositions}>
+            <AgentNewThreadDefaultsProvider
+              settings={appSettings.agentNewThreadDefaults}
+              localClaudeCliVersion={configuredProviderVersion(
+                workbench.agents.providerManagement,
+                "claudeCode",
+              )}
+            >
+              <AgentModeView
+                followUpBehavior={appSettings.agentFollowUpBehavior}
+                dictationLanguage={appSettings.speechDictationLanguage}
+                composerVisible={
+                  threadViewVisible && !rightPanelCoversThread(agentWorkbench.layout)
+                }
+                questionGateway={questionGateway}
+                artifactLoader={DEFAULT_ARTIFACT_LOADER}
+                artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
+                imageSurface={DEFAULT_IMAGE_SURFACE}
+                agents={agents}
+                chrome={chrome}
+                navigationKey={navigationBoundary.key}
+                navigationSession={navigationSession}
+                modelFavoritesPersistence={modelFavoritesPersistence}
+                onOpenSourceControl={openSourceControl}
+                onOpenEnvironmentSettings={
+                  openSettingsSection === undefined ? undefined : openEnvironmentSettings
+                }
+                onOpenUsageSettings={
+                  openSettingsSection === undefined ? undefined : openUsageSettings
+                }
+                onOpenMcpSettings={openSettingsSection === undefined ? undefined : openMcpSettings}
+                onCloseProject={(rootPath) => void workbench.closeWorkspaceTab(rootPath)}
+                onActivateWorkspaceTab={activateWorkspaceTab}
+                onReleaseProject={(projectRootKey) => void projects.releaseProject(projectRootKey)}
+                onTrustProject={(projectRootKey, origin) =>
+                  void (projects.grantProjectTrust ?? projects.trustProject)(
+                    projectRootKey,
+                    origin ?? null,
+                  )
+                }
+                overflowRootPaths={projects.overflowRootPaths}
+                providerEnabled={providerEnabled}
+                projects={projects.projects}
+                projectsLoaded={projects.projectsLoaded}
+                textClipboard={textClipboard}
+                projectCollapsePreference={projectCollapsePreference}
+                projectFocusPreference={projectFocusPreference}
+                workingSectionPreference={workingSectionPreference}
+                newThreadPicker={newThreadPicker}
+                viewCommands={workbenchAgentViewCommandBridge}
+                threadNotifications={threadNotifications}
+                threadNotificationsVisible={workbench.settingsOpen !== true}
+                remotePortPreview={remotePortPreview}
+                workspaceRoot={workspaceRoot}
+              />
+            </AgentNewThreadDefaultsProvider>
+          </AgentTranscriptPositionProvider>
+        </AgentArtifactSupportProvider>
+      </AgentFileViewerProvider>
+    </CodeHighlighterProvider>
   );
 }
 

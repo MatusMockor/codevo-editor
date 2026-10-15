@@ -206,66 +206,6 @@ describe("App Quick Open integration", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps custom-policy 3 MiB TypeScript editing inside the right sidebar", async () => {
-    const largeContent = "x".repeat(3 * 1024 * 1024);
-    mocks.largeFileContent.current = largeContent;
-    localStorage.setItem(
-      "editor.settings.workspace:canonical:%2Fworkspace",
-      JSON.stringify({
-        ...editorSurfaceWorkspaceSettings(),
-        largeFileMode: { characterLimit: 10 * 1024 * 1024, lineLimit: 200_000 },
-      }),
-    );
-    const { default: App } = await import("./App");
-    await act(async () => root.render(<App />));
-    await waitFor(() => {
-      expect(
-        host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
-      ).toBe("true");
-    });
-    await waitForEditorSurface(host);
-
-    act(() => {
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "p", metaKey: true }),
-      );
-    });
-    const input = await waitForElement<HTMLInputElement>(
-      document,
-      'input[aria-label="Search files"]',
-    );
-    act(() => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
-        input,
-        "large",
-      );
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await waitFor(() => {
-      expect(document.querySelector('[role="option"][title="/workspace/large.ts"]')).not.toBeNull();
-    });
-    act(() => {
-      input.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }),
-      );
-    });
-
-    await waitFor(() => {
-      expect(mocks.updateActiveDocument.current).not.toBeNull();
-      expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
-      expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
-    });
-
-    const smallContent = "const value = 1;";
-    act(() => {
-      mocks.updateActiveDocument.current?.(smallContent, "/workspace/large.ts", {
-        lineCount: 1,
-        utf16Length: smallContent.length,
-      });
-    });
-    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
-  }, 15_000);
-
   it("routes a command prefix through the real controller into Command Palette", async () => {
     const { default: App } = await import("./App");
     await act(async () => {
@@ -407,32 +347,6 @@ describe("App Quick Open integration", () => {
     expect(mocks.surfaceRenderCount.value - rendersBeforeTyping).toBe(0);
   }, 10_000);
 
-  it("keeps one hundred cursor updates out of the mounted editor surface", async () => {
-    const { default: App } = await import("./App");
-    await act(async () => {
-      root.render(<App />);
-    });
-    await waitFor(() => {
-      expect(
-        host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
-      ).toBe("true");
-    });
-    await waitForEditorSurface(host);
-    await waitFor(() => expect(mocks.onCursorPositionChange.current).not.toBeNull());
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 0));
-    });
-    const rendersBeforeCursorMoves = mocks.surfaceRenderCount.value;
-
-    for (let lineNumber = 1; lineNumber <= 100; lineNumber += 1) {
-      act(() => {
-        mocks.onCursorPositionChange.current?.({ column: lineNumber, lineNumber });
-      });
-    }
-
-    expect(mocks.surfaceRenderCount.value - rendersBeforeCursorMoves).toBe(0);
-  }, 10_000);
-
   it.each([
     {
       input: ":42",
@@ -504,7 +418,7 @@ describe("App Quick Open integration", () => {
 async function waitForEditorSurface(host: ParentNode): Promise<void> {
   await waitFor(() => {
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
-    expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
   });
 }
 

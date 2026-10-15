@@ -99,7 +99,7 @@ function AgentChangedFileRow({
       </button>
       <span className="agent-files__actions">
         <button
-          aria-label={`Open ${file.relativePath} in the editor`}
+          aria-label={`Open file ${file.relativePath}`}
           className="agent-linkbutton"
           disabled={openBlocked}
           onClick={() => onOpenChangedFile(threadId, file)}
@@ -109,7 +109,7 @@ function AgentChangedFileRow({
           <ExternalLink aria-hidden="true" size={11} /> Open
         </button>
         <button
-          aria-label={`Open a diff document for ${file.relativePath}`}
+          aria-label={`Show diff for ${file.relativePath}`}
           className="agent-linkbutton"
           disabled={diffBlocked}
           onClick={() => onOpenChangedFileDiff(threadId, file)}

@@ -94,7 +94,13 @@ export function AgentTurnItemView({
         />
       );
     case "tool":
-      return <AgentToolItem attachmentImages={attachmentImages} item={item} />;
+      return (
+        <AgentToolItem
+          attachmentImages={attachmentImages}
+          item={item}
+          textClipboard={textClipboard}
+        />
+      );
     case "result":
       if (isAnswerResult(item))
         return (
@@ -128,9 +134,11 @@ export function AgentTurnItemView({
 function AgentToolItem({
   attachmentImages,
   item,
+  textClipboard,
 }: {
   readonly attachmentImages: AgentTurnAttachmentImageViewer | null;
   readonly item: Extract<AgentTurnItem, { kind: "tool" }>;
+  readonly textClipboard: TextClipboardGateway | null;
 }) {
   const scope = useContext(AgentTurnRequestsScopeContext);
   if (isAgentQuestionTool(item.name) && scope !== null)
@@ -141,7 +149,7 @@ function AgentToolItem({
     return <AgentQuestionToolRow attachmentImages={attachmentImages} item={item} />;
   return (
     <>
-      <AgentToolRow item={item} />
+      <AgentToolRow item={item} textClipboard={textClipboard} />
       {scope !== null && scope.anchors.toolIdByKey.has(item.key) && (
         <AgentToolRequestHistory
           attachmentImages={attachmentImages}

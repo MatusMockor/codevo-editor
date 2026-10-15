@@ -40,8 +40,8 @@ describe("AgentThreadChanges", () => {
       summary: summary({ files: [file] }),
     });
 
-    click('[aria-label="Open src/parser.ts in the editor"]');
-    click('[aria-label="Open a diff document for src/parser.ts"]');
+    click('[aria-label="Open file src/parser.ts"]');
+    click('[aria-label="Show diff for src/parser.ts"]');
 
     expect(onOpenChangedFile).toHaveBeenCalledWith("agt-1", file);
     expect(onOpenChangedFileDiff).toHaveBeenCalledWith("agt-1", file);
@@ -101,11 +101,11 @@ describe("AgentThreadChanges", () => {
   }
 
   function open(relativePath: string): HTMLButtonElement {
-    return required(`[aria-label="Open ${relativePath} in the editor"]`);
+    return required(`[aria-label="Open file ${relativePath}"]`);
   }
 
   function diff(relativePath: string): HTMLButtonElement {
-    return required(`[aria-label="Open a diff document for ${relativePath}"]`);
+    return required(`[aria-label="Show diff for ${relativePath}"]`);
   }
 
   function required(selector: string): HTMLButtonElement {

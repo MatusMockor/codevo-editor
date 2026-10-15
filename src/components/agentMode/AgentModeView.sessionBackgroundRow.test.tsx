@@ -261,8 +261,7 @@ function sessionGateway() {
 }
 
 const EDITOR_PORT: AgentEditorBridgePort = {
-  openFile: async () => true,
-  openGitChange: async () => undefined,
+  revealFile: () => undefined,
   openSurface: () => undefined,
 };
 const PROJECTS = [projectFixture()];

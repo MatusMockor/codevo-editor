@@ -18,11 +18,11 @@ import type { AgentDiffFile, AgentDiffSidesUnavailable, AgentDiffSource } from "
 
 export const MAX_EXPANDED_DIFF_FILES = 12;
 export const INITIALLY_EXPANDED_DIFF_FILES = 3;
-export const DIFF_TOO_LARGE_REASON = "This diff is too large to show here. Open it in the editor.";
+export const DIFF_TOO_LARGE_REASON = "This diff is too large to show here.";
 
 const UNAVAILABLE_REASONS: Readonly<Record<AgentDiffSidesUnavailable, string>> = {
-  binary: "Binary file. Open it in the editor to inspect it.",
-  large: "This file is too large to show here. Open it in the editor.",
+  binary: "Binary file. There is no text diff to show.",
+  large: "This file is too large to show here.",
   missing: "This file no longer has changes. Refresh the diff.",
 };
 

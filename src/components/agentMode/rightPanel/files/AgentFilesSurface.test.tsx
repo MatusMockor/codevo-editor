@@ -33,6 +33,9 @@ let ui: MountedUi | null = null;
 beforeEach(() => {
   vi.useFakeTimers();
   installResizeObserver();
+  if (typeof Element.prototype.scrollIntoView !== "function") {
+    Element.prototype.scrollIntoView = () => undefined;
+  }
 });
 
 afterEach(() => {
@@ -130,6 +133,10 @@ function render(
     </WithRightPanelContext>,
   );
   return ui.host;
+}
+
+function viewerPath(host: HTMLElement): string | null {
+  return host.querySelector(".cv-file-viewer")?.getAttribute("data-file-viewer-path") ?? null;
 }
 
 function searchField(host: HTMLElement): HTMLInputElement | null {
@@ -375,26 +382,29 @@ describe("AgentFilesSurface", () => {
     expect(host.querySelector('[role="listbox"]')).toBeNull();
   });
 
-  it("previews a result on click and opens it on double-click or Enter", async () => {
+  it("opens a result in the built-in viewer on click or Enter, never in the editor", async () => {
     const onPreviewFile = vi.fn();
     const onOpenFile = vi.fn();
-    const gateway = staticSearch([result("src/app.ts")]);
+    const gateway = staticSearch([result("src/app.ts"), result("src/new.ts")]);
     const host = render(
       { fileTree: fileTree({ onOpenFile, onPreviewFile }) },
       rightPanelTestContext({}, { fileSearch: gateway }),
     );
-    await typeQuery(host, "app");
+    await typeQuery(host, "ts");
     const option = host.querySelector<HTMLElement>('[role="option"]');
     expect(option).not.toBeNull();
     if (option === null) return;
 
     act(() => option.click());
-    expect(onPreviewFile).toHaveBeenCalledWith(entry(`${ROOT}/src/app.ts`));
+    expect(viewerPath(host)).toBe("src/app.ts");
 
-    act(() => option.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
-    press(option, "Enter");
-    expect(onOpenFile).toHaveBeenCalledTimes(2);
-    expect(onOpenFile).toHaveBeenLastCalledWith(entry(`${ROOT}/src/app.ts`));
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Back to files"]')?.click());
+    const second = host.querySelectorAll<HTMLElement>('[role="option"]')[1];
+    if (second === undefined) return;
+    press(second, "Enter");
+    expect(viewerPath(host)).toBe("src/new.ts");
+    expect(onPreviewFile).not.toHaveBeenCalled();
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 
   it("moves from the search field into the results with ArrowDown and clears with Escape", async () => {
@@ -446,20 +456,20 @@ describe("AgentFilesSurface", () => {
     expect(option?.tabIndex).toBe(-1);
     if (option === null) return;
     act(() => option.click());
-    act(() => option.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
     press(option, "Enter");
     const input = searchField(host);
     if (input !== null) press(input, "ArrowDown");
     expect(document.activeElement).not.toBe(option);
-    expect(onPreviewFile).not.toHaveBeenCalled();
-    expect(onOpenFile).not.toHaveBeenCalled();
+    expect(viewerPath(host)).toBeNull();
 
     await act(async () => pending?.([result("src/new.ts")]));
     const fresh = host.querySelector<HTMLElement>('[role="option"]');
     expect(host.querySelector('[role="listbox"]')?.getAttribute("aria-busy")).toBeNull();
     expect(fresh?.getAttribute("aria-disabled")).toBeNull();
     act(() => fresh?.click());
-    expect(onPreviewFile).toHaveBeenCalledWith(entry(`${ROOT}/src/new.ts`));
+    expect(viewerPath(host)).toBe("src/new.ts");
+    expect(onPreviewFile).not.toHaveBeenCalled();
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 
   it("collapses every expanded folder from the surface header", () => {
@@ -523,14 +533,28 @@ describe("AgentFilesSurface", () => {
     );
   });
 
-  it("fills the surface with the tree and hosts no editor slot or crumbs", () => {
+  it("fills the surface with the tree and hosts no editor slot until a file is opened", () => {
     const host = render({});
 
     expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
-    expect(host.querySelector(".cv-files__crumbs")).toBeNull();
-    expect(host.querySelector(".cv-files__preview")).toBeNull();
+    expect(host.querySelector(".cv-file-viewer")).toBeNull();
     expect(host.querySelector('[aria-label="Open in editor"]')).toBeNull();
     expect(host.querySelector('nav[aria-label="Workspace files"]')).not.toBeNull();
+  });
+
+  it("opens a clicked tree file in the viewer in place of the tree on a narrow panel", () => {
+    const onPreviewFile = vi.fn();
+    const onOpenFile = vi.fn();
+    const host = render({ fileTree: fileTree({ onOpenFile, onPreviewFile }) });
+
+    act(() => host.querySelector<HTMLElement>(`.cv-files [title^="${ROOT}/src/app.ts"]`)?.click());
+
+    expect(viewerPath(host)).toBe("src/app.ts");
+    expect(host.querySelector("[data-agent-editor-slot]")).toBeNull();
+    expect(host.querySelector('nav[aria-label="Workspace files"]')).toBeNull();
+    expect(searchField(host)).toBeNull();
+    expect(onPreviewFile).not.toHaveBeenCalled();
+    expect(onOpenFile).not.toHaveBeenCalled();
   });
 
   it("drops the search and tree column while the tree is hidden", () => {

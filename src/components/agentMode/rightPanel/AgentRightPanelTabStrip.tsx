@@ -1,14 +1,12 @@
-import { FilePlus, FileText, Plus, SquareTerminal } from "lucide-react";
+import { Plus, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AgentSurfaceKind } from "../../../domain/agentWorkbenchLayout";
-import { gitStatusLabel, gitStatusTitle, type GitChangeStatus } from "../../../domain/git";
 import { Menu } from "../../../ui/foundation/Menu";
 import { MenuItem } from "../../../ui/foundation/MenuItem";
-import { PanelTabs, type PanelTabBadge, type PanelTabItem } from "../../../ui/foundation/PanelTabs";
+import { PanelTabs, type PanelTabItem } from "../../../ui/foundation/PanelTabs";
 import { AGENT_RIGHT_PANEL_SURFACE_CATALOG } from "./agentRightPanelSurfaceCatalog";
 import {
   selectedAgentRightPanelTabId,
-  type AgentRightPanelEditorDocuments,
   type AgentRightPanelTabEntry,
   type AgentTerminalSessionCommand,
 } from "./agentRightPanelTabEntries";
@@ -17,7 +15,6 @@ import "./rightPanel.css";
 export interface AgentRightPanelTabStripProps {
   readonly entries: ReadonlyArray<AgentRightPanelTabEntry>;
   readonly addableSurfaces: ReadonlyArray<AgentSurfaceKind>;
-  readonly editorDocuments: AgentRightPanelEditorDocuments | null;
   onActivateSurface(kind: AgentSurfaceKind): void;
   onCloseSurface(kind: AgentSurfaceKind): void;
   onTerminalSessionCommand(command: AgentTerminalSessionCommand): void;
@@ -67,11 +64,6 @@ export function AgentRightPanelTabStrip(props: AgentRightPanelTabStripProps) {
     observer.observe(strip);
     return () => observer.disconnect();
   }, []);
-  const pin = (id: string): void => {
-    const entry = byId.get(id);
-    if (entry === undefined || entry.kind !== "editorDocument") return;
-    props.editorDocuments?.onPin(entry.documentId);
-  };
   const add = (kind: AgentSurfaceKind): void => {
     setMenuOpen(false);
     props.onAddSurface(kind);
@@ -83,25 +75,11 @@ export function AgentRightPanelTabStrip(props: AgentRightPanelTabStripProps) {
         <PanelTabs
           label="Panel surfaces"
           onClose={close}
-          onPin={pin}
           onSelect={select}
           selectedId={selectedId}
           tabs={props.entries.map((entry) => panelTab(entry, props.tabPanelsRendered))}
         />
       </div>
-      {props.editorDocuments !== null && (
-        <button
-          aria-label="Open file"
-          className="cv-icon-button cv-icon-button--xs"
-          onClick={props.editorDocuments.onOpenFile}
-          title="Open file ⌘P"
-          type="button"
-        >
-          <span aria-hidden="true" className="cv-icon-button__glyph">
-            <FilePlus size={14} />
-          </span>
-        </button>
-      )}
       <button
         aria-expanded={menuOpen}
         aria-haspopup="menu"
@@ -191,16 +169,6 @@ function panelTab(entry: AgentRightPanelTabEntry, tabPanelsRendered: boolean): P
         live: entry.live,
         closable: entry.closable,
       };
-    case "editorDocument":
-      return {
-        id: entry.id,
-        title: entry.label,
-        icon: <FileText size={14} />,
-        panelId,
-        dirty: entry.dirty,
-        preview: entry.preview,
-        badge: entry.gitStatus === null ? undefined : gitStatusBadge(entry.gitStatus),
-      };
   }
 }
 
@@ -213,9 +181,6 @@ function activateEntry(entry: AgentRightPanelTabEntry, props: AgentRightPanelTab
       props.onActivateSurface("terminal");
       props.onTerminalSessionCommand({ kind: "activate", sessionId: entry.sessionId });
       return;
-    case "editorDocument":
-      props.editorDocuments?.onActivate(entry.documentId);
-      return;
   }
 }
 
@@ -227,30 +192,5 @@ function closeEntry(entry: AgentRightPanelTabEntry, props: AgentRightPanelTabStr
     case "terminalSession":
       props.onTerminalSessionCommand({ kind: "close", sessionId: entry.sessionId });
       return;
-    case "editorDocument":
-      props.editorDocuments?.onClose(entry.documentId);
-      return;
-  }
-}
-
-function gitStatusBadge(status: GitChangeStatus): PanelTabBadge {
-  return {
-    label: gitStatusLabel(status),
-    title: gitStatusTitle(status),
-    tone: gitStatusTone(status),
-  };
-}
-
-function gitStatusTone(status: GitChangeStatus): PanelTabBadge["tone"] {
-  switch (status) {
-    case "added":
-    case "renamed":
-    case "untracked":
-      return "ok";
-    case "modified":
-      return "warn";
-    case "deleted":
-    case "conflicted":
-      return "danger";
   }
 }

@@ -18,7 +18,7 @@ import type {
   AgentProviderPolicyGateway,
   AgentProviderUpdateGateway,
 } from "../domain/agentProviderHealth";
-import type { GitChangedFile, GitGateway } from "../domain/git";
+import type { GitGateway } from "../domain/git";
 import type { GitRepositoryMapping, GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import type {
   AppSettings,
@@ -27,7 +27,7 @@ import type {
   WorkspaceSettings,
 } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
-import type { EditorDocument, FileEntry } from "../domain/workspace";
+import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
 import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
@@ -90,18 +90,6 @@ export function useAgentProjectGateways(
   );
 }
 
-export type WorkbenchControllerOpenFileRef = {
-  readonly current: (
-    entry: FileEntry,
-    options?: { pin?: boolean; readOnly?: boolean; recordNavigation?: boolean },
-  ) => Promise<boolean>;
-};
-
-export type WorkbenchControllerOpenGitChange = (
-  change: GitChangedFile,
-  repositoryRoot?: string,
-) => Promise<void>;
-
 export type WorkbenchControllerPersistWorkspaceSettings = (
   rootPath: string,
   nextSettings: WorkspaceSettings,
@@ -132,8 +120,6 @@ export interface WorkbenchControllerAgentsOptions {
     | "agentInlineImageGateway"
     | "gitWorktreeGateway"
   >;
-  readonly openFileRef: WorkbenchControllerOpenFileRef;
-  readonly openGitChange: WorkbenchControllerOpenGitChange;
   readonly gitGateway: Pick<
     GitGateway,
     "getStatus" | "getDiff" | "detectRepositories" | "stageFiles" | "commit" | "deleteBranch"
@@ -219,11 +205,7 @@ export function useWorkbenchControllerAgents(
     options.activateWorkspaceRoot,
   );
 
-  const editorBridge = useAgentEditorBridgePort(
-    options.openFileRef,
-    options.openGitChange,
-    agentWorkbench.dispatch,
-  );
+  const editorBridge = useAgentEditorBridgePort(agentWorkbench.dispatch);
   const activeWorkspaceRoot = options.workspaceRoot;
   const activeWorkspaceId = options.workspaceIdentityDescriptor?.workspaceId ?? null;
   const setWorkspaceTrust = options.setWorkspaceTrust;
@@ -378,17 +360,14 @@ function useAgentWorkbenchLayoutPersistence(
 }
 
 function useAgentEditorBridgePort(
-  openFileRef: WorkbenchControllerOpenFileRef,
-  openGitChange: WorkbenchControllerOpenGitChange,
   dispatchAgentLayout: AgentWorkbenchLayoutState["dispatch"],
 ): AgentEditorBridgePort {
   return useMemo(
     () => ({
-      openFile: (entry, options) => openFileRef.current(entry, options),
-      openGitChange: (change, repositoryRoot) => openGitChange(change, repositoryRoot),
+      revealFile: (path) => dispatchAgentLayout({ kind: "revealFile", path }),
       openSurface: (surface) => dispatchAgentLayout({ kind: "openSurface", surface }),
     }),
-    [dispatchAgentLayout, openFileRef, openGitChange],
+    [dispatchAgentLayout],
   );
 }
 

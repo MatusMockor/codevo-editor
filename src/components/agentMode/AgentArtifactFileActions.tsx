@@ -76,11 +76,11 @@ export function AgentArtifactFileActions({
           data-agent-artifact-action="open"
           disabled={reason !== null || pending !== null}
           onClick={() => run("open", AGENT_ARTIFACT_OPEN_FAILED)}
-          title={reason ?? "Open in editor"}
+          title={reason ?? "Open file"}
           type="button"
         >
           <SquarePen aria-hidden="true" size={14} />
-          <span>Open in editor</span>
+          <span>Open file</span>
         </button>
         <button
           aria-describedby={reason === null ? undefined : reasonId}

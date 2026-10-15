@@ -68,6 +68,10 @@ mod webview_media_linux;
 mod window_geometry;
 #[path = "workspace_facade.rs"]
 mod workspace_facade;
+#[path = "../workspace_file_preview.rs"]
+mod workspace_file_preview;
+#[path = "workspace_file_preview_commands.rs"]
+mod workspace_file_preview_commands;
 #[path = "workspace_services.rs"]
 mod workspace_services;
 

@@ -44,11 +44,9 @@ import {
 } from "./agentProviderSettings";
 import { normalizeAppUpdaterSkippedVersion } from "./appUpdater";
 import {
-  parseAgentWorkbenchLayout,
-  parsePersistedAgentBottomPanel,
-  serializeAgentWorkbenchLayout,
-  type AgentWorkbenchLayoutPersisted,
-} from "./agentWorkbenchLayout";
+  normalizePersistedAgentWorkbenchSession,
+  type AgentWorkbenchSessionPersisted,
+} from "./agentWorkbenchLayoutThreads";
 import {
   createInitialEditorGroupsState,
   normalizeEditorGroupsState,
@@ -257,7 +255,7 @@ export interface WorkspaceSessionNavigation {
 }
 
 export interface WorkspaceSessionStateV1 {
-  agentWorkbench?: AgentWorkbenchLayoutPersisted;
+  agentWorkbench?: AgentWorkbenchSessionPersisted;
   bottomPanelView: WorkspaceSessionBottomPanelView;
   editor: EditorGroupsState;
   navigation?: WorkspaceSessionNavigation;
@@ -738,15 +736,12 @@ export function normalizeWorkspaceSession(value: unknown): WorkspaceSessionState
 
 export function normalizeWorkspaceSessionAgentWorkbench(
   value: unknown,
-): AgentWorkbenchLayoutPersisted | undefined {
+): AgentWorkbenchSessionPersisted | undefined {
   if (!isRecord(value) || Array.isArray(value)) {
     return undefined;
   }
 
-  return serializeAgentWorkbenchLayout(
-    parseAgentWorkbenchLayout(value),
-    parsePersistedAgentBottomPanel(value),
-  );
+  return normalizePersistedAgentWorkbenchSession(value);
 }
 
 export function normalizeWorkspaceSessionNavigation(

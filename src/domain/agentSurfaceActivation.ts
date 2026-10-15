@@ -21,8 +21,6 @@ export interface AgentSurfaceActivation {
   readonly hidden: boolean;
 }
 
-export type AgentSurfaceEditorSlot = "open" | "none";
-
 export const LOCAL_AGENT_SURFACE_ACTIVATION: AgentSurfaceActivation = {
   remote: false,
   threadPresent: true,
@@ -66,7 +64,6 @@ export function agentSurfaceServes(
   activation: AgentSurfaceActivation,
   kind: AgentSurfaceKind,
 ): boolean {
-  if (kind === "editor") return !activation.remote;
   if (!activation.remote) return true;
   if (agentSurfaceUnavailability(activation, kind) !== null) return false;
   if (kind === "diff" || kind === "agents") return activation.threadPresent;
@@ -90,35 +87,4 @@ export function effectiveAgentSurface(
   if (activeSurface === null) return null;
   if (!agentSurfaceServes(activation, activeSurface)) return null;
   return activeSurface;
-}
-
-export function agentSurfaceEditorSlot(
-  activation: AgentSurfaceActivation,
-  activeSurface: AgentSurfaceKind | null,
-): AgentSurfaceEditorSlot {
-  if (activation.hidden) return "none";
-  if (activation.unavailable) return "none";
-  if (activation.remote) return "none";
-  if (effectiveAgentSurface(activation, activeSurface) !== "editor") return "none";
-  return "open";
-}
-
-export interface AgentSurfaceSelection {
-  readonly openSurfaces: ReadonlyArray<AgentSurfaceKind>;
-  readonly activeSurface: AgentSurfaceKind | null;
-}
-
-export function withoutEmptyEditorSurface(
-  openSurfaces: ReadonlyArray<AgentSurfaceKind>,
-  activeSurface: AgentSurfaceKind | null,
-  editorHasDocuments: boolean,
-): AgentSurfaceSelection {
-  const editorIndex = openSurfaces.indexOf("editor");
-  if (editorHasDocuments || editorIndex < 0) return { openSurfaces, activeSurface };
-  const remaining = openSurfaces.filter((kind) => kind !== "editor");
-  if (activeSurface !== "editor") return { openSurfaces: remaining, activeSurface };
-  return {
-    openSurfaces: remaining,
-    activeSurface: remaining[editorIndex] ?? remaining[editorIndex - 1] ?? null,
-  };
 }

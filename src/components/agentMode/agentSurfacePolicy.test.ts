@@ -508,9 +508,6 @@ describe("remote folder project surfaces", () => {
       );
     }
     expect(agentSurfaceBlockedReason("agents", folder, true, SURFACE_FIXTURE_ROOT)).toBeNull();
-    expect(agentSurfaceBlockedReason("editor", folder, true, SURFACE_FIXTURE_ROOT)).toBe(
-      SURFACE_REMOTE_UNAVAILABLE_REASON,
-    );
   });
 
   it("leaves a repository project and a runner without kinds unchanged", () => {
@@ -564,15 +561,6 @@ describe("git, scripts and pull request surfaces", () => {
     expect(agentSurfaceBlockedReason("git", remote, true, SURFACE_FIXTURE_ROOT)).toBe(
       SURFACE_REMOTE_UNAVAILABLE_REASON,
     );
-  });
-});
-
-describe("editor surface blocked reason", () => {
-  it("never blocks the local editor, even without a thread, project scope or trust", () => {
-    expect(agentSurfaceBlockedReason("editor", null, false, null)).toBeNull();
-    expect(
-      agentSurfaceBlockedReason("editor", surfaceThreadView(), false, "/workspace/other"),
-    ).toBeNull();
   });
 });
 

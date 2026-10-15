@@ -416,6 +416,7 @@ pub fn run() {
             project_commands::get_workspace_descriptor,
             workspace_commands::workspace_read_text_file,
             workspace_commands::workspace_read_image_file,
+            workspace_file_preview_commands::workspace_read_file_preview,
             workspace_commands::workspace_read_directory,
             workspace_directory_commands::workspace_read_directory_bounded,
             workspace_commands::workspace_search_files,

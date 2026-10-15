@@ -4227,7 +4227,7 @@ describe("useWorkbenchController workspace lifecycle, language runtimes, and sav
     expect(getWorkbench().notices).toEqual([]);
     expect(getWorkbench().editorRevealTarget).toBeNull();
     expect(getWorkbench().bottomPanelVisible).toBe(false);
-    expect(getWorkbench().bottomPanelView).toBe("problems");
+    expect(getWorkbench().bottomPanelView).toBe("terminal");
     expect(getWorkbench().phpTree.nodes).toEqual([]);
     expect(getWorkbench().phpTreeLoading).toBe(false);
     expect(getWorkbench().quickOpenOpen).toBe(false);

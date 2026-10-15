@@ -1,3 +1,4 @@
+import { useAgentLayoutBottomPanel } from "./useAgentWorkbenchLayoutBottomPanel";
 import { agentGitStatusDemand } from "./agentGitStatusDemand";
 import { registerActiveComposerManifestWorkspace } from "../components/composerManifestMonacoProviders";
 import { registerActiveNpmManifestWorkspace } from "../components/npmManifestMonacoProviders";
@@ -131,7 +132,6 @@ import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { type SmartModeGateway } from "../domain/intelligence";
 import type { GitGateway } from "../domain/git";
 import type { LocalHistoryGateway } from "../domain/localHistory";
-import type { BottomPanelView } from "../domain/bottomPanel";
 import type { IndexProgressGateway } from "../domain/indexProgress";
 import {
   type LanguageServerDiagnostic,
@@ -308,8 +308,13 @@ export function useWorkbenchController(
     Record<string, LanguageServerDiagnostic[]>
   >({});
   const [sidebarView, setSidebarView] = useState<SidebarView>("files");
-  const [bottomPanelView, setBottomPanelView] = useState<BottomPanelView>("problems");
-  const [bottomPanelVisible, setBottomPanelVisible] = useState(false);
+  const {
+    bottomPanelView,
+    bottomPanelVisible,
+    setBottomPanelView,
+    setBottomPanelVisible,
+    agentLayoutRef,
+  } = useAgentLayoutBottomPanel();
   const bottomPanelViewRef = useRef(bottomPanelView);
   useLayoutEffect(() => {
     bottomPanelViewRef.current = bottomPanelView;
@@ -1730,8 +1735,6 @@ export function useWorkbenchController(
     setBottomPanelView,
     setBottomPanelVisible,
     options,
-    openFileRef,
-    openGitChange,
     editorSessionOwnerKey,
     gitGateway,
     gitRepositoryMappings,
@@ -1755,6 +1758,7 @@ export function useWorkbenchController(
     persistWorkspaceSettings,
   });
 
+  agentLayoutRef.current = agents.agentWorkbench.effectiveLayout === "agent";
   const agentDiffVisible = agentGitStatusDemand(agents.agentWorkbench);
 
   const editorFile = useWorkbenchEditorFileCoordinator({

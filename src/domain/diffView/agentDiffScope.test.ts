@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentDiffScopeActiveTurnId,
   agentDiffScopeLabel,
+  agentDiffScopeRevealPath,
   agentDiffScopesEqual,
   agentDiffTurnOptions,
   resolveAgentDiffScope,
@@ -53,5 +54,20 @@ describe("agent diff scope", () => {
     expect(agentDiffScopesEqual({ kind: "turn", turnId: "a" }, { kind: "turn", turnId: "b" })).toBe(
       false,
     );
+  });
+
+  it("carries a reveal path for turn and working-tree scopes only", () => {
+    expect(agentDiffScopeRevealPath({ kind: "workingTree", revealPath: "src/a.ts" })).toBe(
+      "src/a.ts",
+    );
+    expect(agentDiffScopeRevealPath({ kind: "turn", turnId: "t1", revealPath: "b.ts" })).toBe(
+      "b.ts",
+    );
+    expect(agentDiffScopeRevealPath({ kind: "workingTree" })).toBeNull();
+    expect(agentDiffScopeRevealPath({ kind: "latestTurn" })).toBeNull();
+    expect(agentDiffScopeRevealPath({ kind: "branch", baseRef: "main" })).toBeNull();
+    expect(
+      agentDiffScopesEqual({ kind: "workingTree", revealPath: "a.ts" }, { kind: "workingTree" }),
+    ).toBe(true);
   });
 });

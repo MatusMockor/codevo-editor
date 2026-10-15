@@ -2969,7 +2969,7 @@ MissingClass::class;
     expect(confirm).toHaveBeenCalledOnce();
     expect(getWorkbench().openDocuments).toHaveLength(1);
   });
-  it("opens the Express panel for a JS workspace without an active document", async () => {
+  it("never opens the invisible Express panel drawer in the agent layout", async () => {
     const { getWorkbench } = renderController({
       appSettings: {
         ...defaultAppSettings(),
@@ -2984,8 +2984,8 @@ MissingClass::class;
     await act(async () => {
       await runCommand(getWorkbench(), "panel.showExpressRoutes");
     });
-    expect(getWorkbench().bottomPanelView).toBe("expressRoutes");
-    expect(getWorkbench().bottomPanelVisible).toBe(true);
+    expect(getWorkbench().bottomPanelView).toBe("problems");
+    expect(getWorkbench().bottomPanelVisible).toBe(false);
   });
   describe("bookmarks", () => {
     it("toggles a bookmark at the active cursor line capturing the line preview", async () => {

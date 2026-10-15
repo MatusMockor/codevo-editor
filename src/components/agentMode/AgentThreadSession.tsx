@@ -79,8 +79,6 @@ import { agentTurnHydrationScrollTop, normalizeAgentTurnEventOffset } from "./ag
 import type { AgentTurnHighlight } from "./agentTurnHighlightModel";
 import { AgentTurnView } from "./AgentTurnView";
 import { useAgentThreadFollow } from "./useAgentThreadFollow";
-import { AgentCodeColorizerContext, type AgentCodeColorizer } from "./agentCodeColorizer";
-import { defaultAgentCodeColorizer } from "./shikiAgentCodeColorizer";
 import { AgentSessionDock } from "./conversation/AgentSessionDock";
 import { agentSessionActivityBar } from "./conversation/agentSessionActivityBar";
 import { agentLiveWhileServerReachable } from "./agentTurnLiveIndicators";
@@ -167,7 +165,6 @@ export interface AgentThreadSessionProps {
   readonly awaiting?: AgentThreadAwaiting | null;
   readonly getTurnChanges?: AgentThreadsSurface["getTurnChanges"];
   readonly monacoTheme?: MonacoAppTheme;
-  readonly codeColorizer?: AgentCodeColorizer | null;
 }
 
 export function AgentThreadSession(props: AgentThreadSessionProps) {
@@ -234,8 +231,6 @@ function AgentThreadSessionBody({
   activeDiffTurnId = null,
   awaiting = null,
   getTurnChanges,
-  monacoTheme = "calm-dark",
-  codeColorizer,
   reveal = null,
   textClipboard = null,
   markdownRenderer,
@@ -336,10 +331,6 @@ function AgentThreadSessionBody({
     viewport,
   });
   const { followLatest, pinnedRef: pinnedToLatestRef, release: releaseLatest } = follow;
-  const colorizer = useMemo(
-    () => (codeColorizer === undefined ? defaultAgentCodeColorizer(monacoTheme) : codeColorizer),
-    [codeColorizer, monacoTheme],
-  );
   const remoteExecution = thread.execution?.kind === "remote";
   const { openExternal: openExternalLink, linkTitle } = useMemo(
     () => agentThreadLinks(openLinkOnThisComputer, serverLoopback, remoteExecution),
@@ -705,13 +696,11 @@ function AgentThreadSessionBody({
   );
 
   return (
-    <AgentCodeColorizerContext.Provider value={colorizer}>
-      <AgentTurnAttachmentFilesContext.Provider value={attachmentFilePort}>
-        <AgentAgentsDock agents={agents} running={running}>
-          {session}
-        </AgentAgentsDock>
-      </AgentTurnAttachmentFilesContext.Provider>
-    </AgentCodeColorizerContext.Provider>
+    <AgentTurnAttachmentFilesContext.Provider value={attachmentFilePort}>
+      <AgentAgentsDock agents={agents} running={running}>
+        {session}
+      </AgentAgentsDock>
+    </AgentTurnAttachmentFilesContext.Provider>
   );
 }
 

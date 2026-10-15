@@ -18,9 +18,10 @@ import {
 } from "../../domain/agentThread";
 import { findInThread } from "../../domain/agentThreadSearch";
 import { loadAgentMarkdownRenderer } from "../../infrastructure/markdown/agentMarkdownRendererAdapter";
+import { CodeHighlighterProvider } from "../../infrastructure/codeHighlight/CodeHighlighterProvider";
+import { createInlineCodeHighlighter } from "../../infrastructure/codeHighlight/inlineCodeHighlighter";
 import { AgentThreadSession, type AgentThreadSessionProps } from "./AgentThreadSession";
 import { AgentClockProvider } from "./agentClock";
-import { AGENT_CODE_COLORIZE_DELAY_MS, type AgentCodeColorizer } from "./agentCodeColorizer";
 import type { AgentLocalFileLinkPort } from "./agentMarkdownLinks";
 
 const ROOT = "/workspace/app";
@@ -218,28 +219,47 @@ describe("AgentThreadSession transcript", () => {
     expect(host.querySelector("a.agent-md__path-link")).toBeNull();
   });
 
-  it("colorizes a fenced block through the colorizer port and keeps plain text while searching", async () => {
+  it("highlights a fenced block through the shared highlighter and keeps plain text while searching", async () => {
     vi.useRealTimers();
-    const colorize = vi.fn<AgentCodeColorizer["colorize"]>(async (code) => [
-      [{ text: code, color: "#ff0000", italic: false, bold: false }],
-    ]);
+    const highlighter = createInlineCodeHighlighter();
     const thread = view([
       turn("t1", "Code?", { kind: "exited", exitCode: 0 }, [
         { kind: "assistantText", text: "```ts\nconst a = 1;\n```" },
       ]),
     ]);
-    render({ codeColorizer: { colorize }, thread });
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, AGENT_CODE_COLORIZE_DELAY_MS + 20));
-    });
+    const renderHighlighted = (overrides: Partial<AgentThreadSessionProps>): void =>
+      act(() =>
+        root.render(
+          <CodeHighlighterProvider highlighter={highlighter} theme="calm-dark">
+            <AgentClockProvider nowTickMs={1}>
+              <AgentThreadSession
+                composerRepositoryLabel="app"
+                markdownViewport={null}
+                onReviewInDiff={() => undefined}
+                thread={null}
+                {...overrides}
+              />
+            </AgentClockProvider>
+          </CodeHighlighterProvider>,
+        ),
+      );
+    renderHighlighted({ thread });
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (host.querySelector(".agent-md__code-colorized") !== null) break;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      });
+    }
 
-    expect(colorize).toHaveBeenCalledWith("const a = 1;", "ts");
-    const token = host.querySelector<HTMLElement>(".agent-md__code-colorized span span");
-    expect(token?.textContent).toBe("const a = 1;");
-    expect(token?.style.color).toBe("rgb(255, 0, 0)");
+    const colorized = host.querySelector<HTMLElement>(".agent-md__code-colorized");
+    expect(colorized?.textContent).toBe("const a = 1;");
+    expect(
+      [...(colorized?.querySelectorAll<HTMLElement>("span span") ?? [])].some(
+        (token) => token.style.color !== "",
+      ),
+    ).toBe(true);
 
-    render({
-      codeColorizer: { colorize },
+    renderHighlighted({
       thread,
       findQuery: "const",
       findHits: [{ scope: "turn", turnId: "t1", eventIndex: 0, start: 8, end: 13 }],
@@ -382,7 +402,6 @@ describe("AgentThreadSession transcript", () => {
       root.render(
         <AgentClockProvider nowTickMs={1}>
           <AgentThreadSession
-            codeColorizer={null}
             composerRepositoryLabel="app"
             markdownViewport={null}
             onReviewInDiff={() => undefined}

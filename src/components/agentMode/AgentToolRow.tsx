@@ -1,8 +1,10 @@
 import { useId } from "react";
+import type { TextClipboardGateway } from "../../domain/textClipboard";
 import { toolRowIcon } from "./agentToolRowIcon";
 import { useAgentToolDisclosure } from "./AgentToolDisclosure";
 import { agentToolFailureTag } from "./agentActivityGrouping";
 import { AgentWorkStatusTag } from "./AgentWorkStatusTag";
+import { AgentToolRowOutput } from "./AgentToolRowOutput";
 import type { AgentTurnItem } from "./agentModePresentation";
 import type { AgentToolItemStatus } from "./agentTurnProjection";
 
@@ -29,8 +31,10 @@ function unsupportedToolRowStatus(status: never): never {
 
 export function AgentToolRow({
   item,
+  textClipboard = null,
 }: {
   readonly item: Extract<AgentTurnItem, { kind: "tool" }>;
+  readonly textClipboard?: TextClipboardGateway | null;
 }) {
   const disclosure = useAgentToolDisclosure(item.toolId);
   const detailId = useId();
@@ -59,19 +63,33 @@ export function AgentToolRow({
         )}
       </button>
       <div className="agent-tool-row__detail" hidden={!expanded} id={detailId}>
-        {expanded && <AgentToolRowDetail item={item} />}
+        {expanded && <AgentToolRowDetail item={item} textClipboard={textClipboard} />}
       </div>
     </>
   );
 }
 
-function AgentToolRowDetail({ item }: { readonly item: Extract<AgentTurnItem, { kind: "tool" }> }) {
+function AgentToolRowDetail({
+  item,
+  textClipboard,
+}: {
+  readonly item: Extract<AgentTurnItem, { kind: "tool" }>;
+  readonly textClipboard: TextClipboardGateway | null;
+}) {
   return (
     <>
       {item.command !== null && (
         <pre className="agent-tool-row__command">{`$ ${item.command}`}</pre>
       )}
-      {item.output !== null && <pre className="agent-tool-row__output">{item.output}</pre>}
+      {item.output !== null && (
+        <AgentToolRowOutput
+          inputSummary={item.inputSummary}
+          output={item.output}
+          rowKind={item.rowKind}
+          running={item.status === "running"}
+          textClipboard={textClipboard}
+        />
+      )}
       {item.output === null && <p className="agent-tool-row__empty">{emptyOutputText(item)}</p>}
     </>
   );

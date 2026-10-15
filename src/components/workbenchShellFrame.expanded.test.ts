@@ -4,6 +4,7 @@ import {
   buildTokenTable,
   collectBorderViolations,
   parseAllStyleSheets,
+  selectorParts,
   type CssRule,
 } from "./cssContractTestSupport";
 import {
@@ -12,10 +13,6 @@ import {
   nextWorkbenchFrameEditorReports,
   workbenchFrameEditorState,
 } from "./workbenchFrameEditorReport";
-import {
-  WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE,
-  WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR,
-} from "./workbenchShellPlacement";
 
 const SHELL_SHEET = "components/workbenchShellFrame.css";
 const SURFACE_SHEET = "components/agentMode/agentSurface.css";
@@ -70,15 +67,16 @@ describe("expanded editing shell layout contract", () => {
     expect(surface.length).toBeGreaterThan(0);
   });
 
-  it("declares the surface header height and editor gutter without a tree column token", () => {
-    const tokens = declarations(shell, ".app-shell");
-    expect(tokens.get("--agent-surface-header-height")).toBe("var(--cv-topbar-h)");
-    expect(tokens.get("--agent-surface-editor-gutter")).toBe("8px");
-    expect([...tokens.keys()].filter((name) => name.includes("tree"))).toEqual([]);
+  it("declares only the panel edge token and no editor overlay or tree column token", () => {
+    expect([...declarations(shell, ".app-shell").entries()]).toEqual([
+      ["--agent-surface-edge-width", "1px"],
+    ]);
+    const names = shell.flatMap((rule) => rule.declarations.map((entry) => entry.property));
+    expect(names.filter((name) => /header-height|editor-gutter/.test(name))).toEqual([]);
     expect(parsed.rules.some((rule) => rule.selector.includes("data-tree"))).toBe(false);
   });
 
-  it("builds the maximized grid as rail and centre", () => {
+  it("fills the maximized area with the surface itself, without an editor layer", () => {
     expect(declarations(shell, MAXIMIZED).get("grid-template-columns")).toBe(
       compact("var(--agent-rail-track) minmax(0, 1fr)"),
     );
@@ -87,42 +85,38 @@ describe("expanded editing shell layout contract", () => {
     expect(surfaceSlot.get("grid-column")).toBe("2");
     expect(surfaceSlot.get("grid-row")).toBe("1");
 
-    const editorSlot = declarations(shell, `${MAXIMIZED} > [data-slot="editor"]`);
-    expect(editorSlot.get("grid-column")).toBe("2");
-    expect(editorSlot.get("grid-row")).toBe("1");
-    expect(editorSlot.get("padding")).toBe(
-      compact(
-        "var(--agent-surface-header-height) 0 var(--agent-surface-editor-gutter) var(--agent-surface-editor-gutter)",
-      ),
-    );
-    expect(editorSlot.get("clip-path")).toBe(
-      compact(
-        "inset(var(--agent-surface-header-height) 0 var(--agent-surface-editor-gutter) var(--agent-surface-editor-gutter) round var(--cv-r-group))",
-      ),
-    );
-
     const bottomSlot = declarations(shell, `${MAXIMIZED} > [data-slot="bottom"]`);
     expect(bottomSlot.get("grid-column")).toBe("2");
     expect(bottomSlot.get("grid-row")).toBe("2");
     expect(bottomSlot.get("background")).toBe("var(--cv-canvas)");
-    expect(bottomSlot.get("border-radius")).toBe(
-      compact("var(--cv-r-group) var(--cv-r-group) 0 0"),
-    );
-    expect(bottomSlot.get("margin-left")).toBe("var(--agent-surface-editor-gutter)");
+    expect(bottomSlot.has("margin-left")).toBe(false);
+    expect(bottomSlot.has("border-radius")).toBe(false);
+    expect(
+      declarations(shell, '.workbench-frame[data-right-panel="maximized"] .agent-mode__center').get(
+        "visibility",
+      ),
+    ).toBe("hidden");
   });
 
-  it("keeps the docked editor overlay below the panel header and painted on the canvas tone", () => {
-    const editorSlot = declarations(
-      shell,
-      '.workbench-frame[data-layout="agent"] > [data-slot="editor"]',
+  it("never places the editor layer anywhere in the agent layout", () => {
+    const agentEditorParts = shell.flatMap((rule) =>
+      selectorParts(rule.selector)
+        .filter((part) => part.includes('[data-layout="agent"]') && part.includes('"editor"'))
+        .map((part) => ({ part: compact(part), rule })),
     );
-    expect(editorSlot.get("padding-top")).toBe("var(--agent-surface-header-height)");
-    expect(editorSlot.get("padding-left")).toBe("var(--agent-surface-edge-width)");
-    expect(editorSlot.get("background")).toBe("var(--cv-canvas)");
-    expect(editorSlot.get("background-clip")).toBe("content-box");
-    expect(editorSlot.get("clip-path")).toBe(
-      compact("inset(var(--agent-surface-header-height) 0 0 0)"),
-    );
+    expect(agentEditorParts.map((entry) => entry.part)).toEqual([
+      compact('.workbench-frame[data-layout="agent"] > [data-slot="editor"]'),
+    ]);
+    expect(
+      agentEditorParts.flatMap(({ rule }) =>
+        rule.declarations.map((entry) => `${entry.property}:${compact(entry.value)}`),
+      ),
+    ).toEqual(["display:none"]);
+    expect(
+      shell
+        .filter((rule) => rule.selector.includes("data-editor-slot"))
+        .map((rule) => rule.selector),
+    ).toEqual([]);
   });
 
   it("keeps the editor overlay for an empty editor and lets the Files tree fill its surface", () => {
@@ -145,17 +139,6 @@ describe("expanded editing shell layout contract", () => {
       ),
     ).toEqual([]);
     expect(rulesFor(surface, ".agent-surface__editor-slot")).toEqual([]);
-  });
-
-  it("yields the editor overlay whenever the surface panel hosts no editor slot", () => {
-    expect(
-      declarations(shell, `${WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR} > [data-slot="editor"]`).get(
-        "display",
-      ),
-    ).toBe("none");
-    expect(WORKBENCH_FRAME_EDITOR_YIELD_SELECTOR).toContain(
-      `.agent-surface[${WORKBENCH_FRAME_EDITOR_SLOT_ATTRIBUTE}="none"]`,
-    );
   });
 
   it("never reverses the Files surface when maximized", () => {
@@ -224,7 +207,7 @@ describe("workbenchFrameEditorReport", () => {
     );
   });
 
-  it("keeps the center track while overlaying the surface and editor at the viewport right edge", () => {
+  it("keeps the center track while overlaying the surface at the viewport right edge", () => {
     const overlay = '.workbench-frame[data-layout="agent"][data-right-panel="overlay"]';
     expect(declarations(shell, overlay).get("grid-template-columns")).toBe(
       "var(--agent-rail-track)minmax(var(--agent-center-min-width),1fr)0",
@@ -234,15 +217,14 @@ describe("workbenchFrameEditorReport", () => {
     );
     expect(declarations(shell, `${overlay} .agent-mode__center`).get("grid-column")).toBe("2");
     expect(declarations(shell, `${overlay} .agent-mode__center`).get("grid-row")).toBe("1");
-    const slots = `${overlay} > [data-slot="surface"], ${overlay} > [data-slot="editor"]`;
-    const placement = declarations(shell, slots);
+    const placement = declarations(shell, `${overlay} > [data-slot="surface"]`);
     expect(placement.get("position")).toBe("absolute");
     expect(placement.get("right")).toBe("0");
     expect(placement.get("width")).toBe("var(--agent-right-panel-width)");
     expect(placement.get("grid-column")).toBe("auto");
     expect(placement.get("grid-row")).toBe("auto");
-    expect(declarations(shell, `${overlay} > [data-slot="surface"]`).get("z-index")).toBe("2");
-    expect(declarations(shell, `${overlay} > [data-slot="editor"]`).get("z-index")).toBe("3");
+    expect(placement.get("z-index")).toBe("2");
+    expect(rulesFor(shell, `${overlay} > [data-slot="editor"]`)).toEqual([]);
   });
 
   it("drops the rail track before the editor column collapses", () => {

@@ -3,6 +3,7 @@ import type { AgentDiffFile } from "../../../../application/rightPanel/agentDiff
 import type { GitChangedFile } from "../../../../domain/git";
 import { inlineDiffViewGateway } from "../../../../infrastructure/inlineDiffViewGateway";
 import { useAgentRightPanelContext } from "../agentRightPanelContext";
+import { agentDiffOpenBlockedReason } from "./agentDiffFileOpen";
 import { AgentDiffSurface } from "./AgentDiffSurface";
 import { useAgentDiffSurfaceSource } from "./useAgentDiffSurfaceSource";
 
@@ -16,17 +17,12 @@ export function AgentDiffSurfaceContainer() {
   const { agents, chrome, legacyWorkingTreeDiff, thread } = context;
   const openFile = (file: AgentDiffFile) => {
     const root = file.repositoryRoot;
-    if (root === null) return;
+    if (root === null || agentDiffOpenBlockedReason(file) !== null) return;
     if (thread === null) {
       context.openFile(joinPath(root, file.relativePath));
       return;
     }
-    const change = gitChange(root, file);
-    if (context.diffScope.kind === "workingTree") {
-      void agents.openChangedFileDiff(thread.thread.threadId, change);
-      return;
-    }
-    void agents.openChangedFile(thread.thread.threadId, change);
+    void agents.openChangedFile(thread.thread.threadId, gitChange(root, file));
   };
   return (
     <AgentDiffSurface

@@ -11,9 +11,14 @@ export async function openPaletteFile(
   result: FileSearchResult,
   location?: QuickOpenLocation,
 ): Promise<void> {
-  const opened = await current().openSearchResult(result, location);
-  if (!opened) return;
-  const settled = current();
-  if (!settled.agentModeActive || settled.agentWorkbench.effectiveLayout !== "agent") return;
-  settled.agentWorkbench.dispatch({ kind: "openSurface", surface: "editor" });
+  const workbench = current();
+  if (workbench.agentModeActive && workbench.agentWorkbench.effectiveLayout === "agent") {
+    workbench.agentWorkbench.dispatch({
+      kind: "revealFile",
+      path: result.path,
+      line: location?.line ?? null,
+    });
+    return;
+  }
+  await workbench.openSearchResult(result, location);
 }

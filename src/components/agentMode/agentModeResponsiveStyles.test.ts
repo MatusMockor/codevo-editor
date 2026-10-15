@@ -303,14 +303,11 @@ describe("agent mode responsive layout contract", () => {
     expect(Math.max(...spreads)).toBeLessThanOrEqual(4);
   });
 
-  it("lets the Files tree fill its surface and never offsets the editor overlay by a tree", () => {
+  it("lets the Files tree fill its surface and never places an editor layer in the agent layout", () => {
     expect(shellCss).not.toContain("agent-surface-tree-width");
     expect(rule(".agent-surface-tree")).toContain("flex: 1 1 auto");
     const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
-    expect(editor).toContain("padding-left: var(--agent-surface-edge-width)");
-    expect(editor.replace(/\s+/g, " ")).toContain(
-      "clip-path: inset(var(--agent-surface-header-height) 0 0 0)",
-    );
+    expect(editor.trim()).toBe("display: none;");
   });
 
   it("places the docked bottom panel under the thread column beside full-height side rails", () => {
@@ -341,7 +338,7 @@ describe("agent mode responsive layout contract", () => {
     expect(surface).toContain("grid-row: 1 / -1");
     expect(
       rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
-    ).toContain("grid-column: 3");
+    ).not.toContain("grid-column");
     expect(
       rule(
         '.workbench-frame > [data-slot="surface"][hidden],\n.workbench-frame > [data-slot="editor"][hidden]',
@@ -376,15 +373,9 @@ describe("agent mode responsive layout contract", () => {
     ).toContain("display: none");
   });
 
-  it("offsets the editor overlay by the same header token that sizes the surface head", () => {
-    const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
-    expect(editor).toContain("padding-top: var(--agent-surface-header-height)");
-    expect(editor).toContain("padding-left: var(--agent-surface-edge-width)");
-    expect(editor).toContain("grid-row: 1 / -1");
-    expect(rule(".app-shell {", shellCss)).toContain(
-      "--agent-surface-header-height: var(--cv-topbar-h)",
-    );
-    expect(allStyles().match(/--agent-surface-header-height:/g)).toHaveLength(1);
+  it("defines no editor overlay header offset", () => {
+    expect(allStyles()).not.toContain("--agent-surface-header-height");
+    expect(rule(".app-shell {", shellCss)).toContain("--agent-surface-edge-width: 1px");
   });
 
   it("pins the maximized frame rail column to the rail track and moves the bottom panel under the surface", () => {

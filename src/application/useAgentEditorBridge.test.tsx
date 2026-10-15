@@ -7,7 +7,6 @@ import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentThread } from "../domain/agentThread";
 import type { GitChangedFile } from "../domain/git";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
-import { waitForReact } from "../test/reactTestLifecycle";
 import {
   DELETED_FILE_REASON,
   EDITOR_UNAVAILABLE_REASON,
@@ -92,8 +91,7 @@ function renderBridge(overrides: Partial<Environment> = {}) {
     ...overrides,
   };
   const editor = {
-    openFile: vi.fn(async () => true),
-    openGitChange: vi.fn(async () => undefined),
+    revealFile: vi.fn(),
     openSurface: vi.fn(),
   } satisfies AgentEditorBridgePort;
   const reportError = vi.fn();
@@ -130,7 +128,7 @@ function renderBridge(overrides: Partial<Environment> = {}) {
 }
 
 describe("useAgentEditorBridge", () => {
-  it("opens files for a retained runtime owner", async () => {
+  it("reveals files for a retained runtime owner in the Files viewer", async () => {
     const runtimeThread = thread({
       owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: ROOT_KEY },
     });
@@ -139,60 +137,26 @@ describe("useAgentEditorBridge", () => {
       threads: new Map([[THREAD_ID, runtimeThread]]),
     });
     await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
-    expect(harness.editor.openFile).toHaveBeenCalledTimes(1);
+    expect(harness.editor.revealFile).toHaveBeenCalledExactlyOnceWith(`${WORKTREE}/src/parser.ts`);
     harness.unmount();
   });
 
-  it("drops editor publication after a retained runtime owner is evicted", async () => {
-    let resolveOpen!: (opened: boolean) => void;
-    const opened = new Promise<boolean>((resolve) => {
-      resolveOpen = resolve;
-    });
-    const runtimeThread = thread({
-      owner: { rootKey: ROOT_KEY, ownerId: RUNTIME_OWNER_ID, repositoryRoot: ROOT_KEY },
-    });
-    const harness = renderBridge({
-      projects: [project({ runtimeOwnerIds: [OWNER_ID, RUNTIME_OWNER_ID] })],
-      threads: new Map([[THREAD_ID, runtimeThread]]),
-    });
-    harness.editor.openFile.mockImplementationOnce(async () => opened);
-
-    let pending!: Promise<void>;
-    act(() => {
-      pending = harness.hook().openChangedFile(THREAD_ID, change());
-    });
-    harness.set({ projects: [project({ runtimeOwnerIds: [OWNER_ID] })] });
-    await act(async () => {
-      resolveOpen(true);
-      await pending;
-    });
-
-    expect(harness.editor.openSurface).not.toHaveBeenCalled();
-    harness.unmount();
-  });
-  it("opens a changed file pinned in the editor and shows the Editor surface", async () => {
+  it("reveals a changed file in the Files viewer without opening any editor surface", async () => {
     const harness = renderBridge();
     expect(harness.hook().canOpenInEditor(THREAD_ID)).toEqual({ kind: "available" });
 
     await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
 
-    expect(harness.editor.openFile).toHaveBeenCalledWith(
-      { name: "parser.ts", path: `${WORKTREE}/src/parser.ts`, kind: "file" },
-      { pin: true, recordNavigation: true },
-    );
-    expect(harness.editor.openSurface).toHaveBeenCalledTimes(1);
-    expect(harness.editor.openSurface).toHaveBeenCalledWith("editor");
+    expect(harness.editor.revealFile).toHaveBeenCalledExactlyOnceWith(`${WORKTREE}/src/parser.ts`);
+    expect(harness.editor.openSurface).not.toHaveBeenCalled();
     harness.unmount();
   });
 
-  it("opens the diff against the worktree root and shows the Files surface", async () => {
+  it("shows the Diff surface for a changed file diff, including deleted files", async () => {
     const harness = renderBridge();
     await act(() => harness.hook().openChangedFileDiff(THREAD_ID, change({ status: "deleted" })));
-    expect(harness.editor.openGitChange).toHaveBeenCalledWith(
-      change({ status: "deleted" }),
-      WORKTREE,
-    );
-    expect(harness.editor.openSurface).toHaveBeenCalledTimes(1);
+    expect(harness.editor.openSurface).toHaveBeenCalledExactlyOnceWith("diff");
+    expect(harness.editor.revealFile).not.toHaveBeenCalled();
     harness.unmount();
   });
 
@@ -203,12 +167,13 @@ describe("useAgentEditorBridge", () => {
       ]),
     });
     const inPlace = change({ path: `${ROOT_KEY}/src/parser.ts` });
-    await act(() => harness.hook().openChangedFileDiff(THREAD_ID, inPlace));
-    expect(harness.editor.openGitChange).toHaveBeenCalledWith(inPlace, ROOT_KEY);
+    await act(() => harness.hook().openChangedFile(THREAD_ID, inPlace));
+    await act(() => harness.hook().openChangedFile(THREAD_ID, change({ path: "/elsewhere/a.ts" })));
+    expect(harness.editor.revealFile).toHaveBeenCalledExactlyOnceWith(`${ROOT_KEY}/src/parser.ts`);
     harness.unmount();
   });
 
-  it("blocks background-tab projects, closed projects and a missing editor", async () => {
+  it("blocks background-tab projects, closed projects and a missing port", async () => {
     const harness = renderBridge({ projects: [project({ origin: "background-tab" })] });
     expect(harness.hook().canOpenInEditor(THREAD_ID)).toEqual({
       kind: "blocked",
@@ -216,8 +181,8 @@ describe("useAgentEditorBridge", () => {
     });
     await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
     await act(() => harness.hook().openChangedFileDiff(THREAD_ID, change()));
-    expect(harness.editor.openFile).not.toHaveBeenCalled();
-    expect(harness.editor.openGitChange).not.toHaveBeenCalled();
+    expect(harness.editor.revealFile).not.toHaveBeenCalled();
+    expect(harness.editor.openSurface).not.toHaveBeenCalled();
 
     harness.set({ projects: [] });
     expect(harness.hook().canOpenInEditor(THREAD_ID)).toEqual({
@@ -234,7 +199,7 @@ describe("useAgentEditorBridge", () => {
     harness.unmount();
   });
 
-  it("refuses to open a deleted file or a path outside the checkout", async () => {
+  it("refuses to reveal a deleted file or a path outside the checkout", async () => {
     const harness = renderBridge();
     await act(() => harness.hook().openChangedFile(THREAD_ID, change({ status: "deleted" })));
     await act(() =>
@@ -243,39 +208,22 @@ describe("useAgentEditorBridge", () => {
     await act(() =>
       harness.hook().openChangedFile(THREAD_ID, change({ path: `${WORKTREE}/../secret.ts` })),
     );
-    expect(harness.editor.openFile).not.toHaveBeenCalled();
-    expect(harness.editor.openSurface).not.toHaveBeenCalled();
-    harness.unmount();
-  });
-
-  it("opens no surface when the owner changed while the file was opening", async () => {
-    let release: (value: boolean) => void = () => undefined;
-    const harness = renderBridge();
-    harness.editor.openFile.mockImplementationOnce(
-      () =>
-        new Promise<boolean>((resolve) => {
-          release = resolve;
-        }),
+    await act(() =>
+      harness.hook().openChangedFileDiff(THREAD_ID, change({ path: `${WORKTREE}/../secret.ts` })),
     );
-    const pending = harness.hook().openChangedFile(THREAD_ID, change());
-    await waitForReact(() => expect(harness.editor.openFile).toHaveBeenCalledTimes(1));
-    harness.set({ projects: [project({ generation: 2 })] });
-    await act(async () => {
-      release(true);
-      await pending;
-    });
+    expect(harness.editor.revealFile).not.toHaveBeenCalled();
     expect(harness.editor.openSurface).not.toHaveBeenCalled();
     harness.unmount();
   });
 
-  it("opens no surface when the editor refused the file or threw", async () => {
+  it("reads the current projects at call time, not the ones captured by a stale callback", async () => {
     const harness = renderBridge();
-    harness.editor.openFile.mockResolvedValueOnce(false);
-    await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
-    harness.editor.openFile.mockRejectedValueOnce(new Error("boom"));
-    await act(() => harness.hook().openChangedFile(THREAD_ID, change()));
-    expect(harness.editor.openSurface).not.toHaveBeenCalled();
-    expect(harness.reportError).toHaveBeenCalledTimes(1);
+    const stale = harness.hook();
+    harness.set({ projects: [project({ origin: "background-tab" })] });
+
+    await act(() => stale.openChangedFile(THREAD_ID, change()));
+
+    expect(harness.editor.revealFile).not.toHaveBeenCalled();
     harness.unmount();
   });
 });

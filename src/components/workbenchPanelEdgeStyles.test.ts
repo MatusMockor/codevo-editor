@@ -58,12 +58,10 @@ describe("right panel edge and hairlines", () => {
     expect(winning(".agent-surface__resize", "left")).toBe("-4px");
   });
 
-  it("stops the editor overlay short of the panel edge instead of painting over it", () => {
-    expect(winning(DOCKED_EDITOR_SLOT, "padding-left")).toBe(EDGE_WIDTH);
-    expect(winning(DOCKED_EDITOR_SLOT, "background-clip")).toBe("content-box");
-    expect(winning(DOCKED_EDITOR_SLOT, "clip-path")).toBe(
-      "inset(var(--agent-surface-header-height) 0 0 0)",
-    );
+  it("paints no editor overlay over the docked panel", () => {
+    expect(winning(DOCKED_EDITOR_SLOT, "display")).toBe("none");
+    expect(winning(DOCKED_EDITOR_SLOT, "padding-left")).toBeUndefined();
+    expect(winning(DOCKED_EDITOR_SLOT, "clip-path")).toBeUndefined();
   });
 
   it("lets the rail divider alone separate a maximized panel so no double rule appears", () => {

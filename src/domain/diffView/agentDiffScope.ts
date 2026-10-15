@@ -3,7 +3,7 @@ import type { AgentTurn } from "../agentThread";
 export type AgentDiffScope =
   | { readonly kind: "latestTurn" }
   | { readonly kind: "turn"; readonly turnId: string; readonly revealPath?: string }
-  | { readonly kind: "workingTree" }
+  | { readonly kind: "workingTree"; readonly revealPath?: string }
   | { readonly kind: "branch"; readonly baseRef: string };
 
 export type ResolvedAgentDiffScope =
@@ -109,6 +109,21 @@ export function agentDiffScopeActiveTurnId(
 ): string | null {
   const resolved = resolveAgentDiffScope(scope, turns);
   return resolved.kind === "turn" ? resolved.turnId : null;
+}
+
+export function agentDiffScopeRevealPath(scope: AgentDiffScope): string | null {
+  switch (scope.kind) {
+    case "turn":
+    case "workingTree":
+      return scope.revealPath ?? null;
+    case "latestTurn":
+    case "branch":
+      return null;
+    default: {
+      const unreachable: never = scope;
+      return unreachable;
+    }
+  }
 }
 
 export function agentDiffScopesEqual(left: AgentDiffScope, right: AgentDiffScope): boolean {

@@ -49,7 +49,7 @@ export function usePerfScenarioBridgeInstall(
   const agentLayoutDispatch = host.agentWorkbench?.dispatch ?? null;
   useEffect(() => {
     if (perfAutorunEnabled() && agentLayoutMode === "agent" && agentLayoutDispatch !== null) {
-      agentLayoutDispatch({ kind: "openSurface", surface: "editor" });
+      agentLayoutDispatch({ kind: "openSurface", surface: "files" });
       agentLayoutDispatch({ kind: "maximizeRightPanel" });
     }
   }, [agentLayoutDispatch, agentLayoutMode]);

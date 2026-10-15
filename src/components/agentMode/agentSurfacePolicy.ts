@@ -299,8 +299,6 @@ export function agentSurfaceBlockedReason(
   scope: AgentSurfaceScope = NO_AGENT_SURFACE_SCOPE,
 ): string | null {
   if (kind === "agents") return null;
-  if (kind === "editor")
-    return isRemoteAgentSurfaceThread(thread) ? SURFACE_REMOTE_UNAVAILABLE_REASON : null;
   const unavailability = remoteThreadSurfaceUnavailability(kind, thread);
   if (unavailability !== null) return agentSurfaceUnavailabilityReason(unavailability);
   if (isRemoteAgentSurfaceThread(thread))

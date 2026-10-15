@@ -1633,7 +1633,7 @@ class SampleTest extends TestCase
       "node_modules/.bin/vitest run 'src/sum.test.ts'\r",
     );
   });
-  it("opens the shared test results panel and bumps only the JS run request version", async () => {
+  it("bumps only the JS run request version without opening the invisible results drawer", async () => {
     const { getWorkbench } = renderController({
       appSettings: workspaceAppSettings(),
       workspaceDescriptor: javaScriptTypeScriptWorkspaceDescriptor(),
@@ -1647,8 +1647,8 @@ class SampleTest extends TestCase
       await runCommand(getWorkbench(), "js.runTestsWithResultsPanel");
     });
 
-    expect(String(getWorkbench().bottomPanelView)).toBe("testResults");
-    expect(getWorkbench().bottomPanelVisible).toBe(true);
+    expect(String(getWorkbench().bottomPanelView)).toBe("problems");
+    expect(getWorkbench().bottomPanelVisible).toBe(false);
     expect(getWorkbench().jsTestRunRequestVersion).toBe(jsVersionBefore + 1);
     expect(getWorkbench().phpTestRunRequestVersion).toBe(phpVersionBefore);
   });

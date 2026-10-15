@@ -137,14 +137,14 @@ describe("workbenchShellPlacement", () => {
     ).toMatchObject({ rail: "collapsed", bottomPanelHeight: 280 });
   });
 
-  it("places the editor in the editor surface while the panel is open", () => {
+  it("keeps the editor layer hidden in the agent layout, even with a maximized Files viewer", () => {
     const placement = workbenchShellPlacement({
       bottomPanelVisible: true,
       effectiveLayout: "agent",
       layout: layoutOf({
         rightPanel: "open",
-        openSurfaces: ["editor", "diff"],
-        activeSurface: "editor",
+        openSurfaces: ["files", "diff"],
+        activeSurface: "files",
         rightPanelMaximized: true,
         rail: "collapsed",
         rightPanelWidth: 620,
@@ -154,7 +154,7 @@ describe("workbenchShellPlacement", () => {
 
     expect(placement).toEqual({
       layout: "agent",
-      editorHidden: false,
+      editorHidden: true,
       rightPanelHidden: false,
       surfacesMounted: true,
       rightPanelMaximized: true,

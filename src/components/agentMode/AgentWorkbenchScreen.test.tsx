@@ -448,10 +448,24 @@ describe("AgentWorkbenchScreen", () => {
     expect(hidden.showBottomPanelView).toHaveBeenCalledWith("terminal");
     expect(hidden.hideBottomPanel).not.toHaveBeenCalled();
 
-    const visible = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: true });
+    const visible = createWorkbench(ROOT_A, {
+      agentWorkbench: layout,
+      bottomPanelView: "terminal",
+      bottomPanelVisible: true,
+    });
     render(visible);
     click('button[aria-label="Toggle terminal panel"]');
     expect(visible.hideBottomPanel).toHaveBeenCalledTimes(1);
+
+    const staleDrawer = createWorkbench(ROOT_A, {
+      agentWorkbench: layout,
+      bottomPanelView: "problems",
+      bottomPanelVisible: true,
+    });
+    render(staleDrawer);
+    click('button[aria-label="Toggle terminal panel"]');
+    expect(staleDrawer.showBottomPanelView).toHaveBeenCalledWith("terminal");
+    expect(staleDrawer.hideBottomPanel).not.toHaveBeenCalled();
   });
 
   it("keeps an unchanged drawer view the controller shows again in the agent layout", () => {
@@ -627,36 +641,26 @@ describe("AgentWorkbenchScreen", () => {
     expect(searchFiles.mock.calls[0]?.[1]).toBe("users");
   });
 
-  it("reveals a single-clicked Files entry only after the double-click window", async () => {
+  it("opens a clicked Files entry in the built-in viewer without touching the editor", async () => {
     const { layout, previewFile, workbench, row } = await renderFilesTree();
 
     click(row);
-    await act(async () => Promise.resolve());
-    expect(previewFile).toHaveBeenCalledExactlyOnceWith(ORDERS_ENTRY);
-    expect(editorReveals(layout)).toBe(0);
-
-    await waitForReact(() => expect(editorReveals(layout)).toBe(1));
-    expect(workbench.openPinnedFile).not.toHaveBeenCalled();
-  });
-
-  it("pins a double-clicked Files entry and reveals the editor exactly once", async () => {
-    const { layout, previewFile, workbench, row } = await renderFilesTree();
-
-    click(row);
-    await act(async () => Promise.resolve());
-    expect(editorReveals(layout)).toBe(0);
-    const target = host.querySelector<HTMLElement>(row);
+    await waitForReact(() =>
+      expect(
+        host.querySelector('.cv-file-viewer[data-file-viewer-path="orders.ts"]'),
+      ).not.toBeNull(),
+    );
+    const target = host.querySelector<HTMLElement>('.tree-row[title$="orders.ts"]');
     act(() => {
-      target?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
       target?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
     });
     await act(
       async () => new Promise((resolve) => setTimeout(resolve, PREVIEW_REVEAL_DELAY_MS * 2)),
     );
 
-    expect(previewFile).toHaveBeenCalledExactlyOnceWith(ORDERS_ENTRY);
-    expect(workbench.openPinnedFile).toHaveBeenCalledExactlyOnceWith(ORDERS_ENTRY);
-    expect(editorReveals(layout)).toBe(1);
+    expect(previewFile).not.toHaveBeenCalled();
+    expect(workbench.openPinnedFile).not.toHaveBeenCalled();
+    expect(layout.actions).toEqual([]);
   });
 
   async function renderFilesTree() {
@@ -726,8 +730,8 @@ describe("AgentWorkbenchScreen", () => {
     expect(host.textContent).toContain("Unable to reveal that path in the file manager.");
   });
 
-  it("opens a linked file outside the project from the backend's bounded text as a read-only snapshot", async () => {
-    const { workbench, readOutsideTextFile, snapshots, link } = await renderOutsideLink({
+  it("shows a linked file outside every project as an external Files viewer preview", async () => {
+    const { workbench, readOutsideTextFile, snapshots, link, layout } = await renderOutsideLink({
       kind: "file",
       canonicalPath: OUTSIDE_FILE,
       content: "# Handoff\n",
@@ -735,41 +739,45 @@ describe("AgentWorkbenchScreen", () => {
 
     await act(async () => link.click());
 
-    const position = { column: 1, lineNumber: 4 };
-    await waitForReact(() => expect(snapshots).toEqual(["# Handoff\n"]));
-    expect(workbench.openProblemNotice).toHaveBeenCalledExactlyOnceWith(
-      {
-        id: `agent-link:${OUTSIDE_FILE}:4:1`,
-        message: OUTSIDE_FILE,
-        navigationTarget: { path: OUTSIDE_FILE, range: { end: position, start: position } },
-        severity: "info",
-        source: "Agent",
-      },
-      { readOnlySnapshot: expect.any(Function), shouldCommit: expect.any(Function) },
+    await waitForReact(() =>
+      expect(layout.actions).toContainEqual({
+        kind: "revealFile",
+        path: OUTSIDE_FILE,
+        line: 4,
+        request: expect.any(Number),
+      }),
     );
     expect(readOutsideTextFile).toHaveBeenCalledExactlyOnceWith(OUTSIDE_FILE);
-    expect(host.querySelector(".agent-notice")).toBeNull();
+    expect(snapshots).toEqual([]);
+    expect(workbench.openProblemNotice).not.toHaveBeenCalled();
   });
 
-  it("says a linked outside file is missing instead of refusing it as outside the project", async () => {
-    const { snapshots, link } = await renderOutsideLink({ kind: "doesNotExist" });
+  it("reveals a linked project file in the Files viewer at the linked line", async () => {
+    const { workbench, link, layout } = await renderOutsideLink(
+      { kind: "doesNotExist" },
+      `${ROOT_A}/src/orders.ts`,
+    );
 
     await act(async () => link.click());
 
     await waitForReact(() =>
-      expect(host.querySelector(".agent-notice")?.textContent).toContain(
-        `${OUTSIDE_FILE} doesn't exist.`,
-      ),
+      expect(layout.actions).toContainEqual({
+        kind: "revealFile",
+        path: `${ROOT_A}/src/orders.ts`,
+        line: 4,
+        request: expect.any(Number),
+      }),
     );
-    expect(snapshots).toEqual([null]);
+    expect(workbench.openProblemNotice).not.toHaveBeenCalled();
+    expect(host.querySelector(".agent-notice")).toBeNull();
   });
 
-  async function renderOutsideLink(file: AgentOutsideTextFile) {
+  async function renderOutsideLink(file: AgentOutsideTextFile, target: string = OUTSIDE_FILE) {
     await loadAgentMarkdownRenderer();
     const agents = surface(ROOT_A);
     const view = agents.threads[0]!;
     const turn = view.thread.turns[0]!;
-    const answer = { kind: "assistantText" as const, text: `[handoff](${OUTSIDE_FILE}:4)` };
+    const answer = { kind: "assistantText" as const, text: `[handoff](${target}:4)` };
     const linked = {
       ...view,
       thread: { ...view.thread, turns: [{ ...turn, events: [answer] }] },
@@ -783,8 +791,10 @@ describe("AgentWorkbenchScreen", () => {
       snapshots.push(snapshot);
       return snapshot !== null && options?.shouldCommit?.() !== false;
     };
+    const layout = recordedLayoutState();
     const workbench = createWorkbench(ROOT_A, {
       agents: { ...agents, threads: [linked] },
+      agentWorkbench: layout,
       openProblemNotice: vi.fn(openProblemNotice),
     });
     const readOutsideTextFile = vi.fn(async (_path: string) => file);
@@ -800,7 +810,7 @@ describe("AgentWorkbenchScreen", () => {
     const selector = "a.agent-md__link";
     await waitForReact(() => expect(host.querySelector(selector)).not.toBeNull());
     const link = host.querySelector<HTMLAnchorElement>(selector)!;
-    return { workbench, readOutsideTextFile, snapshots, link };
+    return { workbench, readOutsideTextFile, snapshots, link, layout };
   }
 
   describe("project switcher with background workspace tabs", () => {
@@ -2330,12 +2340,6 @@ function gatewayFixture() {
     projects.push({ id: "cloned", name: "storefront-api" });
   };
   return { gateway, finishClone };
-}
-
-function editorReveals(layout: RecordedAgentWorkbenchLayout): number {
-  return layout.actions.filter(
-    (action) => action.kind === "openSurface" && action.surface === "editor",
-  ).length;
 }
 
 function currentPaletteProjectLabel(): string | null {

@@ -86,6 +86,15 @@ describe("useAgentDiffSurfaceSource working tree", () => {
     expect(box.current?.source?.key).toBe(reloadedKey);
   });
 
+  it("asks the surface to reveal a working-tree file named by the scope", () => {
+    const plain = render(rightPanelTestContext({ diffScope: { kind: "workingTree" } }));
+    expect(plain.current?.reveal).toBeNull();
+    const revealed = render(
+      rightPanelTestContext({ diffScope: { kind: "workingTree", revealPath: "src/a.ts" } }),
+    );
+    expect(revealed.current?.reveal).toEqual({ relativePath: "src/a.ts" });
+  });
+
   it("warns when some project repositories could not be read", () => {
     const base = rightPanelTestContext({ diffScope: { kind: "workingTree" } });
     expect(render(base).current?.warning).toBeNull();

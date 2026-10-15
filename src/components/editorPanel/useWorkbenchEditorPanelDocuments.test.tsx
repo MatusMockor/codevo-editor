@@ -21,15 +21,13 @@ function doc(path: string): EditorDocument {
 }
 
 describe("useWorkbenchEditorPanelDocuments", () => {
-  it("routes strip intents to the active group, the quick open and the editor surface", () => {
+  it("routes strip intents to the active group and the quick open", () => {
     const host = {
       activateEditorGroupTab: vi.fn(),
       closeDocumentInEditorGroup: vi.fn(async () => undefined),
       setQuickOpenOpen: vi.fn(),
       pinEditorGroupTab: vi.fn(),
     };
-    const workbench = { agentWorkbench: { dispatch: vi.fn() } };
-    const layout = workbench.agentWorkbench;
     const values: Array<EditorPanelDocumentsValue | null> = [];
     const groups = (openPaths: string[]) =>
       createInitialEditorGroupsState("group-a", {
@@ -39,14 +37,9 @@ describe("useWorkbenchEditorPanelDocuments", () => {
       });
     function Probe({ openPaths }: { readonly openPaths: string[] }) {
       values.push(
-        useWorkbenchEditorPanelDocuments(
-          host,
-          workbench,
-          "/w",
-          groups(openPaths),
-          openPaths.map(doc),
-          { "/a.ts": "modified" },
-        ),
+        useWorkbenchEditorPanelDocuments(host, "/w", groups(openPaths), openPaths.map(doc), {
+          "/a.ts": "modified",
+        }),
       );
       return null;
     }
@@ -64,13 +57,11 @@ describe("useWorkbenchEditorPanelDocuments", () => {
     value?.onOpenFile();
     value?.onPin("/b.ts");
     expect(host.activateEditorGroupTab).toHaveBeenCalledWith("group-a", "/b.ts");
-    expect(layout.dispatch).toHaveBeenCalledWith({ kind: "activateSurface", surface: "editor" });
     expect(host.closeDocumentInEditorGroup).toHaveBeenCalledWith("group-a", "/a.ts");
     expect(host.setQuickOpenOpen).toHaveBeenCalledWith(true);
     expect(host.pinEditorGroupTab).toHaveBeenCalledWith("group-a", "/b.ts");
 
-    layout.dispatch.mockClear();
     mounted.render(<Probe openPaths={[]} />);
-    expect(layout.dispatch).toHaveBeenCalledWith({ kind: "closeSurfaceTab", surface: "editor" });
+    expect(host.activateEditorGroupTab).toHaveBeenCalledTimes(1);
   });
 });

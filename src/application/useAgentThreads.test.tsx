@@ -519,8 +519,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     })),
   };
   const editor = {
-    openFile: vi.fn(async () => true),
-    openGitChange: vi.fn(async () => undefined),
+    revealFile: vi.fn(),
     openSurface: vi.fn(),
   };
   const reportError = vi.fn();
@@ -2198,8 +2197,8 @@ describe("useAgentThreads ship and editor wiring", () => {
     expect(changed).toBeDefined();
     if (changed === undefined) return;
     await act(() => harness.hook().openChangedFile(stored.threadId, changed));
-    expect(harness.editor.openFile).toHaveBeenCalledTimes(1);
-    expect(harness.editor.openSurface).toHaveBeenCalledWith("editor");
+    expect(harness.editor.revealFile).toHaveBeenCalledExactlyOnceWith(changed.path);
+    expect(harness.editor.openSurface).not.toHaveBeenCalled();
     harness.unmount();
   });
 });

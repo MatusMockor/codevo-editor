@@ -185,15 +185,10 @@ describe("App docked text search integration", () => {
     vi.useRealTimers();
   });
 
-  it("keeps the selected docked search result visible after navigating to its match", async () => {
+  it("never opens an invisible Search drawer in the agent layout and keeps the terminal visible", async () => {
     const { default: App } = await import("./App");
     await act(async () => {
       root.render(<App />);
-    });
-    await waitFor(() => {
-      expect(mocks.invoke).toHaveBeenCalledWith("detect_workspace", {
-        path: "/workspace",
-      });
     });
     await waitFor(() => {
       expect(
@@ -201,58 +196,7 @@ describe("App docked text search integration", () => {
       ).toBe("true");
     });
     await settleAsyncTurns();
-
-    const shortcutEvent = new KeyboardEvent("keydown", {
-      bubbles: true,
-      cancelable: true,
-      key: "f",
-      metaKey: true,
-      shiftKey: true,
-    });
-    act(() => {
-      window.dispatchEvent(shortcutEvent);
-    });
-    expect(shortcutEvent.defaultPrevented).toBe(true);
-
-    const panel = await waitForElement<HTMLElement>(host, 'section[aria-label="Panel views"]');
-    const search = panel.querySelector<HTMLElement>('section[aria-label="Find in path"]');
-    expect(search).not.toBeNull();
-    const input = search?.querySelector<HTMLInputElement>('input[aria-label="Search text"]');
-    expect(input).not.toBeNull();
-
-    vi.useFakeTimers();
-    act(() => {
-      if (!input) return;
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
-        input,
-        "needle",
-      );
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(181);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    vi.useRealTimers();
-
-    const selectedResult = await waitForElement<HTMLButtonElement>(
-      panel,
-      ".text-search-result.active",
-    );
-    expect(selectedResult.textContent).toContain("src/needle.ts:3:7");
-
-    act(() => {
-      selectedResult.click();
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("workspace_read_text_file", {
-      relativePath: "src/needle.ts",
-      workspaceId: "workspace-1",
-    });
-
-    expect(panel.querySelector('section[aria-label="Find in path"]')).not.toBeNull();
-    expect(panel.querySelector(".text-search-result.active")).toBe(selectedResult);
-    expect(selectedResult.getAttribute("aria-selected")).toBe("true");
+    expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
 
     const showTerminal = async () => {
       await act(async () => {
@@ -269,10 +213,45 @@ describe("App docked text search integration", () => {
       });
     };
     const terminalPanel = () => host.querySelector<HTMLElement>('section[aria-label="Panel"]');
+    const committedBottomHeight = () =>
+      host
+        .querySelector<HTMLElement>(".editor-workbench")
+        ?.style.getPropertyValue("--agent-bottom-panel-committed");
+    const searchShortcut = () => {
+      const event = new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "f",
+        metaKey: true,
+        shiftKey: true,
+      });
+      act(() => {
+        window.dispatchEvent(event);
+      });
+    };
+
+    searchShortcut();
+    await settleAsyncTurns();
+    expect(host.querySelector('section[aria-label="Panel views"]')).toBeNull();
+    expect(document.querySelector('section[aria-label="Find in path"]')).toBeNull();
+    expect(document.querySelector('input[aria-label="Search text"]')).toBeNull();
+    expect(committedBottomHeight()).toBe("0px");
+
     await showTerminal();
     const terminal = terminalPanel();
     expect(terminal?.hasAttribute("hidden")).toBe(false);
+    expect(terminal?.closest("[hidden]")).toBeNull();
+    const openHeight = committedBottomHeight();
+    expect(openHeight).not.toBe("0px");
+
+    searchShortcut();
+    await settleAsyncTurns();
     expect(host.querySelector('section[aria-label="Panel views"]')).toBeNull();
+    expect(document.querySelector('section[aria-label="Find in path"]')).toBeNull();
+    expect(terminalPanel()).toBe(terminal);
+    expect(terminal?.hasAttribute("hidden")).toBe(false);
+    expect(terminal?.closest("[hidden]")).toBeNull();
+    expect(committedBottomHeight()).toBe(openHeight);
 
     const settingsEvent = new KeyboardEvent("keydown", {
       bubbles: true,
@@ -284,71 +263,6 @@ describe("App docked text search integration", () => {
     expect(settingsEvent.defaultPrevented).toBe(true);
     expect(terminal?.isConnected).toBe(true);
     expect(terminal?.hasAttribute("hidden")).toBe(false);
-
-    act(() => window.dispatchEvent(shortcutEvent));
-    expect(
-      host.querySelector('section[aria-label="Panel views"] [role="tab"][aria-selected="true"]')
-        ?.textContent,
-    ).toBe("Search");
-    expect(terminal?.isConnected).toBe(true);
-    expect(terminal?.hasAttribute("hidden")).toBe(true);
-    await showTerminal();
-    expect(terminalPanel()).toBe(terminal);
-    expect(terminal?.hasAttribute("hidden")).toBe(false);
-
-    const workspaceSymbolsEvent = new KeyboardEvent("keydown", {
-      bubbles: true,
-      cancelable: true,
-      key: "t",
-      metaKey: true,
-    });
-    act(() => window.dispatchEvent(workspaceSymbolsEvent));
-    expect(workspaceSymbolsEvent.defaultPrevented).toBe(true);
-    expect(terminalPanel()).toBe(terminal);
-    expect(terminal?.hasAttribute("hidden")).toBe(false);
-  }, 10_000);
-
-  it("keeps the mounted editor surface out of twenty Text Search query commits", async () => {
-    const { default: App } = await import("./App");
-    await act(async () => {
-      root.render(<App />);
-    });
-    await waitFor(() => {
-      expect(
-        host.querySelector('[data-testid="workspace-ready"]')?.getAttribute("data-ready"),
-      ).toBe("true");
-    });
-    await waitForEditorSurface(host);
-    act(() => {
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          bubbles: true,
-          cancelable: true,
-          key: "f",
-          metaKey: true,
-          shiftKey: true,
-        }),
-      );
-    });
-
-    const input = await waitForElement<HTMLInputElement>(host, 'input[aria-label="Search text"]');
-    const rendersBeforeTyping = mocks.surfaceRenderCount.value;
-    let query = "";
-    for (const character of "abcdefghijklmnopqrst") {
-      query += character;
-      act(() => {
-        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set?.call(
-          input,
-          query,
-        );
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-    }
-
-    expect(query).toHaveLength(20);
-    expect(input.value).toBe(query);
-    await settleAsyncTurns();
-    expect(mocks.surfaceRenderCount.value - rendersBeforeTyping).toBe(0);
   }, 10_000);
 
   it("keeps twenty bottom-panel resize updates out of the mounted editor surface", async () => {
@@ -400,7 +314,7 @@ describe("App docked text search integration", () => {
 async function waitForEditorSurface(host: ParentNode): Promise<void> {
   await waitFor(() => {
     expect(host.querySelector(".editor-workbench")?.getAttribute("data-layout")).toBe("agent");
-    expect(host.querySelector('[data-slot="editor"]')?.getAttribute("hidden")).toBeNull();
+    expect(host.querySelector('[data-slot="editor"]')?.hasAttribute("hidden")).toBe(true);
   });
   await settleAsyncTurns();
 }

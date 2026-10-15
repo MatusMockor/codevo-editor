@@ -11,7 +11,7 @@ export const AGENT_ARTIFACT_REMOTE_FILE_REASON =
   "This turn ran on a remote server, so the file is not on this machine.";
 export const AGENT_ARTIFACT_FOREIGN_WORKSPACE = "This file belongs to another workspace.";
 
-export const AGENT_ARTIFACT_OPEN_FAILED = "The file could not be opened in the editor.";
+export const AGENT_ARTIFACT_OPEN_FAILED = "The file could not be opened.";
 export const AGENT_ARTIFACT_REVEAL_FAILED = "The file could not be revealed in the file manager.";
 
 const BOUNDED_NOTICES: readonly string[] = [

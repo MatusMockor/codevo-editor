@@ -79,7 +79,6 @@ export function useWorkbenchEditorGroupsView(
   }, [workbench.activeDocument, workbench.openDocuments, workbench.openTabs]);
   const editorPanelDocuments = useWorkbenchEditorPanelDocuments(
     editorHost,
-    workbench,
     ownerKey,
     editorGroupsState,
     editorAreaDocuments,

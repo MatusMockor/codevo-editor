@@ -91,6 +91,9 @@ vi.mock("./rightPanel/diff/AgentDiffSurfaceContainer", async () => {
         <div
           data-mock-diff={threadId ?? "project"}
           data-recorded-turn={scope.kind === "turn" ? scope.turnId : undefined}
+          data-working-tree-reveal={
+            scope.kind === "workingTree" ? (scope.revealPath ?? "") : undefined
+          }
         >
           <button
             data-open-file
@@ -1951,7 +1954,7 @@ describe("AgentModeView", () => {
     ).toBeNull();
   });
 
-  it("opens a changed file and its diff document through the Diff surface", async () => {
+  it("opens a changed file in the viewer and reveals its working-tree diff in the Diff surface", async () => {
     const openChangedFile = vi.fn(async () => undefined);
     const openChangedFileDiff = vi.fn(async () => undefined);
     const file = changedFile("a.ts");
@@ -1989,7 +1992,12 @@ describe("AgentModeView", () => {
     click("[data-mock-diff] [data-open-diff]");
 
     expect(openChangedFile).toHaveBeenCalledWith("agt-1", file);
-    expect(openChangedFileDiff).toHaveBeenCalledWith("agt-1", file);
+    expect(openChangedFileDiff).not.toHaveBeenCalled();
+    await waitForReact(() =>
+      expect(
+        host.querySelector('[data-mock-diff="agt-1"]')?.getAttribute("data-working-tree-reveal"),
+      ).toBe(file.relativePath),
+    );
   });
 
   it("drops the selection when the thread disappears from the surface", () => {

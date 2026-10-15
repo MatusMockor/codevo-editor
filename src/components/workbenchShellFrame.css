@@ -46,14 +46,8 @@
   --agent-bottom-panel-height: var(--agent-bottom-panel-committed);
 }
 
-/*
-  Right panel: the Editor surface leaves an empty editor slot and the frame places the single
-  editor host over it using these variables.
-*/
 .app-shell {
-  --agent-surface-header-height: var(--cv-topbar-h);
   --agent-surface-edge-width: 1px;
-  --agent-surface-editor-gutter: 8px;
 }
 
 /*
@@ -110,32 +104,7 @@
   grid-row: 1 / -1;
 }
 
-.workbench-frame[data-layout="agent"] > [data-slot="editor"] {
-  z-index: 1;
-  padding-top: var(--agent-surface-header-height);
-  padding-left: var(--agent-surface-edge-width);
-  background: var(--cv-canvas);
-  background-clip: content-box;
-  clip-path: inset(var(--agent-surface-header-height) 0 0 0);
-  grid-column: 3;
-  grid-row: 1 / -1;
-  pointer-events: none;
-}
-
-.workbench-frame[data-layout="agent"] > [data-slot="editor"] > * {
-  pointer-events: auto;
-}
-
-/* The right panel reports whether it hosts the editor slot (data-editor-slot, derived from the
-   shared agentSurfaceActivation helper). A remote pane, an unavailable scope, a hidden panel or
-   any non-Editor surface hosts nothing, so the canvas overlay must not paint over the side tone. */
-.workbench-frame[data-layout="agent"]:has(
-    > [data-slot="surface"] .agent-surface[data-editor-slot="none"]
-  )
-  > [data-slot="editor"] {
-  display: none;
-}
-
+.workbench-frame[data-layout="agent"] > [data-slot="editor"],
 .workbench-frame > [data-slot="surface"][hidden],
 .workbench-frame > [data-slot="editor"][hidden],
 .workbench-frame > [data-slot="bottom"][hidden],
@@ -175,8 +144,8 @@
 }
 
 /*
-  Maximized: the editing shell. The surface takes the thread column; the editor overlay sits in
-  it on a canvas block, the bottom panel sits under the editor, and the rail never changes.
+  Maximized: the surface itself takes the thread column, the bottom panel sits under it, and the
+  rail never changes.
 */
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] {
   background: var(--cv-canvas);
@@ -199,22 +168,9 @@
   box-shadow: none;
 }
 
-.workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="editor"] {
-  padding: var(--agent-surface-header-height) 0 var(--agent-surface-editor-gutter)
-    var(--agent-surface-editor-gutter);
-  clip-path: inset(
-    var(--agent-surface-header-height) 0 var(--agent-surface-editor-gutter)
-      var(--agent-surface-editor-gutter) round var(--cv-r-group)
-  );
-  grid-column: 2;
-  grid-row: 1;
-}
-
 .workbench-frame[data-layout="agent"][data-right-panel="maximized"] > [data-slot="bottom"] {
   overflow: hidden;
   overflow: clip;
-  margin-left: var(--agent-surface-editor-gutter);
-  border-radius: var(--cv-r-group) var(--cv-r-group) 0 0;
   background: var(--cv-canvas);
   grid-column: 2;
   grid-row: 2;
@@ -275,8 +231,7 @@
   grid-template-columns: var(--agent-rail-track) minmax(var(--agent-center-min-width), 1fr) 0;
 }
 
-.workbench-frame[data-layout="agent"][data-right-panel="overlay"] > [data-slot="surface"],
-.workbench-frame[data-layout="agent"][data-right-panel="overlay"] > [data-slot="editor"] {
+.workbench-frame[data-layout="agent"][data-right-panel="overlay"] > [data-slot="surface"] {
   position: absolute;
   top: 0;
   right: 0;
@@ -289,10 +244,6 @@
 .workbench-frame[data-layout="agent"][data-right-panel="overlay"] > [data-slot="surface"] {
   z-index: 2;
   box-shadow: var(--cv-shadow-card);
-}
-
-.workbench-frame[data-layout="agent"][data-right-panel="overlay"] > [data-slot="editor"] {
-  z-index: 3;
 }
 
 .workbench-frame[data-layout="agent"][data-right-panel="overlay"] .agent-mode__grid {

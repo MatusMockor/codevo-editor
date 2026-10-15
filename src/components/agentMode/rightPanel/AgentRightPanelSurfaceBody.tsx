@@ -1,10 +1,10 @@
 import { Suspense, lazy, memo, type ReactNode } from "react";
 import type { AgentThreadView } from "../../../application/agentThreadPorts";
 import type { AgentSurfaceKind } from "../../../domain/agentWorkbenchLayout";
+import type { AgentFileViewerReveal } from "../../../domain/agentWorkbenchLayoutFileReveal";
 import type { AgentSurfaceHistoryProps } from "../AgentSurfaceHistory";
 import type { AgentSurfaceFileTreeProps } from "../AgentSurfaceFileTree";
 import type { AgentSurfaceTerminalProps } from "../AgentSurfaceTerminal";
-import { EditorSurfaceSlot } from "../../editorPanel/EditorSurfaceSlot";
 import {
   agentSurfaceBlockedReason,
   isRemoteGitShipThread,
@@ -45,6 +45,7 @@ export interface AgentRightPanelSurfaceBodyProps {
   readonly active: boolean;
   readonly treeShown: boolean;
   readonly fileTree: AgentSurfaceFileTreeProps | null;
+  readonly fileReveal?: AgentFileViewerReveal | null;
   readonly history: AgentSurfaceHistoryProps | null;
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
   readonly terminalLayoutRevision: number;
@@ -54,7 +55,13 @@ export interface AgentRightPanelSurfaceBodyProps {
 export function AgentRightPanelSurfaceBody(props: AgentRightPanelSurfaceBodyProps) {
   switch (props.kind) {
     case "files":
-      return <FilesSurface fileTree={props.fileTree} treeShown={props.treeShown} />;
+      return (
+        <FilesSurface
+          fileTree={props.fileTree}
+          reveal={props.fileReveal ?? null}
+          treeShown={props.treeShown}
+        />
+      );
     case "history":
       if (!props.active) return null;
       if (props.history === null) return <p className="cv-rp-note">Git history is unavailable.</p>;
@@ -88,8 +95,6 @@ export function AgentRightPanelSurfaceBody(props: AgentRightPanelSurfaceBodyProp
       return blockedOr(props, <ScriptsSurface />);
     case "pullRequest":
       return blockedOr(props, <PullRequestSurface />);
-    case "editor":
-      return <EditorSurfaceSlot />;
   }
 }
 

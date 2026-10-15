@@ -1,7 +1,7 @@
+import type { GitChangedFile } from "../../domain/git";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import type { AgentDiffTurn } from "../../domain/diffView/agentDiffScope";
 import { useAgentDiffScopeSelection } from "./useAgentDiffScopeSelection";
-import type { MonacoAppTheme } from "../../domain/settings";
 import { useProjectRepositoryIdentities } from "../../application/useProjectRepositoryIdentities";
 import { repositoryIdentityCandidates } from "../../application/repositoryIdentityCandidates";
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
@@ -178,7 +178,6 @@ const AGENTS_TOGGLE_BUTTON = <AgentAgentsToggleButton />;
 const AGENTS_PANEL_SURFACE = <AgentAgentsPanelSurface />;
 
 export interface AgentModeViewProps {
-  readonly monacoTheme?: MonacoAppTheme;
   readonly followUpBehavior?: AgentFollowUpBehavior;
   readonly dictationLanguage?: SpeechLanguage;
   readonly composerVisible?: boolean;
@@ -352,7 +351,6 @@ export function AgentModeView(props: AgentModeViewProps) {
 }
 
 function LocalAgentModeView({
-  monacoTheme = "calm-dark",
   followUpBehavior = "queue",
   agents,
   chrome,
@@ -475,6 +473,10 @@ function LocalAgentModeView({
     () => onSelectedThreadChange(selectedThreadId),
     [onSelectedThreadChange, selectedThreadId],
   );
+  const bindLayoutThread = chrome.layout.bindThread;
+  useLayoutEffect(() => {
+    bindLayoutThread?.(selectedThreadId);
+  }, [bindLayoutThread, selectedThreadId]);
   const selectedThread =
     selectedThreadId === null
       ? null
@@ -714,6 +716,7 @@ function LocalAgentModeView({
   const trustProject = useAgentLatestCallback(onTrustProject);
   const releaseProject = useAgentLatestCallback(onReleaseProject);
   const reviewWorkingTree = diffScopes.reviewWorkingTree;
+  const revealWorkingTreeFile = diffScopes.revealWorkingTreeFile;
   const reviewInDiff = useCallback(
     (threadId: string) => {
       void showChanges(threadId);
@@ -1125,7 +1128,10 @@ function LocalAgentModeView({
       showFileDiff: agents.showFileDiff,
       hideFileDiff: agents.hideFileDiff,
       openChangedFile: agents.openChangedFile,
-      openChangedFileDiff: agents.openChangedFileDiff,
+      openChangedFileDiff: (threadId: string, change: GitChangedFile): Promise<void> => {
+        revealWorkingTreeFile(threadId, change.relativePath);
+        return Promise.resolve();
+      },
       getTurnChanges: agents.getTurnChanges,
       getTurnFileDiff: agents.getTurnFileDiff,
       turnChangesRevision: agents.turnChangesRevision,
@@ -1137,10 +1143,10 @@ function LocalAgentModeView({
       agents.getTurnFileDiff,
       agents.hideFileDiff,
       agents.openChangedFile,
-      agents.openChangedFileDiff,
       agents.showChanges,
       agents.showFileDiff,
       agents.turnChangesRevision,
+      revealWorkingTreeFile,
     ],
   );
   useAgentThreadBranchRecorder(agents.threads, chrome.liveCheckoutBranches, threadBranchMemory);
@@ -1443,7 +1449,6 @@ function LocalAgentModeView({
                           : agents.turnChangesRevision
                       }
                       getTurnChanges={agents.getTurnChanges}
-                      monacoTheme={monacoTheme}
                       reveal={find.reveal}
                       textClipboard={textClipboard}
                       thread={sessionThread}

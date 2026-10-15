@@ -18,6 +18,7 @@ import { AgentDiffFileSection } from "./AgentDiffFileSection";
 import { AgentDiffFileTree } from "./AgentDiffFileTree";
 import type { AgentDiffLayout } from "./AgentDiffHunks";
 import { AgentDiffToolbar } from "./AgentDiffToolbar";
+import { useAgentDiffViewPreferences } from "./useAgentDiffViewPreferences";
 import { useViewportWidth } from "../../../useViewportWidth";
 import "./agentDiff.css";
 
@@ -49,8 +50,7 @@ export interface AgentDiffSurfaceProps {
 }
 
 export function AgentDiffSurface(props: AgentDiffSurfaceProps) {
-  const [layout, setLayout] = useState<AgentDiffLayout>("unified");
-  const [wrap, setWrap] = useState(false);
+  const { layout, setLayout, setWrap, wrap } = useAgentDiffViewPreferences();
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [treeVisible, setTreeVisible] = useState(false);
   const [currentPath, setCurrentPath] = useState<string | null>(null);

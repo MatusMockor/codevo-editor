@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { workbenchPanelPlacement } from "../../domain/editorDrawer";
 import type { WorkbenchBottomPanelHostProps } from "../WorkbenchBottomPanelHost";
 import { EditorPanelLayout } from "./EditorPanelLayout";
-import { useEditorDrawerReveal, useEditorSurfaceReveal } from "./useEditorSurfaceReveal";
 import { WorkbenchEditorDrawerHost } from "./WorkbenchEditorDrawerHost";
 
 export interface WorkbenchEditorSlotProps {
@@ -11,14 +10,11 @@ export interface WorkbenchEditorSlotProps {
 }
 
 export function WorkbenchEditorSlot({ area, panelHostProps }: WorkbenchEditorSlotProps) {
-  const { terminalOwnerKey, workbench } = panelHostProps;
-  const { agentWorkbench } = workbench;
-  const drawerView = workbenchPanelPlacement(
-    workbench.bottomPanelView,
-    workbench.bottomPanelVisible,
-  ).drawer;
-  const reveal = useEditorSurfaceReveal(agentWorkbench.dispatch);
-  useEditorDrawerReveal({ drawerView, ownerKey: terminalOwnerKey, reveal });
+  const { workbench } = panelHostProps;
+  const drawerView =
+    workbench.agentWorkbench.effectiveLayout === "agent"
+      ? null
+      : workbenchPanelPlacement(workbench.bottomPanelView, workbench.bottomPanelVisible).drawer;
   return (
     <EditorPanelLayout
       area={area}

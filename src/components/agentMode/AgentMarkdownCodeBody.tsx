@@ -1,6 +1,10 @@
 import type { CSSProperties } from "react";
-import { useAgentCodeColorization, type AgentCodeToken } from "./agentCodeColorizer";
+import { codeLanguageForFence } from "../../domain/codeHighlight/codeLanguage";
+import type { CodeToken, HighlightedLines } from "../../domain/codeHighlight/highlightedCode";
+import { useRetainedHighlightedCode } from "./AgentMarkdownCodeBodyHighlight";
 import { HighlightRun } from "./agentThreadHighlight";
+
+const AGENT_CODE_HIGHLIGHT_DELAY_MS = 150;
 
 export function AgentMarkdownCodeBody({
   code,
@@ -15,10 +19,18 @@ export function AgentMarkdownCodeBody({
   readonly language: string | null;
   readonly query: string;
 }) {
-  const lines = useAgentCodeColorization(code, language, query === "");
-  if (lines === null) {
+  const languageId = codeLanguageForFence(language);
+  const lines = useRetainedHighlightedCode(code, languageId ?? "plaintext", {
+    enabled: query === "" && languageId !== null && languageId !== "plaintext" && code !== "",
+    delayMs: AGENT_CODE_HIGHLIGHT_DELAY_MS,
+  });
+  if (lines === null || query !== "") {
     return <HighlightRun current={current} indexOffset={indexOffset} query={query} text={code} />;
   }
+  return <AgentCodeTokens lines={lines} />;
+}
+
+export function AgentCodeTokens({ lines }: { readonly lines: HighlightedLines }) {
   return (
     <span className="agent-md__code-colorized" data-colorized="true">
       {lines.map((line, lineIndex) => (
@@ -35,7 +47,7 @@ export function AgentMarkdownCodeBody({
   );
 }
 
-function tokenStyle(token: AgentCodeToken): CSSProperties | undefined {
+function tokenStyle(token: CodeToken): CSSProperties | undefined {
   if (token.color === null && !token.italic && !token.bold) return undefined;
   return {
     ...(token.color === null ? {} : { color: token.color }),

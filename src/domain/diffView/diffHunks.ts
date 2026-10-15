@@ -9,6 +9,7 @@ export interface DiffHunk {
 }
 
 export interface SplitDiffCell {
+  readonly index: number;
   readonly line: number;
   readonly text: string;
   readonly kind: DiffLineKind;
@@ -76,28 +77,23 @@ export function splitDiffRows(hunk: DiffHunk): ReadonlyArray<SplitDiffRow> {
     const line = lines[index];
     if (line === undefined) break;
     if (line.kind === "context") {
-      rows.push({ left: cell(line, "oldLine"), right: cell(line, "newLine") });
+      rows.push({ left: cell(line, index, "oldLine"), right: cell(line, index, "newLine") });
       index += 1;
       continue;
     }
-    const deletions: DiffLine[] = [];
-    const additions: DiffLine[] = [];
+    const deletions: SplitDiffCell[] = [];
+    const additions: SplitDiffCell[] = [];
     while (index < lines.length && lines[index]?.kind === "del") {
-      deletions.push(lines[index] as DiffLine);
+      deletions.push(cell(lines[index] as DiffLine, index, "oldLine"));
       index += 1;
     }
     while (index < lines.length && lines[index]?.kind === "add") {
-      additions.push(lines[index] as DiffLine);
+      additions.push(cell(lines[index] as DiffLine, index, "newLine"));
       index += 1;
     }
     const count = Math.max(deletions.length, additions.length);
     for (let row = 0; row < count; row += 1) {
-      const left = deletions[row];
-      const right = additions[row];
-      rows.push({
-        left: left === undefined ? null : cell(left, "oldLine"),
-        right: right === undefined ? null : cell(right, "newLine"),
-      });
+      rows.push({ left: deletions[row] ?? null, right: additions[row] ?? null });
     }
   }
   return rows;
@@ -128,6 +124,6 @@ function lineBefore(lines: ReadonlyArray<DiffLine>, start: number, field: LineFi
   return 0;
 }
 
-function cell(line: DiffLine, field: LineField): SplitDiffCell {
-  return { line: line[field] ?? 0, text: line.text, kind: line.kind };
+function cell(line: DiffLine, index: number, field: LineField): SplitDiffCell {
+  return { index, line: line[field] ?? 0, text: line.text, kind: line.kind };
 }

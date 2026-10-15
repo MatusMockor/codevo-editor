@@ -31,7 +31,7 @@ describe("AgentOpenMenu", () => {
     const onOpenSurface = vi.fn();
     render({ onOpenSurface });
 
-    act(() => button("Open in Editor").click());
+    act(() => button("Show in Files").click());
 
     expect(onOpenSurface).toHaveBeenCalledWith("files");
     expect(host.querySelector('[role="menu"]')).toBeNull();
@@ -49,7 +49,7 @@ describe("AgentOpenMenu", () => {
     expect(items()).toEqual([
       "Reveal in Finder",
       "Open in Terminal",
-      "Open in Editor",
+      "Show in Files",
       "Open Git History",
       "Copy path",
     ]);
@@ -121,8 +121,8 @@ describe("AgentOpenMenu", () => {
 
   it("disables both halves with a reason when the worktree is gone or there is no target", () => {
     render({ target: { path: PATH, missing: true } });
-    expect(button("Open in Editor").disabled).toBe(true);
-    expect(button("Open in Editor").title).toBe(AGENT_OPEN_MISSING_REASON);
+    expect(button("Show in Files").disabled).toBe(true);
+    expect(button("Show in Files").title).toBe(AGENT_OPEN_MISSING_REASON);
     expect(button("Open options").disabled).toBe(true);
 
     render({ target: null });

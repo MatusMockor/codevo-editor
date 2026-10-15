@@ -1,5 +1,4 @@
 import {
-  FileCode2,
   FileDiff,
   Files,
   GitBranch,
@@ -78,13 +77,6 @@ export const AGENT_RIGHT_PANEL_SURFACE_CATALOG: Readonly<
     icon: Users,
     addMenuShortcut: null,
     description: "Subagents working in this thread.",
-  },
-  editor: {
-    label: "Editor",
-    tabLabel: "Editor",
-    icon: FileCode2,
-    addMenuShortcut: null,
-    description: "Edit files in this project.",
   },
 });
 

@@ -767,8 +767,8 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       await getWorkbench().revealCommitInFileHistory(file.path, "abc1234");
     });
 
-    expect(getWorkbench().bottomPanelVisible).toBe(true);
-    expect(getWorkbench().bottomPanelView).toBe("history");
+    expect(getWorkbench().bottomPanelVisible).toBe(false);
+    expect(getWorkbench().bottomPanelView).toBe("problems");
     expect(getWorkbench().fileHistorySelectedSha).toBe("abc1234");
     expect(getWorkbench().fileHistoryDiff?.modifiedContent).toContain("abc1234");
   });
@@ -792,8 +792,8 @@ describe("useWorkbenchController preview tabs, Git history, and Local History", 
       await getWorkbench().revealCommitInFileHistory(file.path, "missing");
     });
 
-    expect(getWorkbench().bottomPanelVisible).toBe(true);
-    expect(getWorkbench().bottomPanelView).toBe("history");
+    expect(getWorkbench().bottomPanelVisible).toBe(false);
+    expect(getWorkbench().bottomPanelView).toBe("problems");
     expect(getWorkbench().fileHistorySelectedSha).toBeNull();
     expect(getWorkbench().fileHistoryDiff).toBeNull();
     expect(fileCommitDiff).not.toHaveBeenCalled();

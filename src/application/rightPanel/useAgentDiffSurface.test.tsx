@@ -147,7 +147,7 @@ describe("useAgentDiffSurface", () => {
     await waitForReact(() =>
       expect(box.current?.files[0]?.body).toEqual({
         kind: "unavailable",
-        reason: "Binary file. Open it in the editor to inspect it.",
+        reason: "Binary file. There is no text diff to show.",
       }),
     );
   });
@@ -304,7 +304,7 @@ describe("useAgentDiffSurface", () => {
     await waitForReact(() =>
       expect(box.current?.files[0]?.body).toEqual({
         kind: "unavailable",
-        reason: "This file is too large to show here. Open it in the editor.",
+        reason: "This file is too large to show here.",
       }),
     );
   });

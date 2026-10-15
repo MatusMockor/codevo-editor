@@ -49,7 +49,7 @@ describe("AgentThreadHeader", () => {
       "A very long thread title that keeps going",
     );
     expect(button("Run dev")).toBeDefined();
-    expect(button("Open in Editor")).toBeDefined();
+    expect(button("Show in Files")).toBeDefined();
     expect(button("Commit")).toBeDefined();
   });
 
@@ -95,12 +95,12 @@ describe("AgentThreadHeader", () => {
     expect(host.querySelector('[role="img"][aria-label="Runs on server"]')).not.toBeNull();
     expect(host.querySelector("h2.agent-crumbs__heading")?.textContent).toBe("Refactor the parser");
     expect(button("Commit")).toBeDefined();
-    expect(button("Open in Editor").disabled).toBe(true);
-    expect(button("Open in Editor").title).toContain("server files");
+    expect(button("Show in Files").disabled).toBe(true);
+    expect(button("Show in Files").title).toContain("server files");
     expect(button("Open options").disabled).toBe(true);
     expect(button("Terminal sessions").disabled).toBe(true);
     act(() => {
-      button("Open in Editor").click();
+      button("Show in Files").click();
       button("Open options").click();
       button("Terminal sessions").click();
     });
@@ -109,7 +109,7 @@ describe("AgentThreadHeader", () => {
     expect(onOpenTerminalSessions).not.toHaveBeenCalled();
     render({ thread: threadView({}) });
     expect(host.querySelector('[aria-label="Runs on server"]')).toBeNull();
-    expect(button("Open in Editor").disabled).toBe(false);
+    expect(button("Show in Files").disabled).toBe(false);
   });
 
   it("leaves thread status to the rail row and the status bar", () => {
@@ -168,10 +168,10 @@ describe("AgentThreadHeader", () => {
     render({});
 
     const run = button("Run dev");
-    const open = button("Open in Editor");
+    const open = button("Show in Files");
     const commit = button("Commit");
     expect(run.title).toBe("Run dev in the terminal panel");
-    expect(open.title).toBe("Open the checkout in the editor");
+    expect(open.title).toBe("Show the checkout in the Files panel");
     expect(commit.title).toBe("Commit changes in the Git panel");
     expect(run.querySelector(".agent-split__label")?.textContent).toBe("dev");
     expect(open.querySelector(".agent-split__label")?.textContent).toBe("Open");
@@ -375,7 +375,7 @@ describe("AgentThreadHeader", () => {
     expect(host.querySelector(".agent-crumbs__project .cv-favicon")?.textContent).toBe("A");
     const actions = host.querySelector(".cv-topbar__actions");
     const trailing = host.querySelector(".cv-topbar__trailing");
-    expect(actions?.contains(button("Open in Editor"))).toBe(true);
+    expect(actions?.contains(button("Show in Files"))).toBe(true);
     expect(actions?.contains(button("Terminal sessions"))).toBe(true);
     expect(actions?.contains(button("Run dev"))).toBe(false);
     expect(trailing?.contains(button("Run dev"))).toBe(true);

@@ -124,6 +124,19 @@ describe("useAgentDiffScopeSelection", () => {
     expect(box.current?.scope).toEqual({ kind: "turn", turnId: "t1", revealPath: "src/app.ts" });
   });
 
+  it("reveals a working-tree file in the Diff surface for the selected thread only", () => {
+    const openDiff = vi.fn();
+    const box = render({ threadId: "a", diffActive: true, openDiff });
+
+    act(() => box.current?.revealWorkingTreeFile("b", "src/app.ts"));
+    expect(box.current?.scope).toEqual({ kind: "latestTurn" });
+    expect(openDiff).not.toHaveBeenCalled();
+
+    act(() => box.current?.revealWorkingTreeFile("a", "src/app.ts"));
+    expect(box.current?.scope).toEqual({ kind: "workingTree", revealPath: "src/app.ts" });
+    expect(openDiff).toHaveBeenCalledTimes(1);
+  });
+
   it("does not open a turn diff when recorded file diffs are unavailable", () => {
     const openDiff = vi.fn();
     const box = render({ threadId: "a", diffActive: true, turnDiffAvailable: false, openDiff });

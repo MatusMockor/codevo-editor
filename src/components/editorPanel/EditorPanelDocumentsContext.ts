@@ -1,6 +1,6 @@
 import { createContext, useEffect, useMemo, useRef } from "react";
 import type { EditorGroup } from "../../domain/editorGroups";
-import type { AgentRightPanelEditorDocuments } from "../agentMode/rightPanel/agentRightPanelTabEntries";
+import type { GitChangeStatus } from "../../domain/git";
 import type { EditorGroupDocument } from "../EditorGroupView";
 import {
   editorPanelDocuments,
@@ -9,7 +9,23 @@ import {
   type EditorPanelFileStatuses,
 } from "./editorPanelDocuments";
 
-export type EditorPanelDocumentsValue = Omit<AgentRightPanelEditorDocuments, "surfaceActive">;
+export interface EditorPanelDocument {
+  readonly documentId: string;
+  readonly title: string;
+  readonly path: string;
+  readonly dirty: boolean;
+  readonly preview: boolean;
+  readonly gitStatus: GitChangeStatus | null;
+}
+
+export interface EditorPanelDocumentsValue {
+  readonly documents: ReadonlyArray<EditorPanelDocument>;
+  readonly activeDocumentId: string | null;
+  onActivate(documentId: string): void;
+  onClose(documentId: string): void;
+  onOpenFile(): void;
+  onPin(documentId: string): void;
+}
 
 export const EditorPanelDocumentsContext = createContext<EditorPanelDocumentsValue | null>(null);
 

@@ -20,6 +20,7 @@ let ui: MountedUi | null = null;
 afterEach(() => {
   ui?.unmount();
   ui = null;
+  window.localStorage.clear();
 });
 
 const LONG_LINE = `const reallyLongIdentifier = "${"x".repeat(600)}";`;
@@ -311,7 +312,7 @@ describe("AgentDiffSurface", () => {
     }
   });
 
-  it("disables Open for a file without a checkout root", async () => {
+  it("disables Open file for a file without a checkout root", async () => {
     const detached: AgentDiffSource = {
       ...source,
       key: "detached",
@@ -325,9 +326,9 @@ describe("AgentDiffSurface", () => {
     };
     const host = mount(props({ source: detached }));
     await waitForReact(() =>
-      expect(
-        host.querySelector<HTMLButtonElement>('[aria-label="Open a.ts in editor"]')?.disabled,
-      ).toBe(true),
+      expect(host.querySelector<HTMLButtonElement>('[aria-label="Open file a.ts"]')?.disabled).toBe(
+        true,
+      ),
     );
   });
 });

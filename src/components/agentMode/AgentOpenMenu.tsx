@@ -67,13 +67,13 @@ export function AgentOpenMenu({
       ref={popover.rootRef}
     >
       <button
-        aria-label="Open in Editor"
+        aria-label="Show in Files"
         className="agent-split__main"
         disabled={blockedReason !== null}
         onClick={() => {
           if (blockedReason === null) onOpenSurface("files");
         }}
-        title={blockedReason ?? "Open the checkout in the editor"}
+        title={blockedReason ?? "Show the checkout in the Files panel"}
         type="button"
       >
         <FolderOpen aria-hidden="true" size={13} />
@@ -116,7 +116,7 @@ export function AgentOpenMenu({
           />
           <MenuItem
             icon={<PanelsTopLeft size={13} />}
-            label="Open in Editor"
+            label="Show in Files"
             onSelect={() => choose(() => onOpenSurface("files"))}
           />
           <MenuItem

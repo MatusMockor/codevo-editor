@@ -30,10 +30,6 @@ import {
   type RecordedAgentWorkbenchLayout,
 } from "./agentWorkbenchChromeTestFixtures";
 import { rightPanelTestContext } from "./rightPanel/agentRightPanelTestSupport";
-import {
-  EditorPanelDocumentsContext,
-  type EditorPanelDocumentsValue,
-} from "../editorPanel/EditorPanelDocumentsContext";
 
 vi.mock("@xterm/xterm", async () =>
   (await import("./agentSurfaceTerminalTestSupport")).xtermMockModule(),
@@ -488,14 +484,14 @@ describe("AgentSurfaceHost", () => {
       const row = await treeRow("users.ts");
 
       act(() => row.click());
-      expect(onPreviewFile).toHaveBeenCalledWith(expect.objectContaining({ name: "users.ts" }));
+      await waitForReact(() => expect(viewerFor("users.ts")).not.toBeNull());
       expect(layout.actions).toEqual([]);
-      expect(reduceRecordedLayout(layout)).toEqual(layout.layout);
 
       act(() => {
         row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
       });
-      expect(onOpenFile).toHaveBeenCalledWith(expect.objectContaining({ name: "users.ts" }));
+      expect(onPreviewFile).not.toHaveBeenCalled();
+      expect(onOpenFile).not.toHaveBeenCalled();
       expect(layout.actions).toEqual([]);
       expect(reduceRecordedLayout(layout)).toMatchObject({
         rightPanel: "open",
@@ -572,9 +568,8 @@ describe("AgentSurfaceHost", () => {
     );
     expect(searchFiles).toHaveBeenCalledWith(SURFACE_FIXTURE_WORKTREE, "users", 201);
     act(() => host.querySelector<HTMLElement>('[role="option"]')?.click());
-    expect(onPreviewFile).toHaveBeenCalledWith(
-      expect.objectContaining({ path: `${SURFACE_FIXTURE_WORKTREE}/src/users.ts` }),
-    );
+    await waitForReact(() => expect(viewerFor("src/users.ts")).not.toBeNull());
+    expect(onPreviewFile).not.toHaveBeenCalled();
     expect(layout.actions).toEqual([]);
   });
 
@@ -675,15 +670,12 @@ describe("AgentSurfaceHost", () => {
         const row = await treeRow(`${SURFACE_FIXTURE_ROOT}/users.ts`);
 
         act(() => row.click());
-        expect(onPreviewFile).toHaveBeenCalledWith(
-          expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
-        );
+        await waitForReact(() => expect(viewerFor("users.ts")).not.toBeNull());
         act(() => {
           row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
         });
-        expect(onOpenFile).toHaveBeenCalledWith(
-          expect.objectContaining({ path: `${SURFACE_FIXTURE_ROOT}/users.ts` }),
-        );
+        expect(onPreviewFile).not.toHaveBeenCalled();
+        expect(onOpenFile).not.toHaveBeenCalled();
         expect(layout.actions).toEqual([]);
         expect(reduceRecordedLayout(layout)).toEqual(layout.layout);
       },
@@ -906,47 +898,35 @@ describe("AgentSurfaceHost", () => {
     return row!;
   }
 
-  it("feeds the editor documents from context into the strip, only for a local pane", () => {
-    const onActivate = vi.fn();
-    const documents: EditorPanelDocumentsValue = {
-      documents: [
-        {
-          documentId: "/w/a.ts",
-          title: "a.ts",
-          path: "/w/a.ts",
-          dirty: true,
-          preview: false,
-          gitStatus: null,
-        },
-      ],
-      activeDocumentId: "/w/a.ts",
-      onActivate,
-      onClose: vi.fn(),
-      onOpenFile: vi.fn(),
-      onPin: vi.fn(),
+  function viewerFor(relativePath: string): Element | null {
+    return host.querySelector(`.cv-file-viewer[data-file-viewer-path="${relativePath}"]`);
+  }
+
+  it("shows the layout's file reveal in the Files viewer and never in a remote pane", async () => {
+    const layout = recordedLayoutState({
+      rightPanel: "open",
+      openSurfaces: ["files"],
+      activeSurface: "files",
+      rightPanelMaximized: true,
+    });
+    const revealing = {
+      ...layout,
+      fileReveal: { path: `${SURFACE_FIXTURE_WORKTREE}/src/users.ts`, line: 3, sequence: 1 },
     };
-    const renderWith = (overrides: Partial<AgentSurfaceHostProps>) =>
-      act(() =>
-        root.render(
-          <EditorPanelDocumentsContext.Provider value={documents}>
-            <AgentSurfaceHost {...defaultProps()} {...overrides} />
-          </EditorPanelDocumentsContext.Provider>,
-        ),
-      );
+    render({ chrome: filesChrome(revealing), layout: FILES_LAYOUT });
 
-    renderWith({ layout: { openSurfaces: ["editor"], activeSurface: "editor" } });
-    const tab = host.querySelector<HTMLElement>('[role="tab"][title="a.ts"]');
-    expect(tab?.getAttribute("aria-selected")).toBe("true");
-    act(() => tab?.click());
-    expect(onActivate).toHaveBeenCalledWith("/w/a.ts");
+    await waitForReact(() => expect(viewerFor("src/users.ts")).not.toBeNull());
+    expect(host.querySelector(".cv-editor-slot")).toBeNull();
+    expect(host.querySelector('[role="tab"][title="Editor"]')).toBeNull();
+    expect(layout.actions).toEqual([]);
 
-    renderWith({
+    render({
+      chrome: filesChrome(revealing),
+      layout: FILES_LAYOUT,
       thread: null,
       remoteDraft: true,
-      layout: { openSurfaces: ["editor"], activeSurface: "editor" },
     });
-    expect(host.querySelector('[role="tab"][title="a.ts"]')).toBeNull();
-    expect(host.querySelector('[aria-label="Open file"]')).toBeNull();
+    expect(viewerFor("src/users.ts")).toBeNull();
   });
 
   function render(overrides: Partial<AgentSurfaceHostProps> = {}): void {

@@ -6,16 +6,10 @@ import type { FileSearchResult } from "../../../../domain/workspace";
 export interface AgentFilesSearchResultsProps {
   readonly search: AgentFilesSearch;
   readonly listRef: RefObject<HTMLUListElement | null>;
-  onPreview(result: FileSearchResult): void;
   onOpen(result: FileSearchResult): void;
 }
 
-export function AgentFilesSearchResults({
-  listRef,
-  onOpen,
-  onPreview,
-  search,
-}: AgentFilesSearchResultsProps) {
+export function AgentFilesSearchResults({ listRef, onOpen, search }: AgentFilesSearchResultsProps) {
   const [selected, setSelected] = useState(0);
   const note = resultsNote(search);
   const lastIndex = search.results.length - 1;
@@ -70,10 +64,6 @@ export function AgentFilesSearchResults({
               onClick={() => {
                 if (stale) return;
                 setSelected(index);
-                onPreview(result);
-              }}
-              onDoubleClick={() => {
-                if (stale) return;
                 onOpen(result);
               }}
               onFocus={() => setSelected(index)}

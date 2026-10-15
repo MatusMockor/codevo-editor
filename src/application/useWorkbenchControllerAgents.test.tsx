@@ -429,8 +429,6 @@ function renderAgents(overrides: HarnessOverrides = {}) {
       agentTaskGateway,
       gitWorktreeGateway,
     },
-    openFileRef: { current: async () => true },
-    openGitChange: async () => undefined,
     gitGateway: {
       getStatus: vi.fn(async (rootPath: string): Promise<GitStatus> => ({
         branch: "main",

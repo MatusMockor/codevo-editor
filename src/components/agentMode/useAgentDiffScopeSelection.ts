@@ -24,6 +24,7 @@ export interface AgentDiffScopeSelection {
   setScope(scope: AgentDiffScope): void;
   openTurnDiff(threadId: string, summary: AgentTurnChangeSummary, relativePath?: string): void;
   reviewWorkingTree(threadId: string): void;
+  revealWorkingTreeFile(threadId: string, relativePath: string): void;
   resetScope(): void;
 }
 
@@ -67,6 +68,14 @@ export function useAgentDiffScopeSelection({
     },
     [openDiff, threadId],
   );
+  const revealWorkingTreeFile = useCallback(
+    (requestThreadId: string, relativePath: string) => {
+      if (requestThreadId !== threadId) return;
+      setSelection({ threadId, scope: { kind: "workingTree", revealPath: relativePath } });
+      openDiff();
+    },
+    [openDiff, threadId],
+  );
   const resetScope = useCallback(() => setSelection(null), []);
   return {
     scope,
@@ -79,6 +88,7 @@ export function useAgentDiffScopeSelection({
     setScope,
     openTurnDiff,
     reviewWorkingTree,
+    revealWorkingTreeFile,
     resetScope,
   };
 }

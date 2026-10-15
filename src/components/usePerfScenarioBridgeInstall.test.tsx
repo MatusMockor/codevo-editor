@@ -177,7 +177,7 @@ describe("usePerfScenarioBridgeInstall", () => {
     });
 
     expect(firstDispatch.mock.calls.map(([action]) => action)).toEqual([
-      { kind: "openSurface", surface: "editor" },
+      { kind: "openSurface", surface: "files" },
       { kind: "maximizeRightPanel" },
     ]);
 
@@ -193,7 +193,7 @@ describe("usePerfScenarioBridgeInstall", () => {
       agentWorkbench: { effectiveLayout: "agent", dispatch: nextDispatch },
     });
     expect(nextDispatch.mock.calls.map(([action]) => action)).toEqual([
-      { kind: "openSurface", surface: "editor" },
+      { kind: "openSurface", surface: "files" },
       { kind: "maximizeRightPanel" },
     ]);
   });

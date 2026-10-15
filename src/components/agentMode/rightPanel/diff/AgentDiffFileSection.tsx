@@ -1,8 +1,9 @@
-import { ChevronRight, ExternalLink, FileDiff, FilePlus, FileMinus } from "lucide-react";
+import { ChevronRight, FileDiff, FileMinus, FilePlus, FileText } from "lucide-react";
 import type { AgentDiffFile } from "../../../../application/rightPanel/agentDiffSources";
 import type { AgentDiffFileView } from "../../../../application/rightPanel/useAgentDiffSurface";
 import { IconButton } from "../../../../ui/foundation/IconButton";
 import { Spinner } from "../../../../ui/foundation/Spinner";
+import { agentDiffOpenBlockedReason } from "./agentDiffFileOpen";
 import { AgentDiffHunks, type AgentDiffLayout } from "./AgentDiffHunks";
 
 export interface AgentDiffFileSectionProps {
@@ -23,6 +24,7 @@ export function AgentDiffFileSection({
   const { body, file } = view;
   const expanded = body.kind !== "collapsed";
   const { directory, name } = splitDisplayPath(file.displayPath);
+  const openBlockedReason = agentDiffOpenBlockedReason(file);
   return (
     <div className="cv-diff-file" ref={sectionRef}>
       <div className="cv-diff-file__head">
@@ -46,16 +48,12 @@ export function AgentDiffFileSection({
           <DiffStat added={file.added} deleted={file.deleted} />
         </button>
         <IconButton
-          disabled={file.repositoryRoot === null}
-          icon={<ExternalLink size={14} />}
-          label={`Open ${name} in editor`}
+          disabled={openBlockedReason !== null}
+          icon={<FileText size={14} />}
+          label={`Open file ${name}`}
           onClick={() => onOpen(file)}
           size="xs"
-          title={
-            file.repositoryRoot === null
-              ? "This file is not in a checkout on this machine."
-              : undefined
-          }
+          title={openBlockedReason ?? undefined}
         />
       </div>
       {body.kind === "loading" && (
@@ -66,11 +64,15 @@ export function AgentDiffFileSection({
       {body.kind === "unavailable" && <p className="cv-diff-file__note">{body.reason}</p>}
       {body.kind === "ready" && (
         <>
-          <AgentDiffHunks hunks={body.hunks} label={`${file.displayPath} diff`} layout={layout} />
+          <AgentDiffHunks
+            hunks={body.hunks}
+            label={`${file.displayPath} diff`}
+            layout={layout}
+            path={file.relativePath}
+          />
           {body.hiddenChangedLines > 0 && (
             <p className="cv-diff-file__note">
-              {hiddenChangedLinesLabel(body.hiddenChangedLines)} not shown here. Open the diff in
-              the editor.
+              {hiddenChangedLinesLabel(body.hiddenChangedLines)} not shown here.
             </p>
           )}
         </>

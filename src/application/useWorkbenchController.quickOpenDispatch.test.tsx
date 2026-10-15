@@ -16,7 +16,7 @@ import {
 describe("useWorkbenchController Quick Open dispatch", () => {
   const { renderController } = setupWorkbenchControllerTestHarness();
 
-  it("dispatches Quick Open file locations and command prefixes through the workbench", async () => {
+  it("reveals Quick Open file locations in the Files viewer and dispatches command prefixes", async () => {
     const result: FileSearchResult = {
       name: "foo.ts",
       path: "/workspace/src/foo.ts",
@@ -68,45 +68,17 @@ describe("useWorkbenchController Quick Open dispatch", () => {
     });
     await flushAsyncTurns();
 
-    expect(getWorkbench().editorRevealTarget).toEqual({
+    expect(getWorkbench().editorRevealTarget).toBeNull();
+    expect(getWorkbench().agentWorkbench.fileReveal).toMatchObject({
       path: result.path,
-      position: { column: 1, lineNumber: 42 },
+      line: 42,
+    });
+    expect(getWorkbench().agentWorkbench.layout).toMatchObject({
+      rightPanel: "open",
+      activeSurface: "files",
     });
 
     act(() => {
-      getWorkbench().setQuickOpenOpen(true);
-      getWorkbench().setQuickOpenQuery(":2");
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().editorRevealTarget).toEqual({
-      path: result.path,
-      position: { column: 1, lineNumber: 42 },
-    });
-
-    act(() => {
-      document
-        .querySelector<HTMLInputElement>('input[aria-label="Go to line"]')
-        ?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().editorRevealTarget).toEqual({
-      path: result.path,
-      position: { column: 1, lineNumber: 2 },
-    });
-
-    act(() => {
-      getWorkbench().setQuickOpenOpen(true);
-      getWorkbench().setQuickOpenQuery("@method");
-    });
-    await flushAsyncTurns();
-
-    expect(getWorkbench().fileStructureOpen).toBe(true);
-    expect(getWorkbench().fileStructureInitialQuery).toBe("method");
-
-    act(() => {
-      getWorkbench().setFileStructureOpen(false);
       getWorkbench().setQuickOpenOpen(true);
       getWorkbench().setQuickOpenQuery("#handler");
     });

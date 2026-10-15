@@ -16,6 +16,7 @@ import {
 import { gitSurfaceStatusValue } from "../../../../application/rightPanel/useGitSurfaceStatus";
 import {
   agentDiffScopeLabel,
+  agentDiffScopeRevealPath,
   agentDiffTurnOptions,
   resolveAgentDiffScope,
   type AgentDiffTurn,
@@ -83,13 +84,10 @@ export function useAgentDiffSurfaceSource(
     gitStatusRefresh();
     setRefreshCount((count) => count + 1);
   }, [gitStatusRefresh]);
-  const reveal = useMemo<AgentDiffRevealRequest | null>(
-    () =>
-      diffScope.kind === "turn" && diffScope.revealPath !== undefined
-        ? { relativePath: diffScope.revealPath }
-        : null,
-    [diffScope],
-  );
+  const reveal = useMemo<AgentDiffRevealRequest | null>(() => {
+    const revealPath = agentDiffScopeRevealPath(diffScope);
+    return revealPath === null ? null : { relativePath: revealPath };
+  }, [diffScope]);
 
   const source = useMemo<AgentDiffSource | null>(() => {
     switch (resolved.kind) {

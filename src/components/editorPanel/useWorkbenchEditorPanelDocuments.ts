@@ -1,4 +1,3 @@
-import type { AgentWorkbenchLayoutAction } from "../../domain/agentWorkbenchLayout";
 import type { EditorGroupId, EditorGroupsState } from "../../domain/editorGroups";
 import type { EditorGroupDocument } from "../EditorGroupView";
 import type { EditorPanelFileStatuses } from "./editorPanelDocuments";
@@ -14,34 +13,25 @@ export interface EditorPanelDocumentsHost {
   pinEditorGroupTab(groupId: EditorGroupId, path: string): void;
 }
 
-export interface EditorPanelDocumentsWorkbench {
-  readonly agentWorkbench: {
-    dispatch(action: AgentWorkbenchLayoutAction): void;
-  };
-}
-
 export function useWorkbenchEditorPanelDocuments(
   host: EditorPanelDocumentsHost,
-  workbench: EditorPanelDocumentsWorkbench,
   ownerKey: string | null,
   groups: EditorGroupsState,
   documents: ReadonlyArray<EditorGroupDocument>,
   fileStatusesByPath: EditorPanelFileStatuses,
 ): EditorPanelDocumentsValue | null {
   const groupId = groups.activeGroupId;
-  const layout = workbench.agentWorkbench;
   return useEditorPanelDocumentsValue({
     ownerKey,
     group: groups.groups[groupId] ?? null,
     documents,
     fileStatusesByPath,
-    onActivate: (path) => {
-      host.activateEditorGroupTab(groupId, path);
-      layout.dispatch({ kind: "activateSurface", surface: "editor" });
-    },
+    onActivate: (path) => host.activateEditorGroupTab(groupId, path),
     onClose: (path) => void host.closeDocumentInEditorGroup(groupId, path),
     onOpenFile: () => host.setQuickOpenOpen(true),
     onPin: (path) => host.pinEditorGroupTab(groupId, path),
-    onEmpty: () => layout.dispatch({ kind: "closeSurfaceTab", surface: "editor" }),
+    onEmpty: ignoreEmptyEditorPanel,
   });
 }
+
+const ignoreEmptyEditorPanel = (): void => undefined;

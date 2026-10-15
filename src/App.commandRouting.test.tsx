@@ -1103,7 +1103,7 @@ describe("App command routing", () => {
     expect(document.title).toBe("Agents");
   });
 
-  it("keeps one editor runtime mounted across agent, editor surface, other surfaces and the editor-only fallback", async () => {
+  it("keeps one editor runtime mounted, hidden in every agent layout and shown only in the editor-only fallback", async () => {
     const initialRuntime = requiredElement<HTMLElement>(
       host,
       '[data-testid="editor-runtime-host"]',
@@ -1121,16 +1121,9 @@ describe("App command routing", () => {
       {
         layout: agentLayoutState("agent", {
           rightPanel: "open",
-          openSurfaces: ["files", "editor"],
-          activeSurface: "editor",
-        }),
-        hidden: false,
-      },
-      {
-        layout: agentLayoutState("agent", {
-          rightPanel: "open",
-          openSurfaces: ["files", "editor"],
+          openSurfaces: ["files"],
           activeSurface: "files",
+          rightPanelMaximized: true,
         }),
         hidden: true,
       },
@@ -1143,14 +1136,6 @@ describe("App command routing", () => {
         hidden: true,
       },
       { layout: agentLayoutState("editor-only"), hidden: false },
-      {
-        layout: agentLayoutState("agent", {
-          rightPanel: "open",
-          openSurfaces: ["files", "editor"],
-          activeSurface: "editor",
-        }),
-        hidden: false,
-      },
       { layout: agentLayoutState("agent"), hidden: true },
     ];
 

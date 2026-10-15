@@ -1,3 +1,5 @@
+import { parseAgentFileRevealTarget } from "./agentWorkbenchLayoutFileReveal";
+
 export const AGENT_SURFACE_KINDS = [
   "files",
   "diff",
@@ -7,7 +9,6 @@ export const AGENT_SURFACE_KINDS = [
   "scripts",
   "pullRequest",
   "agents",
-  "editor",
 ] as const;
 export type AgentSurfaceKind = (typeof AGENT_SURFACE_KINDS)[number];
 
@@ -21,6 +22,9 @@ export function isAgentTransientSurfaceKind(kind: AgentSurfaceKind): boolean {
 }
 
 export const MAX_AGENT_OPEN_SURFACES = AGENT_SURFACE_KINDS.length;
+
+const LEGACY_EDITOR_SURFACE = "editor";
+const LEGACY_EDITOR_REPLACEMENT: ReadonlyArray<AgentSurfaceKind> = ["files"];
 
 export const AGENT_WORKBENCH_LAYOUT_MODES = ["agent", "editor-only"] as const;
 export type AgentWorkbenchLayoutMode = (typeof AGENT_WORKBENCH_LAYOUT_MODES)[number];
@@ -69,7 +73,13 @@ export type AgentWorkbenchLayoutAction =
   | { readonly kind: "toggleRail" }
   | { readonly kind: "resizeRail"; readonly width: number }
   | { readonly kind: "resizeRightPanel"; readonly width: number }
-  | { readonly kind: "resizeBottomPanel"; readonly height: number };
+  | { readonly kind: "resizeBottomPanel"; readonly height: number }
+  | {
+      readonly kind: "revealFile";
+      readonly path: string;
+      readonly line?: number | null;
+      readonly request?: number | null;
+    };
 
 const NO_SURFACES: ReadonlyArray<AgentSurfaceKind> = Object.freeze([]);
 
@@ -149,6 +159,10 @@ export function agentWorkbenchLayoutReducer(
       return resizeRightPanel(state, action.width);
     case "resizeBottomPanel":
       return resizeBottomPanel(state, action.height);
+    case "revealFile":
+      return parseAgentFileRevealTarget(action.path, action.line ?? null) === null
+        ? state
+        : openSurface(state, "files");
     default:
       return unsupportedAgentWorkbenchLayoutAction(action);
   }
@@ -171,6 +185,30 @@ export function parseAgentWorkbenchLayout(value: unknown): AgentWorkbenchLayout 
     rightPanelMaximized,
     ...parseIndependentFields(value),
   };
+}
+
+export function parseAgentSurfaceSelection(
+  value: Record<string, unknown>,
+): Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface"> {
+  const openSurfaces = parseOpenSurfaces(value);
+  return { openSurfaces, activeSurface: parseActiveSurface(value, openSurfaces) };
+}
+
+export function persistableAgentSurfaceSelection(
+  selection: Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface">,
+): Pick<AgentWorkbenchLayout, "openSurfaces" | "activeSurface"> {
+  const openSurfaces = selection.openSurfaces.filter((kind) => !isAgentTransientSurfaceKind(kind));
+  return {
+    openSurfaces,
+    activeSurface: persistedActiveSurface(selection.activeSurface, openSurfaces),
+  };
+}
+
+export function agentSurfacesEqual(
+  left: ReadonlyArray<AgentSurfaceKind>,
+  right: ReadonlyArray<AgentSurfaceKind>,
+): boolean {
+  return surfacesEqual(left, right);
 }
 
 export function parsePersistedAgentBottomPanel(value: unknown): boolean {
@@ -331,6 +369,14 @@ function parseIndependentFields(
 }
 
 function parseOpenSurfaces(value: Record<string, unknown>): ReadonlyArray<AgentSurfaceKind> {
+  const surfaces = parsePersistedOpenSurfaces(value);
+  if (surfaces.length > 0 || !hadLegacyEditorSurface(value)) return surfaces;
+  return LEGACY_EDITOR_REPLACEMENT;
+}
+
+function parsePersistedOpenSurfaces(
+  value: Record<string, unknown>,
+): ReadonlyArray<AgentSurfaceKind> {
   if (value.openSurfaces === undefined) {
     return isPersistableSurface(value.rightSurface) ? [value.rightSurface] : NO_SURFACES;
   }
@@ -354,8 +400,21 @@ function parseActiveSurface(
   openSurfaces: ReadonlyArray<AgentSurfaceKind>,
 ): AgentSurfaceKind | null {
   const candidate = value.openSurfaces === undefined ? value.rightSurface : value.activeSurface;
+  if (candidate === LEGACY_EDITOR_SURFACE) return legacyEditorFallback(openSurfaces);
   if (!isAgentSurfaceKind(candidate)) return null;
   return openSurfaces.includes(candidate) ? candidate : null;
+}
+
+function legacyEditorFallback(
+  openSurfaces: ReadonlyArray<AgentSurfaceKind>,
+): AgentSurfaceKind | null {
+  if (openSurfaces.includes("files")) return "files";
+  return openSurfaces[0] ?? null;
+}
+
+function hadLegacyEditorSurface(value: Record<string, unknown>): boolean {
+  if (value.rightSurface === LEGACY_EDITOR_SURFACE) return true;
+  return Array.isArray(value.openSurfaces) && value.openSurfaces.includes(LEGACY_EDITOR_SURFACE);
 }
 
 function parseRightPanel(
