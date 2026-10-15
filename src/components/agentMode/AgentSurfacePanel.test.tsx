@@ -824,6 +824,7 @@ function defaultProps(): AgentSurfacePanelProps {
     hidden: false,
     chooserAutoFocus: true,
     fileTree: {
+      fontSize: 14,
       source: "thread",
       tree: tree(),
       unavailable: null,

@@ -7,7 +7,7 @@ import { useAgentModelFavorites } from "../../application/useAgentModelFavorites
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
 import { defaultAgentCliDiscoveryResult } from "../../domain/agentSettings";
-import type { AgentLaunchOptions } from "../../domain/agentLaunch";
+import type { AgentExecutionTarget, AgentLaunchOptions } from "../../domain/agentLaunch";
 import { readStyleSheet } from "../cssContractTestSupport";
 import { createModelNewness, newModelSignature } from "../../application/modelNewness";
 import {
@@ -28,7 +28,7 @@ import { ModelNewnessContext } from "./useAgentModelNewness";
 
 const CLAUDE: AgentLaunchOptions = {
   provider: "claudeCode",
-  model: "default",
+  model: "claude-sonnet-5",
   mode: "default",
   effort: "default",
 };
@@ -90,6 +90,31 @@ describe("AgentModelPicker", () => {
     expect(legacyToggle().textContent).toContain("Legacy models");
     expect(legacyToggle().textContent).toContain("Fable 5, Opus 4.8 and 5 more");
   });
+
+  it.each(["local", "server"] as const)(
+    "keeps an unresolved %s default unselected and allows explicitly choosing the manifest default",
+    (executionTarget) => {
+      const onSelect = vi.fn();
+      render({ ...CLAUDE, model: "default" }, onSelect, false, null, null, false, executionTarget);
+
+      expect(trigger().dataset.value).toBe("default");
+      expect(trigger().textContent).toBe(
+        executionTarget === "server" ? "Server default" : "Claude Code default",
+      );
+      open();
+
+      expect(selectedOption()).toBeNull();
+      const manifestDefault = BUNDLED_CLAUDE_MODEL_MANIFEST.claudeCode.find(
+        (entry) => entry.isDefault,
+      );
+      expect(manifestDefault).toBeDefined();
+      const value = manifestDefault?.choice ?? "";
+      expect(option(value).getAttribute("aria-selected")).toBe("false");
+      act(() => option(value).click());
+
+      expect(onSelect).toHaveBeenCalledExactlyOnceWith(value);
+    },
+  );
 
   it("shows no NEW badge without newness evidence", () => {
     render(CLAUDE);
@@ -346,7 +371,7 @@ describe("AgentModelPicker", () => {
 
   it("names the CLI-configured default model and removes its duplicate row", () => {
     const configured = management({ claudeCode: true, codex: true });
-    render(CLAUDE, vi.fn(), false, {
+    render({ ...CLAUDE, model: "default" }, vi.fn(), false, {
       ...configured,
       cliDiscovery: {
         ...configured.cliDiscovery,
@@ -575,7 +600,9 @@ describe("AgentModelPicker", () => {
     providerEnabled,
     providerManagement,
     providerSwitchable,
+    executionTarget = "local",
   }: {
+    readonly executionTarget?: AgentExecutionTarget;
     readonly launch: AgentLaunchOptions;
     readonly disabled: boolean;
     readonly providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>> | null;
@@ -593,6 +620,7 @@ describe("AgentModelPicker", () => {
         id={ID}
         label="Agent model"
         launch={current}
+        executionTarget={executionTarget}
         onSelect={onSelect}
         providerEnabled={providerEnabled}
         providerManagement={providerManagement}
@@ -609,12 +637,14 @@ describe("AgentModelPicker", () => {
     providerManagement: AgentProviderManagementSurface | null = null,
     providerEnabled: Readonly<Record<"claudeCode" | "codex", boolean>> | null = null,
     providerSwitchable = false,
+    executionTarget: AgentExecutionTarget = "local",
   ): void {
     act(() =>
       root.render(
         <Harness
           disabled={disabled}
           launch={launch}
+          executionTarget={executionTarget}
           onSelect={onSelect}
           providerEnabled={
             providerEnabled ??

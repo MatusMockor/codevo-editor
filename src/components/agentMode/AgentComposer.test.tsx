@@ -781,7 +781,7 @@ describe("AgentComposer", () => {
     expect(onCompactContext).toHaveBeenCalledWith({
       launch: {
         provider: "claudeCode",
-        model: "claude-sonnet-5",
+        model: "default",
         mode: "bypassPermissions",
         effort: "high",
         context: "1m",
@@ -1558,7 +1558,7 @@ describe("AgentComposer", () => {
     return event;
   }
 
-  it("dispatches the refreshed catalog default after a provider update", () => {
+  it("keeps the CLI default after a provider catalog update", () => {
     const onSubmit = vi.fn();
     const props = { ...defaultProps(), prompt: "Fix it", onSubmit };
     const remote = parseClaudeModelManifest({
@@ -1592,14 +1592,14 @@ describe("AgentComposer", () => {
         </ClaudeModelCatalogContext.Provider>,
       ),
     );
-    expect(trigger("agent-launch-model").textContent).toContain("Claude Future 9");
+    expect(trigger("agent-launch-model").textContent).toContain("Claude Code default");
     submitForm();
     expect(onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({
         launch: expect.objectContaining({
-          model: "claude-future-9",
-          effort: "low",
-          context: "200k",
+          model: "default",
+          effort: "high",
+          context: "1m",
         }),
       }),
     );

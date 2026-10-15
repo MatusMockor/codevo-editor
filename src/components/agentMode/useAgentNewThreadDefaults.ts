@@ -5,6 +5,8 @@ import {
   type AgentNewThreadDefaults,
 } from "../../domain/agentNewThreadDefaults";
 
+import type { ClaudeNewThreadModelFallback } from "./agentComposerLaunch";
+
 export type AgentNewThreadDefaultsByTarget = Readonly<
   Record<AgentExecutionTarget, AgentNewThreadDefaults>
 >;
@@ -18,4 +20,14 @@ export const AgentNewThreadDefaultsContext = createContext<AgentNewThreadDefault
 
 export function useAgentNewThreadDefaults(target: AgentExecutionTarget): AgentNewThreadDefaults {
   return useContext(AgentNewThreadDefaultsContext)[target];
+}
+
+export const AgentNewThreadModelFallbackContext = createContext<
+  Readonly<Record<AgentExecutionTarget, ClaudeNewThreadModelFallback | null>>
+>({ local: null, server: null });
+
+export function useAgentNewThreadModelFallback(
+  target: AgentExecutionTarget,
+): ClaudeNewThreadModelFallback | null {
+  return useContext(AgentNewThreadModelFallbackContext)[target];
 }

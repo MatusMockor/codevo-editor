@@ -153,18 +153,14 @@ export function environmentComposerScope(
       return scope;
   }
 
-  const group = groups.find(
-    (candidate) =>
-      candidate.projectRootKey === scope.projectRootKey ||
-      candidate.memberProjectRootKeys?.includes(scope.projectRootKey),
+  const candidates = environmentCandidates(
+    scope.projectRootKey,
+    groups,
+    projects,
+    serverId,
+    repositoryIdentities,
+    links,
   );
-  const members = group?.memberProjectRootKeys ?? [scope.projectRootKey];
-  const reachable = projects.filter((project) => projectRunsOn(project.rootKey, serverId));
-  const displayed = reachable.filter((project) => members.includes(project.rootKey));
-  const candidates =
-    displayed.length > 0
-      ? displayed
-      : repositoryCounterparts(selected, members, projects, reachable, repositoryIdentities, links);
   // Multiple linked checkouts on the same server require an explicit selection, not a guess.
   if (candidates.length !== 1)
     return {
@@ -181,6 +177,65 @@ export function environmentComposerScope(
     ownerId: target.ownerId,
     generation: target.generation,
   };
+}
+
+function environmentCandidates(
+  projectRootKey: string,
+  groups: readonly AgentProjectGroup[],
+  projects: readonly AgentProjectDescriptor[],
+  serverId: string | null,
+  repositoryIdentities: ReadonlyMap<string, string>,
+  links: ReadonlyMap<string, string>,
+): readonly AgentProjectDescriptor[] {
+  const selected = projects.find((project) => project.rootKey === projectRootKey);
+  const group = groups.find(
+    (candidate) =>
+      candidate.projectRootKey === projectRootKey ||
+      candidate.memberProjectRootKeys?.includes(projectRootKey),
+  );
+  const members = group?.memberProjectRootKeys ?? [projectRootKey];
+  const reachable = projects.filter((project) => projectRunsOn(project.rootKey, serverId));
+  const displayed = reachable.filter((project) => members.includes(project.rootKey));
+  if (displayed.length > 0) return displayed;
+  return repositoryCounterparts(
+    selected,
+    members,
+    projects,
+    reachable,
+    repositoryIdentities,
+    links,
+  );
+}
+
+export function missingServerCounterpart(
+  scope: ComposerScope | null,
+  groups: readonly AgentProjectGroup[],
+  projects: readonly AgentProjectDescriptor[],
+  serverId: string | null,
+  repositoryIdentities: ReadonlyMap<string, string> = NO_REPOSITORY_IDENTITIES,
+  links: ReadonlyMap<string, string> = NO_LINKS,
+): AgentProjectDescriptor | null {
+  if (serverId === null || scope === null || scope.kind === "missing") return null;
+  const source = projects.find((project) => project.rootKey === scope.projectRootKey);
+  if (source === undefined || !acceptsDraft(source) || !projectRunsOn(source.rootKey, null))
+    return null;
+  const candidates = environmentCandidates(
+    source.rootKey,
+    groups,
+    projects,
+    serverId,
+    repositoryIdentities,
+    links,
+  );
+  if (candidates.length > 0) return null;
+  const namesake = projects.some(
+    (project) =>
+      projectRunsOn(project.rootKey, serverId) &&
+      acceptsDraft(project) &&
+      project.label === source.label,
+  );
+  if (namesake) return null;
+  return source;
 }
 
 /** New-thread commands retain the selected environment for a linked display project. */

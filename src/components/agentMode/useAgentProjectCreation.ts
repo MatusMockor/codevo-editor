@@ -144,6 +144,11 @@ export function useAgentProjectCreation(options: AgentProjectCreationOptions) {
       setCapacityError(null);
       active.open();
     },
+    addCounterpart(environment: string, initialPath: string | null) {
+      active.closeEntry();
+      setCapacityError(null);
+      remoteFolder.openFor(environment, initialPath);
+    },
     choose(environment: string | null, action: "existing" | "clone" | "folder") {
       if (action === "folder") {
         if (environment === null) return;

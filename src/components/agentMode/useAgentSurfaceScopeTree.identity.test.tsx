@@ -5,10 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
 import type { FileEntry } from "../../domain/workspace";
-import type { AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
+import { AgentSurfaceFileTree, type AgentSurfaceFileTreeProps } from "./AgentSurfaceFileTree";
 import type { AgentSurfaceScope } from "./agentSurfacePolicy";
 import { surfaceRepositoryScope, surfaceThreadView } from "./agentSurfaceTestFixtures";
 import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
+import { installResizeObserver } from "./agentSurfaceTerminalTestSupport";
 import { useAgentSurfaceScopeTree } from "./useAgentSurfaceScopeTree";
 
 interface PendingRead {
@@ -68,6 +69,7 @@ describe("surface tree follows exact owner identity", () => {
   );
   const chrome = chromeFixture({
     fileTree: {
+      editorFontSize: 18,
       files: { readDirectory },
       fileChanges: null,
       activePath: null,
@@ -120,6 +122,27 @@ describe("surface tree follows exact owner identity", () => {
     expect(current).not.toBeNull();
     return (current?.tree.entriesByDirectory[rootPath] ?? []).map((entry) => entry.path);
   }
+
+  it("renders the editor font size from workbench chrome in FileTree", async () => {
+    installResizeObserver();
+    function FontHarness() {
+      const fileTree = useAgentSurfaceScopeTree({
+        chrome,
+        filesOpen: true,
+        scope: surfaceRepositoryScope("/a"),
+        thread: null,
+        threadRootPath: null,
+        onSwitchScope: null,
+        onTrustScope: () => undefined,
+      });
+      if (fileTree === null) return null;
+      return <AgentSurfaceFileTree {...fileTree} />;
+    }
+
+    await act(async () => root.render(<FontHarness />));
+
+    expect(host.querySelector<HTMLElement>(".file-tree")?.style.fontSize).toBe("18px");
+  });
 
   it("treats thread A after B as a new owner and drops the first A's late results", async () => {
     await select(threadSelection("/a", "thread-a"));

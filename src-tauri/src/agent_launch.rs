@@ -230,11 +230,13 @@ impl AgentLaunchOptions {
         version: Option<&str>,
     ) -> Result<(), &'static str> {
         if let Self::ClaudeCode { model, .. } = self {
+            if *model == ClaudeModelChoice::Default {
+                return self.validate_default_capabilities(manifest);
+            }
             let entry = manifest
                 .resolve_model(model.as_str())
                 .ok_or(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
             if version.is_none()
-                && *model != ClaudeModelChoice::Default
                 && (entry.min_version.is_some() || entry.max_version_exclusive.is_some())
             {
                 return Err("Cannot verify the Claude Code version for this model. Refresh the provider status and try again.");
@@ -257,6 +259,9 @@ impl AgentLaunchOptions {
             ..
         } = self
         {
+            if *model == ClaudeModelChoice::Default {
+                return self.validate_default_capabilities(manifest);
+            }
             let entry = manifest
                 .resolve_model(model.as_str())
                 .ok_or(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR)?;
@@ -300,6 +305,53 @@ impl AgentLaunchOptions {
                     );
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn validate_default_capabilities(
+        &self,
+        manifest: &crate::claude_model_manifest_domain::ClaudeModelManifest,
+    ) -> Result<(), &'static str> {
+        let Self::ClaudeCode {
+            effort,
+            context,
+            fast_mode,
+            thinking_mode,
+            ..
+        } = self
+        else {
+            return Err(AGENT_LAUNCH_PROVIDER_MISMATCH_ERROR);
+        };
+        let effort = match effort {
+            ClaudeEffortChoice::Default => "default",
+            ClaudeEffortChoice::Low => "low",
+            ClaudeEffortChoice::Medium => "medium",
+            ClaudeEffortChoice::High => "high",
+            ClaudeEffortChoice::Xhigh => "xhigh",
+            ClaudeEffortChoice::Max => "max",
+            ClaudeEffortChoice::Ultracode => "ultracode",
+            ClaudeEffortChoice::Ultrathink => "ultrathink",
+        };
+        let context = match context {
+            ClaudeContextChoice::TwoHundredK => "200k",
+            ClaudeContextChoice::OneM => "1m",
+        };
+        let entries = &manifest.claude_code;
+        if (effort != "default"
+            && !entries
+                .iter()
+                .any(|entry| entry.efforts.iter().any(|value| value == effort)))
+            || (entries
+                .iter()
+                .any(|entry| !entry.context_windows.is_empty())
+                && !entries
+                    .iter()
+                    .any(|entry| entry.context_windows.iter().any(|value| value == context)))
+            || (*fast_mode && !entries.iter().any(|entry| entry.fast_mode))
+            || (*thinking_mode && !entries.iter().any(|entry| entry.thinking_mode))
+        {
+            return Err(AGENT_LAUNCH_CAPABILITY_MISMATCH_ERROR);
         }
         Ok(())
     }

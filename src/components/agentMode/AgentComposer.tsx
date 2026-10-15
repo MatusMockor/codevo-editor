@@ -60,14 +60,21 @@ import {
 import { useAgentTextPaste } from "./useAgentTextPaste";
 import { useAgentAttachmentIntake } from "./useAgentAttachmentIntake";
 import { useAgentComposerDragDrop } from "./useAgentComposerDragDrop";
-import { newThreadComposerLaunch, normalizeAgentComposerLaunch } from "./agentComposerLaunch";
-import { useAgentNewThreadDefaults } from "./useAgentNewThreadDefaults";
+import {
+  claudeUnavailableModelNotice,
+  newThreadComposerLaunch,
+  normalizeAgentComposerLaunch,
+} from "./agentComposerLaunch";
+import {
+  useAgentNewThreadDefaults,
+  useAgentNewThreadModelFallback,
+} from "./useAgentNewThreadDefaults";
 import { AgentComposerCommands } from "./AgentComposerCommands";
 import { useAgentComposerCommands } from "./useAgentComposerCommands";
 import type { AgentComposerCommandId } from "../../domain/agentComposerCommand";
 import { HEAD_WORKTREE_BASE, type AgentWorktreeBase } from "../../domain/agentWorktreeBase";
 import { AgentLaunchControls, type AgentLaunchControlRequest } from "./AgentLaunchControls";
-import { agentLaunchForDispatch } from "./agentLaunchPresentation";
+import { agentLaunchForDispatch, agentLaunchForServerDispatch } from "./agentLaunchPresentation";
 import { formatAgentPromptBytes } from "./agentModePresentation";
 import { agentSubmitShortcut } from "./agentSubmitShortcut";
 import { useCompactComposerControls } from "./useCompactComposerControls";
@@ -311,6 +318,7 @@ export function AgentComposer({
   }, [promptOwnerKey, executionServerId, attachmentTargetKey]);
   const executionTarget: AgentExecutionTarget = executionServerId === null ? "local" : "server";
   const newThreadDefaults = useAgentNewThreadDefaults(executionTarget);
+  const claudeFallback = useAgentNewThreadModelFallback(executionTarget);
   const normalizedLaunch = useMemo(
     () =>
       normalizeAgentComposerLaunch(
@@ -327,19 +335,19 @@ export function AgentComposer({
   const configuredModel =
     discovery?.kind === "detected" ? (discovery.configuredModel ?? null) : null;
   const effectiveLaunch = useMemo(() => {
-    const dispatched = agentLaunchForDispatch(
-      normalizedLaunch,
-      configuredModel,
-      catalog,
-      codexCatalog,
-    );
+    const dispatch =
+      executionTarget === "server" ? agentLaunchForServerDispatch : agentLaunchForDispatch;
+    const dispatched = dispatch(normalizedLaunch, configuredModel, catalog, codexCatalog);
     if (executionTarget === "local") return dispatched;
     return agentLaunchWithoutBrowser(dispatched);
   }, [normalizedLaunch, configuredModel, executionTarget, catalog, codexCatalog]);
   const modelFallbackNotice =
     normalizedLaunch.provider === "codex"
       ? codexUnavailableModelNotice(normalizedLaunch, codexCatalog)
-      : null;
+      : claudeUnavailableModelNotice(
+          !followUp && claudeFallback?.offered === normalizedLaunch.model ? claudeFallback : null,
+          catalog,
+        );
   const dangerousLaunch = agentLaunchIsDangerous(effectiveLaunch);
   const providerReason =
     providerEnabled[effectiveLaunch.provider] === false
@@ -474,7 +482,7 @@ export function AgentComposer({
         onOpenRequestHandled={() => setControlRequest(null)}
         executionTarget={executionTarget}
         favorites={favorites}
-        launch={effectiveLaunch}
+        launch={normalizedLaunch}
         onLaunchChange={onLaunchChange}
         presentation={compact ? { kind: "compact", checkout: null } : { kind: "inline" }}
         providerEnabled={providerEnabled}
@@ -490,6 +498,7 @@ export function AgentComposer({
       mode,
       target,
       favorites,
+      normalizedLaunch,
       effectiveLaunch,
       onLaunchChange,
       compact,
@@ -574,8 +583,8 @@ export function AgentComposer({
     if (allProvidersDisabled) return;
     changePrompt("");
     if (command === "plan") {
-      if (effectiveLaunch.provider === "claudeCode") {
-        onLaunchChange({ ...effectiveLaunch, mode: "plan" });
+      if (normalizedLaunch.provider === "claudeCode") {
+        onLaunchChange({ ...normalizedLaunch, mode: "plan" });
       }
       return;
     }

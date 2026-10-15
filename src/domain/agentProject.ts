@@ -20,7 +20,10 @@ export interface AgentProjectDescriptor {
   readonly isolationPolicy: AgentIsolationPolicy;
   readonly leaseToken: number | null;
   readonly remoteProjectKind?: RemoteProjectKind;
+  readonly repositoryDiscovery?: AgentProjectRepositoryDiscovery;
 }
+
+export type AgentProjectRepositoryDiscovery = "pending" | "settled";
 
 export interface AgentRootLeaseAcquireRequest {
   readonly rootPath: string;

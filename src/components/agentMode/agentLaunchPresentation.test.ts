@@ -28,6 +28,7 @@ import {
   agentLaunchEffortValue,
   agentLaunchEffectiveModel,
   agentLaunchForDispatch,
+  agentLaunchForServerDispatch,
   agentLaunchMetaLabel,
   agentLaunchSummaryLabel,
   agentLaunchModeChoices,
@@ -71,6 +72,76 @@ describe("agentLaunchPresentation", () => {
     expect(agentLaunchForDispatch({ ...launch, model: "gpt-5.5" }, "gpt-6-astra").model).toBe(
       "gpt-5.5",
     );
+  });
+
+  it("preserves every Claude server default option without consulting the manifest", () => {
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "plan",
+      effort: "ultracode",
+      context: "1m",
+      fastMode: true,
+      thinkingMode: true,
+    };
+
+    expect(agentLaunchForServerDispatch(launch)).toBe(launch);
+    expect(agentLaunchForServerDispatch(launch, "claude-opus-5")).toBe(launch);
+    expect(agentLaunchForDispatch(launch)).toEqual(launch);
+  });
+
+  it("delegates explicit Claude and all Codex server launches to the existing dispatch policy", () => {
+    const launches: readonly AgentLaunchOptions[] = [
+      { provider: "claudeCode", model: "claude-sonnet-5", mode: "plan", effort: "high" },
+      { provider: "codex", model: "default", mode: "workspaceWrite", effort: "high" },
+      { provider: "codex", model: "gpt-6-luna", mode: "readOnly", effort: "ultra" },
+    ];
+
+    for (const launch of launches) {
+      expect(
+        agentLaunchForServerDispatch(
+          launch,
+          "gpt-6-astra",
+          BUNDLED_CLAUDE_MODEL_MANIFEST,
+          BUNDLED_CODEX_MODEL_CATALOG,
+        ),
+      ).toEqual(
+        agentLaunchForDispatch(
+          launch,
+          "gpt-6-astra",
+          BUNDLED_CLAUDE_MODEL_MANIFEST,
+          BUNDLED_CODEX_MODEL_CATALOG,
+        ),
+      );
+    }
+  });
+
+  it("labels and explains the Claude server default independently of the local manifest", () => {
+    const launch: AgentLaunchOptions = {
+      provider: "claudeCode",
+      model: "default",
+      mode: "default",
+      effort: "high",
+    };
+
+    expect(agentLaunchModelLabel(launch, null, undefined, undefined, "server")).toBe(
+      "Server default",
+    );
+    expect(agentLaunchModelHint(launch, null, undefined, undefined, "server")).toBe(
+      "Uses the model configured in Claude Code on the server.",
+    );
+    for (const explicit of [
+      { ...launch, model: "claude-opus-5" },
+      { provider: "codex", model: "default", mode: "default" },
+    ] as const) {
+      expect(agentLaunchModelLabel(explicit, null, undefined, undefined, "server")).toBe(
+        agentLaunchModelLabel(explicit),
+      );
+      expect(agentLaunchModelHint(explicit, null, undefined, undefined, "server")).toBe(
+        agentLaunchModelHint(explicit),
+      );
+    }
+    expect(agentLaunchModelLabel(launch)).toBe("Claude Code default");
   });
 
   it("ignores a value that is not a choice of the current provider", () => {
@@ -167,7 +238,7 @@ describe("agentLaunchPresentation", () => {
     }
   });
 
-  it("resolves the Claude catalog default to a real model name", () => {
+  it("preserves the unresolved Claude Code default", () => {
     expect(
       agentLaunchModelLabel({
         provider: "claudeCode",
@@ -175,7 +246,7 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toBe("Claude Sonnet 5");
+    ).toBe("Claude Code default");
     expect(agentLaunchModelLabel({ provider: "codex", model: "default", mode: "default" })).toBe(
       "GPT-6.1-Sol",
     );
@@ -186,7 +257,7 @@ describe("agentLaunchPresentation", () => {
         mode: "default",
         effort: "default",
       }),
-    ).toContain("Claude model catalog");
+    ).toBe("Uses the model configured in Claude Code.");
     expect(
       agentLaunchModeLabel({
         provider: "claudeCode",
@@ -584,7 +655,7 @@ describe("agent model rows", () => {
     });
     expect(agentLaunchWithChrome({ ...claude, model: "default" }, false, "claude-opus-5")).toEqual({
       ...claude,
-      model: "claude-opus-5",
+      model: "default",
       chrome: false,
     });
     const codex: AgentLaunchOptions = {
@@ -642,7 +713,9 @@ describe("remote Claude model presentation", () => {
     const explicit: AgentLaunchOptions = { ...launch, model: "claude-new-model-99" };
     expect(agentLaunchModelHint(explicit, null, bare)).toBeNull();
     expect(agentModelRows("claudeCode", null, null, bare)[0].hint).toBeNull();
-    expect(agentLaunchModelHint(launch, null, bare)).toBe("Selected by the Claude model catalog.");
+    expect(agentLaunchModelHint(launch, null, bare)).toBe(
+      "Uses the model configured in Claude Code.",
+    );
     expect(agentLaunchModelHint({ ...launch, model: "claude-unlisted-1" }, null, bare)).toBe(
       "Runs the session on claude-unlisted-1.",
     );
@@ -656,7 +729,7 @@ describe("remote Claude model presentation", () => {
     expect(agentLaunchModelChoices("claudeCode", catalog)[0].value).toBe("claude-new-model-99");
     expect(agentLaunchModelLabel(launch, "opus", catalog)).toBe("New model 99");
     expect(agentLaunchModelHint(launch, "opus", catalog)).toContain("A newly published model.");
-    expect(agentLaunchEffectiveModel(launch, null, catalog)).toBe("claude-new-model-99");
+    expect(agentLaunchEffectiveModel(launch, null, catalog)).toBe("default");
     expect(agentLaunchForDispatch(launch, "opus", catalog).model).toBe("claude-new-model-99");
     const selected = agentLaunchWithModel(launch, "claude-new-model-99", null, catalog);
     expect(selected).toMatchObject({
@@ -679,7 +752,7 @@ describe("remote Claude model presentation", () => {
     expect(
       agentLaunchForDispatch(
         { ...launch, effort: "high", context: "1m", fastMode: true, thinkingMode: true },
-        null,
+        "opus",
         lowOnlyCatalog,
       ),
     ).toMatchObject({
@@ -689,7 +762,7 @@ describe("remote Claude model presentation", () => {
       fastMode: false,
       thinkingMode: false,
     });
-    expect(agentLaunchForDispatch(launch, null, catalog)).toMatchObject({
+    expect(agentLaunchForDispatch(launch, "opus", catalog)).toMatchObject({
       effort: "low",
       context: "200k",
     });

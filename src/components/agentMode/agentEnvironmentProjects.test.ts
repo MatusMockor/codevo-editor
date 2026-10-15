@@ -10,6 +10,7 @@ import { agentRailScopeEntries, agentRailSections } from "./agentSidebarPresenta
 import {
   environmentComposerScope,
   groupedEnvironmentProjects,
+  missingServerCounterpart,
   newThreadEnvironmentProjectRootKey,
 } from "./agentEnvironmentProjects";
 import { projectFixture, fixtureRepository } from "./agentThreadsSurfaceTestFixtures";
@@ -702,5 +703,72 @@ describe("project grouping modes", () => {
     expect(environmentComposerScope(serverScope, eligibleGroups, eligible, null, known)?.kind).toBe(
       "missing",
     );
+  });
+});
+
+describe("local project missing on the selected server", () => {
+  const folder = projectFixture({
+    rootKey: "/workspace/playablemaker",
+    rootPath: "/workspace/playablemaker",
+    ownerId: "agent-root:playablemaker",
+    label: "playablemaker",
+    repositories: [fixtureRepository("/workspace/playablemaker/pa-ai-be", "pa-ai-be")],
+  });
+  const folderScope = {
+    kind: "project" as const,
+    projectRootKey: folder.rootKey,
+    repositoryRoot: folder.rootPath,
+    ownerId: folder.ownerId,
+    generation: folder.generation,
+  };
+  const serverProject = (name: string, label = name) => {
+    const rootKey = `remote:linux:runner:${name}`;
+    return projectFixture({ rootKey, rootPath: rootKey, ownerId: rootKey, label });
+  };
+
+  function counterpart(
+    inventory: ReturnType<typeof projectFixture>[],
+    serverId: string | null,
+    projectLinks: ReadonlyMap<string, string> = new Map(),
+  ) {
+    const groups = groupedEnvironmentProjects(
+      agentProjectGroups(inventory, [], []),
+      inventory,
+      projectLinks,
+    );
+    return missingServerCounterpart(
+      folderScope,
+      groups,
+      inventory,
+      serverId,
+      new Map(),
+      projectLinks,
+    );
+  }
+
+  it("offers the selected local project when the server has no counterpart", () => {
+    expect(counterpart([folder, serverProject("codevo-editor")], "linux")).toBe(folder);
+  });
+
+  it("offers nothing locally, on a linked server, or next to a same-named server project", () => {
+    const added = serverProject("playablemaker");
+    expect(counterpart([folder, added], null)).toBeNull();
+    expect(
+      counterpart([folder, added], "linux", new Map([[added.rootKey, folder.rootKey]])),
+    ).toBeNull();
+    expect(counterpart([folder, added], "linux")).toBeNull();
+  });
+
+  it("never offers an untrusted local project or a scope that already failed", () => {
+    const untrusted = { ...folder, trust: "untrusted" as const };
+    expect(counterpart([untrusted], "linux")).toBeNull();
+    expect(
+      missingServerCounterpart(
+        { kind: "missing", projectRootKey: folder.rootKey, repositoryRoot: folder.rootPath },
+        [],
+        [folder],
+        "linux",
+      ),
+    ).toBeNull();
   });
 });

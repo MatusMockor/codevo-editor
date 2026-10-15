@@ -202,3 +202,32 @@
   color: var(--cv-fg-muted);
   font-size: var(--cv-t-xs);
 }
+
+.agent-remote-project-choice__counterpart {
+  flex: none;
+  padding: var(--cv-space-3);
+  box-shadow: var(--cv-edge-bottom-hair);
+}
+
+.agent-remote-project-choice__counterpart-add {
+  grid-template-columns: 16px minmax(0, 1fr);
+}
+
+.agent-remote-project-choice__counterpart-add svg,
+.agent-remote-project-choice__counterpart-add strong {
+  color: var(--cv-accent);
+}
+
+.agent-remote-project-choice__counterpart-add:hover,
+.agent-remote-project-choice__counterpart-add:focus-visible {
+  background: var(--cv-accent-soft);
+}
+
+.agent-remote-project-choice__counterpart-add:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.agent-remote-project-choice__counterpart-add:disabled:hover {
+  background: transparent;
+}

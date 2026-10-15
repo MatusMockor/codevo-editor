@@ -154,3 +154,12 @@ export function useProjectRepositoryIdentities(
 ): ReadonlyMap<string, string> {
   return useDiscoveredValues(projectTargets(projects), local, remote, timers, knownIdentity);
 }
+
+export function useProjectRepositoryIdentityOutcomes(
+  projects: readonly AgentProjectDescriptor[],
+  local: RepositoryIdentityGateway | null,
+  remote: RemoteRepositoryIdentityGateway | null,
+  timers: RepositoryIdentityTimers = SYSTEM_REPOSITORY_IDENTITY_TIMERS,
+): RepositoryIdentityOutcomes {
+  return useDiscoveredValues(projectTargets(projects), local, remote, timers, wholeOutcome);
+}

@@ -292,7 +292,7 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(providerFooter("claudeCode")).not.toBeNull();
     expect(providerFooter("codex")).toBeNull();
-    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
+    expect(modelPicker().textContent).toContain("Claude Code default");
     expect(prompt().disabled).toBe(false);
     click('button[aria-label="Agent model"]');
     expect(host.querySelector('button[aria-label="Claude Code models"]')).not.toBeNull();
@@ -317,7 +317,7 @@ describe("AgentWorkbenchScreen", () => {
 
     expect(providerFooter("claudeCode")).not.toBeNull();
     expect(providerFooter("codex")).toBeNull();
-    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
+    expect(modelPicker().textContent).toContain("Claude Code default");
     expect(modelPicker().disabled).toBe(false);
     expect(prompt().disabled).toBe(false);
     expect(host.querySelector('button[aria-label="Claude Code models"]')).not.toBeNull();
@@ -338,7 +338,7 @@ describe("AgentWorkbenchScreen", () => {
       }),
     );
 
-    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
+    expect(modelPicker().textContent).toContain("Claude Code default");
     expect(prompt().disabled).toBe(false);
 
     selectedProviderAuthority = { settingsRevision: 3, provider: "codex" };
@@ -376,7 +376,7 @@ describe("AgentWorkbenchScreen", () => {
     );
 
     expect(providerFooter("claudeCode")).not.toBeNull();
-    expect(modelPicker().textContent).toContain("Claude Sonnet 5");
+    expect(modelPicker().textContent).toContain("Claude Code default");
     expect(prompt().disabled).toBe(false);
   });
 
@@ -432,7 +432,11 @@ describe("AgentWorkbenchScreen", () => {
 
     render(createWorkbench(ROOT_A, { agents: withClaudeCli("2.1.283"), appSettings }));
 
-    expect(modelPicker().dataset.value).toBe("claude-sonnet-5");
+    expect(modelPicker().dataset.value).toBe("default");
+    expect(modelPicker().textContent).toContain("Claude Code default");
+    expect(host.textContent).toContain(
+      "Claude Sonnet 5.5 needs Claude Code 2.1.284 or newer. This turn uses your Claude Code default model instead.",
+    );
 
     render(createWorkbench(ROOT_A, { agents: withClaudeCli("2.1.284"), appSettings }));
 

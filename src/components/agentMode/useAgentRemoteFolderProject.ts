@@ -20,7 +20,7 @@ export interface AgentRemoteFolderProjectOptions {
 }
 
 export interface AgentRemoteFolderProject extends RemoteProjectFolderController {
-  openFor(serverId: string): void;
+  openFor(serverId: string, initialPath?: string | null): void;
 }
 
 type FolderSession = Readonly<{
@@ -59,7 +59,7 @@ export function useAgentRemoteFolderProject(
   });
   return {
     ...controller,
-    openFor(nextServerId) {
+    openFor(nextServerId, initialPath = null) {
       setSession({
         runnerGateway,
         owner: {
@@ -67,6 +67,7 @@ export function useAgentRemoteFolderProject(
           workspaceOwner: options.workspaceRoot,
           directoryGateway: createRemoteProjectDirectoryGateway(runnerGateway, nextServerId),
           registrationGateway: createRemoteProjectRegistrationGateway(runnerGateway, nextServerId),
+          ...(initialPath === null ? {} : { initialPath }),
         },
       });
     },

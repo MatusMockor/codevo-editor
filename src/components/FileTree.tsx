@@ -2,13 +2,15 @@ import { ChevronRight } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, RefObject, UIEvent } from "react";
 import { gitStatusLabel, gitStatusTitle, type GitChangeStatus } from "../domain/git";
+import { defaultEditorFontSize } from "../domain/settings";
+import { normalizeTreeFontSize, treeRowHeight } from "../domain/fileTreeLayout";
+export { TREE_ROW_HEIGHT } from "../domain/fileTreeLayout";
 import type { FileEntry } from "../domain/workspace";
 import { workspaceRelativePath } from "../domain/pathDerivation";
 import { ContextMenu } from "./ContextMenu";
 import { getTreeGitStatusClassName } from "./gitStatusClassName";
 import { TreeEntryIcon } from "./TreeEntryIcon";
 
-export const TREE_ROW_HEIGHT = 26;
 const TREE_ROW_OVERSCAN = 8;
 const TREE_VIEWPORT_FALLBACK_HEIGHT = 360;
 const TREE_PADDING_TOP = 6;
@@ -26,6 +28,7 @@ interface VisibleTreeState {
 }
 
 interface FileTreeProps {
+  readonly fontSize?: number;
   rootPath: string | null;
   entriesByDirectory: Record<string, FileEntry[]>;
   fileStatusesByPath?: Record<string, GitChangeStatus>;
@@ -47,6 +50,7 @@ interface FileTreeProps {
 }
 
 function FileTreeComponent({
+  fontSize = defaultEditorFontSize,
   rootPath,
   entriesByDirectory,
   fileStatusesByPath,
@@ -66,6 +70,8 @@ function FileTreeComponent({
   onPrefetchFile,
   onCancelPrefetchFile,
 }: FileTreeProps) {
+  const normalizedFontSize = normalizeTreeFontSize(fontSize);
+  const rowHeight = treeRowHeight(normalizedFontSize);
   const activeRowRef = useRef<HTMLButtonElement | null>(null);
   const pendingRevealKeyRef = useRef<string | null>(null);
   const pendingScrollTopRef = useRef(0);
@@ -119,7 +125,7 @@ function FileTreeComponent({
   const itemCount = visibleRows.length;
   const effectiveViewportHeight =
     viewportHeight > 0 ? viewportHeight : TREE_VIEWPORT_FALLBACK_HEIGHT;
-  const totalContentHeight = itemCount * TREE_ROW_HEIGHT;
+  const totalContentHeight = itemCount * rowHeight;
   const totalScrollHeight = totalContentHeight + TREE_PADDING_TOP + TREE_PADDING_BOTTOM;
   const maxScrollTop = Math.max(0, totalScrollHeight - effectiveViewportHeight);
   const clampedScrollTop = Math.min(scrollTop, maxScrollTop);
@@ -127,14 +133,14 @@ function FileTreeComponent({
   const normalizedRowsScrollTop = Math.max(0, normalizedScrollTop - TREE_PADDING_TOP);
   const startIndex = Math.max(
     0,
-    Math.floor(normalizedRowsScrollTop / TREE_ROW_HEIGHT) - TREE_ROW_OVERSCAN,
+    Math.floor(normalizedRowsScrollTop / rowHeight) - TREE_ROW_OVERSCAN,
   );
   const endIndex = Math.min(
     itemCount,
-    startIndex + Math.ceil(effectiveViewportHeight / TREE_ROW_HEIGHT) + TREE_ROW_OVERSCAN * 2,
+    startIndex + Math.ceil(effectiveViewportHeight / rowHeight) + TREE_ROW_OVERSCAN * 2,
   );
   const rowsToRender = visibleRows.slice(startIndex, endIndex);
-  const renderedWindowOffset = startIndex * TREE_ROW_HEIGHT;
+  const renderedWindowOffset = startIndex * rowHeight;
   const virtualContentHeight = Math.max(totalScrollHeight, effectiveViewportHeight);
 
   useEffect(() => {
@@ -161,8 +167,8 @@ function FileTreeComponent({
     }
 
     const container = treeContainerRef.current;
-    const rowTop = TREE_PADDING_TOP + activeRowIndex * TREE_ROW_HEIGHT;
-    const adjustedRowBottom = rowTop + TREE_ROW_HEIGHT;
+    const rowTop = TREE_PADDING_TOP + activeRowIndex * rowHeight;
+    const adjustedRowBottom = rowTop + rowHeight;
     const currentScrollTop = container.scrollTop;
     const rowIsVisible =
       rowTop >= currentScrollTop && adjustedRowBottom <= currentScrollTop + effectiveViewportHeight;
@@ -181,6 +187,7 @@ function FileTreeComponent({
     pendingRevealKeyRef.current = null;
   }, [
     activePath,
+    rowHeight,
     effectiveViewportHeight,
     itemCount,
     maxScrollTop,
@@ -317,6 +324,7 @@ function FileTreeComponent({
     <nav
       aria-label="Workspace files"
       className="file-tree"
+      style={{ fontSize: `${normalizedFontSize}px` }}
       onScroll={handleScroll}
       ref={treeContainerRef}
     >
@@ -352,6 +360,7 @@ function FileTreeComponent({
                 }
                 key={entry.path}
                 level={level}
+                rowHeight={rowHeight}
                 onOpenFile={onOpenFile}
                 onPreviewFile={onPreviewFile}
                 onOpenContextMenu={openContextMenu}
@@ -393,6 +402,7 @@ function measureTreeViewportHeight(container: HTMLElement): number {
 }
 
 interface TreeRowProps {
+  readonly rowHeight: number;
   entry: FileEntry;
   level: number;
   isActive: boolean;
@@ -411,6 +421,7 @@ interface TreeRowProps {
 }
 
 const TreeRow = memo(function TreeRow({
+  rowHeight,
   entry,
   level,
   isActive,
@@ -438,7 +449,7 @@ const TreeRow = memo(function TreeRow({
       style={
         {
           "--tree-level": level,
-          height: `${TREE_ROW_HEIGHT}px`,
+          height: `${rowHeight}px`,
         } as CSSProperties
       }
     >
@@ -500,7 +511,7 @@ const TreeRow = memo(function TreeRow({
           onOpenContextMenu(entry, { x: event.clientX, y: event.clientY });
         }}
         ref={isActive ? activeRowRef : undefined}
-        style={{ height: `${TREE_ROW_HEIGHT}px` }}
+        style={{ height: `${rowHeight}px` }}
         title={title}
         type="button"
       >

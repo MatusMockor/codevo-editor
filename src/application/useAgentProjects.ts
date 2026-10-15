@@ -1332,6 +1332,7 @@ function projectDescriptors(
       trust: entry.trust,
       origin: projectOrigin(entry, isActive),
       repositories,
+      repositoryDiscovery: entry.repositories === null ? "pending" : "settled",
       isolationPolicy: isActive
         ? activeIsolationPolicy
         : (entry.isolationPolicy ?? DEFAULT_AGENT_ISOLATION_POLICY),

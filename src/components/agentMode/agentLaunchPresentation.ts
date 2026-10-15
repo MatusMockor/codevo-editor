@@ -417,7 +417,7 @@ export function agentLaunchWithEffort(
   launch: AgentLaunchOptions,
   value: string,
   configuredModel: string | null = null,
-  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+  _catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
   codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
 ): AgentLaunchOptions {
   if (launch.provider === "codex") {
@@ -425,8 +425,7 @@ export function agentLaunchWithEffort(
   }
   const effort = pick(CLAUDE_EFFORT_CHOICES, value);
   if (effort === null) return launch;
-  const model = explicitConfiguredClaudeModel(launch.model, configuredModel, catalog);
-  return { ...launch, model, effort };
+  return { ...launch, effort };
 }
 
 export function agentLaunchContextLabel(context: ClaudeContextChoice): string {
@@ -436,24 +435,22 @@ export function agentLaunchContextLabel(context: ClaudeContextChoice): string {
 export function agentLaunchWithContext(
   launch: AgentLaunchOptions,
   context: ClaudeContextChoice,
-  configuredModel: string | null,
-  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+  _configuredModel: string | null,
+  _catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
-  const model = explicitConfiguredClaudeModel(launch.model, configuredModel, catalog);
-  return { ...launch, model: model as ClaudeModelChoice, context };
+  return { ...launch, context };
 }
 
 export function agentLaunchWithFastMode(
   launch: AgentLaunchOptions,
   fastMode: boolean,
-  configuredModel: string | null,
-  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+  _configuredModel: string | null,
+  _catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
   return {
     ...launch,
-    model: explicitConfiguredClaudeModel(launch.model, configuredModel, catalog),
     fastMode,
   };
 }
@@ -461,13 +458,12 @@ export function agentLaunchWithFastMode(
 export function agentLaunchWithThinkingMode(
   launch: AgentLaunchOptions,
   thinkingMode: boolean,
-  configuredModel: string | null,
-  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+  _configuredModel: string | null,
+  _catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
   return {
     ...launch,
-    model: explicitConfiguredClaudeModel(launch.model, configuredModel, catalog),
     thinkingMode,
   };
 }
@@ -475,13 +471,12 @@ export function agentLaunchWithThinkingMode(
 export function agentLaunchWithChrome(
   launch: AgentLaunchOptions,
   chrome: boolean,
-  configuredModel: string | null,
-  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+  _configuredModel: string | null,
+  _catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): AgentLaunchOptions {
   if (launch.provider !== "claudeCode") return launch;
   return {
     ...launch,
-    model: explicitConfiguredClaudeModel(launch.model, configuredModel, catalog),
     chrome,
   };
 }
@@ -522,7 +517,15 @@ export function agentLaunchModelLabel(
   configuredModel: string | null = null,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
   codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
+  executionTarget: AgentExecutionTarget = "local",
 ): string {
+  if (
+    executionTarget === "server" &&
+    launch.provider === "claudeCode" &&
+    launch.model === "default"
+  ) {
+    return "Server default";
+  }
   if (launch.provider === "codex") {
     if (launch.model === "default") return codexDefaultModelLabel(configuredModel, codexCatalog);
     return codexModelText(launch.model, codexCatalog).label;
@@ -530,9 +533,7 @@ export function agentLaunchModelLabel(
   if (launch.model === "default") {
     const configured = configuredModelEntry(configuredModel, catalog)?.label;
     if (configured !== undefined) return configured;
-    return (
-      catalog.claudeCode.find((entry) => entry.isDefault)?.label ?? catalog.claudeCode[0].label
-    );
+    return "Claude Code default";
   }
   return modelText(launch, catalog).label;
 }
@@ -549,9 +550,7 @@ export function agentLaunchEffectiveModel(
   if (launch.model !== "default") return launch.model;
   const configured = configuredModelEntry(configuredModel, catalog)?.choice;
   if (configured !== undefined) return configured;
-  return (
-    catalog.claudeCode.find((entry) => entry.isDefault)?.choice ?? catalog.claudeCode[0].choice
-  );
+  return "default";
 }
 
 /** Resolves the display/default sentinel before a launch crosses into the CLI. */
@@ -584,12 +583,30 @@ export function agentLaunchForDispatch(
   return codexLaunchForDispatch(launch, configuredModel, codexCatalog);
 }
 
+export function agentLaunchForServerDispatch(
+  launch: AgentLaunchOptions,
+  configuredModel: string | null = null,
+  catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
+  codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
+): AgentLaunchOptions {
+  if (launch.provider === "claudeCode" && launch.model === "default") return launch;
+  return agentLaunchForDispatch(launch, configuredModel, catalog, codexCatalog);
+}
+
 export function agentLaunchModelHint(
   launch: AgentLaunchOptions,
   configuredModel: string | null = null,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
   codexCatalog: CodexModelCatalog = BUNDLED_CODEX_MODEL_CATALOG,
+  executionTarget: AgentExecutionTarget = "local",
 ): string | null {
+  if (
+    executionTarget === "server" &&
+    launch.provider === "claudeCode" &&
+    launch.model === "default"
+  ) {
+    return "Uses the model configured in Claude Code on the server.";
+  }
   if (launch.provider === "codex") {
     if (launch.model === "default") return codexDefaultModelHint(configuredModel, codexCatalog);
     return codexModelText(launch.model, codexCatalog).hint;
@@ -602,8 +619,7 @@ export function agentLaunchModelHint(
         `Selected by your ${agentModelProviderName(launch.provider)} configuration.`,
       );
     }
-    const fallback = catalog.claudeCode.find((entry) => entry.isDefault) ?? catalog.claudeCode[0];
-    return withDescription(fallback, "Selected by the Claude model catalog.");
+    return "Uses the model configured in Claude Code.";
   }
   return modelText(launch, catalog).hint;
 }
@@ -788,11 +804,7 @@ function explicitConfiguredClaudeModel(
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
 ): ClaudeModelChoice {
   if (model !== "default") return model;
-  return (
-    manifestClaudeModel(model, configuredModel, catalog)?.choice ??
-    catalog.claudeCode.find((entry) => entry.isDefault)?.choice ??
-    catalog.claudeCode[0].choice
-  );
+  return manifestClaudeModel(model, configuredModel, catalog)?.choice ?? "default";
 }
 
 function configuredModelEntry(

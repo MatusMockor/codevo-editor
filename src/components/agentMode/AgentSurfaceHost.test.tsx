@@ -950,6 +950,7 @@ function filesChrome(
     ...chrome(fakeTerminalGateway()),
     layout,
     fileTree: {
+      editorFontSize: 18,
       files: { readDirectory: listing },
       fileChanges: null,
       activePath: null,

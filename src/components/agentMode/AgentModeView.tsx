@@ -2,8 +2,7 @@ import type { GitChangedFile } from "../../domain/git";
 import type { AgentSurfaceKind } from "../../domain/agentWorkbenchLayout";
 import type { AgentDiffTurn } from "../../domain/diffView/agentDiffScope";
 import { useAgentDiffScopeSelection } from "./useAgentDiffScopeSelection";
-import { useProjectRepositoryIdentities } from "../../application/useProjectRepositoryIdentities";
-import { repositoryIdentityCandidates } from "../../application/repositoryIdentityCandidates";
+import { useAgentProjectIdentities } from "../../application/useAgentProjectIdentities";
 import { TauriRepositoryIdentityGateway } from "../../infrastructure/tauriRepositoryIdentityGateway";
 import { SHARED_REMOTE_REPOSITORY_IDENTITY } from "../remoteRunner/sharedRemoteRepositoryIdentity";
 import { TauriRemoteGitSyncGateway } from "../../infrastructure/tauriRemoteGitSyncGateway";
@@ -415,8 +414,9 @@ function LocalAgentModeView({
     [projects, agents.orphanedWorktrees, presentationThreads],
   );
 
-  const repositoryIdentities = useProjectRepositoryIdentities(
-    repositoryIdentityCandidates(projects, projectLinks),
+  const repositoryIdentities = useAgentProjectIdentities(
+    projects,
+    projectLinks,
     PROJECT_IDENTITY_GATEWAY,
     REMOTE_PROJECT_IDENTITY_GATEWAY,
   );
@@ -1311,6 +1311,8 @@ function LocalAgentModeView({
                       projects={composerProjects}
                       cloneRunning={remoteAddCloneRunning}
                       onAddProject={openRemoteAddProject}
+                      counterpart={draft.counterpart}
+                      onAddCounterpart={(path) => creation.addCounterpart(selectedServerId, path)}
                       onSelect={(project) => {
                         const live = projects.find(
                           (candidate) =>
