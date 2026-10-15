@@ -60,9 +60,9 @@ export interface PalettePresenterInput {
   readonly commands: readonly Command[];
   commandEnabled(command: Command): boolean;
   readonly agent: AgentPaletteProvider | null;
-  readonly editorProjects: readonly PaletteProject[];
-  readonly editorScripts: readonly PaletteScript[];
-  readonly editorScriptsTruncated: boolean;
+  readonly workspaceProjects: readonly PaletteProject[];
+  readonly workspaceScripts: readonly PaletteScript[];
+  readonly workspaceScriptsTruncated: boolean;
   readonly rootFiles: readonly FileSearchResult[];
   readonly branches: PaletteBranchesView;
   readonly models: ComposerPaletteModels | null;
@@ -257,7 +257,7 @@ function commandItems(
 }
 
 function projectsOf(input: PalettePresenterInput): readonly PaletteProject[] {
-  return input.agent?.projects ?? input.editorProjects;
+  return input.agent?.projects ?? input.workspaceProjects;
 }
 
 function projectItems(
@@ -340,11 +340,11 @@ function threadItem(thread: PaletteThread, tokens: readonly string[], nowMs: num
 }
 
 function scriptsOf(input: PalettePresenterInput): readonly PaletteScript[] {
-  return input.agent?.scripts ?? input.editorScripts;
+  return input.agent?.scripts ?? input.workspaceScripts;
 }
 
 function scriptsTruncated(input: PalettePresenterInput): boolean {
-  return input.agent?.scriptsTruncated ?? input.editorScriptsTruncated;
+  return input.agent?.scriptsTruncated ?? input.workspaceScriptsTruncated;
 }
 
 function scriptsLabel(input: PalettePresenterInput): string {

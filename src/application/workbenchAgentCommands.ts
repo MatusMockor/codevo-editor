@@ -82,7 +82,7 @@ export function workbenchAgentCommands({
     category: "Agents",
     shortcut: shortcut?.("agent.toggleSidebar"),
     isEnabled: inAgentMode,
-    isShortcutEnabled: (context) => inAgentMode(context) && !viewCommands.editorTextFocused(),
+    isShortcutEnabled: inAgentMode,
     run: () => agentLayout?.dispatch({ kind: "toggleRail" }),
   };
 

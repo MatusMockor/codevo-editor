@@ -47,32 +47,17 @@ const terminalLayout: AgentWorkbenchLayout = {
 };
 
 describe("useAgentWorkbenchLayout", () => {
-  it("starts in the agent layout for an owned workspace", () => {
+  it("starts from the initial layout for an owned workspace", () => {
     const harness = renderLayout({ workspaceOwnerKey: "workspace-a", hasWorkspace: true });
 
-    expect(harness.result().agentModeActive).toBe(true);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
     expect(harness.result().agentWorkbench.layout).toEqual(initialAgentWorkbenchLayout);
     harness.unmount();
   });
 
-  it("starts in the agent layout without a workspace", () => {
+  it("starts from the initial layout without a workspace", () => {
     const harness = renderLayout({ workspaceOwnerKey: null, hasWorkspace: false });
 
-    expect(harness.result().agentModeActive).toBe(true);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
-    harness.unmount();
-  });
-
-  it("derives the editor-only fallback while the agent layout is unavailable", () => {
-    const harness = renderLayout({
-      workspaceOwnerKey: "workspace-a",
-      hasWorkspace: true,
-      agentLayoutAvailable: false,
-    });
-
-    expect(harness.result().agentModeActive).toBe(false);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("editor-only");
+    expect(harness.result().agentWorkbench.layout).toEqual(initialAgentWorkbenchLayout);
     harness.unmount();
   });
 
@@ -93,8 +78,6 @@ describe("useAgentWorkbenchLayout", () => {
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
 
-    expect(harness.result().agentModeActive).toBe(true);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
     expect(harness.result().agentWorkbench.layout).toMatchObject({
       rightPanel: "open",
       activeSurface: "diff",
@@ -115,22 +98,25 @@ describe("useAgentWorkbenchLayout", () => {
     harness.unmount();
   });
 
-  it("ignores a legacy persisted expanded editor mode", async () => {
-    const harness = renderLayout({
-      workspaceOwnerKey: "workspace-a",
-      hasWorkspace: true,
-      hydration: {
-        ownerKey: "workspace-a",
-        layout: { ...diffLayout, layout: "editor-expanded" },
-      },
-    });
+  it.each(["editor-expanded", "editor-only"])(
+    "ignores a legacy persisted %s layout mode",
+    async (legacyMode) => {
+      const harness = renderLayout({
+        workspaceOwnerKey: "workspace-a",
+        hasWorkspace: true,
+        hydration: {
+          ownerKey: "workspace-a",
+          layout: { ...diffLayout, layout: legacyMode, bottomPanelView: "problems" },
+        },
+      });
 
-    await harness.settle();
+      await harness.settle();
 
-    expect(harness.result().agentModeActive).toBe(true);
-    expect(harness.result().agentWorkbench.layout).toEqual(diffLayout);
-    harness.unmount();
-  });
+      expect(harness.result().agentWorkbench.layout).toEqual(diffLayout);
+      expect(harness.result().agentWorkbench.persistedBottomPanel).toBe(false);
+      harness.unmount();
+    },
+  );
 
   it("rehydrates an open panel without a surface as the chooser", async () => {
     const harness = renderLayout({
@@ -364,23 +350,6 @@ describe("useAgentWorkbenchLayout", () => {
     const last = persistence.writes[persistence.writes.length - 1];
     expect(last.layout.bottomPanel).toBe(true);
     expect(last.layout.activeSurface).toBe("diff");
-    harness.unmount();
-  });
-
-  it("never writes a bottom panel change made outside the agent layout", async () => {
-    const persistence = recordingPersistence();
-    const harness = renderLayout({
-      workspaceOwnerKey: "workspace-a",
-      hasWorkspace: true,
-      agentLayoutAvailable: false,
-      bottomPanelVisible: false,
-      persistence,
-    });
-
-    harness.rerender({ bottomPanelVisible: true });
-    await harness.settle();
-
-    expect(persistence.writes).toEqual([]);
     harness.unmount();
   });
 

@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { contrastRatio } from "../../domain/themeContrast";
 import {
   buildTokenTable,
   lastOf,
   parseAllStyleSheets,
   selectorParts,
-  type CssRule,
   type TokenTable,
 } from "../../components/cssContractTestSupport";
 import { AGENT_TYPE_SCALE_VARIABLE } from "../../components/appShellTypeScale";
@@ -48,7 +46,6 @@ const SCHEMED_TOKENS = [
   ...SYMBOLS.map((kind) => `--cv-sym-${kind}`),
   ...VISIBILITIES.map((kind) => `--cv-vis-${kind}`),
 ];
-const MINIMUM_ICON_CONTRAST = 3;
 
 const parsed = parseAllStyleSheets();
 
@@ -61,13 +58,6 @@ function rules(scheme: (typeof SCHEMES)[number] | "root") {
         ? rule.selector === ":root"
         : selectorParts(rule.selector).includes(`:root[data-cv-scheme="${scheme}"]`)),
   );
-}
-
-function schemeValue(scheme: (typeof SCHEMES)[number], value: string): string {
-  const name = /^var\((--[\w-]+)\)$/.exec(value)?.[1] ?? "";
-  const resolved = lastOf(table(scheme).get(name)) ?? lastOf(table("root").get(name)) ?? "";
-  expect(resolved, `${scheme} ${value}`).toMatch(/^#[0-9a-f]{6}$/i);
-  return resolved;
 }
 
 function table(scheme: (typeof SCHEMES)[number] | "root"): TokenTable {
@@ -99,39 +89,5 @@ describe("replacement tokens for retired legacy variables", () => {
         .map((declaration) => declaration.value);
       expect(values, scheme).toEqual([scheme]);
     }
-  });
-
-  it("keeps the rendered symbol badge glyph readable on every symbol kind in both schemes", () => {
-    const badgeRules = parsed.rules.filter(
-      (rule) =>
-        rule.sheet === "App.css" &&
-        rule.context.length === 0 &&
-        /^\.symbol-icon(\[data-kind="[a-z]+"\])?$/.test(rule.selector),
-    );
-    const base = badgeRules.find((rule) => rule.selector === ".symbol-icon");
-    const declared = (rule: CssRule | undefined, property: string) =>
-      lastOf(rule?.declarations.filter((declaration) => declaration.property === property))
-        ?.value ?? "";
-    const foreground = declared(base, "color");
-    const kinds = badgeRules.map((rule) => ({
-      selector: rule.selector,
-      background: declared(rule, "background"),
-    }));
-
-    expect(foreground).toBe("var(--cv-sym-badge-fg)");
-    expect(kinds.length).toBeGreaterThanOrEqual(SYMBOLS.length - 1);
-
-    const unreadable = SCHEMES.flatMap((scheme) =>
-      kinds
-        .map(({ selector, background }) => ({
-          selector,
-          fg: schemeValue(scheme, foreground),
-          bg: schemeValue(scheme, background),
-        }))
-        .filter(({ fg, bg }) => contrastRatio(fg, bg) < MINIMUM_ICON_CONTRAST)
-        .map(({ selector, fg, bg }) => `${scheme} ${selector} ${fg} on ${bg}`),
-    );
-
-    expect(unreadable).toEqual([]);
   });
 });

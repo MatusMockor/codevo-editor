@@ -3,8 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EditorDocument, FileEntry } from "../domain/workspace";
-import { EditorTabs } from "./EditorTabs";
+import type { FileEntry } from "../domain/workspace";
 import { FileTree } from "./FileTree";
 
 describe("editor preview interactions", () => {
@@ -27,87 +26,6 @@ describe("editor preview interactions", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
-  });
-
-  it("marks preview tabs and pins them on double click", () => {
-    const document = editorDocument("/workspace/src/User.php", "User.php");
-    const onPin = vi.fn();
-
-    act(() => {
-      root.render(
-        <EditorTabs
-          activePath={document.path}
-          documents={[document]}
-          onActivate={vi.fn()}
-          onClose={vi.fn()}
-          onPin={onPin}
-          previewPath={document.path}
-        />,
-      );
-    });
-
-    expect(queryRequired(host, ".editor-tab").classList.contains("preview")).toBe(
-      true,
-    );
-
-    act(() => {
-      queryRequired<HTMLButtonElement>(host, "button[role='tab']").dispatchEvent(
-        new MouseEvent("dblclick", { bubbles: true }),
-      );
-    });
-
-    expect(onPin).toHaveBeenCalledWith(document.path);
-  });
-
-  it("marks changed tabs separately from preview tabs", () => {
-    const document = {
-      ...editorDocument("/workspace/src/User.php", "User.php"),
-      content: "<?php echo 'changed';",
-      savedContent: "<?php echo 'saved';",
-    };
-
-    act(() => {
-      root.render(
-        <EditorTabs
-          activePath={document.path}
-          documents={[document]}
-          onActivate={vi.fn()}
-          onClose={vi.fn()}
-          onPin={vi.fn()}
-          previewPath={document.path}
-        />,
-      );
-    });
-
-    const tab = queryRequired(host, ".editor-tab");
-    expect(tab.classList.contains("changed")).toBe(true);
-    expect(tab.classList.contains("preview")).toBe(false);
-  });
-
-  it("closes file tabs with a middle click", () => {
-    const document = editorDocument("/workspace/src/User.php", "User.php");
-    const onClose = vi.fn();
-
-    act(() => {
-      root.render(
-        <EditorTabs
-          activePath={document.path}
-          documents={[document]}
-          onActivate={vi.fn()}
-          onClose={onClose}
-          onPin={vi.fn()}
-          previewPath={null}
-        />,
-      );
-    });
-
-    act(() => {
-      queryRequired(host, ".editor-tab").dispatchEvent(
-        new MouseEvent("auxclick", { bubbles: true, button: 1 }),
-      );
-    });
-
-    expect(onClose).toHaveBeenCalledWith(document.path);
   });
 
   it("previews files on single click and opens them on double click", () => {
@@ -341,16 +259,6 @@ describe("editor preview interactions", () => {
     });
   }
 });
-
-function editorDocument(path: string, name: string): EditorDocument {
-  return {
-    content: "<?php\n",
-    language: "php",
-    name,
-    path,
-    savedContent: "<?php\n",
-  };
-}
 
 function fileEntry(
   path: string,

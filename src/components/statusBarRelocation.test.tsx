@@ -3,15 +3,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { click, mountUi, type MountedUi } from "../ui/foundation/foundationTestSupport";
+import { mountUi, type MountedUi } from "../ui/foundation/foundationTestSupport";
 import { defaultStatusBarItemVisibility, type StatusBarItemVisibility } from "../domain/settings";
 import { AgentSidebarReveal } from "./agentMode/AgentSidebarReveal";
 import { AgentThreadActivity } from "./agentMode/AgentThreadActivity";
 import { agentThreadActivityDetail } from "./agentMode/agentThreadActivityPresentation";
-import { EditorChromeContext } from "./editorPanel/EditorChromeContext";
-import { chromeFixture } from "./editorPanel/editorChromeTestSupport";
-import { EditorSubheader } from "./editorPanel/EditorSubheader";
-import { editorStatusRows } from "./editorPanel/editorStatusRows";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -86,7 +82,7 @@ const INVENTORY: ReadonlyArray<RelocatedItem> = [
   {
     item: "ide activity",
     source: "editor",
-    visibilityKeys: ["index", "languageServer"],
+    visibilityKeys: [],
     homes: ["editorSubheader"],
   },
   {
@@ -105,7 +101,7 @@ const INVENTORY: ReadonlyArray<RelocatedItem> = [
   {
     item: "cursor",
     source: "editor",
-    visibilityKeys: ["cursorPosition"],
+    visibilityKeys: [],
     homes: ["editorSubheader"],
   },
   {
@@ -148,57 +144,6 @@ describe("status bar removal inventory", () => {
     expect(new Set(INVENTORY.map((entry) => entry.item)).size).toBe(INVENTORY.length);
   });
 
-  it("renders every editor item in the editor sub-header or its More menu", () => {
-    const chrome = chromeFixture({
-      diagnostics: { errors: 1, warnings: 4 },
-      activity: { kind: "problem", text: "Indexing failed", title: "Indexing failed\ndisk full" },
-      statusRows: editorStatusRows({
-        activeLanguage: "TypeScript",
-        workspaceLabel: "orders-api · TS 5.8",
-        gitBranch: "main",
-        branchRepositoryLabel: null,
-        workspaceTrustLabel: "Trusted",
-        intelligenceMode: "fullSmart",
-        largeDocumentStatus: { label: "Large file", title: "Large file mode" },
-        dirtyCount: 2,
-      }),
-    });
-    mounted = mountUi();
-    mounted.render(
-      <EditorChromeContext.Provider value={chrome}>
-        <EditorSubheader
-          documentPath="/w/src/app.ts"
-          groupId="editor-main"
-          onFind={vi.fn()}
-          rootPath="/w"
-          symbols={null}
-        />
-      </EditorChromeContext.Provider>,
-    );
-    const subheader = mounted.host.querySelector(".cv-esub");
-
-    expect(subheader?.textContent).toContain("src");
-    expect(subheader?.textContent).toContain("app.ts");
-    expect(
-      subheader?.querySelector('button[aria-label="1 error, 4 warnings. Show problems"]'),
-    ).not.toBeNull();
-    expect(subheader?.querySelector('button[aria-label="Indexing failed"]')).not.toBeNull();
-    click(subheader?.querySelector('button[aria-label="More editor actions"]') as Element);
-    const menu = document.body.querySelector('[role="menu"][aria-label="More editor actions"]');
-    for (const expected of [
-      "TypeScript",
-      "orders-api · TS 5.8",
-      "main",
-      "Trusted",
-      "IDE Mode",
-      "Large file",
-      "2 files",
-    ]) {
-      expect(menu?.textContent, expected).toContain(expected);
-    }
-    expect(mounted.host.querySelector("footer")).toBeNull();
-  });
-
   it("shows running and attention in the sidebar footer activity and the expand tooltip", () => {
     const summary = { live: 2, capacity: 4, attention: 1, attentionExplanation: "1 failed." };
     mounted = mountUi();
@@ -237,7 +182,7 @@ describe("status bar removal inventory", () => {
 
   it("leaves no status bar row, stylesheet or component behind", () => {
     const root = resolve(import.meta.dirname, "../..");
-    const appCss = readFileSync(resolve(root, "src/App.css"), "utf8");
+    const appCss = readFileSync(resolve(root, "src/agentApp.css"), "utf8");
     const skeleton = readFileSync(resolve(root, "index.html"), "utf8");
 
     expect(existsSync(resolve(root, "src/components/agentMode/agentStatusBar.css"))).toBe(false);

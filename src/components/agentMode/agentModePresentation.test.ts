@@ -524,12 +524,8 @@ describe("agentModePresentation", () => {
     expect(agentIsolationReasonLabel({ kind: "worktree", reason: "dirty-tree" })).toContain(
       "uncommitted",
     );
-    expect(agentIsolationReasonLabel({ kind: "worktree", reason: "dirty-editors" })).toContain(
-      "unsaved editors",
-    );
 
     expect(inPlaceGuardReasonLabel("dirty-tree")).toContain("uncommitted");
-    expect(inPlaceGuardReasonLabel("dirty-editors")).toContain("unsaved editors");
     expect(inPlaceGuardReasonLabel("status-unknown")).toContain("unknown");
   });
 

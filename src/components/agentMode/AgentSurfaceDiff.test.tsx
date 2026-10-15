@@ -12,20 +12,6 @@ import {
 } from "./AgentSurfaceDiff";
 import { surfaceChangedFile, surfaceSummary, surfaceThreadView } from "./agentSurfaceTestFixtures";
 
-const diffEditorMocks = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
-const monacoRuntimeMocks = vi.hoisted(() => ({ ready: Promise.resolve() }));
-
-vi.mock("../monacoRuntimeLoader", () => ({
-  initializeMonacoRuntime: vi.fn(() => monacoRuntimeMocks.ready),
-}));
-
-vi.mock("@monaco-editor/react", () => ({
-  DiffEditor: (props: Record<string, unknown>) => {
-    diffEditorMocks.props.push(props);
-    return <div data-testid="diff-editor" />;
-  },
-}));
-
 describe("AgentSurfaceDiff", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -35,7 +21,6 @@ describe("AgentSurfaceDiff", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    diffEditorMocks.props.length = 0;
   });
 
   afterEach(() => {
@@ -55,7 +40,7 @@ describe("AgentSurfaceDiff", () => {
     expect(onShowChanges).toHaveBeenCalledTimes(1);
   });
 
-  it("lists the changed files, selects one and feeds the Monaco preview with a projected diff", async () => {
+  it("lists the changed files, selects one and renders its text diff", async () => {
     const onShowFileDiff = vi.fn();
     const onHideFileDiff = vi.fn();
     const file = surfaceChangedFile("src/parser.ts");
@@ -78,22 +63,18 @@ describe("AgentSurfaceDiff", () => {
         },
       }),
     });
-    await waitForReact(() => expect(host.querySelector(".git-diff-preview")).not.toBeNull());
-    expect(host.querySelector(".git-diff-header strong")?.textContent).toBe("src/parser.ts");
+    await waitForReact(() => expect(host.querySelector(".cv-diff-hunk")).not.toBeNull());
+    expect(host.querySelector(".agent-surface-diff__preview .agent-microlabel")?.textContent).toBe(
+      "src/parser.ts",
+    );
     expect(host.querySelector(".agent-surface-diff__banner")?.textContent).toBe(
       SURFACE_DIFF_TRUNCATED_MESSAGE,
     );
     expect(host.querySelector('[aria-current="true"]')?.textContent).toContain("src/parser.ts");
     expect(host.querySelector('[aria-label="Revert file"]')).toBeNull();
-    await waitForReact(() => expect(diffEditorMocks.props.length).toBeGreaterThan(0));
-    const editorProps = diffEditorMocks.props[0] as {
-      language: string;
-      original: string;
-      modified: string;
-    };
-    expect(editorProps.language).toBe("typescript");
-    expect(editorProps.original).toBe("a");
-    expect(editorProps.modified).toBe("b");
+    expect(host.querySelector('[aria-label="src/parser.ts diff"]')).not.toBeNull();
+    expect(host.querySelector(".cv-diff-code--del")?.textContent).toBe("a");
+    expect(host.querySelector(".cv-diff-code--add")?.textContent).toBe("b");
 
     act(() => host.querySelector<HTMLElement>('[aria-label="Close diff"]')?.click());
     expect(onHideFileDiff).toHaveBeenCalledWith("agt-1");
@@ -118,7 +99,7 @@ describe("AgentSurfaceDiff", () => {
     expect(host.querySelector(".agent-note--bad")?.textContent).toBe(
       "The file diff could not be read.",
     );
-    expect(host.querySelector(".git-diff-preview")).toBeNull();
+    expect(host.querySelector("[data-agent-text-diff]")).toBeNull();
     const refresh = host.querySelector<HTMLButtonElement>(
       '[aria-label="Refresh changes for agent agt-1"]',
     );
@@ -129,6 +110,23 @@ describe("AgentSurfaceDiff", () => {
       host.querySelector<HTMLElement>('[aria-label="Refresh changes for agent agt-1"]')?.click(),
     );
     expect(onRefreshChanges).toHaveBeenCalledWith("agt-1");
+  });
+
+  it("explains binary and oversized files instead of diffing them", () => {
+    render({
+      summary: surfaceSummary({
+        diff: {
+          relativePath: "assets/logo.png",
+          loading: false,
+          error: null,
+          original: { text: "", truncated: false },
+          modified: { text: "", truncated: false },
+          unavailableReason: "binary",
+        },
+      }),
+    });
+    expect(host.textContent).toContain("This file is binary and cannot be shown as a text diff.");
+    expect(host.querySelector("[data-agent-text-diff]")).toBeNull();
   });
 
   it("reports a gone checkout and never requests changes for it", () => {
@@ -148,7 +146,6 @@ function defaultProps(): AgentSurfaceDiffProps {
   return {
     thread: surfaceThreadView(),
     summary: surfaceSummary(),
-    monacoTheme: "calm-dark",
     onShowChanges: () => undefined,
     onRefreshChanges: () => undefined,
     onShowFileDiff: () => undefined,

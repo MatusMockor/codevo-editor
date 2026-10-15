@@ -68,11 +68,11 @@ describe("text-entry focus contract", () => {
 
   it("exempts text-entry elements from the global accent focus ring", () => {
     const globalIndex = rules.findIndex(
-      (rule) => rule.sheet === "App.css" && rule.selector === ":focus-visible",
+      (rule) => rule.sheet === "agentApp.css" && rule.selector === ":focus-visible",
     );
     const exemptionIndex = rules.findIndex(
       (rule) =>
-        rule.sheet === "App.css" &&
+        rule.sheet === "agentApp.css" &&
         rule.selector.startsWith(":where(") &&
         rule.selector.endsWith(":focus-visible") &&
         rule.selector.includes("textarea") &&
@@ -164,7 +164,7 @@ describe("text-entry focus contract", () => {
   });
 
   it("keeps the global keyboard ring for non-text controls", () => {
-    expect(declarationValue("App.css", ":focus-visible", "box-shadow")).toBe(
+    expect(declarationValue("agentApp.css", ":focus-visible", "box-shadow")).toBe(
       "var(--cv-ring-focus)",
     );
   });

@@ -123,13 +123,11 @@ function deferred<T>() {
 }
 
 interface Environment {
-  agentModeActive: boolean;
   projects: ReadonlyArray<AgentProjectDescriptor>;
 }
 
 function renderStore(overrides: Partial<Environment> = {}) {
   const environment: Environment = {
-    agentModeActive: true,
     projects: [project()],
     ...overrides,
   };
@@ -157,7 +155,6 @@ function renderStore(overrides: Partial<Environment> = {}) {
   const dependencies = (): AgentThreadStoreDependencies => ({
     agentThreadStoreGateway: gateway as unknown as AgentThreadStoreGateway,
     projects: environment.projects,
-    agentModeActive: environment.agentModeActive,
     reportError,
     setNotice,
     legacyPinStorage,
@@ -196,9 +193,9 @@ function renderStore(overrides: Partial<Environment> = {}) {
 describe("useAgentThreadStore loading", () => {
   it("keeps saved-only deletion blocked through load settlement microtasks", async () => {
     const pending = deferred<AgentThreadStoreSnapshot>();
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     harness.loadResults.push(pending.promise);
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
     const saved = thread();
     let deletion: Promise<unknown> | undefined;
     void pending.promise.then(() => {
@@ -221,9 +218,9 @@ describe("useAgentThreadStore loading", () => {
 
   it("rejects a load after its bounded removal journal overflows", async () => {
     const pending = deferred<AgentThreadStoreSnapshot>();
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     harness.loadResults.push(pending.promise);
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
     act(() => {
       for (let index = 0; index <= MAX_AGENT_THREADS_PER_ROOT; index += 1) {
         const draft = thread({ threadId: `agt-${index + 2}-0a1b` });
@@ -248,14 +245,14 @@ describe("useAgentThreadStore loading", () => {
 
   it("does not resurrect a draft created and deleted after the pending load began", async () => {
     const pending = deferred<AgentThreadStoreSnapshot>();
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     Object.assign(harness.gateway, { readAgentHistoryTurns: vi.fn() });
     harness.gateway.saveAgentThread.mockImplementation(async (request) => {
       harness.saved.push(request);
       request.onRevision?.(1);
     });
     harness.loadResults.push(pending.promise);
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
     act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
     await waitForReact(() => expect(harness.saved).toHaveLength(1));
     const stored = { ...harness.saved[0]!.thread, historyRevision: 1 };
@@ -274,14 +271,14 @@ describe("useAgentThreadStore loading", () => {
 
   it("retains a newly saved local draft when an older empty load settles", async () => {
     const pending = deferred<AgentThreadStoreSnapshot>();
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     Object.assign(harness.gateway, { readAgentHistoryTurns: vi.fn() });
     harness.gateway.saveAgentThread.mockImplementation(async (request) => {
       harness.saved.push(request);
       request.onRevision?.((request.thread.historyRevision ?? 0) + 1);
     });
     harness.loadResults.push(pending.promise);
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
     act(() => harness.hook().dispatchAction({ kind: "threadCreated", thread: thread() }));
     await waitForReact(() => {
       expect(harness.hook().state.threads.get("agt-1-0a1b")?.historyRevision).toBe(1);
@@ -299,7 +296,7 @@ describe("useAgentThreadStore loading", () => {
   });
 
   it("never replaces an acknowledged save with the stale snapshot read before it", async () => {
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     const persisted = thread({ historyRevision: 4 });
     harness.snapshots.set(ROOT_KEY, { threads: [persisted], unreadable: [], evicted: 0 });
     Object.assign(harness.gateway, { readAgentHistoryTurns: vi.fn() });
@@ -311,7 +308,7 @@ describe("useAgentThreadStore loading", () => {
       revision += 1;
       request.onRevision?.(revision);
     });
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
     await waitForReact(() => expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
     const pending = deferred<AgentThreadStoreSnapshot>();
     harness.loadResults.push(pending.promise);
@@ -336,10 +333,10 @@ describe("useAgentThreadStore loading", () => {
   });
 
   it("does not resurrect a local thread deleted while a load was pending", async () => {
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     const persisted = thread({ historyRevision: 4 });
     harness.snapshots.set(ROOT_KEY, { threads: [persisted], unreadable: [], evicted: 0 });
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
     await waitForReact(() => expect(harness.hook().loadedRootKeys.has(ROOT_KEY)).toBe(true));
     const pending = deferred<AgentThreadStoreSnapshot>();
     harness.loadResults.push(pending.promise);
@@ -353,14 +350,14 @@ describe("useAgentThreadStore loading", () => {
     harness.unmount();
   });
 
-  it("loads the admitted project once agent mode is active", async () => {
+  it("loads a project once it is admitted", async () => {
     const persisted = thread();
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     harness.snapshots.set(ROOT_KEY, { threads: [persisted], unreadable: [], evicted: 0 });
 
     expect(harness.gateway.loadAgentThreads).not.toHaveBeenCalled();
 
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
     await waitForReact(() => {
       expect(harness.hook().state.threads.get("agt-1-0a1b")).toEqual(persisted);
     });
@@ -389,9 +386,9 @@ describe("useAgentThreadStore loading", () => {
 
   it("drops a late workspace A result after A to B to A", async () => {
     const staleA = deferred<AgentThreadStoreSnapshot>();
-    const harness = renderStore({ agentModeActive: false });
+    const harness = renderStore({ projects: [] });
     harness.loadResults.push(staleA.promise);
-    harness.set({ agentModeActive: true });
+    harness.set({ projects: [project()] });
 
     await waitForReact(() => {
       expect(harness.gateway.loadAgentThreads).toHaveBeenCalledTimes(1);
@@ -805,7 +802,6 @@ function renderRuntimeOwnedStore(
     captured.value = useAgentThreadStore({
       agentThreadStoreGateway: gateway as AgentThreadStoreGateway,
       projects,
-      agentModeActive: true,
       reportError,
       setNotice,
       legacyPinStorage: { removeItem: vi.fn() },
@@ -942,7 +938,6 @@ function renderStoreWithGateway(gateway: AgentThreadStoreGateway) {
   const dependencies: AgentThreadStoreDependencies = {
     agentThreadStoreGateway: gateway,
     projects: [project()],
-    agentModeActive: true,
     reportError: vi.fn(),
     setNotice: vi.fn(),
     legacyPinStorage: { removeItem: vi.fn() },

@@ -247,20 +247,21 @@ describe("shortcutSequence", () => {
     expect(findKeymapSequenceConflicts(keymap, "default", "mac")).toEqual([]);
   });
 
-  it("resolves the official Run Test at Cursor chord on each platform", () => {
-    const linuxKeymap = defaultKeymapSettings("linux");
+  it("resolves a user-bound chord against the default keymap on each platform", () => {
+    const linuxKeymap = { ...defaultKeymapSettings("linux"), "agent.goToTurn": "Ctrl+; C" };
     expect(
-      lookupKeymapShortcutSequence(linuxKeymap, "Ctrl+; C", ["testing.runAtCursor"], "linux"),
-    ).toEqual({ exact: ["testing.runAtCursor"], prefix: [] });
+      lookupKeymapShortcutSequence(linuxKeymap, "Ctrl+; C", ["agent.goToTurn"], "linux"),
+    ).toEqual({ exact: ["agent.goToTurn"], prefix: [] });
 
-    const macKeymap = defaultKeymapSettings("mac");
-    expect(
-      lookupKeymapShortcutSequence(macKeymap, "Cmd+; C", ["testing.runAtCursor"], "mac"),
-    ).toEqual({ exact: ["testing.runAtCursor"], prefix: [] });
+    const macKeymap = { ...defaultKeymapSettings("mac"), "agent.goToTurn": "Cmd+; C" };
+    expect(lookupKeymapShortcutSequence(macKeymap, "Cmd+; C", ["agent.goToTurn"], "mac")).toEqual({
+      exact: ["agent.goToTurn"],
+      prefix: [],
+    });
   });
 
   it("keeps a bare first stroke reachable through the keydown prefilter", () => {
-    const keymap = { ...defaultKeymapSettings("mac"), "editor.save": "A B" };
+    const keymap = { ...defaultKeymapSettings("mac"), "app.quit": "A B" };
     expect(collectBareKeyShortcutKeys(keymap).has("a")).toBe(true);
   });
 

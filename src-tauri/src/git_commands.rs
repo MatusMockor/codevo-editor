@@ -8,9 +8,8 @@
 use crate::git::{
     self, load_commit_details, load_commit_diff, load_commit_files, load_commit_log,
     load_git_branches, CommandGitRepositoryGateway, CommitDiffPayload, CommitFileChange,
-    CommitGraphNode, GitBlameLine, GitBranches, GitChangedFile, GitCommit, GitCommitDetails,
-    GitCommitFilters, GitFileDiff, GitFileHistoryEntry, GitRepoStatus, GitRepositoryGateway,
-    GitStatus,
+    GitBranches, GitChangedFile, GitCommit, GitCommitDetails, GitCommitFilters, GitFileDiff,
+    GitRepoStatus, GitRepositoryGateway, GitStatus,
 };
 use crate::{canonicalize_workspace_root, run_blocking_command, trusted_for, GitTrustState};
 
@@ -109,44 +108,6 @@ pub(crate) async fn get_git_commit_log(
 }
 
 #[tauri::command]
-pub(crate) async fn get_git_commit_graph_page(
-    root_path: String,
-    cursor: Option<String>,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<CommitGraphNode>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        let commits = load_commit_log(
-            &root,
-            GitCommitFilters {
-                all_branches: None,
-                author: None,
-                branch: None,
-                cursor,
-                limit: Some(200),
-                path: None,
-                query: None,
-            },
-            trusted,
-        )
-        .map_err(|error| error.to_string())?;
-
-        Ok(commits
-            .into_iter()
-            .map(|commit| CommitGraphNode {
-                children: Vec::new(),
-                commit: commit.clone(),
-                depth: 0,
-                hash: commit.hash,
-                is_merge: commit.parents.len() > 1,
-            })
-            .collect())
-    })
-    .await
-}
-
-#[tauri::command]
 pub(crate) async fn get_git_commit_details(
     root_path: String,
     commit_hash: String,
@@ -156,38 +117,6 @@ pub(crate) async fn get_git_commit_details(
     run_blocking_command(move || {
         let root = canonicalize_workspace_root(&root_path)?;
         load_commit_details(&root, &commit_hash, trusted).map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn revert_git_commit(
-    root_path: String,
-    commit_hash: String,
-    trust: GitTrustState<'_>,
-) -> Result<GitCommit, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .revert_commit(&root, &commit_hash)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn cherry_pick_git_commit(
-    root_path: String,
-    commit_hash: String,
-    trust: GitTrustState<'_>,
-) -> Result<GitCommit, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .cherry_pick_commit(&root, &commit_hash)
-            .map_err(|error| error.to_string())
     })
     .await
 }
@@ -250,46 +179,6 @@ pub(crate) async fn get_git_diff(
         let root = canonicalize_workspace_root(&root_path)?;
         CommandGitRepositoryGateway::new(trusted)
             .diff(&root, &change)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn get_git_blame(
-    root_path: String,
-    relative_path: String,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<GitBlameLine>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    // `git blame` shells out to a subprocess that can take a while on large
-    // files; keep it off the main thread so the WebView never stalls. The
-    // captured `root_path` + `relative_path` bind the request to its own
-    // repository and file (no cross-root or cross-file leakage).
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .blame(&root, &relative_path)
-            .map_err(|error| error.to_string())
-    })
-    .await
-}
-
-#[tauri::command]
-pub(crate) async fn get_git_file_history(
-    root_path: String,
-    relative_path: String,
-    trust: GitTrustState<'_>,
-) -> Result<Vec<GitFileHistoryEntry>, String> {
-    let trusted = trusted_for(&trust, &root_path)?;
-    // `git log --follow` shells out to a subprocess that can take a while on a
-    // file with deep history; keep it off the main thread so the WebView never
-    // stalls. The captured `root_path` + `relative_path` bind the request to its
-    // own repository and file (no cross-root or cross-file leakage).
-    run_blocking_command(move || {
-        let root = canonicalize_workspace_root(&root_path)?;
-        CommandGitRepositoryGateway::new(trusted)
-            .file_history(&root, &relative_path)
             .map_err(|error| error.to_string())
     })
     .await

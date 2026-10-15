@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { defaultKeymapSettings } from "../domain/keymap";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { __resetKeymapPlatformCacheForTests, defaultKeymapSettings } from "../domain/keymap";
 import {
   CommandRegistry,
   executeCommand,
@@ -16,46 +16,50 @@ import {
 } from "./workbenchShortcutCommandDispatcher";
 
 const commandContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: true,
 };
 
+beforeEach(() => {
+  vi.stubGlobal("navigator", { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" });
+  __resetKeymapPlatformCacheForTests();
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  __resetKeymapPlatformCacheForTests();
+});
+
 describe("dispatchWorkbenchShortcutCommand", () => {
-  it("hands Cmd+B to Go to Definition while editor text owns focus and to Toggle Sidebar otherwise", () => {
-    let editorFocused = true;
+  it("runs Toggle Sidebar on Cmd+B only while its shortcut scope allows it", () => {
+    let sidebarShortcutEnabled = false;
     const toggleSidebar = vi.fn();
-    const goToDefinition = vi.fn();
     const sidebarCommand: ShortcutScopedCommand = {
       category: "Agents",
       id: "agent.toggleSidebar",
       isEnabled: () => true,
-      isShortcutEnabled: () => !editorFocused,
+      isShortcutEnabled: () => sidebarShortcutEnabled,
       run: toggleSidebar,
       title: "Toggle Sidebar",
     };
-    const commandRegistry = registry({
-      "agent.toggleSidebar": sidebarCommand,
-      "editor.goToDefinition": command({ id: "editor.goToDefinition", run: goToDefinition }),
-    });
+    const commandRegistry = registry({ "agent.toggleSidebar": sidebarCommand });
+    const event = keyboardEvent({ key: "b", metaKey: true });
     const dispatch = () =>
       dispatchWorkbenchShortcutCommand({
         commandContext,
         commandRegistry,
-        event: keyboardEvent({ key: "b", metaKey: true }),
+        event,
         keymap: defaultKeymapSettings("mac"),
         runCommand: registryRunner(commandRegistry),
       });
 
-    expect(dispatch()).toBe(true);
-    expect(goToDefinition).toHaveBeenCalledTimes(1);
+    expect(dispatch()).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
     expect(toggleSidebar).not.toHaveBeenCalled();
 
-    editorFocused = false;
+    sidebarShortcutEnabled = true;
 
     expect(dispatch()).toBe(true);
     expect(toggleSidebar).toHaveBeenCalledTimes(1);
-    expect(goToDefinition).toHaveBeenCalledTimes(1);
   });
 
   it("dispatches a pre-resolved chord collision in index priority order", () => {
@@ -65,22 +69,22 @@ describe("dispatchWorkbenchShortcutCommand", () => {
       .mockReturnValueOnce("executed");
     const event = keyboardEvent({ key: "c", metaKey: true });
     const commandRegistry = registry({
-      "editor.save": command({ id: "editor.save", run: vi.fn() }),
-      "testing.runAtCursor": command({ id: "testing.runAtCursor", run: vi.fn() }),
+      "app.quit": command({ id: "app.quit", run: vi.fn() }),
+      "agent.goToTurn": command({ id: "agent.goToTurn", run: vi.fn() }),
     });
 
     expect(
       dispatchResolvedWorkbenchShortcutCommands({
         commandContext,
-        commandIds: ["testing.runAtCursor", "editor.save", "testing.runAtCursor"],
+        commandIds: ["agent.goToTurn", "app.quit", "agent.goToTurn"],
         commandRegistry,
         event,
         runCommand,
       }),
     ).toBe(true);
     expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
-      "testing.runAtCursor",
-      "editor.save",
+      "agent.goToTurn",
+      "app.quit",
     ]);
     expect(event.preventDefault).toHaveBeenCalledOnce();
   });
@@ -131,7 +135,7 @@ describe("dispatchWorkbenchShortcutCommand", () => {
       event,
       keymap: {
         ...defaultKeymapSettings("mac"),
-        "panel.toggleTodo": "Cmd+J",
+        "panel.toggleMaximized": "Cmd+J",
       },
       runCommand: registryRunner(commandRegistry),
     });
@@ -143,18 +147,18 @@ describe("dispatchWorkbenchShortcutCommand", () => {
 
   it("consumes a matching disabled command without running it", () => {
     const run = vi.fn();
-    const event = keyboardEvent({ key: "t", metaKey: true, shiftKey: true });
+    const event = keyboardEvent({ key: "w", metaKey: true });
     const commandRegistry = registry({
-      "panel.toggleTodo": command({
+      "workbench.closeActive": command({
         enabled: false,
-        id: "panel.toggleTodo",
+        id: "workbench.closeActive",
         run,
       }),
     });
 
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
-      commandIds: ["panel.toggleTodo"],
+      commandIds: ["workbench.closeActive"],
       commandRegistry,
       event,
       keymap: defaultKeymapSettings("mac"),
@@ -170,7 +174,7 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     const first = vi.fn();
     const second = vi.fn();
     const runCommand = vi.fn<CommandExecutionRunner>((commandId) => {
-      if (commandId === "panel.toggleTodo") {
+      if (commandId === "panel.toggleMaximized") {
         return "disabled";
       }
       return "executed";
@@ -178,24 +182,24 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     const event = keyboardEvent({ key: "k", metaKey: true });
     const commandRegistry = registry({
       "panel.toggle": command({ id: "panel.toggle", run: first }),
-      "panel.toggleTodo": command({ id: "panel.toggleTodo", run: second }),
+      "panel.toggleMaximized": command({ id: "panel.toggleMaximized", run: second }),
     });
 
     dispatchWorkbenchShortcutCommand({
       commandContext,
-      commandIds: ["panel.toggle", "panel.toggleTodo"],
+      commandIds: ["panel.toggle", "panel.toggleMaximized"],
       commandRegistry,
       event,
       keymap: {
         ...defaultKeymapSettings("mac"),
         "panel.toggle": "Cmd+K",
-        "panel.toggleTodo": "Cmd+K",
+        "panel.toggleMaximized": "Cmd+K",
       },
       runCommand,
     });
 
     expect(runCommand.mock.calls.map(([commandId]) => commandId)).toEqual([
-      "panel.toggleTodo",
+      "panel.toggleMaximized",
       "panel.toggle",
     ]);
   });
@@ -205,18 +209,18 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     const event = keyboardEvent({ key: "k", metaKey: true });
     const commandRegistry = registry({
       "panel.toggle": command({ id: "panel.toggle", run: vi.fn() }),
-      "panel.toggleTodo": command({ id: "panel.toggleTodo", run: vi.fn() }),
+      "panel.toggleMaximized": command({ id: "panel.toggleMaximized", run: vi.fn() }),
     });
 
     const handled = dispatchWorkbenchShortcutCommand({
       commandContext,
-      commandIds: ["panel.toggle", "panel.toggleTodo"],
+      commandIds: ["panel.toggle", "panel.toggleMaximized"],
       commandRegistry,
       event,
       keymap: {
         ...defaultKeymapSettings("mac"),
         "panel.toggle": "Cmd+K",
-        "panel.toggleTodo": "Cmd+K",
+        "panel.toggleMaximized": "Cmd+K",
       },
       runCommand,
     });
@@ -306,8 +310,8 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     const event = keyboardEvent({ key: "k", metaKey: true });
     const commandRegistry = registry({
       "panel.toggle": command({ id: "panel.toggle", run: fallback }),
-      "panel.toggleTodo": command({
-        id: "panel.toggleTodo",
+      "panel.toggleMaximized": command({
+        id: "panel.toggleMaximized",
         run: () => Promise.reject(new Error("async command failed")),
       }),
     });
@@ -316,13 +320,13 @@ describe("dispatchWorkbenchShortcutCommand", () => {
 
     dispatchWorkbenchShortcutCommand({
       commandContext,
-      commandIds: ["panel.toggle", "panel.toggleTodo"],
+      commandIds: ["panel.toggle", "panel.toggleMaximized"],
       commandRegistry,
       event,
       keymap: {
         ...defaultKeymapSettings("mac"),
         "panel.toggle": "Cmd+K",
-        "panel.toggleTodo": "Cmd+K",
+        "panel.toggleMaximized": "Cmd+K",
       },
       runCommand,
     });
@@ -359,8 +363,8 @@ describe("dispatchWorkbenchShortcutCommand", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("leaves an unregistered Monaco-only keymap shortcut untouched", () => {
-    const event = keyboardEvent({ altKey: true, key: "F5" });
+  it("leaves an unregistered keymap shortcut untouched", () => {
+    const event = keyboardEvent({ key: "w", metaKey: true });
     const runCommand = vi.fn();
 
     const handled = dispatchWorkbenchShortcutCommand({
@@ -458,7 +462,7 @@ describe("dispatchWorkbenchDefaultAliasCommand", () => {
 
   it.each([
     ["the command is rebound", { "workbench.zoomIn": "Cmd+Alt+I" }],
-    ["another command owns the chord", { "editor.unfoldAll": "Cmd+Shift+=" }],
+    ["another command owns the chord", { "agent.goToTurn": "Cmd+Shift+=" }],
   ] as const)("leaves the shifted + chord untouched when %s", (_reason, overrides) => {
     const zoomIn = vi.fn();
     const event = keyboardEvent({ key: "+", metaKey: true, shiftKey: true });

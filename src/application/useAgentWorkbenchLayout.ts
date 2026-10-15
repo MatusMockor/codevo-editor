@@ -5,7 +5,6 @@ import {
   parsePersistedAgentBottomPanel,
   type AgentRailState,
   type AgentWorkbenchLayout,
-  type AgentWorkbenchLayoutMode,
 } from "../domain/agentWorkbenchLayout";
 import type { AgentFileViewerReveal } from "../domain/agentWorkbenchLayoutFileReveal";
 import {
@@ -43,7 +42,6 @@ export interface AgentWorkbenchLayoutHydration {
 export interface UseAgentWorkbenchLayoutOptions {
   readonly workspaceOwnerKey: string | null;
   readonly hasWorkspace: boolean;
-  readonly agentLayoutAvailable?: boolean;
   readonly bottomPanelVisible?: boolean;
   readonly hydration?: AgentWorkbenchLayoutHydration | null;
   readonly persistence?: AgentWorkbenchLayoutPersistencePort | null;
@@ -53,7 +51,6 @@ export interface UseAgentWorkbenchLayoutOptions {
 
 export interface AgentWorkbenchLayoutState {
   readonly layout: AgentWorkbenchLayout;
-  readonly effectiveLayout: AgentWorkbenchLayoutMode;
   readonly persistedBottomPanel: boolean;
   readonly fileReveal?: AgentFileViewerReveal | null;
   dispatch(action: AgentWorkbenchCommand): void;
@@ -61,7 +58,6 @@ export interface AgentWorkbenchLayoutState {
 }
 
 export interface AgentWorkbenchLayoutSurface {
-  readonly agentModeActive: boolean;
   readonly agentWorkbench: AgentWorkbenchLayoutState;
 }
 
@@ -71,12 +67,7 @@ export const AGENT_SIDEBAR_PREFERENCE_SOURCE = "Agent Sidebar";
 export function useAgentWorkbenchLayout(
   options: UseAgentWorkbenchLayoutOptions,
 ): AgentWorkbenchLayoutSurface {
-  const {
-    agentLayoutAvailable = true,
-    bottomPanelVisible = false,
-    hasWorkspace,
-    hydration = null,
-  } = options;
+  const { bottomPanelVisible = false, hasWorkspace, hydration = null } = options;
   const ownerKey = hasWorkspace ? options.workspaceOwnerKey : null;
 
   const ownerKeyRef = useRef(ownerKey);
@@ -158,9 +149,6 @@ export function useAgentWorkbenchLayout(
     });
   }, [hydration, owned]);
 
-  const effectiveLayout: AgentWorkbenchLayoutMode = agentLayoutAvailable ? "agent" : "editor-only";
-  const agentLayoutActive = effectiveLayout === "agent";
-
   useEffect(() => {
     const persistOwnerKey = owned.ownerKey;
     if (persistOwnerKey === null) {
@@ -183,8 +171,7 @@ export function useAgentWorkbenchLayout(
       return;
     }
 
-    const bottomPanelChanged =
-      agentLayoutActive && previous.snapshot.bottomPanel !== snapshot.bottomPanel;
+    const bottomPanelChanged = previous.snapshot.bottomPanel !== snapshot.bottomPanel;
     persistedRef.current = { ownerKey: persistOwnerKey, snapshot };
 
     if (owned.source !== "dispatch" && !bottomPanelChanged) {
@@ -211,7 +198,7 @@ export function useAgentWorkbenchLayout(
     return () => {
       cancelled = true;
     };
-  }, [agentLayoutActive, bottomPanelVisible, owned]);
+  }, [bottomPanelVisible, owned]);
 
   const { persistedBottomPanel } = owned;
   const ownedLayout = owned.layout;
@@ -223,11 +210,11 @@ export function useAgentWorkbenchLayout(
     return shown.rail === rail ? shown : { ...shown, rail };
   }, [ownedLayout, rail, threadLayout]);
   const agentWorkbench = useMemo<AgentWorkbenchLayoutState>(
-    () => ({ bindThread, dispatch, effectiveLayout, fileReveal, layout, persistedBottomPanel }),
-    [bindThread, dispatch, effectiveLayout, fileReveal, layout, persistedBottomPanel],
+    () => ({ bindThread, dispatch, fileReveal, layout, persistedBottomPanel }),
+    [bindThread, dispatch, fileReveal, layout, persistedBottomPanel],
   );
 
-  return { agentModeActive: effectiveLayout === "agent", agentWorkbench };
+  return { agentWorkbench };
 }
 
 function initialOwned(ownerKey: string | null, generation: number): OwnedAgentWorkbenchLayout {

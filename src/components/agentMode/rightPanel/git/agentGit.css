@@ -258,14 +258,6 @@
   white-space: nowrap;
 }
 
-.cv-rp-ctl--static {
-  cursor: default;
-}
-
-.cv-rp-ctl--static:hover {
-  background: none;
-}
-
 .cv-git-banner {
   display: flex;
   flex-direction: column;

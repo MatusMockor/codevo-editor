@@ -15,18 +15,58 @@ describe("migrateRetiredKeymapDefaults", () => {
     ["workbench.zoomOut", "Cmd+-", "workbench.zoomReset", "Cmd+0"],
     ["workbench.zoomReset", "Cmd+0", "workbench.zoomIn", "Cmd+="],
   ] as const)(
-    "leaves the new %s unbound when a preserved Save binding owns %s",
+    "leaves the new %s unbound when a preserved Quit binding owns %s",
     (commandId, shortcut, unaffectedCommand, unaffectedShortcut) => {
-      const persisted = { "editor.fontZoomIn": "", "editor.save": shortcut };
+      const persisted = { "editor.fontZoomIn": "", "app.quit": shortcut };
       const migration = migrateRetiredKeymapDefaults(persisted, 1, "mac");
       const keymap = normalizeKeymapSettings(migration.keymap, "mac");
       expect(keymap[commandId]).toBe("");
       expect(keymap[unaffectedCommand]).toBe(unaffectedShortcut);
-      expect(keymap["editor.save"]).toBe(shortcut);
+      expect(keymap["app.quit"]).toBe(shortcut);
       expect(migrateRetiredKeymapDefaults(migration.keymap, migration.revision, "mac")).toEqual(
         migration,
       );
-      expect(persisted).toEqual({ "editor.fontZoomIn": "", "editor.save": shortcut });
+      expect(persisted).toEqual({ "editor.fontZoomIn": "", "app.quit": shortcut });
+    },
+  );
+
+  it.each([
+    ["mac", "Cmd+Enter"],
+    ["linux", "Ctrl+Enter"],
+    ["linux", "Cmd+Enter"],
+    ["windows", "Ctrl+Enter"],
+  ] as const)("retires the old %s Git commit default %s", (platform, shortcut) => {
+    expect(migratedKeymap({ "git.commit": shortcut }, 3, platform)["git.commit"]).toBe("");
+    expect(migratedKeymap({ "git.commit": shortcut }, 4, platform)["git.commit"]).toBe(shortcut);
+  });
+
+  it("keeps a custom Git commit binding when retiring the old default", () => {
+    expect(migratedKeymap({ "git.commit": "Cmd+Alt+Enter" }, 3, "mac")["git.commit"]).toBe(
+      "Cmd+Alt+Enter",
+    );
+  });
+
+  it.each([
+    ["mac", "workbench.zoomIn", "Cmd+="],
+    ["mac", "workbench.zoomOut", "Cmd+-"],
+    ["mac", "workbench.zoomReset", "Cmd+0"],
+    ["linux", "workbench.zoomIn", "Ctrl+="],
+    ["linux", "workbench.zoomOut", "Ctrl+-"],
+    ["linux", "workbench.zoomReset", "Ctrl+0"],
+    ["windows", "workbench.zoomIn", "Ctrl+="],
+    ["windows", "workbench.zoomOut", "Ctrl+-"],
+    ["windows", "workbench.zoomReset", "Ctrl+0"],
+  ] as const)(
+    "translates a legacy editor.closeTab binding before the %s %s default is admitted",
+    (platform, commandId, shortcut) => {
+      const keymap = migratedKeymap({ "editor.closeTab": shortcut }, 1, platform);
+      expect(keymap["workbench.closeActive"]).toBe(shortcut);
+      expect(keymap[commandId]).toBe("");
+      expect(
+        Object.entries(keymap)
+          .filter(([, binding]) => binding === shortcut)
+          .map(([id]) => id),
+      ).toEqual(["workbench.closeActive"]);
     },
   );
 
@@ -48,7 +88,7 @@ describe("migrateRetiredKeymapDefaults", () => {
   ] as const)(
     "recognizes normalized and physical conflicts for %s with %s",
     (commandId, shortcut) => {
-      expect(migratedKeymap({ "editor.save": shortcut }, 1, "mac")[commandId]).toBe("");
+      expect(migratedKeymap({ "app.quit": shortcut }, 1, "mac")[commandId]).toBe("");
     },
   );
 
@@ -57,13 +97,13 @@ describe("migrateRetiredKeymapDefaults", () => {
     (platform) => {
       for (const modifier of ["Cmd", "Ctrl"]) {
         expect(
-          migratedKeymap({ "editor.save": `${modifier}+=` }, 1, platform)["workbench.zoomIn"],
+          migratedKeymap({ "app.quit": `${modifier}+=` }, 1, platform)["workbench.zoomIn"],
         ).toBe("");
         expect(
-          migratedKeymap({ "editor.save": `${modifier}+-` }, 1, platform)["workbench.zoomOut"],
+          migratedKeymap({ "app.quit": `${modifier}+-` }, 1, platform)["workbench.zoomOut"],
         ).toBe("");
         expect(
-          migratedKeymap({ "editor.save": `${modifier}+0` }, 1, platform)["workbench.zoomReset"],
+          migratedKeymap({ "app.quit": `${modifier}+0` }, 1, platform)["workbench.zoomReset"],
         ).toBe("");
       }
     },
@@ -73,7 +113,7 @@ describe("migrateRetiredKeymapDefaults", () => {
     "enables every new zoom default when the preserved binding %s does not conflict",
     (shortcut) => {
       expect(
-        migratedKeymap({ "editor.fontZoomIn": "", "editor.save": shortcut }, 1, "mac"),
+        migratedKeymap({ "editor.fontZoomIn": "", "app.quit": shortcut }, 1, "mac"),
       ).toMatchObject({
         "workbench.zoomIn": "Cmd+=",
         "workbench.zoomOut": "Cmd+-",
@@ -84,15 +124,17 @@ describe("migrateRetiredKeymapDefaults", () => {
 
   it("does not treat unknown commands or malformed bindings as preserved custom shortcuts", () => {
     expect(
-      migratedKeymap({ "unknown.command": "Cmd+=", "editor.save": "Cmd++" }, 1, "mac")[
-        "workbench.zoomIn"
-      ],
+      migratedKeymap(
+        { "unknown.command": "Cmd+=", "editor.save": "Cmd+=", "app.quit": "Cmd++" },
+        1,
+        "mac",
+      )["workbench.zoomIn"],
     ).toBe("Cmd+=");
   });
 
   it("preserves explicitly assigned zoom bindings even when they collide", () => {
     const persisted = {
-      "editor.save": "Cmd+=",
+      "app.quit": "Cmd+=",
       "workbench.zoomIn": "Cmd+=",
       "workbench.zoomOut": "",
       "workbench.zoomReset": "Cmd+R",
@@ -101,24 +143,22 @@ describe("migrateRetiredKeymapDefaults", () => {
   });
 
   it.each(["mac", "linux", "windows", "other"] as const)(
-    "retires editor font defaults and enables window zoom on %s from revision one",
+    "drops the retired editor font and fold bindings and enables window zoom on %s",
     (platform) => {
       const primary = platform === "mac" ? "Cmd" : "Ctrl";
       const persisted = {
         "editor.fontZoomIn": `${primary}+=`,
         "editor.fontZoomOut": `${primary}+-`,
         "editor.fontZoomReset": `${primary}+0`,
+        "editor.foldAll": `${primary}+Shift+-`,
+        "editor.unfoldAll": `${primary}+Shift+=`,
       };
-      const migration = migrateRetiredKeymapDefaults(persisted, 1, platform);
+      const migration = migrateRetiredKeymapDefaults(persisted, 0, platform);
+      const keymap = normalizeKeymapSettings(migration.keymap, platform);
+
       expect(migration.revision).toBe(KEYMAP_DEFAULTS_REVISION);
-      expect(normalizeKeymapSettings(migration.keymap, platform)).toMatchObject({
-        "editor.fontZoomIn": "",
-        "editor.fontZoomOut": "",
-        "editor.fontZoomReset": "",
-        "workbench.zoomIn": `${primary}+=`,
-        "workbench.zoomOut": `${primary}+-`,
-        "workbench.zoomReset": `${primary}+0`,
-      });
+      expect(keymap).toEqual(defaultKeymapSettings(platform));
+      expect(Object.keys(keymap).some((id) => id.startsWith("editor."))).toBe(false);
       expect(persisted["editor.fontZoomIn"]).toBe(`${primary}+=`);
       expect(migrateRetiredKeymapDefaults(migration.keymap, migration.revision, platform)).toEqual(
         migration,
@@ -126,102 +166,12 @@ describe("migrateRetiredKeymapDefaults", () => {
     },
   );
 
-  it("preserves custom font bindings and window zoom removals during the revision two migration", () => {
-    const persisted = {
-      "editor.fontZoomIn": "Cmd+Alt+=",
-      "editor.fontZoomOut": "Cmd+K Cmd+-",
-      "editor.fontZoomReset": "",
-      "workbench.zoomIn": "",
-      "workbench.zoomOut": "Cmd+Alt+O",
-    };
-    expect(migrateRetiredKeymapDefaults(persisted, 1, "mac").keymap).toEqual(persisted);
+  it("keeps the defaults revision at three or later", () => {
+    expect(KEYMAP_DEFAULTS_REVISION).toBeGreaterThanOrEqual(3);
   });
 
-  it("preserves font defaults deliberately rebound after revision two", () => {
-    const persisted = { "editor.fontZoomIn": "Cmd+=", "editor.fontZoomOut": "Cmd+-" };
-    expect(migrateRetiredKeymapDefaults(persisted, 2, "mac").keymap).toEqual(persisted);
-  });
-
-  it("moves the retired fold defaults to the new defaults once and bumps the revision", () => {
-    const persisted = {
-      ...defaultKeymapSettings("mac"),
-      "editor.foldAll": "Cmd+Shift+-",
-      "editor.unfoldAll": "Cmd+Shift+=",
-    };
-
-    const migration = migrateRetiredKeymapDefaults(persisted, undefined, "mac");
-
-    expect(migration.revision).toBe(KEYMAP_DEFAULTS_REVISION);
-    expect(normalizeKeymapSettings(migration.keymap, "mac")).toEqual(defaultKeymapSettings("mac"));
-    expect(persisted["editor.unfoldAll"]).toBe("Cmd+Shift+=");
-  });
-
-  it("compares the persisted shortcut after normalisation", () => {
-    expect(
-      migratedKeymap(
-        { "editor.foldAll": " command + shift + - ", "editor.unfoldAll": "shift+cmd+=" },
-        undefined,
-        "mac",
-      ),
-    ).toMatchObject({ "editor.foldAll": "Cmd+Alt+-", "editor.unfoldAll": "Cmd+Alt+=" });
-  });
-
-  it.each(["linux", "windows", "other"] as const)(
-    "migrates both the Ctrl and the persisted Mac form of the retired defaults on %s",
-    (platform) => {
-      expect(
-        migratedKeymap(
-          { "editor.foldAll": "Ctrl+Shift+-", "editor.unfoldAll": "Ctrl+Shift+=" },
-          undefined,
-          platform,
-        ),
-      ).toMatchObject({ "editor.foldAll": "Ctrl+Alt+-", "editor.unfoldAll": "Ctrl+Alt+=" });
-      expect(
-        migratedKeymap(
-          { "editor.foldAll": "Cmd+Shift+-", "editor.unfoldAll": "Cmd+Shift+=" },
-          undefined,
-          platform,
-        ),
-      ).toMatchObject({ "editor.foldAll": "Ctrl+Alt+-", "editor.unfoldAll": "Ctrl+Alt+=" });
-    },
-  );
-
-  it("leaves customised fold shortcuts and every other command untouched", () => {
-    const customised = {
-      "editor.foldAll": "Cmd+Shift+U",
-      "editor.save": "Cmd+Shift+=",
-      "editor.toggleCase": "Cmd+Shift+-",
-      "editor.unfoldAll": "",
-    };
-
-    const migration = migrateRetiredKeymapDefaults(customised, undefined, "mac");
-
-    expect(migration.keymap).toEqual({ ...customised, "workbench.zoomIn": "" });
-    expect(migration.revision).toBe(KEYMAP_DEFAULTS_REVISION);
-  });
-
-  it("treats an explicit Control binding on macOS as a customisation", () => {
-    expect(
-      migratedKeymap(
-        { "editor.foldAll": "Ctrl+Shift+-", "editor.unfoldAll": "Ctrl+Shift+=" },
-        undefined,
-        "mac",
-      ),
-    ).toMatchObject({ "editor.foldAll": "Ctrl+Shift+-", "editor.unfoldAll": "Ctrl+Shift+=" });
-  });
-
-  it("migrates each retired default independently", () => {
-    expect(
-      migratedKeymap(
-        { "editor.foldAll": "Cmd+Alt+F", "editor.unfoldAll": "Cmd+Shift+=" },
-        undefined,
-        "mac",
-      ),
-    ).toMatchObject({ "editor.foldAll": "Cmd+Alt+F", "editor.unfoldAll": "Cmd+Alt+=" });
-  });
-
-  it("keeps a deliberate re-bind to a retired default once the revision is current", () => {
-    const rebound = { "editor.foldAll": "Cmd+Shift+-", "editor.unfoldAll": "Cmd+Shift+=" };
+  it("returns the keymap unchanged once the revision is current", () => {
+    const rebound = { "app.quit": "Cmd+Shift+-", "editor.unfoldAll": "Cmd+Shift+=" };
 
     const migration = migrateRetiredKeymapDefaults(rebound, KEYMAP_DEFAULTS_REVISION, "mac");
 
@@ -230,7 +180,7 @@ describe("migrateRetiredKeymapDefaults", () => {
   });
 
   it("never re-runs a migration for a revision written by a newer build", () => {
-    const rebound = { "editor.unfoldAll": "Cmd+Shift+=" };
+    const rebound = { "app.quit": "" };
 
     const migration = migrateRetiredKeymapDefaults(rebound, KEYMAP_DEFAULTS_REVISION + 6, "mac");
 
@@ -241,16 +191,10 @@ describe("migrateRetiredKeymapDefaults", () => {
   it.each([null, "1", -1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 60, {}, [1]])(
     "treats the malformed revision %j as never migrated",
     (revision) => {
-      const migration = migrateRetiredKeymapDefaults(
-        { "editor.unfoldAll": "Cmd+Shift+=" },
-        revision,
-        "mac",
-      );
+      const migration = migrateRetiredKeymapDefaults({ "app.quit": "Cmd+=" }, revision, "mac");
 
       expect(migration.revision).toBe(KEYMAP_DEFAULTS_REVISION);
-      expect(normalizeKeymapSettings(migration.keymap, "mac")["editor.unfoldAll"]).toBe(
-        "Cmd+Alt+=",
-      );
+      expect(normalizeKeymapSettings(migration.keymap, "mac")["workbench.zoomIn"]).toBe("");
     },
   );
 
@@ -263,12 +207,6 @@ describe("migrateRetiredKeymapDefaults", () => {
       expect(migration.revision).toBe(KEYMAP_DEFAULTS_REVISION);
     },
   );
-
-  it("ignores a non-string persisted fold shortcut", () => {
-    expect(
-      migratedKeymap({ "editor.foldAll": 7, "editor.unfoldAll": null }, undefined, "mac"),
-    ).toMatchObject({ "editor.foldAll": "Cmd+Alt+-", "editor.unfoldAll": "Cmd+Alt+=" });
-  });
 });
 
 describe("New thread picker collision repair", () => {
@@ -300,7 +238,7 @@ describe("New thread picker collision repair", () => {
       {
         "agent.newThread": "Cmd+Shift+N",
         "agent.newThreadIn": "Cmd+Shift+N",
-        "editor.save": "Cmd+N",
+        "app.quit": "Cmd+N",
       },
       2,
       "mac",
@@ -309,7 +247,7 @@ describe("New thread picker collision repair", () => {
     expect(keymap).toMatchObject({
       "agent.newThread": "Cmd+Shift+N",
       "agent.newThreadIn": "",
-      "editor.save": "Cmd+N",
+      "app.quit": "Cmd+N",
     });
   });
 

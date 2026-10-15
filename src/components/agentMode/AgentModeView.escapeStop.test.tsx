@@ -107,7 +107,6 @@ describe("Escape stops the running agent only from the composer prompt", () => {
           chrome={chromeFixture({
             layout: {
               layout,
-              effectiveLayout: "agent",
               persistedBottomPanel: false,
               dispatch,
             },

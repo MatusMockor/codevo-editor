@@ -119,7 +119,6 @@ describe("stopping a native background task left live in an idle Claude session"
           chrome={chromeFixture({
             layout: {
               layout,
-              effectiveLayout: "agent",
               persistedBottomPanel: false,
               dispatch,
             },

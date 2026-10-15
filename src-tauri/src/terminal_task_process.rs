@@ -57,6 +57,7 @@ impl TerminalTaskOwnership {
 
     /// Takes a read-only snapshot of the task's currently owned process group.
     /// Reaped and terminated generations are deliberately not exposed.
+    #[cfg(test)]
     pub(crate) fn active_process_group_id(&self) -> Option<i32> {
         match *self.state() {
             TaskProcessGroupState::Active { process_group_id } => Some(process_group_id),

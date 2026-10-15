@@ -3,7 +3,7 @@ use crate::workspace_registry::validate_relative_path;
 use std::{
     ffi::{CStr, CString, OsStr},
     fs::File,
-    io::{self, Read},
+    io,
     os::{
         fd::{AsRawFd, FromRawFd, RawFd},
         unix::ffi::OsStrExt,
@@ -50,56 +50,6 @@ pub(super) fn open_parent(root: RawFd, path: &Path) -> io::Result<File> {
         return fd_result(fd);
     }
     open_directory_path(root, path)
-}
-
-pub(super) fn open_regular(root: RawFd, path: &Path, flags: libc::c_int) -> io::Result<File> {
-    validate_relative_path(path)?;
-    let path = cstring(path.as_os_str())?;
-    let fd = open_regular_beneath(root, &path, flags)?;
-    let file = fd_result(fd)?;
-    regular_unlinked_stat(file.as_raw_fd())?;
-    Ok(file)
-}
-
-#[cfg(target_os = "macos")]
-fn open_regular_beneath(root: RawFd, path: &CStr, flags: libc::c_int) -> io::Result<libc::c_int> {
-    Ok(unsafe {
-        libc::openat(
-            root,
-            path.as_ptr(),
-            flags
-                | libc::O_NONBLOCK
-                | libc::O_CLOEXEC
-                | libc::O_NOFOLLOW_ANY
-                | super::O_RESOLVE_BENEATH,
-        )
-    })
-}
-
-#[cfg(target_os = "linux")]
-fn open_regular_beneath(root: RawFd, path: &CStr, flags: libc::c_int) -> io::Result<libc::c_int> {
-    let mut how: libc::open_how = unsafe { std::mem::zeroed() };
-    how.flags = (flags | libc::O_NONBLOCK | libc::O_CLOEXEC) as u64;
-    how.resolve = libc::RESOLVE_BENEATH | libc::RESOLVE_NO_SYMLINKS;
-    let mut attempts = 0;
-    loop {
-        let fd = unsafe {
-            libc::syscall(
-                libc::SYS_openat2,
-                root,
-                path.as_ptr(),
-                &how,
-                std::mem::size_of::<libc::open_how>(),
-            ) as libc::c_int
-        };
-        if fd >= 0
-            || io::Error::last_os_error().raw_os_error() != Some(libc::EAGAIN)
-            || attempts == 2
-        {
-            return Ok(fd);
-        }
-        attempts += 1;
-    }
 }
 
 pub(super) fn open_regular_at(parent: RawFd, name: &CStr, flags: libc::c_int) -> io::Result<File> {
@@ -156,17 +106,6 @@ pub(super) fn ensure_regular_single_link(stat: &libc::stat) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn ensure_supported_entry(stat: &libc::stat) -> io::Result<()> {
-    match stat.st_mode & libc::S_IFMT {
-        libc::S_IFREG => ensure_regular_single_link(stat),
-        libc::S_IFDIR => Ok(()),
-        _ => Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "symlinks and special files are not supported",
-        )),
-    }
-}
-
 pub(super) fn fstat(fd: RawFd) -> io::Result<libc::stat> {
     let mut value = std::mem::MaybeUninit::uninit();
     if unsafe { libc::fstat(fd, value.as_mut_ptr()) } != 0 {
@@ -215,12 +154,6 @@ pub(super) fn content_hash(content: &[u8]) -> u64 {
     content.iter().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     })
-}
-
-pub(super) fn read_all(file: &mut impl Read) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    Ok(bytes)
 }
 
 pub(super) fn same_identity(a: &libc::stat, b: &libc::stat) -> bool {

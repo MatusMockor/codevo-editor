@@ -29,24 +29,24 @@ describe("desktop window chrome config", () => {
     });
   });
 
-  it("exposes editor typography commands through the native macOS View menu", () => {
+  it("exposes window zoom and appearance commands through the native macOS View menu", () => {
     const runtimeSource = [
       readText("src-tauri/src/lib_composition/workspace_facade.rs"),
       readText("src-tauri/src/lib_composition/runtime.rs"),
     ].join("\n");
     const menuSource = readText("src-tauri/src/application_menu.rs");
 
-    expect(runtimeSource).toContain("const FONT_ZOOM_IN_MENU_ID");
-    expect(runtimeSource).toContain("const FONT_ZOOM_OUT_MENU_ID");
-    expect(runtimeSource).toContain("const FONT_ZOOM_RESET_MENU_ID");
-    expect(runtimeSource).toContain("const TOGGLE_FONT_LIGATURES_MENU_ID");
+    expect(runtimeSource).toContain("const WINDOW_ZOOM_IN_MENU_ID");
+    expect(runtimeSource).toContain("const WINDOW_ZOOM_OUT_MENU_ID");
+    expect(runtimeSource).toContain("const WINDOW_ZOOM_RESET_MENU_ID");
     expect(runtimeSource).toContain("const OPEN_APPEARANCE_SETTINGS_MENU_ID");
     expect(menuSource).toContain('SubmenuBuilder::new(app, "View")');
-    expect(runtimeSource).toContain("FONT_ZOOM_IN_EVENT");
-    expect(runtimeSource).toContain("FONT_ZOOM_OUT_EVENT");
-    expect(runtimeSource).toContain("FONT_ZOOM_RESET_EVENT");
-    expect(runtimeSource).toContain("TOGGLE_FONT_LIGATURES_EVENT");
+    expect(runtimeSource).toContain("WINDOW_ZOOM_IN_EVENT");
+    expect(runtimeSource).toContain("WINDOW_ZOOM_OUT_EVENT");
+    expect(runtimeSource).toContain("WINDOW_ZOOM_RESET_EVENT");
     expect(runtimeSource).toContain("OPEN_APPEARANCE_SETTINGS_EVENT");
+    expect(runtimeSource).not.toContain("FONT_ZOOM_");
+    expect(runtimeSource).not.toContain("TOGGLE_FONT_LIGATURES_");
   });
 
   it("grants the custom chrome only the required window controls", () => {

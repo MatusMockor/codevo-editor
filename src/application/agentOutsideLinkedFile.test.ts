@@ -9,8 +9,8 @@ import {
   type AgentOutsideTextFile,
   type AgentOutsideTextFilePort,
   type AgentOutsideTextFileRefusal,
+  type ReadOnlySnapshotReader,
 } from "./agentOutsideLinkedFile";
-import type { ReadOnlySnapshotReader } from "./useWorkbenchDocumentTabs";
 
 const PROJECT = "/Users/me/Developer/mono";
 const OTHER_TAB = "/Users/me/Developer/billing";

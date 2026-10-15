@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   RemoteCommitFiles,
   RemoteGitHistory,
@@ -6,18 +6,13 @@ import type {
   RemoteSurfaceScope,
 } from "../../domain/remoteRunnerSurfaces";
 import type { RemoteRunnerTaskFileDiff } from "../../domain/remoteRunner";
-import type { MonacoAppTheme } from "../../domain/settings";
-import type { GitFileDiff } from "../../domain/git";
+import { AgentTextDiffView } from "../agentMode/rightPanel/diff/AgentTextDiffView";
 import { useRemoteSurfaceLease } from "./useRemoteSurfaceLease";
 import "./remoteSurfacePanels.css";
 
-const DiffPreview = lazy(() =>
-  import("../GitDiffPreview").then((module) => ({ default: module.GitDiffPreview })),
-);
 type Props = Readonly<{
   scope: RemoteSurfaceScope;
   gateway: RemoteRunnerSurfacesGateway;
-  monacoTheme?: MonacoAppTheme;
 }>;
 type Selection = Readonly<{
   commit: string;
@@ -40,7 +35,7 @@ export function RemoteGitHistoryPanel(props: Props) {
   return <HistoryContent key={key} {...props} scope={scope} />;
 }
 
-function HistoryContent({ scope, gateway, monacoTheme = "calm-dark" }: Props) {
+function HistoryContent({ scope, gateway }: Props) {
   const lease = useRemoteSurfaceLease(scope);
   const [offsets, setOffsets] = useState([0]);
   const [page, setPage] = useState<RemoteGitHistory | null>(null);
@@ -116,24 +111,6 @@ function HistoryContent({ scope, gateway, monacoTheme = "calm-dark" }: Props) {
   }
   const diff = selection?.diff;
   const file = selection?.files.files.find((item) => item.path === diff?.path);
-  const preview: GitFileDiff | null =
-    diff && file
-      ? {
-          change: {
-            path: file.path,
-            relativePath: file.path,
-            oldPath: file.oldPath ?? null,
-            oldRelativePath: file.oldPath ?? null,
-            isStaged: false,
-            isUnversioned: false,
-            status: file.status,
-          },
-          language: "plaintext",
-          originalContent: diff.original.text,
-          modifiedContent: diff.modified.text,
-          previewUnavailableReason: diff.unavailableReason,
-        }
-      : null;
   return (
     <section aria-label="Server Git history" className="remote-surface-panel">
       <header className="remote-surface-toolbar">
@@ -258,26 +235,52 @@ function HistoryContent({ scope, gateway, monacoTheme = "calm-dark" }: Props) {
               This diff is incomplete because it exceeded the server preview limit.
             </p>
           )}
-          {preview && (
-            <div className="remote-surface-editor remote-surface-diff">
-              <Suspense fallback={<p className="remote-surface-note">Loading diff…</p>}>
-                <DiffPreview
-                  diff={preview}
-                  isLoading={false}
-                  monacoTheme={monacoTheme}
-                  canRevertChange={false}
-                  comparisonLabels={{ original: "Parent", modified: "Commit" }}
-                  previewIdentity={`${lease.key}:${selection.commit}:${diff?.path}`}
-                  onClose={() => {
+          {diff && file && (
+            <div className="remote-surface-diff">
+              <div className="remote-surface-toolbar">
+                <strong>
+                  {file.oldPath ? `${file.oldPath} → ` : ""}
+                  {file.path}
+                </strong>
+                <button
+                  type="button"
+                  onClick={() => {
                     generation.current++;
                     setSelection({ ...selection, diff: null });
                   }}
-                />
-              </Suspense>
+                >
+                  Close diff
+                </button>
+              </div>
+              <RemoteCommitDiff diff={diff} />
             </div>
           )}
         </>
       )}
     </section>
   );
+}
+
+function RemoteCommitDiff({ diff }: { readonly diff: RemoteRunnerTaskFileDiff }) {
+  switch (diff.unavailableReason) {
+    case "binary":
+      return <p className="remote-surface-note">This is a binary file; no text diff is shown.</p>;
+    case "large":
+      return <p className="remote-surface-note">This file is too large to show as a diff.</p>;
+    case null:
+      return (
+        <AgentTextDiffView
+          original={diff.original.text}
+          modified={diff.modified.text}
+          path={diff.path}
+          labels={{ original: "Parent", modified: "Commit" }}
+        />
+      );
+    default:
+      return unsupportedReason(diff.unavailableReason);
+  }
+}
+
+function unsupportedReason(reason: never): never {
+  throw new TypeError(`Unsupported remote diff state: ${String(reason)}`);
 }

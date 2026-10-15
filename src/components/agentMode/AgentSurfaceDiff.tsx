@@ -1,30 +1,22 @@
-import { RefreshCw } from "lucide-react";
-import { Suspense, lazy, useEffect, useMemo } from "react";
+import { RefreshCw, X } from "lucide-react";
+import { useEffect } from "react";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import type { GitChangedFile } from "../../domain/git";
-import type { MonacoAppTheme } from "../../domain/settings";
 import { AgentThreadChanges } from "./AgentThreadChanges";
-import {
-  agentFileDiffToGitFileDiff,
-  agentFileDiffTruncated,
-  agentSurfaceTargetGone,
-} from "./agentModePresentation";
+import { agentFileDiffTruncated, agentSurfaceTargetGone } from "./agentModePresentation";
+import { AgentTextDiffView } from "./rightPanel/diff/AgentTextDiffView";
 
 export const SURFACE_DIFF_GONE_MESSAGE = "This thread's checkout is gone.";
 export const SURFACE_DIFF_TRUNCATED_MESSAGE =
   "This diff was truncated to stay bounded. Open the diff document for the full file.";
-
-const LazyGitDiffPreview = lazy(() =>
-  import("../GitDiffPreview").then((module) => ({ default: module.GitDiffPreview })),
-);
+const SURFACE_DIFF_UNAVAILABLE_MESSAGES = {
+  binary: "This file is binary and cannot be shown as a text diff.",
+  large: "This file is too large to show as a text diff.",
+} as const;
 
 export interface AgentSurfaceDiffProps {
   readonly thread: AgentThreadView;
   readonly summary: AgentTaskChangeSummary | null;
-  readonly monacoTheme: MonacoAppTheme;
-  readonly editorFontFamily?: string;
-  readonly editorFontLigatures?: boolean;
-  readonly editorFontSize?: number;
   onShowChanges(threadId: string): void;
   onRefreshChanges(threadId: string): void;
   onShowFileDiff(threadId: string, change: GitChangedFile): void;
@@ -38,10 +30,6 @@ export function AgentSurfaceDiff(props: AgentSurfaceDiffProps) {
 }
 
 function AgentWorkingTreeDiff({
-  editorFontFamily,
-  editorFontLigatures,
-  editorFontSize,
-  monacoTheme,
   onHideFileDiff,
   onOpenChangedFile,
   onOpenChangedFileDiff,
@@ -61,14 +49,6 @@ function AgentWorkingTreeDiff({
   }, [gone, onShowChanges, summaryMissing, threadId]);
 
   const diff = summary?.diff ?? null;
-  const diffChange = useMemo(
-    () => summary?.files.find((file) => file.relativePath === diff?.relativePath) ?? null,
-    [diff?.relativePath, summary?.files],
-  );
-  const gitDiff = useMemo(() => {
-    if (diff === null || diffChange === null || diff.loading || diff.error !== null) return null;
-    return agentFileDiffToGitFileDiff(diff, diffChange);
-  }, [diff, diffChange]);
 
   return (
     <section aria-label="Thread diff" className="agent-surface-diff" data-agent-surface-diff>
@@ -120,19 +100,32 @@ function AgentWorkingTreeDiff({
               </p>
             )}
             {diff !== null && diff.error === null && (
-              <Suspense fallback={<p className="agent-note">Loading the diff viewer…</p>}>
-                <LazyGitDiffPreview
-                  canRevertChange={false}
-                  diff={gitDiff}
-                  editorFontFamily={editorFontFamily}
-                  editorFontLigatures={editorFontLigatures}
-                  editorFontSize={editorFontSize}
-                  isLoading={diff.loading}
-                  monacoTheme={monacoTheme}
-                  onClose={() => onHideFileDiff(threadId)}
-                  previewIdentity={`${threadId}:${diff.relativePath}`}
-                />
-              </Suspense>
+              <>
+                <header className="agent-surface__subhead">
+                  <span className="agent-microlabel">{diff.relativePath}</span>
+                  <span className="agent-session__spacer" />
+                  <button
+                    aria-label="Close diff"
+                    className="agent-iconbutton"
+                    onClick={() => onHideFileDiff(threadId)}
+                    type="button"
+                  >
+                    <X aria-hidden="true" size={12} />
+                  </button>
+                </header>
+                {diff.unavailableReason !== null ? (
+                  <p className="agent-note">
+                    {SURFACE_DIFF_UNAVAILABLE_MESSAGES[diff.unavailableReason]}
+                  </p>
+                ) : (
+                  <AgentTextDiffView
+                    loading={diff.loading}
+                    modified={diff.modified.text}
+                    original={diff.original.text}
+                    path={diff.relativePath}
+                  />
+                )}
+              </>
             )}
           </div>
         </div>

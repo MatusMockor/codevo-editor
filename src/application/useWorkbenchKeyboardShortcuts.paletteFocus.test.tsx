@@ -4,7 +4,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Command } from "../domain/command";
-import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import { __resetKeymapPlatformCacheForTests } from "../domain/keymap";
 import { defaultAppSettings, type AppSettings } from "../domain/settings";
 import { CommandRegistry, executeCommand, type CommandContext } from "./commandRegistry";
@@ -13,14 +12,7 @@ import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const context: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: true,
   hasWorkspace: true,
-};
-const EDITOR_SURFACE_IDENTITY = {};
-const DOUBLE_SHIFT_DETECTOR: DoubleShiftDetector = {
-  handleKeyDown: () => false,
-  reset: () => undefined,
 };
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -37,13 +29,11 @@ function Harness({
   readonly registry: CommandRegistry;
 }) {
   useWorkbenchKeyboardShortcuts({
-    actions: { closeFloatingSurface: () => false, openSearchEverywhere: () => undefined },
     appSettingsRef: { current: appSettings },
     bareKeyShortcutsRef: { current: { keymap: null, keys: new Set<string>() } },
+    closeFloatingSurface: () => false,
     commandContext: context,
     commandRegistry: registry,
-    doubleShiftDetectorRef: { current: DOUBLE_SHIFT_DETECTOR },
-    editorSurfaceIdentity: EDITOR_SURFACE_IDENTITY,
     keymap: appSettings.keymap,
     runCommand: (commandId, commandContext = context) =>
       executeCommand(registry, commandId, commandContext),
@@ -51,9 +41,7 @@ function Harness({
   return (
     <div>
       <input aria-label="composer" />
-      <div className="monaco-editor">
-        <textarea aria-label="editor" className="inputarea" />
-      </div>
+      <textarea aria-label="viewer search" />
     </div>
   );
 }
@@ -85,39 +73,33 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("palette shortcuts respect editor text focus", () => {
-  it("opens the palette immediately outside the editor and keeps Cmd+K chords inside it", () => {
+describe("palette shortcuts from any focused field", () => {
+  it("opens the palette and the cheatsheet from every field without chord delays", () => {
     const openPalette = vi.fn();
-    const splitDown = vi.fn();
     const cheatsheet = vi.fn();
     const registry = new CommandRegistry();
     registry.register(command("palette.open", openPalette));
     registry.register(command("palette.shortcuts", cheatsheet));
-    registry.register(command("editor.splitDown", splitDown));
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
     const appSettings = defaultAppSettings();
     act(() => root?.render(<Harness appSettings={appSettings} registry={registry} />));
     const composer = document.querySelector('[aria-label="composer"]');
-    const editor = document.querySelector('[aria-label="editor"]');
+    const search = document.querySelector('[aria-label="viewer search"]');
     expect(composer).not.toBeNull();
-    expect(editor).not.toBeNull();
+    expect(search).not.toBeNull();
 
-    keydown(composer as Element, "k");
+    expect(keydown(composer as Element, "k").defaultPrevented).toBe(true);
     expect(openPalette).toHaveBeenCalledTimes(1);
+    expect(keydown(search as Element, "k").defaultPrevented).toBe(true);
+    expect(openPalette).toHaveBeenCalledTimes(2);
 
-    keydown(editor as Element, "k");
-    keydown(editor as Element, "\\");
-    act(() => vi.advanceTimersByTime(2_500));
-    expect(splitDown).toHaveBeenCalledTimes(1);
-    expect(openPalette).toHaveBeenCalledTimes(1);
-
-    const slash = keydown(editor as Element, "/");
-    expect(cheatsheet).not.toHaveBeenCalled();
-    expect(slash.defaultPrevented).toBe(false);
+    expect(keydown(search as Element, "/").defaultPrevented).toBe(true);
     keydown(composer as Element, "/");
-    expect(cheatsheet).toHaveBeenCalledTimes(1);
+    expect(cheatsheet).toHaveBeenCalledTimes(2);
+    act(() => vi.advanceTimersByTime(2_500));
+    expect(openPalette).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -138,36 +120,36 @@ describe("shortcuts inside an open command surface", () => {
   }
 
   it("ignores a shortcut the open command surface already handled", () => {
-    const quickOpenClass = vi.fn();
+    const quickOpenFile = vi.fn();
     const registry = new CommandRegistry();
-    registry.register(command("class.quickOpen", quickOpenClass));
+    registry.register(command("file.quickOpen", quickOpenFile));
     const { dialog, field } = mountDialog(registry);
     const handle = (event: Event) => event.preventDefault();
     dialog.addEventListener("keydown", handle);
-    keydown(field, "o");
+    keydown(field, "p");
     dialog.removeEventListener("keydown", handle);
-    expect(quickOpenClass).not.toHaveBeenCalled();
+    expect(quickOpenFile).not.toHaveBeenCalled();
   });
 
   it("still runs a shortcut the open command surface left unhandled", () => {
-    const quickOpenClass = vi.fn();
+    const quickOpenFile = vi.fn();
     const registry = new CommandRegistry();
-    registry.register(command("class.quickOpen", quickOpenClass));
+    registry.register(command("file.quickOpen", quickOpenFile));
     const { field } = mountDialog(registry);
-    keydown(field, "o");
-    expect(quickOpenClass).toHaveBeenCalledTimes(1);
+    keydown(field, "p");
+    expect(quickOpenFile).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps running shortcuts the editor already prevented outside a command surface", () => {
-    const quickOpenClass = vi.fn();
+  it("keeps running shortcuts a field already prevented outside a command surface", () => {
+    const quickOpenFile = vi.fn();
     const registry = new CommandRegistry();
-    registry.register(command("class.quickOpen", quickOpenClass));
+    registry.register(command("file.quickOpen", quickOpenFile));
     mountDialog(registry);
     const composer = document.querySelector('[aria-label="composer"]') as Element;
     const handle = (event: Event) => event.preventDefault();
     composer.addEventListener("keydown", handle);
-    keydown(composer, "o");
+    keydown(composer, "p");
     composer.removeEventListener("keydown", handle);
-    expect(quickOpenClass).toHaveBeenCalledTimes(1);
+    expect(quickOpenFile).toHaveBeenCalledTimes(1);
   });
 });

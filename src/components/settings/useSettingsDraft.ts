@@ -1,9 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  settingsIgnorePatternsText,
-  type AppSettings,
-  type WorkspaceSettings,
-} from "../../domain/settings";
+import type { AppSettings, WorkspaceSettings } from "../../domain/settings";
 import { settingsDraftPersistence } from "./settingsDraftPersistence";
 import type { SettingsDraft, SettingsDraftActions, SettingsSaveInput } from "./settingsPageProps";
 
@@ -30,9 +26,6 @@ export function useSettingsDraft({
   const [draftAppSettings, setDraftAppSettings] = useState(appSettings);
   const [draftWorkspaceSettings, setDraftWorkspaceSettings] = useState(workspaceSettings);
   const [draftTrusted, setDraftTrusted] = useState(trusted);
-  const [ignorePatternsText, setIgnorePatternsText] = useState(() =>
-    settingsIgnorePatternsText(workspaceSettings.extraIgnorePatterns),
-  );
   const appSettingsRef = useRef(draftAppSettings);
   const workspaceSettingsRef = useRef(draftWorkspaceSettings);
   const trustedRef = useRef(draftTrusted);
@@ -43,8 +36,8 @@ export function useSettingsDraft({
   }, [onSave]);
 
   const actions = useMemo<SettingsDraftActions>(
-    () => ({
-      ...settingsDraftPersistence({
+    () =>
+      settingsDraftPersistence({
         appSettingsRef,
         hasWorkspace,
         onSave: (input) => saveRef.current(input),
@@ -54,19 +47,16 @@ export function useSettingsDraft({
         trustedRef,
         workspaceSettingsRef,
       }),
-      updateIgnorePatternsText: setIgnorePatternsText,
-    }),
     [hasWorkspace],
   );
 
   const draft = useMemo<SettingsDraft>(
     () => ({
       appSettings: draftAppSettings,
-      ignorePatternsText,
       trusted: draftTrusted,
       workspaceSettings: draftWorkspaceSettings,
     }),
-    [draftAppSettings, draftTrusted, draftWorkspaceSettings, ignorePatternsText],
+    [draftAppSettings, draftTrusted, draftWorkspaceSettings],
   );
 
   return { actions, draft };

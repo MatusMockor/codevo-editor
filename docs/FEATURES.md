@@ -4,26 +4,18 @@ This file documents how selected app features are implemented and how to use the
 
 ## Toast notifications
 
-The editor uses a shared notice/toast pipeline.
+The app uses a shared notice/toast pipeline.
 
 ### Files
 
 - `src/application/workbenchNotice.ts`
   - `WorkbenchNotice` model and factory helpers.
-- `src/application/useWorkbenchController.ts`
-  - Maintains toast/notices state.
-- `src/application/useNoticeToastRenderers.tsx`
+- `src/components/useNoticeToastRenderers.tsx`
   - Maps notice payloads to toast UI renderers.
 - `src/components/NoticeToastHost.tsx`
   - Displays toasts and tracks dismissals.
 - `src/components/ToastNotification.tsx`
   - Reusable toast UI component with template types and action handlers.
-- `src/components/ManagedPhpactorSetupNotice.tsx`
-  - Concrete notice implementation for missing PHPactor setup.
-- `src/App.tsx`
-  - Shell wiring; mounts `NoticeToastHost` and connects workbench state.
-- `src/App.css`
-  - Toast styling, variants, and animations.
 
 ### How to add/update a toast in code
 
@@ -31,7 +23,7 @@ The editor uses a shared notice/toast pipeline.
 2. Choose a notice identity strategy:
    - Include `groupKey` for replaceable/grouped notices.
    - Omit `groupKey` for one-off one-time notices.
-3. Push/replace notices in `useWorkbenchController`.
+3. Push or replace the notice through the app's notice state owner.
 4. Add or update a renderer in `useNoticeToastRenderers.tsx` for the notice payload.
 
 ### How to use grouped notices
@@ -51,163 +43,14 @@ For new feature work, append a section in this file with:
 
 Use the same pattern for other features that need contributor-facing implementation guidance.
 
-## Quick Open routing and seed ownership
-
-Quick Open parses one closed query model before it searches or routes:
-
-- ordinary text searches files;
-- `>` opens Commands;
-- `@` opens symbols in the current file;
-- `#` opens workspace symbols;
-- `path:line[:column]` opens an exact file location;
-- `:line[:column]` offers a confirmable current-file location.
-
-Paste and completed IME composition forward the exact parsed text after the prefix.
-Typing only a prefix transfers focus with an empty seed so subsequent characters are
-entered in the destination picker. Command Palette and File Structure consume their
-seed only on a closed-to-open transition; ordinary opening supplies an empty seed.
-Workspace Symbols clears its controlled query when closed. This prevents stale
-one-shot state from leaking through A→B→A surface transitions.
-
-Backend truncation is a separate field and is never inferred from a full frontend page.
-The visible syntax hint has an explicit accessible label.
-
-### Main files
-
-- `src/domain/quickOpenQuery.ts`
-- `src/application/useWorkbenchQuickOpen.ts`
-- `src/application/useQuickOpenPrefixDispatch.ts`
-- `src/components/QuickOpen.tsx`
-- `src/components/CommandPalette.tsx`
-- `src/components/FileStructure.tsx`
-
-## Docked text search and dirty overlays
-
-Workspace search is a bottom-panel view. Opening it remembers the previous panel per
-workspace; closing it restores that view and visibility. Native Rust search remains
-authoritative for disk content. A browser worker computes a latest-wins overlay for
-unsaved documents, and application ownership merges or replaces results only for the
-exact dirty snapshot and workspace generation.
-
-Dirty-buffer semantics are intentionally narrower than native disk search:
-
-- literal case-sensitive and case-insensitive matching is supported;
-- regex and `wholeWord` are unsupported because JavaScript `RegExp` does not share the
-  native Rust regex language, linear-time guarantee, or Unicode word boundaries;
-- non-empty file masks are unsupported because ignore/mask policy belongs to native
-  search;
-- an unsupported mode returns no approximate dirty rows and adds an explicit
-  limitation/truncated reason.
-
-The worker clone boundary is hard-capped at 16 documents, 4,096 dirty paths, 256 Ki
-UTF-16 code units per document, 1 Mi aggregate code units, 768 KiB UTF-8 per document,
-3 MiB aggregate UTF-8, 500 results, 4,096 code points per preview, and a 2 MiB response.
-The default deadline is one second. A superseding request or abort terminates the old
-worker.
-
-### Main files
-
-- `src/application/useDockedTextSearch.ts`
-- `src/application/dirtyTextSearchComputation.ts`
-- `src/application/dirtyTextSearchMatcher.ts`
-- `src/infrastructure/browserDirtyTextSearchGateway.ts`
-- `src/infrastructure/dirtyTextSearch.worker.ts`
-- `src-tauri/src/workspace_file_commands/workspace_file_search.rs`
-
-## Editor MRU, navigation persistence, and model retention
-
-Open-editor MRU order is scoped by project and editor group. It reconciles tab changes,
-commits on Control release, restores focus, and retains at most 64 inactive scope
-orders.
-
-Navigation persistence snapshots editor groups, documents, view state, sidebar, and
-bottom-panel state only after session restore is authoritative. Scheduled saves are
-flushed before workspace departure, and errors are published only for the still-active
-root.
-
-Monaco model lifetime follows navigation ownership rather than retaining every model
-ever opened. The active model, open document models, and models still required by
-navigation history survive. A model that belongs to none of those owners is disposed;
-navigation waits for a live replacement model before revealing a restored location.
-
-### Main files
-
-- `src/application/useOpenEditorsMru.ts`
-- `src/application/useWorkbenchNavigationSessionPersistence.ts`
-- `src/components/EditorSurface.tsx`
-- `src/components/editorRuntimeModels.ts`
-
-## Workspace package graph
-
-The package graph is a pure bounded model used by monorepo-aware scripts, tests,
-Express routes, and Problems attribution. It accepts at most 128 workspace glob
-patterns, 256 glob expansions, 256 package manifests, 2,000 source paths, and eight
-specifier segments. Over-budget or malformed authority is explicit and consumers must
-not invent a nearest package from an incomplete graph.
-
-### Main files
-
-- `src/domain/workspacePackageGraph.ts`
-- `src/domain/workspacePackageForPath.ts`
-- `src/application/useWorkbenchWorkspacePackageGraph.ts`
-- `src/application/useWorkspacePackageGraph.ts`
-
-## Exact cancellable JS/TS LSP and watcher resync
-
-JavaScript/TypeScript LSP requests and document notifications are bound to the exact
-workspace root and accepted language-server session. Superseded requests cancel;
-late, foreign, and replacement-session responses fail stale. The latest-value document
-mailbox coalesces edits without allowing a dropped A→B→A owner to publish.
-
-Watch delivery is bounded. Batch or queue overflow does not replay a partial set of
-concrete file events. It requests project resynchronization for the exact accepted LSP
-session; if that session cannot accept resync, the frontend receives a truthful rescan
-signal. Retry and replacement retain generation ownership.
-
-## Background editor change hunks
-
-Change-hunk calculation runs in a reusable browser worker instead of blocking the UI
-thread. A newer active-editor request aborts and terminates older computation.
-Responses must match owner, path, and generation. Files over the configured large-file
-policy return an explicit degraded result with no hunks, and worker failure or timeout
-is surfaced as unavailable.
-
-### Main files
-
-- `src/application/editorChangeHunksComputation.ts`
-- `src/application/useOwnedEditorChangeHunks.ts`
-- `src/infrastructure/browserEditorChangeHunksGateway.ts`
-- `src/infrastructure/editorChangeHunks.worker.ts`
-
-## JavaScript coverage viewport projection
-
-JavaScript coverage reports are indexed once by immutable report identity. The active-editor application policy selects an exact workspace-owned, clean file; the Monaco adapter then binary-searches its already sorted line records for the visible viewport.
-
-### Files
-
-- `src/domain/jsTestCoverageDecorations.ts`
-  - Immutable report/path lookup facade and editor-neutral line projection.
-- `src/application/jsTestCoverageDecorationSelection.ts`
-  - Workspace, report, file and dirty-document authority checks.
-- `src/components/jsTestCoverageDecorationWindow.ts`
-  - Bounded visible-range normalization, binary-search selection and decoration/inline-label caps.
-- `src/components/useJsTestCoverageEditorDecorations.ts`
-  - Exact model subscription, refresh and cleanup ownership.
-
-The adapter returns at most 256 decorations and 128 inline hit-count labels. It reads at most 64 Monaco visible ranges per pass and marks retained decorations when additional ranges were omitted. Do not restore a full-file clone, sort or decoration map before viewport selection.
-
-## JavaScript/TypeScript LSP change mailbox
-
-Document changes use a latest-value mailbox keyed by the exact workspace root and LSP session. Only the current entry may drain or publish an error; drop, clear, re-entry and replacement revoke older work. Every document notification also carries `expectedSessionId` through the gateway so the Rust session rejects stale writes.
-
 ## Remote add project and repository lookup
 
-Selecting a server as the execution environment replaces the local folder browser with a stepped add-project dialog: sources, one entry field, confirm. Supported sources are a registered server project, a Git clone URL, and one exact GitHub `owner/repo` or GitLab `group/project` looked up through this machine's `gh` or `glab` account; lookup runs on the desktop, so it is available on macOS and Linux only. An unavailable source cannot be chosen or submitted, and a repository is accepted only when the looked-up provider and host are the ones that were asked for, so a renamed repository must be entered under its current path. A failed lookup offers **Use Git URL**, which moves to the Git URL step; an unreachable server, an unfinished host check, a missing provider CLI and a provider that is not signed in all offer **Retry** instead of a setup chip, with the command to run (`gh auth login`, `glab auth login`) in the reason line, and a truncated host list says so. A host signed in just now can need a few seconds before **Retry** finds it, because the desktop caches the CLI host status briefly. A repeated Enter on the entry that is already being looked up is ignored, so a held Enter runs one lookup, while a different entry supersedes the running one. A repository the host returns without any usable clone URL does not open confirm: the entry step reports "This host returned no usable clone URL. Use a Git URL instead." next to **Use Git URL**. Confirm validates the folder name under the server projects root, validates an optional branch against the runner's branch grammar, and offers only the clone protocols whose URL exists; HTTPS on a repository that is not public warns that the server clones anonymously, and only when an HTTPS clone URL exists. Enter starts the clone only from the folder name or branch field; Cmd/Ctrl+Enter is the primary shortcut. Submitting closes the dialog and the rail shows one bounded clone row, scoped to the workspace tab and the server, with status text, an indeterminate bar while queued or running, and cancel or dismiss. A refused submission stays in that row with its bounded reason. On success the editor refreshes the server projects and selects the new project for the draft thread only once it is present in the refreshed list and only while the user selected nothing else meanwhile: choosing a project in the draft chooser, in the rail or in the scope menu, opening a thread, changing the composer's repository or switching servers all cancel the auto-selection, and the clone row then stays as "Clone finished" with **Dismiss**.
+Selecting a server as the execution environment replaces the local folder browser with a stepped add-project dialog: sources, one entry field, confirm. Supported sources are a registered server project, a Git clone URL, and one exact GitHub `owner/repo` or GitLab `group/project` looked up through this machine's `gh` or `glab` account; lookup runs on the desktop, so it is available on macOS and Linux only. An unavailable source cannot be chosen or submitted, and a repository is accepted only when the looked-up provider and host are the ones that were asked for, so a renamed repository must be entered under its current path. A failed lookup offers **Use Git URL**, which moves to the Git URL step; an unreachable server, an unfinished host check, a missing provider CLI and a provider that is not signed in all offer **Retry** instead of a setup chip, with the command to run (`gh auth login`, `glab auth login`) in the reason line, and a truncated host list says so. A host signed in just now can need a few seconds before **Retry** finds it, because the desktop caches the CLI host status briefly. A repeated Enter on the entry that is already being looked up is ignored, so a held Enter runs one lookup, while a different entry supersedes the running one. A repository the host returns without any usable clone URL does not open confirm: the entry step reports "This host returned no usable clone URL. Use a Git URL instead." next to **Use Git URL**. Confirm validates the folder name under the server projects root, validates an optional branch against the runner's branch grammar, and offers only the clone protocols whose URL exists; HTTPS on a repository that is not public warns that the server clones anonymously, and only when an HTTPS clone URL exists. Enter starts the clone only from the folder name or branch field; Cmd/Ctrl+Enter is the primary shortcut. Submitting closes the dialog and the rail shows one bounded clone row, scoped to the workspace tab and the server, with status text, an indeterminate bar while queued or running, and cancel or dismiss. A refused submission stays in that row with its bounded reason. On success Codevo refreshes the server projects and selects the new project for the draft thread only once it is present in the refreshed list and only while the user selected nothing else meanwhile: choosing a project in the draft chooser, in the rail or in the scope menu, opening a thread, changing the composer's repository or switching servers all cancel the auto-selection, and the clone row then stays as "Clone finished" with **Dismiss**.
 
-Not supported: repository search or suggestion lists, clone percentage (the runner reports status only), tracking a clone across an editor restart, and GitHub Enterprise hosts. A provider without its CLI, without a login, or on a server without the `projectCloning` capability is shown disabled with a truthful one-line reason instead of being hidden.
+Not supported: repository search or suggestion lists, clone percentage (the runner reports status only), tracking a clone across an app restart, and GitHub Enterprise hosts. A provider without its CLI, without a login, or on a server without the `projectCloning` capability is shown disabled with a truthful one-line reason instead of being hidden.
 
 ### Main files
 
-- `src/components/agentMode/remoteAddProject/` — dialog, step views, clone row, and the pure presentation helpers.
-- `src/application/useRemoteAddProject.ts` — controller state machine, lookup and clone orchestration.
-- `src/domain/repositoryLookup.ts`, `src/domain/repositoryCloneUrl.ts` — closed lookup contract and clone URL grammar.
+- `src/components/agentMode/remoteAddProject/` - dialog, step views, clone row, and the pure presentation helpers.
+- `src/application/useRemoteAddProject.ts` - controller state machine, lookup and clone orchestration.
+- `src/domain/repositoryLookup.ts`, `src/domain/repositoryCloneUrl.ts` - closed lookup contract and clone URL grammar.

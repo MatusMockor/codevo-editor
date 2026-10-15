@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { WorkspaceSettings } from "../domain/settings";
+import { defaultWorkspaceSettings, type WorkspaceSettings } from "../domain/settings";
 import {
   createWorkspaceSettingsSaveCoordinator,
   WORKSPACE_SETTINGS_NAVIGATION_SAVE_DEBOUNCE_MS,
@@ -154,10 +154,8 @@ describe("workspace settings save coordinator", () => {
 
 const ROOT = "/workspace";
 
-function settings(validation: boolean): WorkspaceSettings {
-  return {
-    javaScriptTypeScriptValidation: validation,
-  } as WorkspaceSettings;
+function settings(gitDirectoryMappingsAuto: boolean): WorkspaceSettings {
+  return { ...defaultWorkspaceSettings(), gitDirectoryMappingsAuto };
 }
 
 function deferred<T>(): {

@@ -33,8 +33,8 @@ then choose a checkout:
 
 - **Local checkout** runs directly in the project's checkout. Multiple conversations can run
   there at the same time, sharing the files and Git state. Another running agent does not block
-  a new conversation or require a confirmation. Unsaved editor changes still require explicit
-  confirmation, and a failed repository status check prevents a new local start.
+  a new conversation or require a confirmation. A failed repository status check prevents a new
+  local start.
 - **Isolated worktree** creates a dedicated Git worktree so the main checkout is not edited by
   that thread. The automatic isolation policy prefers a worktree; choosing **Local checkout**
   explicitly keeps that choice even while other agents are running. The shared limit of 64
@@ -91,26 +91,27 @@ with arguments keep the normal prompt behavior.
 ## Review and work with a thread
 
 The thread header's **Open** menu can reveal the checkout in Finder, open its terminal or Files
-surface, or copy its path. The right-panel surface controls expose four surfaces:
+surface, or copy its path. The right-panel surface controls expose these surfaces:
 
-- **Files** browses the selected project or thread checkout and opens files in the editor.
+- **Files** browses the selected project or thread checkout and shows files in a read-only
+  viewer.
 - **Diff** lists the selected project's changes, or the thread's changed files when a thread is
-  selected, and opens file diffs or editor diff documents.
+  selected, and opens file diffs.
 - **Terminal** opens a terminal in the selected project or thread checkout, including nested
   repositories and isolated worktrees.
 - **History** browses the selected project's repositories or the selected thread's checkout.
+- **Git**, **Scripts**, **Pull request**, and **Agents** show the repository status, the
+  project's package scripts, the thread's pull request, and the running agents.
 
-The standard editor remains available by expanding the editor. Its tabs, navigation, file and
-local history, Git history, Source Control, and bottom terminal continue to work normally. The
-agent rail footer opens Source Control, Usage, and **Settings > Providers** directly.
+Codevo has no code editor: edit files through the agent, the terminal, or your own editor. The
+agent rail footer opens Usage and **Settings > Providers** directly.
 
 Search the rail to find saved thread titles and retained turn content. Search indexes the newest
 eligible content first and is bounded to 128 thread documents or 4 MiB; the results say when some
 documents or matches were omitted.
 
 **Find in Thread** searches prompts plus the newest 200 rendered events from each retained turn,
-returning at most 500 matches. It does not show a truncation label. Its **Cmd+F** shortcut is scoped
-to focus in the thread session or its find bar; elsewhere **Cmd+F** remains the editor's Find.
+returning at most 500 matches. It does not show a truncation label.
 
 ## Ship changes
 
@@ -195,13 +196,10 @@ applicable:
 | Find in selected thread              | Cmd+F                             |
 | Toggle right panel                   | Cmd+Alt+R                         |
 | Open Files / Diff / Terminal surface | Cmd+Alt+F / Cmd+Alt+D / Cmd+Alt+J |
-| Expand or collapse editor            | Cmd+Alt+E                         |
 | Command palette                      | Cmd+Shift+P                       |
 | Settings                             | Cmd+,                             |
-| File history / local history         | Cmd+Alt+H / Cmd+Shift+H           |
 | Toggle bottom panel                  | Cmd+J                             |
 
 Open **Settings > Keymap** to search commands by label, category, command ID, or shortcut. Editable
 bindings can be changed or reset individually to the platform default. Codevo displays exact and
-prefix conflicts; the two recently-used-editor shortcuts are reserved and shown with the reason
-they cannot be rebound.
+prefix conflicts.

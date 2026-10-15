@@ -1,43 +1,16 @@
 use super::{
-    create_unique_file, mutation_result, open_parent, regular_unlinked_stat, rename_at, revision,
-    same_entry_snapshot, same_identity, split_path, stat_at, sync_after_commit, sync_dir,
-    CommandFailure, FileCommandResult, FileRevision, MutationFailure, MutationResult, TempCleanup,
-    WorkspaceFileRepository,
+    create_unique_file, open_parent, regular_unlinked_stat, rename_at, revision,
+    same_entry_snapshot, same_identity, split_path, stat_at, sync_dir, CommandFailure,
+    FileCommandResult, FileRevision, TempCleanup, WorkspaceFileRepository,
 };
 use crate::workspace_registry::WorkspaceId;
 use std::{
-    fs::File,
     io::{self, Write},
-    os::fd::{AsRawFd, FromRawFd},
+    os::fd::AsRawFd,
     path::Path,
 };
 
 impl WorkspaceFileRepository<'_> {
-    pub fn create_file(&self, id: &WorkspaceId, path: &Path) -> MutationResult {
-        mutation_result(self.create_file_inner(id, path))
-    }
-
-    fn create_file_inner(&self, id: &WorkspaceId, path: &Path) -> Result<(), MutationFailure> {
-        let _operation = self.registry.lock_operations()?;
-        let root = self.registry.clone_root(id)?;
-        let (parent_path, name) = split_path(path)?;
-        let parent = open_parent(root.as_raw_fd(), parent_path)?;
-        let fd = unsafe {
-            libc::openat(
-                parent.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
-                0o666,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error().into());
-        }
-        let file = unsafe { File::from_raw_fd(fd) };
-        file.sync_all()?;
-        sync_after_commit(&parent, "file was created")
-    }
-
     pub fn create_text_with_content(
         &self,
         id: &WorkspaceId,
@@ -141,6 +114,7 @@ mod tests {
     use std::{
         ffi::OsString,
         fs,
+        os::unix::fs::MetadataExt,
         path::PathBuf,
         sync::{
             atomic::{AtomicU64, Ordering},
@@ -166,10 +140,10 @@ mod tests {
             fs::read_to_string(root.join("launch.json")).unwrap(),
             "{\"version\":1}\n"
         );
-        let snapshot = WorkspaceFileRepository::new(&registry)
-            .read_text(&id, Path::new("launch.json"))
-            .unwrap();
-        assert_eq!(snapshot.revision, created);
+        let metadata = fs::metadata(root.join("launch.json")).unwrap();
+        assert_eq!(created.device, metadata.dev());
+        assert_eq!(created.inode, metadata.ino());
+        assert_eq!(created.size, metadata.size() as i64);
         fs::remove_dir_all(root).unwrap();
     }
 

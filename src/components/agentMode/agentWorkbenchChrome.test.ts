@@ -9,32 +9,55 @@ import {
 const OWNER = "/workspace/app";
 
 describe("agentTerminalPanelIntent", () => {
+  it("restores each project's own persisted panel across A to B to A", () => {
+    const openA = agentTerminalPanelIntent(
+      agentTerminalPanelIntent(initialAgentTerminalPanelIntentState, {
+        owner: "/workspace-a",
+        visible: false,
+        persisted: false,
+      }).state,
+      { owner: "/workspace-a", visible: true, persisted: false },
+    );
+    const switchedToB = agentTerminalPanelIntent(openA.state, {
+      owner: "/workspace-b",
+      visible: false,
+      persisted: false,
+    });
+    const hydratedB = agentTerminalPanelIntent(switchedToB.state, {
+      owner: "/workspace-b",
+      visible: false,
+      persisted: false,
+    });
+    expect(hydratedB.showTerminal).toBe(false);
+
+    const backToA = agentTerminalPanelIntent(hydratedB.state, {
+      owner: "/workspace-a",
+      visible: false,
+      persisted: false,
+    });
+    const hydratedA = agentTerminalPanelIntent(backToA.state, {
+      owner: "/workspace-a",
+      visible: false,
+      persisted: true,
+    });
+    expect(hydratedA.showTerminal).toBe(true);
+  });
+
   it("adopts the owner without revealing the terminal", () => {
     const result = agentTerminalPanelIntent(initialAgentTerminalPanelIntentState, {
       owner: OWNER,
-      active: true,
       visible: false,
-      view: "problems",
       persisted: false,
     });
 
     expect(result.showTerminal).toBe(false);
-    expect(result.state).toEqual({
-      owner: OWNER,
-      visible: false,
-      view: "problems",
-      applied: false,
-    });
+    expect(result.state).toEqual({ owner: OWNER, visible: false, applied: false });
   });
 
   it("shows the terminal once when the hydrated layout persisted an open panel", () => {
-    const adopted = adopt();
-
-    const hydrated = agentTerminalPanelIntent(adopted, {
+    const hydrated = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
-      active: true,
       visible: false,
-      view: "problems",
       persisted: true,
     });
     expect(hydrated.showTerminal).toBe(true);
@@ -42,124 +65,62 @@ describe("agentTerminalPanelIntent", () => {
 
     const settled = agentTerminalPanelIntent(hydrated.state, {
       owner: OWNER,
-      active: true,
       visible: true,
-      view: "terminal",
       persisted: true,
     });
     expect(settled.showTerminal).toBe(false);
 
     const idle = agentTerminalPanelIntent(settled.state, {
       owner: OWNER,
-      active: true,
       visible: true,
-      view: "terminal",
       persisted: true,
     });
     expect(idle.showTerminal).toBe(false);
   });
 
-  it("keeps an explicit request for the unchanged drawer view out of the terminal reveal", () => {
+  it("keeps a panel the user toggled before hydration out of the persisted reveal", () => {
     const opened = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
-      active: true,
       visible: true,
-      view: "problems",
       persisted: false,
     });
-
     expect(opened.showTerminal).toBe(false);
+    expect(opened.state.applied).toBe(true);
 
     const closed = agentTerminalPanelIntent(opened.state, {
       owner: OWNER,
-      active: true,
       visible: false,
-      view: "problems",
       persisted: true,
     });
     expect(closed.showTerminal).toBe(false);
 
-    const reopened = agentTerminalPanelIntent(closed.state, {
+    const unchanged = agentTerminalPanelIntent(closed.state, {
       owner: OWNER,
-      active: true,
-      visible: true,
-      view: "problems",
-      persisted: true,
-    });
-    expect(reopened.showTerminal).toBe(false);
-  });
-
-  it("keeps an explicit view change out of the terminal reveal", () => {
-    const opened = agentTerminalPanelIntent(adopt(), {
-      owner: OWNER,
-      active: true,
-      visible: true,
-      view: "index",
-      persisted: false,
-    });
-
-    expect(opened.showTerminal).toBe(false);
-  });
-
-  it("tracks without revealing the terminal while the agent layout is inactive", () => {
-    const applied = agentTerminalPanelIntent(adopt(), {
-      owner: OWNER,
-      active: true,
       visible: false,
-      view: "problems",
       persisted: true,
-    }).state;
-
-    const inactive = agentTerminalPanelIntent(applied, {
-      owner: OWNER,
-      active: false,
-      visible: true,
-      view: "problems",
-      persisted: false,
     });
-    expect(inactive.showTerminal).toBe(false);
-    expect(inactive.state.visible).toBe(true);
-
-    const resumed = agentTerminalPanelIntent(inactive.state, {
-      owner: OWNER,
-      active: true,
-      visible: true,
-      view: "problems",
-      persisted: false,
-    });
-    expect(resumed.showTerminal).toBe(false);
+    expect(unchanged.showTerminal).toBe(false);
   });
 
   it("resets the applied flag on a workspace A -> B -> A switch", () => {
     const applied = agentTerminalPanelIntent(adopt(), {
       owner: OWNER,
-      active: true,
       visible: false,
-      view: "problems",
       persisted: true,
     }).state;
     expect(applied.applied).toBe(true);
 
     const other = agentTerminalPanelIntent(applied, {
       owner: "/workspace/api",
-      active: true,
       visible: false,
-      view: "problems",
       persisted: false,
     });
-    expect(other.state).toEqual({
-      owner: "/workspace/api",
-      visible: false,
-      view: "problems",
-      applied: false,
-    });
+    expect(other.state).toEqual({ owner: "/workspace/api", visible: false, applied: false });
     expect(other.showTerminal).toBe(false);
 
     const back = agentTerminalPanelIntent(other.state, {
       owner: OWNER,
-      active: true,
       visible: false,
-      view: "problems",
       persisted: true,
     });
     expect(back.state.applied).toBe(false);
@@ -170,9 +131,7 @@ describe("agentTerminalPanelIntent", () => {
 function adopt(): AgentTerminalPanelIntentState {
   return agentTerminalPanelIntent(initialAgentTerminalPanelIntentState, {
     owner: OWNER,
-    active: true,
     visible: false,
-    view: "problems",
     persisted: false,
   }).state;
 }

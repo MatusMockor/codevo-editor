@@ -1,0 +1,597 @@
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentModeView } from "../../components/agentMode/AgentModeView";
+import { chromeFixture } from "../../components/agentMode/agentWorkbenchChromeTestFixtures";
+import { defaultAgentProviderPreferences } from "../../domain/agentProviderSettings";
+import { normalizeAgentModelFavoriteKeys } from "../../domain/agentSettings";
+import type {
+  AgentTaskGateway,
+  AgentTaskOutputEvent,
+  AgentTaskStatusEvent,
+  StartAgentTaskRequest,
+} from "../../domain/agentTask";
+import { emptyGitStatus, type GitGateway } from "../../domain/git";
+import type { AgentWorktreeReceipt, GitWorktreeGateway } from "../../domain/gitWorktree";
+import {
+  defaultAppSettings,
+  defaultWorkspaceSettings,
+  type AppSettings,
+  type SettingsGateway,
+  type WorkspaceSettings,
+  type WorkspaceSettingsIdentity,
+} from "../../domain/settings";
+import type { WorkspaceIdentityDescriptorResolver } from "../../infrastructure/tauriWorkspaceIdentityGateway";
+import {
+  actAndSettle,
+  renderAgentAppController,
+  settleAgentApp,
+  unmountAgentAppHarnesses,
+} from "../../test/agentAppTestHarness";
+import { waitForReact } from "../../test/reactTestLifecycle";
+import { useAgentModelFavorites } from "../useAgentModelFavorites";
+import type {
+  NativeWorkspaceDescriptor,
+  WorkspaceIdentityDescriptor,
+  WorkspaceIdentityGateway,
+} from "../workspaceIdentityGatewayPort";
+import type { AgentAppAgentGateways } from "./agentAppPorts";
+import type { AgentAppController } from "./useAgentAppController";
+
+describe("agent app production chain", () => {
+  let panelHost: HTMLDivElement | null = null;
+  let panelRoot: Root | null = null;
+
+  beforeEach(() => {
+    panelHost = document.createElement("div");
+    document.body.append(panelHost);
+    panelRoot = createRoot(panelHost);
+  });
+
+  afterEach(async () => {
+    unmountAgentAppHarnesses();
+    const mountedRoot = panelRoot;
+    const mountedHost = panelHost;
+    panelRoot = null;
+    panelHost = null;
+    if (mountedRoot) {
+      await act(async () => {
+        mountedRoot.unmount();
+        await Promise.resolve();
+      });
+    }
+    mountedHost?.remove();
+  });
+
+  it("starts in the agent layout and dispatches a thread through the real hook chain", async () => {
+    const agentTaskGateway = fakeAgentTaskGateway();
+    const agentProviderGateway = fakeAgentProviderGateway();
+    const gitWorktreeGateway = fakeGitWorktreeGateway();
+    const { current: getWorkbench } = renderAgentAppController({
+      agentGateways: {
+        agentProviderGateway,
+        agentTaskGateway: agentTaskGateway.gateway,
+        gitWorktreeGateway: gitWorktreeGateway.gateway,
+      },
+      gitGateway: cleanRepositoryGitGateway(),
+      appSettings: {
+        ...defaultAppSettings(),
+        agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a"],
+      },
+      identityGateway: identityGateway(),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+    await waitForReact(() =>
+      expect(getWorkbench().agents.providerManagement.authority("claudeCode")).not.toBeNull(),
+    );
+    await act(async () => {
+      await expect(getWorkbench().agents.refreshIsolationStatus("/workspace-a")).resolves.toEqual(
+        expect.objectContaining({ kind: "ready" }),
+      );
+    });
+    await waitForReact(() =>
+      expect(getWorkbench().agents.isolationPreview("/workspace-a").repositoryStatus?.kind).toBe(
+        "ready",
+      ),
+    );
+
+    renderAgentMode(getWorkbench());
+    const host = getPanelHost();
+    expect(host.querySelector('section[aria-label="Agent mode"]')).not.toBeNull();
+    expect(host.querySelector('aside[aria-label="Agent threads"]')).not.toBeNull();
+    expect(host.querySelector('input[aria-label="Search threads"]')).not.toBeNull();
+
+    await typePrompt(host, "Fix the failing unit test.");
+    await submitComposer(host);
+    await settleAgentApp();
+
+    expect(gitWorktreeGateway.added).toHaveLength(0);
+    expect(agentTaskGateway.started).toHaveLength(1);
+    const started = agentTaskGateway.started[0];
+    expect(started?.repositoryRoot).toBe("/workspace-a");
+    expect(started?.workspaceId).toBe("workspace-a");
+    expect(started?.agentCliKind).toBe("claudeCode");
+    expect(started?.isolation).toBe("in-place");
+    const threadId = getWorkbench().agents.threads[0]?.thread.threadId ?? "";
+    expect(started?.taskId).not.toBe(threadId);
+    expect(started?.cwd).toBe("/workspace-a");
+    expect(started?.resumeSessionId).toBeNull();
+    expect(started?.prompt).toBe("Fix the failing unit test.");
+    expect(agentTaskGateway.acknowledged).toEqual([started?.taskId]);
+    expect(getWorkbench().agents.threads).toHaveLength(1);
+    expect(getWorkbench().agents.threads[0]?.thread.threadId).toBe(threadId);
+    expect(getWorkbench().agents.threads[0]?.thread.turns[0]?.turnId).toBe(started?.taskId);
+    expect(getWorkbench().agents.threads[0]?.lifecycle).toBe("running");
+
+    renderAgentMode(getWorkbench());
+    expect(host.textContent).toContain("Fix the failing unit test.");
+  });
+
+  it("rolls a favorite back when the real app-settings persistence command rejects", async () => {
+    const appSettings = {
+      ...defaultAppSettings(),
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a"],
+    };
+    const settingsGateway = memorySettingsGateway(appSettings);
+    let rejectFavoriteSave: ((error: unknown) => void) | null = null;
+    const saveAppSettings = vi.fn(async (settings: AppSettings) => {
+      if (settings.agentModelFavoritesRevision === 0) return;
+      if (rejectFavoriteSave !== null) return;
+      await new Promise<void>((_resolve, reject) => {
+        rejectFavoriteSave = reject;
+      });
+    });
+    const { current: getWorkbench } = renderAgentAppController({
+      agentGateways: {
+        agentTaskGateway: fakeAgentTaskGateway().gateway,
+        gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      },
+      appSettings,
+      settingsGateway: { ...settingsGateway, saveAppSettings },
+      identityGateway: identityGateway(["workspace-owner-a", "workspace-owner-b"]),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+    let favorite = false;
+
+    function FavoriteProbe() {
+      const favorites = useAgentModelFavorites({
+        keys: getWorkbench().appSettings.agentModelFavoriteKeys,
+        revision: getWorkbench().appSettings.agentModelFavoritesRevision,
+        save: async (keys, revision) => {
+          const workbench = getWorkbench();
+          await workbench.saveWorkbenchSettings(
+            {
+              ...workbench.appSettings,
+              agentModelFavoriteKeys: normalizeAgentModelFavoriteKeys(keys),
+              agentModelFavoritesRevision: revision,
+            },
+            workbench.workspaceSettings,
+            workbench.workspaceTrust?.trusted ?? null,
+            "reportAndReject",
+          );
+        },
+      });
+      favorite = favorites.isFavorite("claudeCode/opus");
+      return (
+        <button onClick={() => favorites.toggle("claudeCode/opus")} type="button">
+          Toggle favorite
+        </button>
+      );
+    }
+
+    act(() => panelRoot?.render(<FavoriteProbe />));
+    await act(async () => {
+      getPanelHost().querySelector("button")?.click();
+      await microtaskTurns();
+    });
+    expect(favorite).toBe(true);
+    let reopenWorkspace!: Promise<unknown>;
+    act(() => {
+      reopenWorkspace = getWorkbench().openWorkspaceRootWithReceipt("/workspace-a");
+    });
+    await act(async () => Promise.resolve());
+    expect(rejectFavoriteSave).not.toBeNull();
+    await act(async () => {
+      rejectFavoriteSave?.(new Error("settings unavailable"));
+      await reopenWorkspace;
+      await microtaskTurns();
+    });
+    expect(getWorkbench().workspaceIdentityDescriptor?.workspaceId).toBe("workspace-owner-b");
+
+    expect(saveAppSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentModelFavoriteKeys: ["claudeCode/opus"],
+        agentModelFavoritesRevision: 1,
+      }),
+    );
+    expect(favorite).toBe(false);
+    expect(getWorkbench().appSettings.agentModelFavoriteKeys).toEqual([]);
+    expect(getWorkbench().appSettings.agentModelFavoritesRevision).toBe(0);
+  });
+
+  it("opens and closes the files surface inside the agent right panel", async () => {
+    const { current: getWorkbench } = renderAgentAppController({
+      agentGateways: {
+        agentTaskGateway: fakeAgentTaskGateway().gateway,
+        gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      },
+      appSettings: {
+        ...defaultAppSettings(),
+        agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
+        recentWorkspacePath: "/workspace-a",
+        workspaceTabs: ["/workspace-a"],
+      },
+      identityGateway: identityGateway(),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+
+    await act(async () => {
+      getWorkbench().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("open"));
+    expect(getWorkbench().agentWorkbench.layout.activeSurface).toBe("files");
+
+    await act(async () => {
+      getWorkbench().agentWorkbench.dispatch({ kind: "toggleRightPanel" });
+      await Promise.resolve();
+    });
+    await waitForReact(() =>
+      expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("closed"),
+    );
+  });
+
+  it("starts each workspace tab in the agent layout across A -> B -> A", async () => {
+    const appSettings: AppSettings = {
+      ...defaultAppSettings(),
+      agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a", "/workspace-b"],
+    };
+    const { current: getWorkbench } = renderAgentAppController({
+      agentGateways: {
+        agentTaskGateway: fakeAgentTaskGateway().gateway,
+        gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      },
+      appSettings,
+      settingsGateway: memorySettingsGateway(appSettings),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+
+    await act(async () => {
+      getWorkbench().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" });
+      await Promise.resolve();
+    });
+    await waitForReact(() => expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("open"));
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await settleAgentApp();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-b");
+    await waitForReact(() =>
+      expect(getWorkbench().agentWorkbench.layout.rightPanel).toBe("closed"),
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-a");
+    });
+    await settleAgentApp();
+
+    expect(getWorkbench().workspaceRoot).toBe("/workspace-a");
+    await waitForReact(() =>
+      expect(getWorkbench().agentWorkbench.layout.activeSurface).toBe("files"),
+    );
+  });
+
+  it("keeps local checkout selected after an aggregate project switch", async () => {
+    const appSettings: AppSettings = {
+      ...defaultAppSettings(),
+      agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: null },
+      recentWorkspacePath: "/workspace-a",
+      workspaceTabs: ["/workspace-a", "/workspace-b"],
+    };
+    const gitGateway = cleanRepositoryGitGateway();
+    gitGateway.detectRepositories = vi.fn(async (rootPath) =>
+      rootPath === "/workspace-a" ? ["nested"] : [""],
+    );
+    gitGateway.getStatus = vi.fn(async (rootPath) => ({
+      ...emptyGitStatus(rootPath),
+      branch: rootPath === "/workspace-a" ? null : "main",
+      isRepository: rootPath !== "/workspace-a",
+    }));
+    const { current: getWorkbench } = renderAgentAppController({
+      agentGateways: {
+        agentTaskGateway: fakeAgentTaskGateway().gateway,
+        gitWorktreeGateway: fakeGitWorktreeGateway().gateway,
+      },
+      gitGateway,
+      appSettings,
+      settingsGateway: memorySettingsGateway(appSettings),
+    });
+    await waitForReact(() => expect(getWorkbench().workspaceRoot).toBe("/workspace-a"));
+    await actAndSettle(() =>
+      getWorkbench().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" }),
+    );
+    await waitForReact(() =>
+      expect(
+        getWorkbench().gitRepositoryMappings.map((mapping) => mapping.rootRelativePath),
+      ).toEqual(["nested"]),
+    );
+
+    await act(async () => {
+      await getWorkbench().activateWorkspaceTab("/workspace-b");
+    });
+    await settleAgentApp();
+    renderAgentMode(getWorkbench());
+    await waitForReact(() =>
+      expect(getWorkbench().agents.isolationPreview("/workspace-b").repositoryStatus?.kind).toBe(
+        "ready",
+      ),
+    );
+
+    expect(getWorkbench().workspaceSettings.agentIsolationPolicy).toBe("auto");
+    expect(getWorkbench().agents.isolationPreview("/workspace-b").recommended).toEqual({
+      kind: "worktree",
+      reason: "policy",
+    });
+    renderAgentMode(getWorkbench());
+    expect(getPanelHost().textContent).toContain("Local checkout");
+    expect(getPanelHost().textContent).not.toContain(
+      "Agents start in an isolated worktree by default.",
+    );
+  });
+
+  function getPanelHost(): HTMLDivElement {
+    expect(panelHost).not.toBeNull();
+    return panelHost ?? document.createElement("div");
+  }
+
+  async function typePrompt(host: HTMLDivElement, value: string): Promise<void> {
+    const textarea = host.querySelector<HTMLTextAreaElement>("textarea#agent-prompt");
+    expect(textarea).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(
+        textarea,
+        value,
+      );
+      textarea?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function submitComposer(host: HTMLDivElement): Promise<void> {
+    const form = host.querySelector("form");
+    expect(form).not.toBeNull();
+    await act(async () => {
+      form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  function renderAgentMode(workbench: AgentAppController): void {
+    const mountedRoot = panelRoot;
+    const preferences =
+      workbench.appSettings.agentProviderPreferences ?? defaultAgentProviderPreferences();
+    expect(mountedRoot).not.toBeNull();
+    act(() => {
+      mountedRoot?.render(
+        <AgentModeView
+          agents={workbench.agents}
+          chrome={chromeFixture({ layout: workbench.agentWorkbench })}
+          onReleaseProject={(projectRootKey) =>
+            void workbench.agents.agentProjects.releaseProject(projectRootKey)
+          }
+          onTrustProject={(projectRootKey) =>
+            void workbench.agents.agentProjects.trustProject(projectRootKey)
+          }
+          overflowRootPaths={workbench.agents.agentProjects.overflowRootPaths}
+          providerEnabled={{
+            claudeCode: preferences.claudeCode.enabled,
+            codex: preferences.codex.enabled,
+          }}
+          projects={workbench.agents.agentProjects.projects}
+          workspaceRoot={workbench.workspaceRoot}
+        />,
+      );
+    });
+  }
+});
+
+async function microtaskTurns(count = 24): Promise<void> {
+  for (let turn = 0; turn < count; turn += 1) await Promise.resolve();
+}
+
+function memorySettingsGateway(appSettings: AppSettings): SettingsGateway {
+  const workspaceSettingsByIdentity = new Map<string, WorkspaceSettings>();
+  const key = (identity: string | WorkspaceSettingsIdentity): string => JSON.stringify(identity);
+  return {
+    loadAppSettings: async () => appSettings,
+    saveAppSettings: async () => undefined,
+    loadWorkspaceSettings: async (identity) =>
+      workspaceSettingsByIdentity.get(key(identity)) ?? defaultWorkspaceSettings(),
+    saveWorkspaceSettings: async (identity, settings) => {
+      workspaceSettingsByIdentity.set(key(identity), settings);
+    },
+  };
+}
+
+function fakeAgentTaskGateway(): {
+  gateway: AgentTaskGateway;
+  started: StartAgentTaskRequest[];
+  acknowledged: string[];
+} {
+  const started: StartAgentTaskRequest[] = [];
+  const acknowledged: string[] = [];
+  const gateway: AgentTaskGateway = {
+    startAgentTask: async (request) => {
+      started.push(request);
+      return { taskId: request.taskId };
+    },
+    acknowledgeAgentTaskStart: async (request) => {
+      acknowledged.push(request.taskId);
+    },
+    stopAgentTask: async () => undefined,
+    stopAgentTasksForRoot: async () => undefined,
+    steerAgentTask: async () => ({ kind: "accepted" }) as const,
+    closeAgentTaskInput: async () => undefined,
+    subscribeAgentTaskStatus: async (_handler: (event: AgentTaskStatusEvent) => void) => () =>
+      undefined,
+    subscribeAgentTaskOutput: async (_handler: (event: AgentTaskOutputEvent) => void) => () =>
+      undefined,
+  };
+  return { gateway, started, acknowledged };
+}
+
+function fakeAgentProviderGateway(): NonNullable<AgentAppAgentGateways["agentProviderGateway"]> {
+  return {
+    currentAgentProviderPolicy: async ({ provider }) => ({ kind: "unregistered", provider }),
+    registerAgentProviderPolicy: async (request) => ({
+      provider: request.provider,
+      settingsRevision: request.settingsRevision,
+      providerGeneration: 1,
+    }),
+    checkAgentProviderUpdates: async () => ({
+      update: { kind: "checksDisabled" as const },
+      checkedAtEpochMs: 0,
+    }),
+    probeAgentProviderHealth: async () => ({
+      installedVersion: "1.0.0",
+      auth: { kind: "unknown" },
+      update: { kind: "checksDisabled" },
+      checkedAtEpochMs: 1,
+    }),
+    updateAgentProvider: async () => ({
+      kind: "failed",
+      reason: "authorityChanged",
+      outputTail: "",
+      outputTruncated: false,
+    }),
+  };
+}
+
+function fakeGitWorktreeGateway(): {
+  gateway: GitWorktreeGateway;
+  added: Array<{ repositoryRoot: string; taskId: string }>;
+} {
+  const added: Array<{ repositoryRoot: string; taskId: string }> = [];
+  const gateway: GitWorktreeGateway = {
+    listWorktrees: async () => [],
+    addAgentWorktree: async (repositoryRoot, taskId): Promise<AgentWorktreeReceipt> => {
+      added.push({ repositoryRoot, taskId });
+      return {
+        worktreePath: `${repositoryRoot}/.worktrees/${taskId}`,
+        branch: `agent/${taskId}`,
+        trusted: true,
+      };
+    },
+    removeWorktree: async () => undefined,
+    pruneWorktrees: async () => [],
+  };
+  return { gateway, added };
+}
+
+function cleanRepositoryGitGateway(): GitGateway {
+  const status = (rootPath: string) => ({
+    ...emptyGitStatus(rootPath),
+    branch: "main",
+    isRepository: true,
+  });
+  return {
+    branchList: vi.fn(async () => []),
+    commit: vi.fn(async (rootPath) => status(rootPath)),
+    createBranch: vi.fn(async () => undefined),
+    currentBranch: vi.fn(async () => "main"),
+    getDiff: vi.fn(async (_rootPath, change) => ({
+      change,
+      language: "plaintext",
+      modifiedContent: "",
+      originalContent: "",
+    })),
+    getStatus: vi.fn(async (rootPath) => status(rootPath)),
+    push: vi.fn(async (rootPath) => status(rootPath)),
+    stageFiles: vi.fn(async (rootPath) => status(rootPath)),
+    switchBranch: vi.fn(async () => undefined),
+  };
+}
+
+function identityGateway(
+  workspaceIds: ReadonlyArray<string> = ["workspace-a"],
+): WorkspaceIdentityGateway & WorkspaceIdentityDescriptorResolver {
+  const descriptors = new Map<string, WorkspaceIdentityDescriptor>();
+  let opened = 0;
+  const nextDescriptor = (): WorkspaceIdentityDescriptor => ({
+    ...workspaceDescriptorA(),
+    workspaceId: workspaceIds[Math.min(opened, workspaceIds.length - 1)] ?? "workspace-a",
+  });
+  return {
+    descriptorForPath: (path) => match(path, descriptors)?.descriptor ?? null,
+    getDescriptor: vi.fn(async () => nativeDescriptor(nextDescriptor())),
+    matchForPath: (path, workspaceId) => {
+      const resolved = match(path, descriptors, workspaceId);
+      if (!resolved) {
+        return null;
+      }
+      return {
+        descriptor: resolved.descriptor,
+        matchedRoot: resolved.descriptor.selectedPath,
+        relativePath: resolved.relativePath,
+      };
+    },
+    openFromPicker: vi.fn(async () => ({ status: "cancelled" as const })),
+    openPath: vi.fn(async () => {
+      const resolved = nextDescriptor();
+      opened += 1;
+      descriptors.set(resolved.workspaceId, resolved);
+      return resolved;
+    }),
+    unregister: vi.fn(async () => ({ status: "released" as const })),
+    adoptAdmission: vi.fn(async () => ({ status: "adopted" as const })),
+    rollbackAdmission: vi.fn(async () => ({ status: "released" as const })),
+  };
+}
+
+function match(
+  path: string,
+  descriptors: ReadonlyMap<string, WorkspaceIdentityDescriptor>,
+  workspaceId?: string,
+): { descriptor: WorkspaceIdentityDescriptor; relativePath: string } | null {
+  for (const descriptor of descriptors.values()) {
+    if (
+      (!workspaceId || descriptor.workspaceId === workspaceId) &&
+      (path === descriptor.selectedPath || path.startsWith(`${descriptor.selectedPath}/`))
+    ) {
+      return {
+        descriptor,
+        relativePath:
+          path === descriptor.selectedPath ? "" : path.slice(descriptor.selectedPath.length + 1),
+      };
+    }
+  }
+  return null;
+}
+
+function workspaceDescriptorA(): WorkspaceIdentityDescriptor {
+  return {
+    canonicalRoot: "/workspace-a",
+    caseSensitive: true,
+    policy: { caseSensitive: true, unicodeNormalization: "none" },
+    selectedPath: "/workspace-a",
+    unicodeNormalizationPolicy: "preserved",
+    workspaceId: "workspace-a",
+  };
+}
+
+function nativeDescriptor(value: WorkspaceIdentityDescriptor): NativeWorkspaceDescriptor {
+  return {
+    canonicalRootPath: value.canonicalRoot,
+    caseSensitive: value.caseSensitive,
+    selectedRootPath: value.selectedPath,
+    unicodeNormalizationPolicy: value.unicodeNormalizationPolicy,
+    workspaceId: value.workspaceId,
+  };
+}

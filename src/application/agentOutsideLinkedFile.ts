@@ -5,7 +5,8 @@ import type {
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import { classifyUnopenedLinkedFile, type LinkedFileDirectoryReader } from "./agentLinkedFileProbe";
-import type { ReadOnlySnapshotReader } from "./useWorkbenchDocumentTabs";
+
+export type ReadOnlySnapshotReader = () => Promise<string | null>;
 
 export const OUTSIDE_LINKED_FILE_READ_TIMEOUT_MS = 10_000;
 

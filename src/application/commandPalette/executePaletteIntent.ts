@@ -17,8 +17,8 @@ export interface PaletteIntentPorts {
   readonly agent: AgentPaletteProvider | null;
   readonly models: ComposerPaletteModels | null;
   openFile(result: FileSearchResult): Promise<void>;
-  switchEditorProject(path: string): Promise<boolean>;
-  runEditorScript(scriptKey: string): Promise<CommandExecutionOutcome>;
+  switchWorkspaceProject(path: string): Promise<boolean>;
+  runWorkspaceScript(scriptKey: string): Promise<CommandExecutionOutcome>;
   switchBranch(name: string, remote: boolean): Promise<boolean>;
   setPalette(palette: PaletteId): Promise<void>;
   setColorScheme(scheme: ColorSchemePreference): Promise<void>;
@@ -40,10 +40,10 @@ export async function executePaletteIntent(
       return settled(ports.agent?.newThreadIn(intent.projectKey) ?? false);
     case "switchProject":
       if (ports.agent !== null) return settled(ports.agent.switchProject(intent.projectKey));
-      return settled(await ports.switchEditorProject(intent.projectKey));
+      return settled(await ports.switchWorkspaceProject(intent.projectKey));
     case "runScript":
       if (ports.agent !== null) return settled(ports.agent.runScript(intent.scriptKey));
-      return settled((await ports.runEditorScript(intent.scriptKey)) === "executed");
+      return settled((await ports.runWorkspaceScript(intent.scriptKey)) === "executed");
     case "selectModel":
       return settled(ports.models?.selectModel(intent.modelKey) ?? false);
     case "openFile":

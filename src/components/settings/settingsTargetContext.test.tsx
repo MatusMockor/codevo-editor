@@ -40,35 +40,35 @@ describe("useSettingsRowTarget", () => {
   });
 
   it("scrolls, focuses and pulses the targeted row, then reports it handled", () => {
-    render("general.formatOnSave");
+    render("general.trustedWorkspace");
 
-    const targeted = row("general.formatOnSave");
+    const targeted = row("general.trustedWorkspace");
 
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "smooth" });
     expect(document.activeElement).toBe(targeted);
     expect(targeted?.getAttribute("data-target")).toBe("true");
     expect(handled).toHaveBeenCalledTimes(1);
-    expect(row("general.autoSave")?.hasAttribute("data-target")).toBe(false);
+    expect(row("general.terminalShellIntegration")?.hasAttribute("data-target")).toBe(false);
   });
 
   it("clears the pulse after the pulse window", () => {
-    render("general.formatOnSave");
+    render("general.trustedWorkspace");
 
     act(() => {
       vi.advanceTimersByTime(SETTINGS_TARGET_PULSE_MS + 1);
     });
 
-    expect(row("general.formatOnSave")?.hasAttribute("data-target")).toBe(false);
+    expect(row("general.trustedWorkspace")?.hasAttribute("data-target")).toBe(false);
   });
 
   it("clears the pulse when the row loses focus", () => {
-    render("general.formatOnSave");
+    render("general.trustedWorkspace");
 
     act(() => {
-      row("general.formatOnSave")?.dispatchEvent(new FocusEvent("blur"));
+      row("general.trustedWorkspace")?.dispatchEvent(new FocusEvent("blur"));
     });
 
-    expect(row("general.formatOnSave")?.hasAttribute("data-target")).toBe(false);
+    expect(row("general.trustedWorkspace")?.hasAttribute("data-target")).toBe(false);
   });
 
   it("does not smooth scroll under reduced motion", () => {
@@ -78,7 +78,7 @@ describe("useSettingsRowTarget", () => {
       writable: true,
     });
 
-    render("general.autoSave");
+    render("general.terminalShellIntegration");
 
     expect(scrollIntoView).toHaveBeenCalledWith({ block: "center", behavior: "auto" });
   });
@@ -88,7 +88,7 @@ describe("useSettingsRowTarget", () => {
 
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(handled).not.toHaveBeenCalled();
-    expect(row("general.formatOnSave")?.hasAttribute("data-target")).toBe(false);
+    expect(row("general.trustedWorkspace")?.hasAttribute("data-target")).toBe(false);
   });
 
   function row(id: SettingsRowId): HTMLElement | null {
@@ -99,10 +99,10 @@ describe("useSettingsRowTarget", () => {
     act(() =>
       root.render(
         <SettingsTargetContext.Provider value={{ onTargetHandled: handled, targetRowId }}>
-          <SettingsRow rowId="general.formatOnSave">
+          <SettingsRow rowId="general.trustedWorkspace">
             <button type="button">on</button>
           </SettingsRow>
-          <SettingsRow rowId="general.autoSave">
+          <SettingsRow rowId="general.terminalShellIntegration">
             <button type="button">off</button>
           </SettingsRow>
         </SettingsTargetContext.Provider>,

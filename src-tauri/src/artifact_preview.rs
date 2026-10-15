@@ -4,9 +4,6 @@
 //! relies on the opaque iframe sandbox, CSP connect-src none, and Tauri's random
 //! invoke key (injected into the main frame only). Never grant allow-same-origin,
 //! inject the key into previews, or forward their postMessage data into IPC.
-#[path = "workspace_html_preview.rs"]
-pub(crate) mod workspace_html_preview;
-
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -240,8 +237,39 @@ fn bundle_route(request: &Request<Vec<u8>>) -> Option<(&str, String)> {
         .body(vec![])
         .ok()?;
     request_token(&origin_check)?;
-    let decoded = workspace_html_preview::decode_asset_path(path)?;
+    let decoded = decode_asset_path(path)?;
     Some((id, decoded))
+}
+/// Decodes URL paths once, rejecting separators and traversal aliases.
+fn decode_asset_path(path: &str) -> Option<String> {
+    if path.is_empty() || path.len() > 4096 {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(path.len());
+    let mut source = path.bytes();
+    while let Some(byte) = source.next() {
+        if byte == b'%' {
+            let a = char::from(source.next()?).to_digit(16)?;
+            let b = char::from(source.next()?).to_digit(16)?;
+            let byte = (a * 16 + b) as u8;
+            if matches!(byte, b'/' | b'\\' | b'%' | 0) {
+                return None;
+            }
+            bytes.push(byte);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    let decoded = String::from_utf8(bytes).ok()?;
+    if decoded.contains(['\\', '\0', ':', '?', '#'])
+        || decoded.chars().any(char::is_control)
+        || decoded
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == ".." || p.starts_with('.'))
+    {
+        return None;
+    }
+    Some(decoded)
 }
 pub(crate) fn respond(
     context: tauri::UriSchemeContext<'_, tauri::Wry>,

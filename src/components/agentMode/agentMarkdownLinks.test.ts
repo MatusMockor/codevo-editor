@@ -499,12 +499,7 @@ describe("activateAgentMarkdownLink", () => {
     ["notFound", "src/gone.ts isn't in this worktree (Server app)."],
     ["notRegularFile", "src/gone.ts isn't a regular text file on the server."],
     ["unreadable", "src/gone.ts exists but couldn't be read."],
-    ["saveInProgress", "Wait for the server file save to finish before opening src/gone.ts."],
     ["failed", "src/gone.ts couldn't be opened."],
-    [
-      "unsavedChanges",
-      "Save or discard your unsaved server file edits before opening src/gone.ts.",
-    ],
     [
       "filesUnavailable",
       "Server files aren't available for this thread right now, so src/gone.ts wasn't opened.",
@@ -530,7 +525,7 @@ describe("activateAgentMarkdownLink", () => {
   });
 
   it("reports transient server refusals on every click without marking the link", async () => {
-    const remote = remotePort("unsavedChanges");
+    const remote = remotePort("filesUnavailable");
     const remembered = memory();
     const scope = remoteScope(remote.port);
     for (let attempt = 0; attempt < 2; attempt++) {

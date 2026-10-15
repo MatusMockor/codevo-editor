@@ -12,16 +12,12 @@ import {
   remoteFileReadFailureOutcome,
   type RemoteFileRevealTarget,
 } from "../../domain/remoteFileReveal";
-import { remoteFileDrafts } from "../../application/remoteFileDrafts";
 import type { RemoteFileRevealRequest } from "../../application/remoteFileRevealRequest";
 import { useRemoteSurfaceLease } from "./useRemoteSurfaceLease";
 
 export type RemoteFileRevealPosition = RemoteFileRevealTarget & Readonly<{ id: number }>;
 
-export type RemoteFilesGateway = Pick<
-  RemoteRunnerSurfacesGateway,
-  "listDirectory" | "readFile" | "writeFile"
->;
+export type RemoteFilesGateway = Pick<RemoteRunnerSurfacesGateway, "listDirectory" | "readFile">;
 
 export function useRemoteFiles(
   scope: RemoteSurfaceScope,
@@ -35,9 +31,7 @@ export function useRemoteFiles(
   );
   const lease = useRemoteSurfaceLease(stableScope);
   const sequence = useRef(0);
-  const saving = useRef(false);
   const activeFile = useRef<RemoteFileContent | null>(null);
-  const loadingFile = useRef(false);
   const shownDirectory = useRef<string | null>(null);
   const revealRun = useRef<{ readonly id: number; readonly sequenceId: number } | null>(null);
   const [directory, setDirectory] = useState<RemoteDirectory | null>(null);
@@ -45,37 +39,22 @@ export function useRemoteFiles(
   const [offset, setOffset] = useState(0);
   const [file, setFile] = useState<RemoteFileContent | null>(null);
   const [comparison, setComparison] = useState<RemoteFileContent | null>(null);
-  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revealAt, setRevealAt] = useState<RemoteFileRevealPosition | null>(null);
-  const dirty = file !== null && file.text !== text;
   const fail = (reason: unknown) =>
     setError(
       reason instanceof Error ? reason.message : "The server could not complete this operation.",
     );
-
-  useEffect(
-    () =>
-      remoteFileDrafts.subscribe(stableScope, (event) => {
-        if (
-          !lease.isCurrent() ||
-          activeFile.current?.path !== event.file.path ||
-          activeFile.current.version !== event.expectedVersion
-        )
-          return;
-        activeFile.current = event.file;
-        setFile(event.file);
-        setText(event.text);
-        setComparison(null);
-      }),
-    [stableScope, lease],
-  );
+  const showFile = (next: RemoteFileContent | null) => {
+    activeFile.current = next;
+    setFile(next);
+    setComparison(null);
+  };
 
   async function browse(nextPath: string, nextOffset = 0) {
-    if (!lease.isCurrent() || saving.current || dirty) return;
+    if (!lease.isCurrent()) return;
     const request = ++sequence.current;
-    loadingFile.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -85,35 +64,20 @@ export function useRemoteFiles(
       setPath(nextPath);
       shownDirectory.current = nextPath;
       setOffset(nextOffset);
-      activeFile.current = null;
-      setFile(null);
+      showFile(null);
       setRevealAt(null);
-      setComparison(null);
     } catch (reason) {
       if (lease.isCurrent() && request === sequence.current) fail(reason);
     } finally {
-      if (lease.isCurrent() && request === sequence.current) {
-        loadingFile.current = false;
-        setBusy(false);
-      }
+      if (lease.isCurrent() && request === sequence.current) setBusy(false);
     }
   }
   useEffect(() => {
     const request = ++sequence.current;
-    const draft = remoteFileDrafts.first(stableScope);
     setDirectory(null);
     shownDirectory.current = null;
-    const restoredFile: RemoteFileContent | null = draft
-      ? {
-          path: draft.path,
-          text: draft.original,
-          version: draft.version,
-          unavailableReason: null,
-        }
-      : null;
-    activeFile.current = restoredFile;
-    setFile(restoredFile);
-    setText(draft?.text ?? "");
+    activeFile.current = null;
+    setFile(null);
     setPath("");
     setOffset(0);
     setError(null);
@@ -131,36 +95,24 @@ export function useRemoteFiles(
         if (lease.isCurrent() && request === sequence.current) fail(reason);
       })
       .finally(() => {
-        if (lease.isCurrent() && request === sequence.current) {
-          loadingFile.current = false;
-          setBusy(false);
-        }
+        if (lease.isCurrent() && request === sequence.current) setBusy(false);
       });
   }, [gateway, lease, stableScope]);
 
   async function open(nextPath: string) {
-    if (!lease.isCurrent() || saving.current || dirty) return;
+    if (!lease.isCurrent()) return;
     const request = ++sequence.current;
-    loadingFile.current = true;
     setBusy(true);
     setError(null);
     try {
       const result = await gateway.readFile({ ...scope, path: nextPath });
       if (!lease.isCurrent() || request !== sequence.current) return;
-      const draft = remoteFileDrafts.get(scope, nextPath);
-      const opened = draft ? { ...result, text: draft.original, version: draft.version } : result;
-      activeFile.current = opened;
-      setFile(opened);
-      setComparison(null);
+      showFile(result);
       setRevealAt(null);
-      setText(draft?.text ?? result.text);
     } catch (reason) {
       if (lease.isCurrent() && request === sequence.current) fail(reason);
     } finally {
-      if (lease.isCurrent() && request === sequence.current) {
-        loadingFile.current = false;
-        setBusy(false);
-      }
+      if (lease.isCurrent() && request === sequence.current) setBusy(false);
     }
   }
   async function revealFile(request: RemoteFileRevealRequest) {
@@ -170,20 +122,6 @@ export function useRemoteFiles(
     }
     request.accept();
     const target = request.target;
-    const shown = activeFile.current?.path === target.path;
-    if (saving.current && !shown) {
-      request.settle("saveInProgress");
-      return;
-    }
-    if (remoteFileDrafts.hasDraftOutside(scope, target.path)) {
-      request.settle("unsavedChanges");
-      return;
-    }
-    if (shown && (saving.current || remoteFileDrafts.get(scope, target.path) !== undefined)) {
-      setRevealAt({ ...target, id: request.id });
-      request.settle("opened");
-      return;
-    }
     const sequenceId = ++sequence.current;
     revealRun.current = { id: request.id, sequenceId };
     const owned = () => lease.isCurrent() && sequenceId === sequence.current;
@@ -193,18 +131,12 @@ export function useRemoteFiles(
       request.settle("superseded");
     };
     let read = false;
-    loadingFile.current = true;
     setBusy(true);
     setError(null);
     try {
       const result = await gateway.readFile({ ...scope, path: target.path });
       if (!owned()) return superseded();
-      const draft = remoteFileDrafts.get(scope, target.path);
-      const opened = draft ? { ...result, text: draft.original, version: draft.version } : result;
-      activeFile.current = opened;
-      setFile(opened);
-      setComparison(null);
-      setText(draft?.text ?? result.text);
+      showFile(result);
       setRevealAt(result.unavailableReason === null ? { ...target, id: request.id } : null);
       read = true;
       request.settle(remoteFileContentOutcome(result));
@@ -213,10 +145,7 @@ export function useRemoteFiles(
       fail(reason);
       request.settle(remoteFileReadFailureOutcome(reason));
     } finally {
-      if (owned()) {
-        loadingFile.current = false;
-        setBusy(false);
-      }
+      if (owned()) setBusy(false);
     }
     if (!owned()) return;
     const candidates = revealDirectoryCandidates(
@@ -244,58 +173,18 @@ export function useRemoteFiles(
     if (reveal === null) return;
     void latestReveal.current(reveal);
   }, [reveal]);
-  async function save() {
-    if (
-      !lease.isCurrent() ||
-      saving.current ||
-      loadingFile.current ||
-      activeFile.current !== file ||
-      file?.version == null ||
-      !dirty
-    )
-      return;
-    const currentFile = file;
-    const submitted = text;
-    const ticket = remoteFileDrafts.beginSave(scope, currentFile.path, currentFile.version!);
-    if (!ticket) {
-      setError("Wait for another server file save to finish before saving again.");
-      return;
-    }
-    const request = ++sequence.current;
-    saving.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await gateway.writeFile({
-        ...scope,
-        path: currentFile.path,
-        text: submitted,
-        expectedVersion: currentFile.version!,
-      });
-      remoteFileDrafts.completeSave(scope, ticket, result);
-      if (!lease.isCurrent() || request !== sequence.current) return;
-      setComparison(null);
-    } catch (reason) {
-      remoteFileDrafts.failSave(ticket);
-      if (lease.isCurrent() && request === sequence.current) fail(reason);
-    } finally {
-      saving.current = false;
-      if (lease.isCurrent() && request === sequence.current) {
-        loadingFile.current = false;
-        setBusy(false);
-      }
-    }
-  }
   async function compare() {
-    if (!lease.isCurrent() || busy || !file || activeFile.current !== file) return;
+    const shown = activeFile.current;
+    if (!lease.isCurrent() || busy || shown === null || shown !== file) return;
+    if (shown.unavailableReason !== null) return;
     const request = ++sequence.current;
-    loadingFile.current = true;
     setBusy(true);
     setError(null);
     try {
-      const latest = await gateway.readFile({ ...scope, path: file.path });
-      if (!lease.isCurrent() || request !== sequence.current) return;
-      if (latest.unavailableReason || latest.version === null) {
+      const latest = await gateway.readFile({ ...scope, path: shown.path });
+      if (!lease.isCurrent() || request !== sequence.current || activeFile.current !== shown)
+        return;
+      if (latest.unavailableReason !== null) {
         setError("The server file cannot be compared as text.");
         return;
       }
@@ -303,90 +192,32 @@ export function useRemoteFiles(
     } catch (reason) {
       if (lease.isCurrent() && request === sequence.current) fail(reason);
     } finally {
-      if (lease.isCurrent() && request === sequence.current) {
-        loadingFile.current = false;
-        setBusy(false);
-      }
+      if (lease.isCurrent() && request === sequence.current) setBusy(false);
     }
   }
-  function resolveComparison(keepMine: boolean) {
-    if (
-      !lease.isCurrent() ||
-      busy ||
-      !comparison ||
-      !comparison.version ||
-      !file ||
-      activeFile.current !== file
-    )
-      return;
-    if (keepMine && text !== comparison.text) {
-      if (
-        !remoteFileDrafts.put(scope, {
-          path: comparison.path,
-          text,
-          original: comparison.text,
-          version: comparison.version,
-        })
-      ) {
-        setError("Save or discard another unsaved server file before keeping this comparison.");
-        return;
-      }
-    } else remoteFileDrafts.remove(scope, file.path);
-    activeFile.current = comparison;
-    setFile(comparison);
-    if (!keepMine) setText(comparison.text);
+  function showLatest() {
+    if (!lease.isCurrent() || busy || comparison === null || activeFile.current !== file) return;
+    showFile(comparison);
+    setRevealAt(null);
+  }
+  function closeComparison() {
+    if (!lease.isCurrent()) return;
     setComparison(null);
-    setError(null);
   }
   return {
     directory,
     path,
     offset,
     file,
-    text,
     busy,
     error,
-    dirty,
     comparison,
     revealAt,
-    compare,
-    resolveComparison,
-    canEdit: !busy || saving.current,
     browse,
     open,
-    save,
-    edit: (value: string) => {
-      if (
-        !lease.isCurrent() ||
-        loadingFile.current ||
-        activeFile.current !== file ||
-        !file ||
-        file.version === null
-      )
-        return;
-      if (value === file.text && !remoteFileDrafts.isSaving(scope, file.path))
-        remoteFileDrafts.remove(scope, file.path);
-      else if (
-        !remoteFileDrafts.put(scope, {
-          path: file.path,
-          text: value,
-          original: file.text,
-          version: file.version,
-        })
-      ) {
-        setError("Save or discard another unsaved server file before adding more edits.");
-        return;
-      }
-      setText(value);
-    },
-    discard: () => {
-      if (lease.isCurrent() && !busy && file && activeFile.current === file) {
-        remoteFileDrafts.remove(scope, file.path);
-        setText(file.text);
-        setComparison(null);
-        setError(null);
-      }
-    },
+    compare,
+    showLatest,
+    closeComparison,
   };
 }
 

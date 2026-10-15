@@ -41,11 +41,9 @@ describe("WorkbenchSettingsScreen", () => {
       "Environments",
       "MCP servers",
       "Keybindings",
-      "Index & languages",
-      "Snippets",
+      "Git",
       "Usage",
       "Archive",
-      "PHP",
     ]);
     expect(
       host
@@ -80,13 +78,13 @@ describe("WorkbenchSettingsScreen", () => {
 
     keyDown(selectedTab(), "ArrowUp");
     keyDown(selectedTab(), "ArrowUp");
-    expectRovedTo("PHP");
+    expectRovedTo("Archive");
 
     keyDown(selectedTab(), "ArrowDown");
     expectRovedTo("General");
 
     keyDown(selectedTab(), "End");
-    expectRovedTo("PHP");
+    expectRovedTo("Archive");
 
     keyDown(selectedTab(), "Home");
     expectRovedTo("General");
@@ -136,7 +134,7 @@ describe("WorkbenchSettingsScreen", () => {
 
   it("filters rows, moves the active option and activates the hit with Enter", () => {
     render();
-    const descriptor = settingsRowDescriptor("general.formatOnSave");
+    const descriptor = settingsRowDescriptor("appearance.editorFontFamily");
 
     type(descriptor.title);
 
@@ -145,7 +143,7 @@ describe("WorkbenchSettingsScreen", () => {
     expect(tablist()?.hasAttribute("hidden")).toBe(true);
     expect(optionLabels()[0]).toContain(descriptor.title);
     expect(input.getAttribute("aria-activedescendant")).toBe(
-      "settings-search-option-general.formatOnSave",
+      "settings-search-option-appearance.editorFontFamily",
     );
     expect(options()[0]?.textContent).toContain("General");
 
@@ -160,13 +158,15 @@ describe("WorkbenchSettingsScreen", () => {
     expect(input.value).toBe("");
     expect(selectedTab()?.textContent).toBe("General");
     expect(scrollIntoView).toHaveBeenCalled();
-    expect(document.activeElement?.getAttribute("data-settings-row")).toBe("general.formatOnSave");
+    expect(document.activeElement?.getAttribute("data-settings-row")).toBe(
+      "appearance.editorFontFamily",
+    );
   });
 
   it("clears the query on the first Escape and closes the surface on the next", () => {
     render();
 
-    type("format");
+    type("font");
     escape(searchInput());
 
     expect(searchInput().value).toBe("");
@@ -227,7 +227,7 @@ describe("WorkbenchSettingsScreen", () => {
     render();
     const exit = exitButton();
 
-    type("format");
+    type("font");
     act(() => exit.focus());
     escape(exit);
 
@@ -251,15 +251,24 @@ describe("WorkbenchSettingsScreen", () => {
     expect(document.activeElement).toBe(input);
   });
 
-  it("resolves the git deep link to the Index & languages row", () => {
+  it("opens the git deep link on the Git page with its directory mappings", () => {
     render("git");
 
-    expect(selectedTab()?.textContent).toBe("Index & languages");
-    expect(scrollIntoView).toHaveBeenCalled();
-    expect(document.activeElement?.getAttribute("data-settings-row")).toBe(
-      "index.gitDirectoryMappings",
-    );
+    expect(selectedTab()?.textContent).toBe("Git");
+    expect(host.querySelector('[data-settings-row="git.directoryMappings"]')).not.toBeNull();
+    expect(host.querySelector('[data-settings-row="git.directoryMappingsAuto"]')).not.toBeNull();
   });
+
+  it.each(["php", "snippets", "index"])(
+    "falls back to General for the removed persisted section %s",
+    (section) => {
+      render(section as SettingsSection);
+
+      expect(selectedTab()?.textContent).toBe("General");
+      expect(host.querySelector(".settings-crumb__here")?.textContent).toBe("General");
+      expect(host.querySelector('[data-settings-row="appearance.palette"]')).not.toBeNull();
+    },
+  );
 
   function render(initialSection: SettingsSection = "general"): void {
     act(() =>
@@ -407,13 +416,9 @@ function environment(): SettingsEnvironment {
     gitDetectedRepositoryMappings: [],
     hasWorkspace: true,
     onCopyInstallCommand: () => undefined,
-    onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-    onRestartJavaScriptTypeScriptService: async () => undefined,
-    phpTools: null,
     providerManagement: null,
     providerSignIn: null,
     systemFontGateway: { listMonospaceFontFamilies: async () => [] },
-    workspaceDescriptor: null,
     workspaceRoot: "/workspace",
   };
 }

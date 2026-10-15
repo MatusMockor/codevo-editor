@@ -118,7 +118,7 @@ describe("keymapDefaultAliases", () => {
     ).toEqual([]);
     expect(
       keymapDefaultAliasCommandIdsForEvent(
-        { ...mac, "editor.unfoldAll": "Cmd+Shift+=" },
+        { ...mac, "agent.goToTurn": "Cmd+Shift+=" },
         keyEvent({ key: "+", metaKey: true, shiftKey: true }),
         "mac",
       ),

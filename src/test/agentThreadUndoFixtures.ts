@@ -170,7 +170,6 @@ export function undoThreadDependencies(gateways: UndoThreadGateways): AgentThrea
     editorBridge: null,
     prompter: { confirm: () => true, prompt: () => null },
     projects: UNDO_FIXTURE_PROJECTS,
-    agentModeActive: true,
     getAgentCliKind: () => "claudeCode",
     currentCliVersion: () => "1.4.2",
     getAgentProviderAdmissionAuthority: (provider) => ({
@@ -182,7 +181,6 @@ export function undoThreadDependencies(gateways: UndoThreadGateways): AgentThrea
     getMaxConcurrentAgentTasks: () => 4,
     launchIdentityForProject: () => ({ workspaceId: UNDO_FIXTURE_OWNER, generation: 1 }),
     getRepositoryStatus: () => ({ known: true, dirty: false }),
-    getDirtyEditorDocumentCount: () => 0,
     reportError: () => undefined,
     openAgentSettings: () => undefined,
   };

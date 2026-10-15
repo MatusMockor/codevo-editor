@@ -1,5 +1,4 @@
 import {
-  findKeymapSequenceConflicts as findScopedSequenceConflicts,
   normalizeShortcutSequenceInput,
   parseShortcutSequence,
   representableShortcutKey,
@@ -8,6 +7,7 @@ import {
 } from "./shortcutSequence";
 
 export {
+  findKeymapSequenceConflicts,
   lookupKeymapShortcutSequence,
   normalizeShortcutSequenceInput,
   parseShortcutSequence,
@@ -28,443 +28,10 @@ export const keymapCommands = [
     label: "Quit Application",
   },
   {
-    category: "Editor",
-    defaultShortcut: "Cmd+S",
-    id: "editor.save",
-    label: "Save File",
-  },
-  {
-    category: "Editor",
+    category: "Workbench",
     defaultShortcut: "Cmd+W",
-    id: "editor.closeTab",
-    label: "Close Tab or Window",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Ctrl+Tab",
-    id: "editor.nextRecentlyUsedEditor",
-    label: "Open Next Recently Used Editor",
-    rebindable: false,
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Ctrl+Shift+Tab",
-    id: "editor.previousRecentlyUsedEditor",
-    label: "Open Previous Recently Used Editor",
-    rebindable: false,
-  },
-  {
-    category: "Editor Groups",
-    defaultShortcut: "Cmd+\\",
-    id: "editor.splitRight",
-    label: "Split Editor Right",
-  },
-  {
-    category: "Editor Groups",
-    defaultShortcut: "Cmd+K Cmd+\\",
-    focus: "editorText",
-    id: "editor.splitDown",
-    label: "Split Editor Down",
-  },
-  {
-    category: "Editor Groups",
-    defaultShortcut: "Cmd+K Cmd+ArrowRight",
-    focus: "editorText",
-    id: "editor.focusNextGroup",
-    label: "Focus Next Editor Group",
-  },
-  {
-    category: "Editor Groups",
-    defaultShortcut: "Cmd+K Cmd+ArrowLeft",
-    focus: "editorText",
-    id: "editor.focusPreviousGroup",
-    label: "Focus Previous Editor Group",
-  },
-  {
-    category: "Editor Groups",
-    defaultShortcut: "Cmd+K Cmd+Shift+ArrowRight",
-    focus: "editorText",
-    id: "editor.moveTabToNextGroup",
-    label: "Move Tab to Next Group",
-  },
-  {
-    category: "Editor Groups",
-    defaultShortcut: "Cmd+K Cmd+Shift+ArrowLeft",
-    focus: "editorText",
-    id: "editor.moveTabToPreviousGroup",
-    label: "Move Tab to Previous Group",
-  },
-  {
-    category: "Editor Groups",
-    defaultShortcut: "Cmd+K W",
-    focus: "editorText",
-    id: "editor.closeGroup",
-    label: "Close Editor Group",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+Alt+T",
-    id: "editor.reopenClosedTab",
-    label: "Reopen Closed Tab",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+B",
-    focus: "editorText",
-    id: "editor.goToDefinition",
-    label: "Go to Definition",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.goToSourceDefinition",
-    label: "Go to Source Definition",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.goToDeclaration",
-    label: "Go to Declaration",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.goToTypeDefinition",
-    label: "Go to Type Definition",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Alt+B",
-    id: "editor.goToImplementation",
-    label: "Go to Implementation",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+U",
-    id: "editor.goToSuperMethod",
-    label: "Go to Super Method",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Shift+F12",
-    id: "editor.findReferences",
-    label: "Find All References",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+F12",
-    id: "editor.findFileReferences",
-    label: "Find File References",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+I",
-    id: "editor.quickDefinition",
-    label: "Quick Definition",
-  },
-  {
-    category: "Editor",
-    // VS Code's F2 rename. Drives Monaco's built-in rename action, which routes
-    // through the language server's provideRenameEdits and applies the resulting
-    // WorkspaceEdit across every open file (cross-file rename).
-    defaultShortcut: "F2",
-    id: "editor.rename",
-    label: "Rename Symbol",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+R",
-    id: "editor.fileStructure",
-    label: "File Structure",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+L",
-    id: "editor.gotoLine",
-    label: "Go to Line/Column",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+T",
-    id: "editor.goToSymbol",
-    label: "Go to Symbol in Workspace",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Shift+Alt+F",
-    id: "editor.formatDocument",
-    label: "Format Document",
-  },
-  {
-    category: "Test",
-    // VS Code's editorTextFocus-scoped Run Test at Cursor key chord.
-    defaultShortcut: "Cmd+; C",
-    id: "testing.runAtCursor",
-    label: "Run Test at Cursor",
-  },
-  {
-    category: "Test",
-    // VS Code's editorTextFocus-scoped Run Tests in Current File key chord.
-    defaultShortcut: "Cmd+; F",
-    id: "testing.runCurrentFile",
-    label: "Run Tests in Current File",
-  },
-  {
-    category: "Test",
-    // VS Code's global Rerun Failed Tests key chord.
-    defaultShortcut: "Cmd+; E",
-    id: "testing.reRunFailTests",
-    label: "Rerun Failed Tests",
-  },
-  {
-    category: "Test",
-    // VS Code's global Rerun Last Run key chord.
-    defaultShortcut: "Cmd+; L",
-    id: "testing.reRunLastRun",
-    label: "Rerun Last Run",
-  },
-  {
-    category: "Test",
-    // VS Code's global Test Explorer Cancel Test Run key chord.
-    defaultShortcut: "Cmd+; Cmd+X",
-    id: "testing.cancelRun",
-    label: "Cancel Test Run",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Shift+Alt+O",
-    id: "editor.action.organizeImports",
-    label: "Organize Imports",
-  },
-  {
-    category: "TypeScript",
-    defaultShortcut: "",
-    id: "typescript.sortImports",
-    label: "Sort Imports",
-  },
-  {
-    category: "JavaScript",
-    defaultShortcut: "",
-    id: "javascript.sortImports",
-    label: "Sort Imports",
-  },
-  {
-    category: "TypeScript",
-    defaultShortcut: "",
-    id: "typescript.removeUnusedImports",
-    label: "Remove Unused Imports",
-  },
-  {
-    category: "JavaScript",
-    defaultShortcut: "",
-    id: "javascript.removeUnusedImports",
-    label: "Remove Unused Imports",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Alt+L",
-    id: "editor.formatSelection",
-    label: "Format Selection",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Alt+Enter",
-    id: "editor.quickFix",
-    label: "Context Actions",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+R",
-    id: "editor.action.refactor",
-    label: "Refactor",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.action.sourceAction",
-    label: "Source Action",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "F8",
-    id: "editor.nextProblem",
-    label: "Go to Next Problem",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Shift+F8",
-    id: "editor.previousProblem",
-    label: "Go to Previous Problem",
-  },
-  {
-    category: "Editor",
-    // VS Code's "Go to Next Change" (Alt+F5). Jumps the caret to the next git
-    // change hunk in the active editor using the gutter change markers.
-    defaultShortcut: "Alt+F5",
-    id: "editor.nextChange",
-    label: "Go to Next Change",
-  },
-  {
-    category: "Editor",
-    // VS Code's "Go to Previous Change" (Shift+Alt+F5). Mirrors editor.nextChange
-    // in the reverse direction across the gutter change markers.
-    defaultShortcut: "Shift+Alt+F5",
-    id: "editor.previousChange",
-    label: "Go to Previous Change",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Alt+ArrowUp",
-    id: "editor.extendSelection",
-    label: "Extend Selection",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Alt+ArrowDown",
-    id: "editor.shrinkSelection",
-    label: "Shrink Selection",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Alt+ArrowUp",
-    id: "editor.insertCursorAbove",
-    label: "Add Caret Above",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Alt+ArrowDown",
-    id: "editor.insertCursorBelow",
-    label: "Add Caret Below",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+L",
-    id: "editor.selectAllOccurrences",
-    label: "Select All Occurrences",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.toggleColumnSelection",
-    label: "Toggle Column Selection Mode",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+ArrowUp",
-    id: "editor.moveStatementUp",
-    label: "Move Statement Up",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+ArrowDown",
-    id: "editor.moveStatementDown",
-    label: "Move Statement Down",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Shift+Alt+ArrowUp",
-    id: "editor.moveLineUp",
-    label: "Move Line Up",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Shift+Alt+ArrowDown",
-    id: "editor.moveLineDown",
-    label: "Move Line Down",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+D",
-    id: "editor.duplicateLine",
-    label: "Duplicate Line or Selection",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+D",
-    id: "editor.addSelectionToNextMatch",
-    label: "Add Selection to Next Match",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+K",
-    id: "editor.deleteLine",
-    label: "Delete Line",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Alt+T",
-    id: "editor.surroundWith",
-    label: "Surround With",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+Enter",
-    id: "editor.completeStatement",
-    label: "Complete Current Statement",
-  },
-  {
-    category: "Editor",
-    // Alt+/ on every platform (PhpStorm "Cyclic Expand Word" / Emacs hippie).
-    // Not a Cmd-based shortcut, so it stays Alt+/ on Windows/Linux too.
-    defaultShortcut: "Alt+/",
-    id: "editor.cyclicExpandWord",
-    label: "Cyclic Expand Word",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Shift+J",
-    id: "editor.joinLines",
-    label: "Join Lines",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.sortLinesAscending",
-    label: "Sort Lines Ascending",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.sortLinesDescending",
-    label: "Sort Lines Descending",
-  },
-  {
-    category: "Editor",
-    // PhpStorm's "Toggle Case" key. Monaco has no toggle action, so this drives
-    // its Transform to Uppercase command; Transform to Lowercase ships unbound.
-    defaultShortcut: "Cmd+Shift+U",
-    id: "editor.toggleCase",
-    label: "Toggle Case",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.transformToLowercase",
-    label: "Transform to Lowercase",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Alt+-",
-    id: "editor.foldAll",
-    label: "Fold All",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "Cmd+Alt+=",
-    id: "editor.unfoldAll",
-    label: "Unfold All",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.foldRecursively",
-    label: "Fold Recursively",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.unfoldRecursively",
-    label: "Unfold Recursively",
+    id: "workbench.closeActive",
+    label: "Close Active Panel",
   },
   {
     category: "Workbench",
@@ -485,68 +52,6 @@ export const keymapCommands = [
     label: "Reset Zoom",
   },
   {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.fontZoomIn",
-    label: "Increase Editor Font Size",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.fontZoomOut",
-    label: "Decrease Editor Font Size",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.fontZoomReset",
-    label: "Reset Editor Font Size",
-  },
-  {
-    category: "Editor",
-    defaultShortcut: "",
-    id: "editor.toggleFontLigatures",
-    label: "Toggle Editor Font Ligatures",
-  },
-  {
-    category: "Editor",
-    // PhpStorm has no default for Annotate; Cmd+Alt+G is free and mirrors the
-    // "git" mnemonic. Distinct from Cmd+B go-to-definition by the Alt modifier.
-    defaultShortcut: "Cmd+Alt+G",
-    id: "editor.toggleGitBlame",
-    label: "Annotate with Git Blame",
-  },
-  {
-    category: "Editor",
-    // Cmd+Alt+H ("history") opens the VCS file history for the active document.
-    defaultShortcut: "Cmd+Alt+H",
-    id: "editor.showFileHistory",
-    label: "Show File History",
-  },
-  {
-    category: "Editor",
-    // Local History sits beside the git file history; Cmd+Shift+H keeps the "H"
-    // mnemonic while staying distinct from the Cmd+Alt+H git file history.
-    defaultShortcut: "Cmd+Shift+H",
-    id: "editor.showLocalHistory",
-    label: "Local History: Show History",
-  },
-  {
-    category: "Git",
-    // PhpStorm stashes with Cmd+Shift+S; the slot is free here, so we keep parity.
-    defaultShortcut: "Cmd+Shift+S",
-    id: "git.stashChanges",
-    label: "Git: Stash Changes",
-  },
-  {
-    category: "Git",
-    // Unstash/Show Stashes pairs with Stash; Cmd+Alt+S keeps the "stash" mnemonic
-    // and stays distinct from Cmd+Shift+S (stash) by the Alt vs Shift modifier.
-    defaultShortcut: "Cmd+Alt+S",
-    id: "git.showStashes",
-    label: "Git: Show Stashes",
-  },
-  {
     category: "Git",
     // Switch/checkout branch. Cmd+Shift+B is free ("B" = branch).
     defaultShortcut: "Cmd+Shift+B",
@@ -559,28 +64,13 @@ export const keymapCommands = [
     // the Cmd+Shift+B switch-branch shortcut by both key and modifier.
     defaultShortcut: "Cmd+Alt+N",
     id: "git.newBranch",
-    label: "Git: New Branch",
+    label: "Git: Open Branches",
   },
   {
     category: "Git",
     defaultShortcut: "",
-    id: "git.cherryPickCommit",
-    label: "Git: Cherry-Pick Selected Commit",
-  },
-  {
-    category: "Git",
-    defaultShortcut: "",
-    id: "git.rewordCommit",
-    label: "Git: Reword Selected Commit",
-  },
-  {
-    category: "Git",
-    // Commit the staged changes. Cmd+Enter is the VS Code / PhpStorm commit
-    // accelerator and is free (distinct from Cmd+Shift+Enter complete-statement
-    // and Alt+Enter context-actions by its modifier set).
-    defaultShortcut: "Cmd+Enter",
     id: "git.commit",
-    label: "Git: Commit",
+    label: "Git: Open Commit",
   },
   {
     category: "File",
@@ -589,104 +79,10 @@ export const keymapCommands = [
     label: "Quick Open File",
   },
   {
-    category: "File",
-    defaultShortcut: "Cmd+E",
-    id: "editor.recentFiles",
-    label: "Recent Files",
-  },
-  {
-    category: "File",
-    defaultShortcut: "Cmd+Shift+E",
-    id: "editor.recentLocations",
-    label: "Recent Locations",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "Cmd+O",
-    id: "class.quickOpen",
-    label: "Open Class or Interface",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "",
-    id: "php.goToTest",
-    label: "Go to Test / Test Subject",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "",
-    id: "php.runTest",
-    label: "Run Test Under Cursor",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "",
-    id: "php.runTestFile",
-    label: "Run All Tests in File",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "",
-    id: "php.runTestsWithResultsPanel",
-    label: "Run Tests with Results Panel",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "",
-    id: "pint.formatChangedFiles",
-    label: "Pint: Format Changed Files",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "",
-    id: "pint.formatActiveFile",
-    label: "Pint: Format Active File",
-  },
-  {
-    category: "PHP",
-    defaultShortcut: "",
-    id: "artisan.make",
-    label: "Artisan: Make",
-  },
-  {
-    category: "Navigation",
-    defaultShortcut: "Cmd+[",
-    id: "navigation.back",
-    label: "Go Back",
-  },
-  {
-    category: "Navigation",
-    defaultShortcut: "Cmd+]",
-    id: "navigation.forward",
-    label: "Go Forward",
-  },
-  {
-    category: "Markdown",
-    defaultShortcut: "Cmd+Shift+V",
-    id: "markdown.openPreview",
-    label: "Markdown: Open Preview",
-  },
-  {
-    category: "Search",
-    defaultShortcut: "Cmd+Shift+F",
-    id: "search.text",
-    label: "Search Text",
-  },
-  {
     category: "Workbench",
     defaultShortcut: "Cmd+Shift+P",
     id: "commands.show",
     label: "Show Commands",
-  },
-  {
-    category: "Workbench",
-    // PhpStorm triggers Search Everywhere with double-Shift, which is not
-    // expressible as a normal chord; this is the discoverable fallback shortcut
-    // (also rebindable from the keymap settings). Double-Shift is handled
-    // separately in the global keydown listener.
-    defaultShortcut: "Cmd+Shift+A",
-    id: "workbench.searchEverywhere",
-    label: "Search Everywhere",
   },
   {
     category: "Workbench",
@@ -719,58 +115,10 @@ export const keymapCommands = [
     label: "Toggle Bottom Panel",
   },
   {
-    category: "Workbench",
-    defaultShortcut: "Cmd+Shift+T",
-    id: "panel.toggleTodo",
-    label: "Toggle TODO Panel",
-  },
-  {
-    category: "Workbench",
-    defaultShortcut: "Cmd+Shift+M",
-    id: "panel.showProblems",
-    label: "Show Problems",
-  },
-  {
-    category: "Bookmarks",
-    defaultShortcut: "Alt+F11",
-    id: "bookmark.toggle",
-    label: "Toggle Bookmark",
-  },
-  {
-    category: "Bookmarks",
-    defaultShortcut: "Shift+Alt+F11",
-    id: "bookmark.showPanel",
-    label: "Show Bookmarks",
-  },
-  {
-    category: "Bookmarks",
-    defaultShortcut: "",
-    id: "bookmark.next",
-    label: "Next Bookmark",
-  },
-  {
-    category: "Bookmarks",
-    defaultShortcut: "",
-    id: "bookmark.previous",
-    label: "Previous Bookmark",
-  },
-  {
-    category: "NPM",
-    defaultShortcut: "",
-    id: "npm.runSelectedScript",
-    label: "Run Script",
-  },
-  {
     category: "Terminal",
     defaultShortcut: "Ctrl+`",
     id: "terminal.show",
     label: "Show Terminal",
-  },
-  {
-    category: "Workbench",
-    defaultShortcut: "",
-    id: "runtime.show",
-    label: "Show Runtime Panel",
   },
   {
     category: "Agent",
@@ -877,7 +225,6 @@ export const keymapCommands = [
   {
     category: "Agent",
     defaultShortcut: "Cmd+B",
-    focus: "outsideEditorText",
     id: "agent.toggleSidebar",
     label: "Toggle Sidebar",
   },
@@ -926,14 +273,12 @@ export const keymapCommands = [
   {
     category: "Workbench",
     defaultShortcut: "Cmd+K",
-    focus: "outsideEditorText",
     id: "palette.open",
     label: "Open Command Palette",
   },
   {
     category: "Workbench",
     defaultShortcut: "Cmd+/",
-    focus: "outsideEditorText",
     id: "palette.shortcuts",
     label: "Keyboard Shortcuts",
   },
@@ -947,8 +292,6 @@ export const keymapCommands = [
 
 export type KeymapCommand = (typeof keymapCommands)[number];
 export type KeymapCommandId = (typeof keymapCommands)[number]["id"];
-export type RebindableKeymapCommand = Exclude<KeymapCommand, { readonly rebindable: false }>;
-export type RebindableKeymapCommandId = RebindableKeymapCommand["id"];
 export type KeymapPlatform = "linux" | "mac" | "other" | "windows";
 export type KeymapSettings = Record<KeymapCommandId, string>;
 
@@ -956,34 +299,8 @@ export function isKeymapCommandId(value: string): value is KeymapCommandId {
   return keymapCommands.some((command) => command.id === value);
 }
 
-export type KeymapFocusScope = "any" | "editorText" | "outsideEditorText";
-
-const KEYMAP_FOCUS_SCOPES: ReadonlyMap<string, KeymapFocusScope> = new Map(
-  keymapCommands.map(
-    (command) => [command.id, "focus" in command ? command.focus : "any"] as const,
-  ),
-);
-
-export function keymapCommandFocusScope(commandId: string): KeymapFocusScope {
-  return KEYMAP_FOCUS_SCOPES.get(commandId) ?? "any";
-}
-
-export function keymapFocusScopesOverlap(left: string, right: string): boolean {
-  const scopes = new Set([keymapCommandFocusScope(left), keymapCommandFocusScope(right)]);
-  return !(scopes.has("editorText") && scopes.has("outsideEditorText"));
-}
-
-export function findKeymapSequenceConflicts<CommandId extends string>(
-  keymap: Readonly<Record<CommandId, string>>,
-  commandId: CommandId,
-  platform?: KeymapPlatform,
-) {
-  return findScopedSequenceConflicts(keymap, commandId, platform, keymapFocusScopesOverlap);
-}
-
-export const rebindableKeymapCommands = keymapCommands.filter(
-  (command): command is RebindableKeymapCommand => !("rebindable" in command),
-);
+const CLOSE_ACTIVE_COMMAND_ID = "workbench.closeActive" satisfies KeymapCommandId;
+const LEGACY_CLOSE_TAB_COMMAND_ID = "editor.closeTab";
 
 export interface ParsedShortcut {
   alt: boolean;
@@ -1068,10 +385,7 @@ export function defaultKeymapSettings(
   platform: KeymapPlatform = detectKeymapPlatform(),
 ): KeymapSettings {
   return Object.fromEntries(
-    rebindableKeymapCommands.map((command) => [
-      command.id,
-      defaultShortcutForCommand(command.id, platform),
-    ]),
+    keymapCommands.map((command) => [command.id, defaultShortcutForCommand(command.id, platform)]),
   ) as KeymapSettings;
 }
 
@@ -1099,9 +413,12 @@ export function normalizeKeymapSettings(
   }
 
   const keymap = { ...defaults };
-  const persisted = withNewThreadPickerBindingMigrated(value, platform);
+  const persisted = withNewThreadPickerBindingMigrated(
+    withCloseActiveBindingMigrated(value),
+    platform,
+  );
 
-  for (const command of rebindableKeymapCommands) {
+  for (const command of keymapCommands) {
     const shortcut = persisted[command.id];
 
     if (typeof shortcut !== "string") {
@@ -1116,6 +433,15 @@ export function normalizeKeymapSettings(
   }
 
   return keymap;
+}
+
+export function withCloseActiveBindingMigrated(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  if (value[CLOSE_ACTIVE_COMMAND_ID] !== undefined) return value;
+  const legacyShortcut = value[LEGACY_CLOSE_TAB_COMMAND_ID];
+  if (legacyShortcut === undefined) return value;
+  return { ...value, [CLOSE_ACTIVE_COMMAND_ID]: legacyShortcut };
 }
 
 function withNewThreadPickerBindingMigrated(
@@ -1136,7 +462,7 @@ export function restoredNewThreadPickerShortcut(
   platform: KeymapPlatform,
 ): string {
   const pickerShortcut = defaultShortcutForCommand("agent.newThreadIn", platform);
-  const pickerShortcutTaken = rebindableKeymapCommands.some(({ id }) => {
+  const pickerShortcutTaken = keymapCommands.some(({ id }) => {
     const value = persisted[id];
     if (id === "agent.newThreadIn" || typeof value !== "string") return false;
     const shortcut = normalizeShortcutSequenceInput(normalizeShortcutInput(value));
@@ -1184,8 +510,8 @@ export function keymapCommandIdsForShortcut(
   const matches: KeymapCommandId[] = [];
   const collected = new Set<KeymapCommandId>();
 
-  for (let index = rebindableKeymapCommands.length - 1; index >= 0; index -= 1) {
-    const command = rebindableKeymapCommands[index];
+  for (let index = keymapCommands.length - 1; index >= 0; index -= 1) {
+    const command = keymapCommands[index];
     if (!command || collected.has(command.id)) {
       continue;
     }
@@ -1227,7 +553,6 @@ export function findKeymapConflicts(
 
   return keymapCommands
     .filter((command) => command.id !== commandId)
-    .filter((command) => keymapFocusScopesOverlap(commandId, command.id))
     .filter(
       (command) =>
         normalizeShortcutInput(shortcutForCommand(keymap, command.id, platform)) === shortcut,

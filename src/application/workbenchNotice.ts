@@ -1,5 +1,4 @@
 import { createWorkbenchNotice, type WorkbenchNotice } from "../domain/workbenchNotice";
-import { JS_TEST_PROBLEM_GROUP_PREFIX } from "../domain/jsTestProblems";
 
 export {
   createWorkbenchNotice,
@@ -9,87 +8,6 @@ export {
   type WorkbenchNoticePosition,
   type WorkbenchNoticeSeverity,
 } from "../domain/workbenchNotice";
-
-/**
- * Groups a PHP language server crash notice by workspace root, so the
- * "Open Runtime panel" toast action (wired in `LanguageServerCrashNotice`)
- * only ever targets the crash for the active project - never another open
- * project tab's runtime.
- */
-export function languageServerCrashNoticeGroupKey(workspaceRoot: string | null): string | null {
-  return workspaceRoot ? `language-server-crash:${workspaceRoot}` : null;
-}
-
-export function languageServerRequestErrorNoticeGroupKey(
-  workspaceRoot: string | null,
-): string | null {
-  return workspaceRoot ? `language-server-request-error:${workspaceRoot}` : null;
-}
-
-export function languageServerRequestErrorToastDismissKey(
-  workspaceRoot: string | null,
-  message: string,
-): string | null {
-  return workspaceRoot
-    ? JSON.stringify(["language-server-request-error", workspaceRoot, message])
-    : null;
-}
-
-export function replaceWorkbenchNoticeGroup(
-  current: WorkbenchNotice[],
-  groupKey: string,
-  replacements: WorkbenchNotice[],
-): WorkbenchNotice[] {
-  const retained = current.filter((notice) => notice.groupKey !== groupKey);
-
-  if (replacements.length === 0 && retained.length === current.length) {
-    return current;
-  }
-
-  return [...replacements, ...retained];
-}
-
-export function replaceNodePackageTaskProblemNotices(
-  current: WorkbenchNotice[],
-  replacements: readonly WorkbenchNotice[],
-): WorkbenchNotice[] {
-  return [
-    ...replacements,
-    ...current.filter((notice) => !notice.groupKey?.startsWith("node-package-task-problems:")),
-  ];
-}
-
-export function replaceJsTestProblemNotices(
-  current: WorkbenchNotice[],
-  replacements: readonly WorkbenchNotice[],
-): WorkbenchNotice[] {
-  return [
-    ...replacements,
-    ...current.filter((notice) => !notice.groupKey?.startsWith(JS_TEST_PROBLEM_GROUP_PREFIX)),
-  ];
-}
-
-/**
- * Bounds the number of per-document diagnostic notices rendered in the notices
- * panel. A single Laravel file can publish hundreds of diagnostics; mapping
- * every one to a notice and re-rendering the panel freezes the main thread.
- *
- * Monaco markers use their own bounded projection. The kept notices are the
- * server-ordered head of the list, and an `info` overflow indicator carrying
- * the truthful hidden count is appended so list truncation is never silent.
- */
-export function capDiagnosticNotices(
-  notices: WorkbenchNotice[],
-  limit: number,
-  buildOverflowNotice: (hiddenCount: number) => WorkbenchNotice,
-): WorkbenchNotice[] {
-  if (notices.length <= limit) {
-    return notices;
-  }
-
-  const hiddenCount = notices.length - limit;
-  return [...notices.slice(0, limit), buildOverflowNotice(hiddenCount)];
-}
 
 /**
  * Stable group key for the single global overflow indicator appended by
@@ -161,7 +79,7 @@ function buildGlobalNoticeOverflowNotice(hiddenCount: number): WorkbenchNotice {
   return createWorkbenchNotice(
     "warning",
     "Notices",
-    `${hiddenCount} additional diagnostic notices are not shown in Problems.`,
+    `${hiddenCount} more notices were dropped to keep the list short.`,
     GLOBAL_NOTICE_OVERFLOW_GROUP_KEY,
     undefined,
     "overflow",

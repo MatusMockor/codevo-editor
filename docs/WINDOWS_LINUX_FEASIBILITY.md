@@ -178,11 +178,10 @@ Required signing decisions:
 Windows runtime risks:
 
 - terminal profiles use PowerShell and Command Prompt
-- PHPactor, Intelephense, `rg`, PHP, and shell behavior depend on Windows `PATH` and executable suffix handling
+- agent CLI (Claude Code, Codex), Git, `rg`, and shell behavior depend on Windows `PATH` and executable suffix handling
 - `PATHEXT` handling exists in tool discovery
 - portable-pty behavior must be smoke-tested on Windows
-- file paths, URI encoding, and workspace index hashing must be tested with drive-letter paths
-- LSP `file:///C:/...` URI decoding may need a Windows-specific frontend fix because `URL.pathname` can produce `/C:/...`
+- file paths, URI encoding, and worktree paths must be tested with drive-letter paths
 - WebView2 installation mode should be chosen explicitly before public release
 
 Windows smoke checklist:
@@ -191,12 +190,12 @@ Windows smoke checklist:
 2. Install on a clean Windows user profile.
 3. Verify app title, icon, and bundle identity.
 4. Open a workspace under a path with spaces.
-5. Run file read/write/rename/delete flows.
-6. Run Quick Open and text search with and without `rg`.
-7. Trust a PHP Composer workspace and verify PHPactor behavior with missing and present PHPactor.
+5. Browse files in the read-only Files viewer and review a diff.
+6. Trust the workspace and run a Claude Code or Codex thread in the local checkout and in a worktree.
+7. Commit thread changes and integrate a worktree.
 8. Open Terminal with PowerShell and Command Prompt.
-9. Run soft, PHP-language, and hard reindex.
-10. Verify app restart restores session and index state.
+9. Run a package script from the Scripts surface.
+10. Verify app restart restores session and thread state.
 
 ## Linux Feasibility
 
@@ -227,7 +226,7 @@ Linux runtime risks:
 - GUI apps on Linux may not inherit shell dotfile `PATH`, like macOS GUI apps
 - WebKitGTK version and glibc baseline affect compatibility
 - terminal uses host default shell or `$SHELL`
-- host `rg`, PHP, PHPactor, Intelephense, and Watchman visibility must be smoke-tested
+- host agent CLI, Git, `rg`, and Node visibility must be smoke-tested
 - `.desktop` metadata and icon installation must be verified
 - file permissions and executable detection must be checked on real Linux filesystems
 
@@ -237,35 +236,31 @@ Linux smoke checklist:
 2. Install the package on a clean user profile.
 3. Verify `.desktop` entry, icon, title, and launch from desktop environment.
 4. Open a workspace under a path with spaces.
-5. Run file read/write/rename/delete flows.
-6. Run Quick Open and text search with and without `rg`.
-7. Trust a PHP Composer workspace and verify PHPactor behavior with missing and present PHPactor.
+5. Browse files in the read-only Files viewer and review a diff.
+6. Trust the workspace and run a Claude Code or Codex thread in the local checkout and in a worktree.
+7. Commit thread changes and integrate a worktree.
 8. Open Terminal using the host shell.
-9. Run soft, PHP-language, and hard reindex.
-10. Verify app restart restores session and index state.
+9. Run a package script from the Scripts surface.
+10. Verify app restart restores session and thread state.
 
 ## Cross-Platform Runtime Notes
 
 Host-runtime policy still applies:
 
-- PHP is not bundled.
-- PHPactor is not bundled.
-- Intelephense is not launch-ready.
-- Watchman is unsupported.
+- agent CLIs (Claude Code, Codex) are not bundled.
+- Git and Node are not bundled.
 - ripgrep is not bundled.
 - terminal shells are host-provided.
 
 In-process runtime dependencies:
 
 - SQLite is bundled through `rusqlite`.
-- PHP symbol parsing uses Rust and tree-sitter, not PHP.
 - native notify is a Rust dependency, but live watcher service exposure is still future work.
 
 Data locations:
 
 - trust state uses Tauri `app_config_dir`.
-- workspace index DBs use `app_config_dir/workspace-indexes/<workspace-hash>.sqlite3`.
-- moving a workspace creates a separate index DB because the path hash changes.
+- agent threads, turn logs, and history use Tauri `app_data_dir`.
 
 ## Required Follow-Up
 
@@ -276,6 +271,5 @@ Data locations:
 - Add platform-specific release smoke scripts or checklists.
 - Add Windows signing plan.
 - Add Linux artifact signing or repository policy.
-- Fix or test Windows LSP file URI decoding before claiming Windows language-server support.
-- Test Composer `vendor/bin/phpactor.bat` and `.cmd` wrapper launching on Windows.
+- Test `.cmd` and `.ps1` wrapper launching of npm-installed agent CLIs on Windows.
 - Re-run sidecar and updater plans once Windows/Linux artifacts exist.

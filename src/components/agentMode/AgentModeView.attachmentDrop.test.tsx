@@ -140,7 +140,7 @@ describe("dropping Finder files on the agent thread column", () => {
         <AgentModeView
           agents={{ ...agents, providerManagement: unconfiguredAgentProviderManagement() }}
           chrome={chromeFixture({
-            layout: { layout, effectiveLayout: "agent", persistedBottomPanel: false, dispatch },
+            layout: { layout, persistedBottomPanel: false, dispatch },
           })}
           navigationSession={session}
           onOpenEnvironmentSettings={() => undefined}

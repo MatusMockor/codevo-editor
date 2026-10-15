@@ -30,7 +30,6 @@ export interface AgentViewCommandHandlers {
   findInThread(): void;
   goToTurn?(): void;
   threadFindFocused?(): boolean;
-  editorTextFocused?(): boolean;
   runPreferredScript?(): void;
   openCommitMenu?(): void;
   toggleMaximizedPanel?(): void;
@@ -50,7 +49,6 @@ export interface AgentViewCommandBridge {
   dictationAvailable(): boolean;
   threadSelected(): boolean;
   threadFindFocused(): boolean;
-  editorTextFocused(): boolean;
   surfaceBlocked(surface: AgentSurfaceKind): boolean;
   addProjectAvailable(): boolean;
   run(commandId: AgentViewCommandId): void;
@@ -83,7 +81,6 @@ export function createAgentViewCommandBridge(): AgentViewCommandBridge {
     dictationAvailable: () => current !== null && dictation?.available() === true,
     threadSelected: () => current?.threadSelected() ?? false,
     threadFindFocused: () => current?.threadFindFocused?.() ?? false,
-    editorTextFocused: () => current?.editorTextFocused?.() ?? false,
     surfaceBlocked: (surface) => current?.surfaceBlocked(surface) ?? true,
     addProjectAvailable: () => current?.addProject !== undefined,
     run(commandId) {

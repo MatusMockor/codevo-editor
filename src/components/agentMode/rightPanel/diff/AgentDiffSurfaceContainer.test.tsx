@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DELETED_FILE_REASON } from "../../../../application/useAgentEditorBridge";
+import { DELETED_FILE_REASON } from "../../../../application/useAgentFileNavigation";
 import type { AgentDiffScope } from "../../../../domain/diffView/agentDiffScope";
 import type { GitChangedFile } from "../../../../domain/git";
 import { waitForReact } from "../../../../test/reactTestLifecycle";

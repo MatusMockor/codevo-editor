@@ -74,7 +74,7 @@ import { useAgentInlineImages } from "./useAgentInlineImages";
 import { useExternalSessions } from "./useExternalSessions";
 import { useImportedThreadHistory } from "./useImportedThreadHistory";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
-import { useAgentEditorBridge, type AgentEditorBridgePort } from "./useAgentEditorBridge";
+import { useAgentFileNavigation, type AgentFileNavigationPort } from "./useAgentFileNavigation";
 import { useAgentIsolationPreview } from "./useAgentIsolationPreview";
 import { useAgentShipFlow, type ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { isLoggedAgentThread, useAgentThreadStore } from "./useAgentThreadStore";
@@ -83,7 +83,7 @@ import {
   defaultAgentTurnLogGateway,
   defaultSessionImportGateway,
   defaultHistoryCatalogGateway,
-} from "./workbenchDefaultGateways";
+} from "./agentApp/agentDefaultGateways";
 import { AGENT_TURN_LOG_QUIT_FLUSH_BUDGET_MS, type AgentTurnLogGateway } from "./agentTurnLogPorts";
 import { useAgentTurnDispatch } from "./useAgentTurnDispatch";
 import {
@@ -122,16 +122,14 @@ export interface AgentThreadsDependencies {
   readonly gitGateway: AgentThreadsGitGateway;
   readonly gitIntegrationGateway: GitIntegrationGateway;
   readonly externalUrlOpener: ExternalUrlOpenerPort | null;
-  readonly editorBridge: AgentEditorBridgePort | null;
+  readonly editorBridge: AgentFileNavigationPort | null;
   readonly prompter: WorkbenchPrompter;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
-  readonly agentModeActive: boolean;
   readonly getAgentCliKind: () => AgentCliKind;
   readonly currentCliVersion: (provider: AgentCliKind) => string | null;
   readonly getAgentProviderAdmissionAuthority: AgentProviderAdmissionAuthorityReader;
   readonly getMaxConcurrentAgentTasks: () => number;
   readonly getRepositoryStatus: (repositoryRoot: string) => AgentRepositoryStatusSnapshot;
-  readonly getDirtyEditorDocumentCount: (repositoryRoot: string) => number;
   readonly onProjectDispatchTrustRejected?: (projectRootKey: string) => void;
   readonly onAccountUsageObserved?: (observation: AgentAccountUsageObservation) => void;
   readonly onProviderTurnCompleted?: (provider: AgentCliKind) => void;
@@ -192,7 +190,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const store = useAgentThreadStore({
     agentThreadStoreGateway: dependencies.agentThreadStoreGateway,
     projects,
-    agentModeActive: dependencies.agentModeActive,
     reportError,
     setNotice,
     now: dependencies.now,
@@ -267,7 +264,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     projects,
     gitGateway,
     getRepositoryStatus: dependencies.getRepositoryStatus,
-    getDirtyEditorDocumentCount: dependencies.getDirtyEditorDocumentCount,
     liveAgentTasksInRepository,
     reportError,
   });
@@ -295,10 +291,10 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     currentThreads,
   });
 
-  const editor = useAgentEditorBridge({
+  const editor = useAgentFileNavigation({
     projects,
     threads,
-    editor: dependencies.editorBridge,
+    navigation: dependencies.editorBridge,
     reportError,
   });
 

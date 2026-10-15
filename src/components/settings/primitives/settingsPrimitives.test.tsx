@@ -32,20 +32,20 @@ describe("settings primitives", () => {
 
   it("renders the row title and description from the registry and labels its control", () => {
     render(
-      <SettingsRow rowId="general.formatOnSave">
+      <SettingsRow rowId="general.trustedWorkspace">
         <SettingsSwitch checked={false} onChange={() => undefined} />
       </SettingsRow>,
     );
 
-    const row = host.querySelector('[data-settings-row="general.formatOnSave"]');
+    const row = host.querySelector('[data-settings-row="general.trustedWorkspace"]');
     const control = host.querySelector('[role="switch"]');
     const labelId = control?.getAttribute("aria-labelledby");
     const describedById = control?.getAttribute("aria-describedby");
 
-    expect(row?.querySelector("h3")?.textContent).toBe("Format on save");
-    expect(row?.querySelector(`#${labelId}`)?.textContent).toBe("Format on save");
+    expect(row?.querySelector("h3")?.textContent).toBe("Trusted workspace");
+    expect(row?.querySelector(`#${labelId}`)?.textContent).toBe("Trusted workspace");
     expect(row?.querySelector(`#${describedById}`)?.textContent).toBe(
-      "Run the language formatter before the file is written.",
+      "Trusted projects may run workspace binaries and tasks.",
     );
   });
 
@@ -66,7 +66,7 @@ describe("settings primitives", () => {
   it("labels a section heading and keeps its rows inside it", () => {
     render(
       <SettingsSectionHeading actions={<span>meta</span>} title="Editing">
-        <SettingsRow rowId="general.autoSave">
+        <SettingsRow rowId="general.terminalShellIntegration">
           <span>value</span>
         </SettingsRow>
       </SettingsSectionHeading>,
@@ -76,13 +76,15 @@ describe("settings primitives", () => {
 
     expect(section?.querySelector("h2")?.textContent).toBe("Editing");
     expect(section?.getAttribute("aria-labelledby")).toBe(section?.querySelector("h2")?.id);
-    expect(section?.querySelector('[data-settings-row="general.autoSave"]')).not.toBeNull();
+    expect(
+      section?.querySelector('[data-settings-row="general.terminalShellIntegration"]'),
+    ).not.toBeNull();
   });
 
   it("renders a section as a heading plus one rounded group of rows", () => {
     render(
       <SettingsSectionHeading title="Editing">
-        <SettingsRow rowId="general.autoSave">
+        <SettingsRow rowId="general.terminalShellIntegration">
           <span>control</span>
         </SettingsRow>
       </SettingsSectionHeading>,

@@ -8,8 +8,6 @@ import {
 } from "./commandRegistry";
 
 const context: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: false,
 };
 
@@ -93,8 +91,7 @@ describe("CommandRegistry", () => {
       id: "editor.save",
       title: "Save File",
       category: "Editor",
-      isEnabled: (currentContext) =>
-        currentContext.hasActiveDocument && currentContext.activeDocumentDirty,
+      isEnabled: (currentContext) => currentContext.hasWorkspace,
       run: () => undefined,
     });
 
@@ -102,8 +99,7 @@ describe("CommandRegistry", () => {
     expect(
       registry.get("editor.save")?.isEnabled({
         ...context,
-        activeDocumentDirty: true,
-        hasActiveDocument: true,
+        hasWorkspace: true,
       }),
     ).toBe(true);
   });
@@ -115,7 +111,7 @@ describe("CommandRegistry", () => {
       id: "editor.save",
       title: "Save File",
       category: "Editor",
-      isEnabled: (currentContext) => currentContext.hasActiveDocument,
+      isEnabled: (currentContext) => currentContext.hasWorkspace,
       run,
     });
 
@@ -124,7 +120,7 @@ describe("CommandRegistry", () => {
     expect(
       executeCommand(registry, "editor.save", {
         ...context,
-        hasActiveDocument: true,
+        hasWorkspace: true,
       }),
     ).toBe("executed");
     expect(run).toHaveBeenCalledTimes(1);
@@ -480,7 +476,7 @@ describe("CommandRegistry", () => {
       title: "Save File",
       category: "Editor",
       isEnabled: (currentContext: CommandContext) =>
-        currentContext.hasActiveDocument,
+        currentContext.hasWorkspace,
       run,
     };
 

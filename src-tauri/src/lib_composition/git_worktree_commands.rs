@@ -1,7 +1,6 @@
 use super::agent_task_commands::claude_session_composition::reap_sessions_in_worktree;
 use super::{canonicalize_workspace_root, trusted_for, GitTrustState};
 use crate::agent_task_supervisor::AgentTaskRegistry;
-use crate::eslint::EslintProcessRegistry;
 use crate::git_worktree::git_branch_worktree::add_branch_worktree;
 use crate::git_worktree::git_worktree_start_point::WorktreeStartPointWire;
 use crate::git_worktree::{
@@ -9,9 +8,6 @@ use crate::git_worktree::{
     remove_agent_worktree_with_disposal, AgentWorktreeReceipt, CommandGitWorktreeGateway,
     GitWorktreeDescriptor, GitWorktreeGateway, WorktreeRemovalHooks, WorktreeStartPoint,
 };
-use crate::job_scheduler::WorkspaceIndexLifecycle;
-use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
-use crate::lsp_session::{JavaScriptTypeScriptLanguageServerRegistry, PhpLanguageServerRegistry};
 use crate::run_blocking_command;
 use crate::terminal_session::TerminalSupervisor;
 use crate::trust::WorkspaceTrustService;
@@ -19,7 +15,7 @@ use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use crate::workspace_runtime::{self, WorkspaceRuntimeDisposal};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager};
 
 pub(crate) const UNTRUSTED_WORKTREE_REPOSITORY_ERROR: &str =
@@ -150,28 +146,14 @@ impl WorktreeRemovalHooks for AppWorktreeRemovalHooks<'_> {
     }
 
     fn dispose_runtimes(&self, worktree_path: &Path) -> Result<(), String> {
-        let index_lifecycle = self.app.state::<WorkspaceIndexLifecycle>();
-        let javascript_typescript_language_servers =
-            self.app
-                .state::<JavaScriptTypeScriptLanguageServerRegistry>();
-        let javascript_typescript_watch_registry =
-            self.app
-                .state::<JavaScriptTypeScriptWorkspaceWatchRegistry>();
         let workspace_file_change_watch_registry =
             self.app.state::<WorkspaceFileChangeWatchRegistry>();
-        let php_language_servers = self.app.state::<PhpLanguageServerRegistry>();
-        let eslint_processes = self.app.state::<Arc<EslintProcessRegistry>>();
         let terminal_sessions = self.app.state::<TerminalSupervisor>();
 
         workspace_runtime::dispose_workspace_root(
             worktree_path,
             WorkspaceRuntimeDisposal {
-                index_lifecycle: &*index_lifecycle,
-                javascript_typescript_language_servers: &*javascript_typescript_language_servers,
-                javascript_typescript_watch_registry: &*javascript_typescript_watch_registry,
                 workspace_file_change_watch_registry: &*workspace_file_change_watch_registry,
-                php_language_servers: &*php_language_servers,
-                eslint_processes: &**eslint_processes,
                 terminal_sessions: &*terminal_sessions,
             },
         )

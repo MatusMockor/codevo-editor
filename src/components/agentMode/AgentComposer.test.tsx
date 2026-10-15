@@ -513,7 +513,7 @@ describe("AgentComposer", () => {
   it("shows checkout choices without a second confirmation step", () => {
     render({
       isolation: "in-place",
-      guard: { kind: "unsafe", reasons: ["dirty-tree", "dirty-editors"] },
+      guard: { kind: "unsafe", reasons: ["dirty-tree", "status-unknown"] },
     });
 
     expect(submitButton().disabled).toBe(false);

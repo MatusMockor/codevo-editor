@@ -22,7 +22,7 @@ import {
   agentThreadRequestsOf,
 } from "../../test/agentThreadRequestFeedFake";
 import { waitForReact } from "../../test/reactTestLifecycle";
-import { createWorkbenchComposition } from "../../workbenchComposition";
+import { createAgentAppComposition } from "../../agentAppComposition";
 import { AgentThreadRequestsScope } from "./AgentThreadRequestsScope";
 import { AgentThreadSession } from "./AgentThreadSession";
 import {
@@ -428,15 +428,15 @@ describe("runtime request records in the open thread's transcript", () => {
 });
 
 describe("the thread request feed in the app composition", () => {
-  it("is one router per workbench, handed to the agent surfaces and the pre-dispatch check", () => {
+  it("is one router per app composition, handed to the agent surfaces and the pre-dispatch check", () => {
     vi.stubGlobal("localStorage", window.localStorage);
-    const composition = createWorkbenchComposition();
-    const other = createWorkbenchComposition();
+    const composition = createAgentAppComposition();
+    const other = createAgentAppComposition();
     vi.unstubAllGlobals();
 
-    const feed = composition.agentSurfaceGateways.threadRequestFeed;
-    expect(remoteAgentThreadRequestControl(feed)).toBe(feed);
-    expect(composition.agentControllerGateways.agentThreadRequestFeed).toBe(feed);
-    expect(other.agentSurfaceGateways.threadRequestFeed).not.toBe(feed);
+    const feed = composition.agentGateways.agentThreadRequestFeed;
+    expect(feed).toBeDefined();
+    expect(remoteAgentThreadRequestControl(feed!)).toBe(feed);
+    expect(other.agentGateways.agentThreadRequestFeed).not.toBe(feed);
   });
 });

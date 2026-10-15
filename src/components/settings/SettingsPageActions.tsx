@@ -44,10 +44,8 @@ export function SettingsPageActions({ actions, draft, env, section }: SettingsPa
       return <McpServersPageActions env={env} />;
     case "environments":
     case "keymap":
-    case "index":
-    case "snippets":
+    case "git":
     case "archive":
-    case "php":
       return null;
     default:
       return section satisfies never;

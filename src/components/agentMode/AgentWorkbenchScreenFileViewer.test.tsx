@@ -38,7 +38,6 @@ function mount() {
   };
   const workbench: AgentWorkbenchLayoutState = {
     layout: initialAgentWorkbenchLayout,
-    effectiveLayout: "agent",
     persistedBottomPanel: false,
     dispatch,
     bindThread: (threadId) => bound.push(threadId),

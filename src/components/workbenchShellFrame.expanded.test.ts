@@ -7,12 +7,6 @@ import {
   selectorParts,
   type CssRule,
 } from "./cssContractTestSupport";
-import {
-  EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS,
-  MAX_WORKBENCH_FRAME_EDITOR_REPORTS,
-  nextWorkbenchFrameEditorReports,
-  workbenchFrameEditorState,
-} from "./workbenchFrameEditorReport";
 
 const SHELL_SHEET = "components/workbenchShellFrame.css";
 const SURFACE_SHEET = "components/agentMode/agentSurface.css";
@@ -104,14 +98,8 @@ describe("expanded editing shell layout contract", () => {
         .filter((part) => part.includes('[data-layout="agent"]') && part.includes('"editor"'))
         .map((part) => ({ part: compact(part), rule })),
     );
-    expect(agentEditorParts.map((entry) => entry.part)).toEqual([
-      compact('.workbench-frame[data-layout="agent"] > [data-slot="editor"]'),
-    ]);
-    expect(
-      agentEditorParts.flatMap(({ rule }) =>
-        rule.declarations.map((entry) => `${entry.property}:${compact(entry.value)}`),
-      ),
-    ).toEqual(["display:none"]);
+    expect(agentEditorParts).toEqual([]);
+    expect(shell.filter((rule) => /data-editor|editor-only/.test(rule.selector))).toEqual([]);
     expect(
       shell
         .filter((rule) => rule.selector.includes("data-editor-slot"))
@@ -156,57 +144,7 @@ describe("expanded editing shell layout contract", () => {
   });
 });
 
-describe("workbenchFrameEditorReport", () => {
-  it("starts empty and reports documents while any mounted group holds one", () => {
-    let reports = EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS;
-    expect(workbenchFrameEditorState(reports)).toBe("empty");
-
-    reports = nextWorkbenchFrameEditorReports(reports, "a", "empty");
-    expect(workbenchFrameEditorState(reports)).toBe("empty");
-
-    reports = nextWorkbenchFrameEditorReports(reports, "b", "documents");
-    expect(workbenchFrameEditorState(reports)).toBe("documents");
-
-    reports = nextWorkbenchFrameEditorReports(reports, "b", null);
-    expect(workbenchFrameEditorState(reports)).toBe("empty");
-
-    reports = nextWorkbenchFrameEditorReports(reports, "a", null);
-    expect(workbenchFrameEditorState(reports)).toBe("empty");
-    expect(reports.size).toBe(0);
-  });
-
-  it("keeps the same map for a repeated report and an unknown removal", () => {
-    const reports = nextWorkbenchFrameEditorReports(
-      EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS,
-      "a",
-      "empty",
-    );
-    expect(nextWorkbenchFrameEditorReports(reports, "a", "empty")).toBe(reports);
-    expect(nextWorkbenchFrameEditorReports(reports, "missing", null)).toBe(reports);
-  });
-
-  it("stays bounded past the group cap and fails toward showing the editor", () => {
-    let reports = EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS;
-    for (let index = 0; index < MAX_WORKBENCH_FRAME_EDITOR_REPORTS; index += 1) {
-      reports = nextWorkbenchFrameEditorReports(reports, `group-${index}`, "empty");
-    }
-    expect(reports.size).toBe(MAX_WORKBENCH_FRAME_EDITOR_REPORTS);
-    expect(nextWorkbenchFrameEditorReports(reports, "overflow-empty", "empty")).toBe(reports);
-
-    const withDocuments = nextWorkbenchFrameEditorReports(reports, "overflow", "documents");
-    expect(withDocuments.size).toBe(MAX_WORKBENCH_FRAME_EDITOR_REPORTS);
-    expect(withDocuments.get("overflow")).toBe("documents");
-    expect(workbenchFrameEditorState(withDocuments)).toBe("documents");
-
-    let allDocuments = EMPTY_WORKBENCH_FRAME_EDITOR_REPORTS;
-    for (let index = 0; index < MAX_WORKBENCH_FRAME_EDITOR_REPORTS; index += 1) {
-      allDocuments = nextWorkbenchFrameEditorReports(allDocuments, `group-${index}`, "documents");
-    }
-    expect(nextWorkbenchFrameEditorReports(allDocuments, "overflow", "documents")).toBe(
-      allDocuments,
-    );
-  });
-
+describe("workbench frame overlay placement", () => {
   it("keeps the center track while overlaying the surface at the viewport right edge", () => {
     const overlay = '.workbench-frame[data-layout="agent"][data-right-panel="overlay"]';
     expect(declarations(shell, overlay).get("grid-template-columns")).toBe(
@@ -246,8 +184,6 @@ describe("workbenchFrameEditorReport", () => {
 describe("dialog, toast and terminal chrome", () => {
   it("resolve only palette tokens so portaled surfaces never go transparent", () => {
     const sheets = new Set([
-      "components/ExternalFileConflict.css",
-      "components/DirtyCloseDecisionDialogHost.css",
       "components/QuickInputDialogHost.css",
       "components/terminalPanel.css",
       "components/toastNotification.css",

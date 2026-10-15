@@ -60,159 +60,12 @@ describe("GeneralSettingsPage", () => {
       [...host.querySelectorAll("button")].some((candidate) => candidate.textContent === "Save"),
     ).toBe(false);
 
-    act(() => switchIn("general.revealActiveFileInTree").click());
+    act(() => switchIn("general.threadAttention").click());
 
     expect(onSave).toHaveBeenLastCalledWith({
       appSettings: defaultAppSettings(),
       trusted: true,
-      workspaceSettings: { ...defaultWorkspaceSettings(), revealActiveFileInTree: false },
-    });
-  });
-
-  it("keeps Auto save enabled by default and persists disabling it", async () => {
-    const onSave = await render({});
-
-    expect(switchIn("general.autoSave").getAttribute("aria-checked")).toBe("true");
-
-    act(() => switchIn("general.autoSave").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        autoSave: false,
-        autoSaveConfigured: true,
-      },
-    });
-  });
-
-  it("keeps Format on save disabled by default and persists enabling it", async () => {
-    const onSave = await render({});
-
-    expect(switchIn("general.formatOnSave").getAttribute("aria-checked")).toBe("false");
-
-    act(() => switchIn("general.formatOnSave").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: { ...defaultWorkspaceSettings(), formatOnSave: true },
-    });
-  });
-
-  it("keeps Format on paste disabled by default and persists enabling it", async () => {
-    const onSave = await render({});
-
-    act(() => switchIn("general.formatOnPaste").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: { ...defaultWorkspaceSettings(), formatOnPaste: true },
-    });
-  });
-
-  it("keeps Optimize imports on save disabled by default and persists enabling it", async () => {
-    const onSave = await render({});
-
-    act(() => switchIn("general.optimizeImportsOnSave").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: { ...defaultWorkspaceSettings(), optimizeImportsOnSave: true },
-    });
-  });
-
-  it("persists default indentation settings", async () => {
-    const onSave = await render({});
-    const tabSize = () =>
-      queryIn<HTMLInputElement>("general.defaultTabSize", 'input[type="number"]');
-
-    expect(tabSize().valueAsNumber).toBe(4);
-    expect(switchIn("general.defaultInsertSpaces").getAttribute("aria-checked")).toBe("true");
-
-    act(() => changeInputValue(tabSize(), "2"));
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: { ...defaultWorkspaceSettings(), defaultTabSize: 2 },
-    });
-
-    act(() => switchIn("general.defaultInsertSpaces").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        defaultInsertSpaces: false,
-        defaultTabSize: 2,
-      },
-    });
-  });
-
-  it("clamps the tab size stepper to the workspace bounds", async () => {
-    const onSave = await render({
-      workspaceSettings: { ...defaultWorkspaceSettings(), defaultTabSize: 8 },
-    });
-    const stepper = (label: string) =>
-      queryIn<HTMLButtonElement>("general.defaultTabSize", `button[aria-label="${label}"]`);
-
-    expect(stepper("Increase").disabled).toBe(true);
-
-    act(() => stepper("Decrease").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: { ...defaultWorkspaceSettings(), defaultTabSize: 7 },
-    });
-  });
-
-  it("offers only the header readouts the editor renders", async () => {
-    const onSave = await render({});
-    const labels = [
-      ...rowElement("general.statusBar").querySelectorAll<HTMLButtonElement>(".settings-chip"),
-    ].map((candidate) => candidate.textContent);
-
-    expect(labels).toEqual(["Index", "IDE engine", "Cursor position"]);
-
-    act(() => chip("Cursor position").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: {
-        ...defaultWorkspaceSettings(),
-        statusBar: { ...defaultWorkspaceSettings().statusBar, cursorPosition: false },
-      },
-    });
-  });
-
-  it("persists the intelligence mode from the segmented control", async () => {
-    const onSave = await render({});
-    const option = (label: string): HTMLButtonElement => {
-      const match = [
-        ...rowElement("general.intelligenceMode").querySelectorAll<HTMLButtonElement>(
-          '[role="radio"]',
-        ),
-      ].find((candidate) => candidate.textContent === label);
-
-      expect(match).toBeDefined();
-      return match as HTMLButtonElement;
-    };
-
-    expect(option("Editor Mode").getAttribute("aria-checked")).toBe("true");
-
-    act(() => option("IDE Mode").click());
-
-    expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: defaultAppSettings(),
-      trusted: true,
-      workspaceSettings: { ...defaultWorkspaceSettings(), intelligenceMode: "fullSmart" },
+      workspaceSettings: { ...defaultWorkspaceSettings(), statusBar: { agentAttention: false } },
     });
   });
 
@@ -249,9 +102,7 @@ describe("GeneralSettingsPage", () => {
   it("disables workspace-scoped controls without an open workspace", async () => {
     await render({ env: { hasWorkspace: false, workspaceRoot: null } });
 
-    expect(switchIn("general.autoSave").disabled).toBe(true);
     expect(switchIn("general.trustedWorkspace").disabled).toBe(true);
-    expect(chip("Cursor position").disabled).toBe(true);
     expect(queryIn<HTMLInputElement>("general.workspaceRoot", "input").value).toBe(
       "No workspace open",
     );
@@ -265,7 +116,31 @@ describe("GeneralSettingsPage", () => {
 
     expect(
       [...host.querySelectorAll(".settings-section__title")].map((node) => node.textContent),
-    ).toEqual(["Theme", "Text & editor", "Updates", "Workspace", "Editing", "Editor header items"]);
+    ).toEqual(["Theme", "Text & code", "Updates", "Workspace", "Sidebar"]);
+  });
+
+  it("renders no removed editor row", async () => {
+    await render({});
+
+    for (const removed of [
+      "appearance.minimap",
+      "appearance.wordWrap",
+      "general.intelligenceMode",
+      "general.revealActiveFileInTree",
+      "general.statusBar",
+      "general.autoSave",
+      "general.formatOnSave",
+      "general.formatOnPaste",
+      "general.optimizeImportsOnSave",
+      "general.defaultTabSize",
+      "general.defaultInsertSpaces",
+    ]) {
+      expect(host.querySelector(`[data-settings-row="${removed}"]`)).toBeNull();
+    }
+    expect(host.querySelector(".settings-chip")).toBeNull();
+    expect(host.textContent).not.toContain("Cursor position");
+    expect(host.textContent).not.toContain("IDE Mode");
+    expect(rowElement("appearance.editorFontFamily").textContent).toContain("Code font");
   });
 
   it("switches the appearance mode from the Theme header", async () => {
@@ -357,7 +232,7 @@ describe("GeneralSettingsPage", () => {
     expect(host.querySelector('[role="radiogroup"][aria-label="Update track"]')).toBeNull();
   });
 
-  it("toggles the sidebar attention item in editor header items", async () => {
+  it("toggles the sidebar attention item", async () => {
     const onSave = await render({});
     const attention = defaultWorkspaceSettings().statusBar.agentAttention;
 
@@ -390,7 +265,6 @@ describe("GeneralSettingsPage", () => {
     expect(systemFontGateway.listMonospaceFontFamilies).toHaveBeenCalled();
     expectFontFamilyOptions(["Fira Code", "Iosevka", defaultAppSettings().editorFontFamily]);
     expect(switchIn("appearance.editorFontLigatures").getAttribute("aria-checked")).toBe("false");
-    expect(switchIn("appearance.minimap").getAttribute("aria-checked")).toBe("false");
   });
 
   it("ignores stale font family refresh results", async () => {
@@ -421,7 +295,7 @@ describe("GeneralSettingsPage", () => {
     expectFontFamilyOptions(["Iosevka", defaultAppSettings().editorFontFamily]);
   });
 
-  it("persists editor font changes from the Text & editor section", async () => {
+  it("persists code font changes from the Text & code section", async () => {
     const onSave = await render({
       env: {
         systemFontGateway: { listMonospaceFontFamilies: vi.fn(async () => ["Fira Code"]) },
@@ -440,7 +314,7 @@ describe("GeneralSettingsPage", () => {
       workspaceSettings: defaultWorkspaceSettings(),
     });
 
-    act(() => stepperButton("appearance.editorFontSize", "Increase Editor font size").click());
+    act(() => stepperButton("appearance.editorFontSize", "Increase Code font size").click());
 
     const fontSize = defaultAppSettings().editorFontSize + 1;
     expect(onSave).toHaveBeenLastCalledWith({
@@ -454,8 +328,6 @@ describe("GeneralSettingsPage", () => {
     });
 
     act(() => switchIn("appearance.editorFontLigatures").click());
-    act(() => switchIn("appearance.minimap").click());
-    act(() => switchIn("appearance.wordWrap").click());
 
     expect(onSave).toHaveBeenLastCalledWith({
       appSettings: {
@@ -463,8 +335,6 @@ describe("GeneralSettingsPage", () => {
         editorFontFamily: "Fira Code, monospace",
         editorFontLigatures: true,
         editorFontSize: fontSize,
-        minimapEnabled: true,
-        wordWrapEnabled: true,
       },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
@@ -474,8 +344,8 @@ describe("GeneralSettingsPage", () => {
   it("persists the syntax theme while preserving workspace settings and trust", async () => {
     const workspaceSettings: WorkspaceSettings = {
       ...defaultWorkspaceSettings(),
-      defaultTabSize: 2,
-      statusBar: { ...defaultWorkspaceSettings().statusBar, index: false },
+      gitDirectoryMappingsAuto: false,
+      statusBar: { agentAttention: false },
     };
     const onSave = await render({ trusted: false, workspaceSettings });
     const syntax = () => queryIn<HTMLSelectElement>("appearance.syntaxTheme", "select");
@@ -633,24 +503,7 @@ describe("GeneralSettingsPage", () => {
       })),
     );
   }
-
-  function chip(label: string): HTMLButtonElement {
-    const match = [
-      ...rowElement("general.statusBar").querySelectorAll<HTMLButtonElement>(".settings-chip"),
-    ].find((candidate) => candidate.textContent === label);
-
-    expect(match).toBeDefined();
-    return match as HTMLButtonElement;
-  }
 });
-
-function changeInputValue(input: HTMLInputElement, value: string): void {
-  const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-
-  valueSetter?.call(input, value);
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-}
 
 interface GeneralHarnessProps {
   readonly appSettings: AppSettings;
@@ -693,7 +546,6 @@ function GeneralHarness({
       setDraftAppSettings(settings);
       save({ appSettings: settings });
     },
-    updateIgnorePatternsText: () => undefined,
     updateTrusted: (next) => {
       trustedRef.current = next;
       setDraftTrusted(next);
@@ -711,7 +563,6 @@ function GeneralHarness({
       actions={actions}
       draft={{
         appSettings: draftAppSettings,
-        ignorePatternsText: "",
         trusted: draftTrusted,
         workspaceSettings: draftWorkspaceSettings,
       }}
@@ -725,14 +576,10 @@ function environment(): SettingsEnvironment {
     appUpdater: null,
     gitDetectedRepositoryMappings: [],
     hasWorkspace: true,
-    phpTools: null,
     providerManagement: null,
     providerSignIn: null,
     systemFontGateway: { listMonospaceFontFamilies: async () => [] },
-    workspaceDescriptor: null,
     workspaceRoot: "/workspace",
     onCopyInstallCommand: () => undefined,
-    onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-    onRestartJavaScriptTypeScriptService: async () => undefined,
   };
 }

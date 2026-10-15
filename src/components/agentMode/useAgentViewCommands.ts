@@ -3,7 +3,6 @@ import type {
   AgentViewCommandBridge,
   AgentViewCommandHandlers,
 } from "../../application/agentViewCommandBridge";
-import { editorTextFocused } from "../../application/editorTextFocus";
 
 export function useAgentViewCommands(
   bridge: AgentViewCommandBridge | null,
@@ -27,7 +26,6 @@ export function useAgentViewCommands(
       findInThread: () => ref.current.findInThread(),
       goToTurn: () => ref.current.goToTurn?.(),
       threadFindFocused: () => ref.current.threadFindFocused?.() ?? false,
-      editorTextFocused: () => editorTextFocused(document),
       runPreferredScript: () => ref.current.runPreferredScript?.(),
       openCommitMenu: () => ref.current.openCommitMenu?.(),
       toggleMaximizedPanel: () => ref.current.toggleMaximizedPanel?.(),

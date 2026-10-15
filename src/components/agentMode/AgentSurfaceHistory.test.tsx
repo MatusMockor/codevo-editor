@@ -10,13 +10,6 @@ import { AgentSurfaceHistory } from "./AgentSurfaceHistory";
 import type { AgentHistoryRepositories } from "./agentHistoryRepositories";
 import type { AgentGitHistoryScope } from "./agentGitHistoryTarget";
 
-const preview = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
-vi.mock("../GitDiffPreview", () => ({
-  GitDiffPreview: (props: Record<string, unknown>) => {
-    preview.props.push(props);
-    return <div aria-label="Historical file diff" />;
-  },
-}));
 const commit: Commit = {
   hash: "0123456789abcdef",
   abbrevHash: "0123456",
@@ -63,7 +56,6 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  preview.props.length = 0;
   gateway = {
     getBranches: vi.fn(async () => ({ current: "main", local: ["main"], remotes: {} })),
     getRepoStatus: vi.fn(async () => ({ gitAvailable: true, isRepository: true })),
@@ -112,7 +104,9 @@ it("opens commit details and renamed file history without mutation actions", asy
   expect(button("src/new.ts").title).toBe("src/old.ts → src/new.ts");
   expect(gateway.getCommitDiff).not.toHaveBeenCalled();
   await act(async () => button("src/new.ts").click());
-  await waitForReact(() => expect(preview.props.length).toBeGreaterThan(0));
+  await waitForReact(() =>
+    expect(host.querySelector("[data-agent-text-diff] .cv-diff-hunk")).not.toBeNull(),
+  );
   expect(gateway.getCommitDiff).toHaveBeenCalledWith(
     "/workspace/app/packages/api",
     commit.hash,
@@ -120,20 +114,23 @@ it("opens commit details and renamed file history without mutation actions", asy
     "src/old.ts",
     [expect.objectContaining({ path: "src/new.ts", oldPath: "src/old.ts", status: "R" })],
   );
-  expect(preview.props.slice(-1)[0]).toMatchObject({
-    canRevertChange: false,
-    comparisonLabels: { original: "Empty tree", modified: commit.abbrevHash },
-    diff: {
-      change: { relativePath: "src/new.ts", oldRelativePath: "src/old.ts", status: "renamed" },
-      originalContent: "old",
-      modifiedContent: "new",
-    },
-  });
+  const diff = host.querySelector<HTMLElement>(".agent-history__diff");
+  expect(diff?.querySelector('[title="src/old.ts"]')?.textContent).toBe("src/new.ts");
+  expect(diffLabels()).toBe(`Empty tree ↔ ${commit.abbrevHash}`);
+  expect(diff?.querySelector('[aria-label="src/new.ts diff"]')).not.toBeNull();
+  expect(diff?.querySelector(".cv-diff-code--del")?.textContent).toBe("old");
+  expect(diff?.querySelector(".cv-diff-code--add")?.textContent).toBe("new");
   const actions = Array.from(host.querySelectorAll("button"))
     .map((value) => value.getAttribute("aria-label") ?? value.textContent)
     .join(" ");
   expect(actions).not.toMatch(/checkout|cherry.pick|revert|reset|stage|push/i);
+  await act(async () => button("Close diff").click());
+  expect(host.querySelector("[data-agent-text-diff]")).toBeNull();
 });
+
+function diffLabels(): string | null | undefined {
+  return host.querySelector('[data-agent-text-diff] [aria-label^="Comparing"]')?.textContent;
+}
 
 it("labels a non-root commit against its parent", async () => {
   vi.mocked(gateway.getCommitDetails).mockResolvedValue({
@@ -145,11 +142,7 @@ it("labels a non-root commit against its parent", async () => {
   await render();
   await act(async () => button("Fix Linux startup").click());
   await act(async () => button("src/new.ts").click());
-  await waitForReact(() =>
-    expect(preview.props.slice(-1)[0]).toMatchObject({
-      comparisonLabels: { original: "Parent", modified: commit.abbrevHash },
-    }),
-  );
+  await waitForReact(() => expect(diffLabels()).toBe(`Parent ↔ ${commit.abbrevHash}`));
 });
 
 it("explains an unavailable scope without reading Git", async () => {
@@ -330,12 +323,10 @@ it("closes the commit inspector and its diff while preserving the graph selectio
   await render();
   await act(async () => button("Fix Linux startup").click());
   await act(async () => button("src/new.ts").click());
-  await waitForReact(() =>
-    expect(host.querySelector('[aria-label="Historical file diff"]')).not.toBeNull(),
-  );
+  await waitForReact(() => expect(host.querySelector("[data-agent-text-diff]")).not.toBeNull());
   await act(async () => button("Close commit details").click());
   expect(host.querySelector('[aria-label="Commit files"]')).toBeNull();
-  expect(host.querySelector('[aria-label="Historical file diff"]')).toBeNull();
+  expect(host.querySelector("[data-agent-text-diff]")).toBeNull();
   expect(host.textContent).not.toContain("Use the platform-specific launcher.");
   expect(button("Fix Linux startup").getAttribute("aria-pressed")).toBe("false");
   expect(host.querySelector('[aria-label="History branch"]')).not.toBeNull();

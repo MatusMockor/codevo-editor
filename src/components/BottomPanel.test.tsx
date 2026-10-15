@@ -55,36 +55,6 @@ describe("BottomPanel terminal links", () => {
     host.remove();
   });
 
-  it("keeps the terminal session mounted while hidden behind a drawer view", async () => {
-    await renderPanel(
-      root,
-      "/workspace",
-      vi.fn(async () => true),
-    );
-    const first = activeTerminalProps();
-
-    await renderPanel(
-      root,
-      "/workspace",
-      vi.fn(async () => true),
-      undefined,
-      { hidden: true },
-    );
-    expect(host.querySelector('section[aria-label="Panel"]')?.hasAttribute("hidden")).toBe(true);
-    expect(terminalProps().isActive).toBe(false);
-
-    await renderPanel(
-      root,
-      "/workspace",
-      vi.fn(async () => true),
-      undefined,
-      { hidden: false },
-    );
-    expect(host.querySelector('section[aria-label="Panel"]')?.hasAttribute("hidden")).toBe(false);
-    expect(bottomPanelMocks.terminalUnmounts).toBe(0);
-    expect(activeTerminalProps().rootPath).toBe(first.rootPath);
-  });
-
   it("offers an explicit hide action independently of terminal session controls", async () => {
     const onClose = vi.fn();
     await renderPanel(

@@ -128,8 +128,6 @@ describe("workbenchWorkspaceTabCommands", () => {
 });
 
 const context: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: true,
 };
 

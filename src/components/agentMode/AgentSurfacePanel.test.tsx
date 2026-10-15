@@ -18,10 +18,6 @@ import { WorkbenchShellFrame } from "../WorkbenchShellFrame";
 import { workbenchShellPlacement } from "../workbenchShellPlacement";
 import type { FilePreviewReader } from "../../application/filePreview/filePreviewReader";
 import { FilePreviewReaderContext } from "../../application/rightPanel/useAgentFilePreview";
-import {
-  WorkbenchFrameEditorStateContext,
-  type WorkbenchFrameEditorState,
-} from "../workbenchFrameEditorReport";
 import { readStyleSheet } from "../cssContractTestSupport";
 import { readAgentModeStyles } from "./agentModeCssTestSupport";
 import {
@@ -191,7 +187,7 @@ describe("AgentSurfacePanel", () => {
   });
 
   it("fills the Files surface with the tree and hosts no editor slot", () => {
-    render({ layout: open(["files"], "files") }, "documents");
+    render({ layout: open(["files"], "files") });
 
     const aside = host.querySelector("aside.agent-surface");
     expect(aside?.getAttribute("data-surface")).toBe("files");
@@ -678,17 +674,12 @@ describe("AgentSurfacePanel", () => {
     );
   }
 
-  function render(
-    overrides: Partial<AgentSurfacePanelProps> = {},
-    editorState: WorkbenchFrameEditorState = "empty",
-  ): void {
+  function render(overrides: Partial<AgentSurfacePanelProps> = {}): void {
     act(() =>
       root.render(
-        <WorkbenchFrameEditorStateContext.Provider value={editorState}>
-          <WithRightPanelContext value={rightPanelTestContext()}>
-            <AgentSurfacePanel {...defaultProps()} {...overrides} />
-          </WithRightPanelContext>
-        </WorkbenchFrameEditorStateContext.Provider>,
+        <WithRightPanelContext value={rightPanelTestContext()}>
+          <AgentSurfacePanel {...defaultProps()} {...overrides} />
+        </WithRightPanelContext>,
       ),
     );
   }
@@ -834,7 +825,6 @@ function defaultProps(): AgentSurfacePanelProps {
       onOpenFile: () => undefined,
       onPreviewFile: () => undefined,
     },
-    remoteMonacoTheme: "calm-dark",
     terminal: {
       workspaceId: "ws-1",
       workspaceRoot: "/workspace/app",
@@ -886,7 +876,7 @@ describe("maximized right panel and the shell frame", () => {
     host.remove();
   });
 
-  it("renders a revealed file inside the maximized panel itself, with the editor layer hidden", async () => {
+  it("renders a revealed file inside the maximized panel itself, with no editor layer", async () => {
     const reads: string[] = [];
     const reader: FilePreviewReader = {
       read: async (workspaceRoot, relativePath) => {
@@ -906,9 +896,7 @@ describe("maximized right panel and the shell frame", () => {
     });
 
     expect(frame()?.getAttribute("data-right-panel")).toBe("maximized");
-    const editorLayer = host.querySelector<HTMLElement>('[data-slot="editor"]');
-    expect(editorLayer?.hidden).toBe(true);
-    expect(editorLayer?.childElementCount).toBe(0);
+    expect(host.querySelector('[data-slot="editor"]')).toBeNull();
     expect(host.querySelector("[data-editor-slot]")).toBeNull();
 
     await waitForReact(() =>
@@ -923,11 +911,12 @@ describe("maximized right panel and the shell frame", () => {
     expect(reads).toEqual([`${SURFACE_FIXTURE_WORKTREE}|src/answer.ts`]);
   });
 
-  it("keeps the editor layer hidden for every agent surface, docked or maximized", () => {
+  it("renders every agent surface without an editor layer, docked or maximized", () => {
     for (const rightPanelMaximized of [false, true]) {
       for (const kind of ["files", "diff", "terminal"] as const) {
         renderFrame(null, { layout: openLayout([kind], kind, rightPanelMaximized) });
-        expect(host.querySelector<HTMLElement>('[data-slot="editor"]')?.hidden).toBe(true);
+        expect(host.querySelector('[data-slot="editor"]')).toBeNull();
+        expect(host.querySelector('[data-slot="surface"]')?.parentElement).toBe(frame());
       }
     }
   });
@@ -938,7 +927,6 @@ describe("maximized right panel and the shell frame", () => {
   ): void {
     const placement = workbenchShellPlacement({
       bottomPanelVisible: false,
-      effectiveLayout: "agent",
       layout: overrides.layout,
     });
     act(() =>
@@ -953,8 +941,6 @@ describe("maximized right panel and the shell frame", () => {
               </div>
             }
             bottom={null}
-            chrome={null}
-            editor={null}
             placement={placement}
           />
         </FilePreviewReaderContext.Provider>,

@@ -8,6 +8,7 @@ import { BrowserWorkbenchPrompter } from "../../infrastructure/browserWorkbenchP
 import { QuickInputDialogHost } from "../QuickInputDialogHost";
 import { __resetKeymapPlatformCacheForTests, defaultKeymapSettings } from "../../domain/keymap";
 import { DEFAULT_APPEARANCE } from "../../domain/appearance";
+import { parseQuickOpenQuery } from "../../domain/quickOpenQuery";
 import { mountUi, press, type MountedUi } from "../../ui/foundation/foundationTestSupport";
 import { workbenchComposerPaletteModels } from "../../application/commandPalette/commandPaletteProvider";
 import { CommandPaletteHost, type CommandPaletteHostProps } from "./CommandPaletteHost";
@@ -26,8 +27,6 @@ afterEach(() => {
 
 const context: CommandContext = {
   hasWorkspace: true,
-  hasActiveDocument: false,
-  activeDocumentDirty: false,
 };
 
 function command(id: string, title: string, run: Command["run"] = vi.fn()): Command {
@@ -44,7 +43,7 @@ function hostProps(overrides: Partial<CommandPaletteHostProps> = {}): CommandPal
     commands: [
       command("agent.newThread", "New Thread"),
       command("workbench.openSettings", "Open Settings"),
-      command("panel.showProblems", "Show Problems"),
+      command("workspace.trust", "Trust Workspace"),
     ],
     commandContext: context,
     reportCommandError: vi.fn(),
@@ -66,8 +65,7 @@ function hostProps(overrides: Partial<CommandPaletteHostProps> = {}): CommandPal
       })),
     },
     openSearchResult: vi.fn(async () => undefined),
-    agentModeActive: false,
-    quickOpen: null,
+    files: null,
     ...overrides,
   };
 }
@@ -138,8 +136,8 @@ describe("CommandPaletteHost", () => {
       <CommandPaletteHost
         {...hostProps({
           setPaletteOpen,
-          initialQuery: "problems",
-          commands: [command("panel.showProblems", "Show Problems", run)],
+          initialQuery: "trust workspace",
+          commands: [command("workspace.trust", "Trust Workspace", run)],
         })}
       />,
     );
@@ -153,7 +151,7 @@ describe("CommandPaletteHost", () => {
 
   it("reports a rejected command and stays open", async () => {
     const reportCommandError = vi.fn();
-    const failing = command("panel.showProblems", "Show Problems", () =>
+    const failing = command("workspace.trust", "Trust Workspace", () =>
       Promise.reject(new Error("boom")),
     );
     const setPaletteOpen = vi.fn();
@@ -163,7 +161,7 @@ describe("CommandPaletteHost", () => {
         {...hostProps({
           reportCommandError,
           setPaletteOpen,
-          initialQuery: "problems",
+          initialQuery: "trust workspace",
           commands: [failing],
         })}
       />,
@@ -194,8 +192,8 @@ describe("CommandPaletteHost", () => {
     const setPaletteOpen = vi.fn();
     const props = hostProps({
       setPaletteOpen,
-      initialQuery: "problems",
-      commands: [command("panel.showProblems", "Show Problems", run)],
+      initialQuery: "trust workspace",
+      commands: [command("workspace.trust", "Trust Workspace", run)],
     });
     ui = mountUi();
     ui.render(<CommandPaletteHost {...props} />);
@@ -210,21 +208,21 @@ describe("CommandPaletteHost", () => {
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
 
-  it("offers Change model only in agent mode", () => {
-    const unpublish = workbenchComposerPaletteModels.publish({
-      options: [{ key: "m", group: "OpenAI", label: "GPT", current: true }],
-      selectModel: () => true,
-    });
+  it("offers Change model once the composer publishes its models", () => {
     const titles = () =>
       [...document.querySelectorAll('[role="option"]')].map((option) => option.textContent ?? "");
+    let unpublish: () => void = () => undefined;
     try {
       ui = mountUi();
       ui.render(<CommandPaletteHost {...hostProps({ initialQuery: "model" })} />);
       expect(titles().some((title) => title.includes("Change model"))).toBe(false);
 
-      ui.render(
-        <CommandPaletteHost {...hostProps({ initialQuery: "model", agentModeActive: true })} />,
-      );
+      act(() => {
+        unpublish = workbenchComposerPaletteModels.publish({
+          options: [{ key: "m", group: "OpenAI", label: "GPT", current: true }],
+          selectModel: () => true,
+        });
+      });
       expect(titles().some((title) => title.includes("Change model"))).toBe(true);
     } finally {
       act(() => unpublish());
@@ -257,12 +255,11 @@ describe("CommandPaletteHost", () => {
       <CommandPaletteHost
         {...hostProps({
           setQuickOpenOpen,
-          quickOpen: {
+          files: {
             isLoading: false,
             isTruncated: false,
             onChangeQuery,
             onOpen: vi.fn(),
-            onOpenCurrentFileLocation: vi.fn(),
             query: "",
             request: { kind: "files", query: "" },
             results: [],
@@ -274,6 +271,40 @@ describe("CommandPaletteHost", () => {
 
     expect(setQuickOpenOpen).toHaveBeenCalledWith(true);
     expect(onChangeQuery).toHaveBeenLastCalledWith("orders");
+  });
+
+  it("hands a files page pick with its path:line to the viewer reveal port", () => {
+    const onOpen = vi.fn();
+    const result = {
+      name: "User.ts",
+      path: "/u/orders-api/src/User.ts",
+      relativePath: "src/User.ts",
+    };
+    ui = mountUi();
+    ui.render(
+      <CommandPaletteHost
+        {...hostProps({
+          paletteOpen: false,
+          quickOpenOpen: true,
+          files: {
+            isLoading: false,
+            isTruncated: false,
+            onChangeQuery: vi.fn(),
+            onOpen,
+            query: "User:12",
+            request: parseQuickOpenQuery("User:12"),
+            results: [result],
+          },
+        })}
+      />,
+    );
+
+    expect(input().getAttribute("aria-label")).toBe("Search files");
+    expect(document.body.textContent).not.toContain("Go to line");
+    expect(document.body.textContent).not.toContain("symbols");
+    press(input(), "Enter");
+
+    expect(onOpen).toHaveBeenCalledWith(result, { column: null, line: 12 });
   });
 
   it("opens New File input from Enter and returns the chosen path to the command", async () => {

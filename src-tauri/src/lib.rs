@@ -2,81 +2,28 @@ include!("agent_runtime_module_registration.rs");
 mod application_commands;
 mod application_menu;
 mod artifact_preview;
-mod artisan;
 mod blocking_command;
-pub mod composer;
 mod effective_executable_environment;
-mod eslint;
 mod file_fuzzy_matcher;
-mod file_uri_path;
 pub mod file_watcher;
 include!("repository_module_registration.rs");
 pub mod ignore_matcher;
-pub mod index;
-pub mod index_reindex;
-pub mod index_scan;
-pub mod index_update;
-#[cfg(test)]
-mod javascript_typescript_real_integration_tests;
-pub mod job_scheduler;
-mod js_test_commands;
-mod js_test_coverage_commands;
-mod js_test_execution_root;
-mod js_test_run;
-mod js_test_tasks;
-mod js_test_watch;
-pub mod js_ts_file_watcher;
-pub mod js_ts_symbols;
-pub mod local_history;
-mod lsp;
-mod lsp_capability_support;
-mod lsp_diagnostics;
-mod lsp_document;
-mod lsp_features;
-mod lsp_incremental_document;
-mod lsp_request_commands;
-mod lsp_session;
-mod lsp_transport;
-mod lsp_workspace_edit_guard;
-mod managed_install_commands;
-mod managed_javascript_typescript;
-mod managed_phpactor;
+mod node_executable;
 mod node_package_problem_matcher;
 mod node_package_scripts;
 mod node_package_tasks;
-mod package_commands;
-mod package_tool_context;
-mod perf_capture;
-pub mod php_file_outline;
-pub mod php_parser;
-pub mod php_symbols;
-mod php_test_run;
-pub mod php_tree;
-mod phpstan;
-mod pint;
-mod prettier;
-mod process_group_termination;
 #[cfg_attr(test, allow(dead_code))]
 mod process_task_plan;
 mod process_task_resolver;
 #[cfg_attr(test, allow(dead_code))]
 mod process_task_runtime;
-mod project;
 mod project_commands;
-mod quality_commands;
 mod remote_runner;
 mod retained_workspace_root;
-mod runtime_commands;
-mod runtime_observability;
 mod runtime_task_lifecycle;
-mod search;
 mod settings_fonts;
-mod smart_mode;
-mod symfony_commands;
 mod terminal;
 include!("terminal_module_registration.rs");
-mod test_run_support;
-mod tools;
 mod trust;
 #[cfg_attr(test, allow(dead_code))]
 mod vscode_process_task_commands;
@@ -95,15 +42,11 @@ mod vscode_tasks_discovery_command;
 mod workspace;
 mod workspace_commands;
 mod workspace_directory_commands;
-mod workspace_edit_commands;
 mod workspace_file_commands;
 pub mod workspace_file_watcher;
 mod workspace_registry;
 mod workspace_runtime;
-mod workspace_source_discovery;
-mod workspace_test_discovery;
 mod workspace_trust_commands;
-mod workspace_typescript;
 
 #[cfg(target_os = "macos")]
 use crate::application_menu::application_menu;
@@ -117,41 +60,11 @@ use crate::application_commands::{
 };
 
 use crate::git_commands::{
-    cherry_pick_git_commit, detect_git_repositories, get_git_blame, get_git_branches,
-    get_git_commit_details, get_git_commit_diff, get_git_commit_files, get_git_commit_graph_page,
-    get_git_commit_log, get_git_diff, get_git_file_history, get_git_repo_status, get_git_status,
-    revert_git_commit,
-};
-use crate::job_scheduler::WorkspaceIndexLifecycle;
-use crate::js_test_run::batch::JsTestBatchRegistry;
-use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
-use crate::lsp_capability_support::supports_code_action_resolve as lsp_status_supports_code_action_resolve;
-use crate::lsp_features::{
-    parse_code_action_result, parse_document_highlights_result, parse_linked_editing_ranges_result,
-    parse_resolved_code_action_result, parse_semantic_tokens_result,
-    parse_workspace_symbols_result, validate_code_action_context,
-    validate_code_action_request_range, validate_code_action_resolve_request,
-    LanguageServerCodeAction, LanguageServerCodeActionContext, LanguageServerDocumentHighlight,
-    LanguageServerLinkedEditingRanges, LanguageServerLocation, LanguageServerRange,
-    LanguageServerSemanticTokens, LanguageServerWorkspaceSymbol,
-    LspTextDocumentFeatureRequestFactory, TextDocumentFeatureRequestFactory, TextDocumentPosition,
-    TextDocumentRange,
-};
-use crate::lsp_incremental_document::{
-    javascript_typescript_document_did_change_bounded,
-    javascript_typescript_document_did_close_bounded,
-    javascript_typescript_document_did_open_bounded, DocumentChangeAdmissionRegistry,
-};
-use crate::lsp_session::{
-    JavaScriptTypeScriptLanguageServerRegistry, LanguageServerRequestError,
-    PhpLanguageServerRegistry,
+    detect_git_repositories, get_git_branches, get_git_commit_details, get_git_commit_diff,
+    get_git_commit_files, get_git_commit_log, get_git_diff, get_git_repo_status, get_git_status,
 };
 use crate::terminal_session::TerminalSupervisor;
 use crate::trust::WorkspaceTrustService;
-use crate::workspace_edit_commands::{
-    apply_workspace_edit, workspace_apply_workspace_edit,
-    workspace_apply_workspace_edit_transaction,
-};
 use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use crate::workspace_registry::WorkspaceRegistry;
 use std::{
@@ -164,21 +77,11 @@ use std::{
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 mod lib_composition;
 
+#[cfg(test)]
+pub(crate) use lib_composition::registered_runtime_root;
 pub use lib_composition::run;
-pub(crate) use lib_composition::{
-    absolute_workspace_candidate, canonicalize_workspace_root,
-    ensure_lsp_code_action_context_payloads_in_workspace,
-    ensure_lsp_code_action_payload_in_workspace, ensure_lsp_path_in_workspace,
-    ensure_lsp_position_in_workspace, ensure_lsp_uri_in_workspace,
-    filter_bounded_lsp_locations_to_workspace, filter_lsp_code_action_to_workspace,
-    filter_lsp_code_actions_to_workspace, filter_lsp_workspace_symbols_to_workspace,
-    local_history_store, parse_javascript_typescript_navigation_locations_result,
-    registered_runtime_root, resolve_existing_or_parent_path, trusted_for,
-    workspace_root_for_disposal, GitTrustState, JavaScriptTypeScriptLanguageServerOptions,
-    LegacyLocalHistoryWorkspaceAuthorizer,
-};
+pub(crate) use lib_composition::{canonicalize_workspace_root, trusted_for, GitTrustState};
 #[cfg(target_os = "macos")]
 pub(crate) use lib_composition::{
-    CLOSE_ACTIVE_TAB_MENU_ID, FONT_ZOOM_IN_MENU_ID, FONT_ZOOM_OUT_MENU_ID, FONT_ZOOM_RESET_MENU_ID,
-    OPEN_APPEARANCE_SETTINGS_MENU_ID, QUIT_APPLICATION_MENU_ID, TOGGLE_FONT_LIGATURES_MENU_ID,
+    CLOSE_ACTIVE_TAB_MENU_ID, OPEN_APPEARANCE_SETTINGS_MENU_ID, QUIT_APPLICATION_MENU_ID,
 };

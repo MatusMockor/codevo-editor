@@ -2,7 +2,7 @@ import { REMOTE_RUNNER_REACHABLE } from "../../domain/remoteRunnerReachability";
 import { describe, expect, it } from "vitest";
 import type { AgentTaskChangeSummary, AgentThreadView } from "../../application/agentThreadPorts";
 import { agentThreadViews } from "../../application/agentThreadViewProjection";
-import type { AgentEditorBridgeSurface } from "../../application/useAgentEditorBridge";
+import type { AgentFileNavigationSurface } from "../../application/useAgentFileNavigation";
 import type { AgentBackgroundTask } from "../../domain/agentBackgroundActivity";
 import {
   agentThreadNotificationState,
@@ -42,8 +42,8 @@ const RUNNING: AgentTurnStatus = { kind: "running" };
 const NO_SUMMARIES: ReadonlyMap<string, AgentTaskChangeSummary> = new Map();
 const NO_THREAD_IDS: ReadonlySet<string> = new Set();
 const NO_SHIP_STATES: ReadonlyMap<string, AgentShipState> = new Map();
-const EDITOR: AgentEditorBridgeSurface = {
-  canOpenInEditor: () => ({ kind: "available" }),
+const EDITOR: AgentFileNavigationSurface = {
+  canOpenFiles: () => ({ kind: "available" }),
   openChangedFile: async () => undefined,
   openChangedFileDiff: async () => undefined,
 };

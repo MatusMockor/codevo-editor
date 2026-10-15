@@ -16,9 +16,9 @@ import {
 } from "../../application/agentThreadNotificationCenter";
 import { agentThreadViews } from "../../application/agentThreadViewProjection";
 import {
-  useAgentEditorBridge,
-  type AgentEditorBridgePort,
-} from "../../application/useAgentEditorBridge";
+  useAgentFileNavigation,
+  type AgentFileNavigationPort,
+} from "../../application/useAgentFileNavigation";
 import { useAgentSessionBackgrounds } from "../../application/useAgentSessionBackgrounds";
 import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import { agentBackgroundTurn, parseAgentBackgroundTurn } from "../../domain/agentBackgroundTurn";
@@ -260,7 +260,7 @@ function sessionGateway() {
   };
 }
 
-const EDITOR_PORT: AgentEditorBridgePort = {
+const NAVIGATION_PORT: AgentFileNavigationPort = {
   revealFile: () => undefined,
   openSurface: () => undefined,
 };
@@ -386,10 +386,10 @@ describe("sidebar row status of a thread whose background work is tracked by its
         Date.now,
         reportFailure,
       );
-      const editor = useAgentEditorBridge({
+      const editor = useAgentFileNavigation({
         projects: PROJECTS,
         threads,
-        editor: EDITOR_PORT,
+        navigation: NAVIGATION_PORT,
         reportError,
       });
       const cache = useRef<ReadonlyMap<string, AgentThreadView>>(new Map());
@@ -423,7 +423,6 @@ describe("sidebar row status of a thread whose background work is tracked by its
           chrome={chromeFixture({
             layout: {
               layout,
-              effectiveLayout: "agent",
               persistedBottomPanel: false,
               dispatch,
             },

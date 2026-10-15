@@ -146,3 +146,23 @@ fn bundle_routes_are_exact_token_paths_and_allow_asset_cache_keys() {
         assert!(bundle_route(&request).is_none());
     }
 }
+#[test]
+fn asset_paths_are_closed() {
+    for value in [
+        "../a.js",
+        "/a.js",
+        "a//b.js",
+        "%2e%2e/a.js",
+        "a%2fb.js",
+        "a%5cb.js",
+        ".env",
+        "a\0.js",
+        "a%252e.js",
+    ] {
+        assert!(decode_asset_path(value).is_none(), "{value}");
+    }
+    assert_eq!(
+        decode_asset_path("my%20file.css"),
+        Some("my file.css".into())
+    );
+}

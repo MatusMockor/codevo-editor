@@ -26,9 +26,6 @@ export const MAX_AGENT_OPEN_SURFACES = AGENT_SURFACE_KINDS.length;
 const LEGACY_EDITOR_SURFACE = "editor";
 const LEGACY_EDITOR_REPLACEMENT: ReadonlyArray<AgentSurfaceKind> = ["files"];
 
-export const AGENT_WORKBENCH_LAYOUT_MODES = ["agent", "editor-only"] as const;
-export type AgentWorkbenchLayoutMode = (typeof AGENT_WORKBENCH_LAYOUT_MODES)[number];
-
 export const MIN_AGENT_RIGHT_PANEL_WIDTH = 360;
 export const MAX_AGENT_RIGHT_PANEL_WIDTH = 1200;
 export const DEFAULT_AGENT_RIGHT_PANEL_WIDTH = 540;

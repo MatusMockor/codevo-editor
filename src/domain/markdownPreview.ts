@@ -1,24 +1,4 @@
 import type { Token } from "marked";
-import { buildMarkdownPreviewDocumentPath } from "./editorDocumentSchemes";
-import type { EditorDocument } from "./workspace";
-
-export interface MarkdownPreviewTab {
-  content: string;
-  html: string;
-  name: string;
-  path: string;
-  sourcePath: string;
-}
-
-export function markdownPreviewPath(sourcePath: string): string {
-  return buildMarkdownPreviewDocumentPath(sourcePath);
-}
-
-export function isMarkdownDocument(
-  document: EditorDocument | null | undefined,
-): document is EditorDocument {
-  return Boolean(document && document.language === "markdown");
-}
 
 export function isSafeExternalMarkdownUrl(value: string): boolean {
   try {

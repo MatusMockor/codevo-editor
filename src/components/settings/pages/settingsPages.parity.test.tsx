@@ -14,7 +14,6 @@ import { SETTINGS_SECTIONS, settingsRowsForSection } from "../settingsRegistry";
 
 const draft: SettingsDraft = {
   appSettings: defaultAppSettings(),
-  ignorePatternsText: "",
   trusted: false,
   workspaceSettings: defaultWorkspaceSettings(),
 };
@@ -23,7 +22,6 @@ const actions: SettingsDraftActions = {
   publishAppSettings: () => undefined,
   save: () => undefined,
   updateAppSettings: () => undefined,
-  updateIgnorePatternsText: () => undefined,
   updateTrusted: () => undefined,
   updateWorkspaceSettings: () => undefined,
 };
@@ -32,15 +30,11 @@ const env: SettingsEnvironment = {
   appUpdater: null,
   gitDetectedRepositoryMappings: [],
   hasWorkspace: true,
-  phpTools: null,
   providerManagement: null,
   providerSignIn: null,
   systemFontGateway: { listMonospaceFontFamilies: async () => [] },
-  workspaceDescriptor: null,
   workspaceRoot: "/tmp/project",
   onCopyInstallCommand: () => undefined,
-  onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-  onRestartJavaScriptTypeScriptService: async () => undefined,
 };
 
 const ROWS_RENDERED_BY_LATER_TASKS: ReadonlySet<string> = new Set<string>([]);

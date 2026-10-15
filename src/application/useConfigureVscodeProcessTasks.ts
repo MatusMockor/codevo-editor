@@ -22,8 +22,13 @@ interface UseConfigureVscodeProcessTasksOptions {
       readonly shouldCommit: () => boolean;
     },
   ) => Promise<boolean>;
-  readonly workspaceFiles: WorkspaceFileGateway;
-  readonly workspaceOwnerFiles: WorkspaceOwnerFileGateway | undefined;
+  readonly workspaceFiles: Pick<WorkspaceFileGateway, "readDirectory">;
+  readonly workspaceOwnerFiles:
+    | Pick<
+        WorkspaceOwnerFileGateway,
+        "createDirectoryForWorkspace" | "createTextFileWithContentForWorkspace"
+      >
+    | undefined;
   readonly workspaceIdentity: WorkspaceIdentityDescriptor | null;
   readonly workspaceRoot: string | null;
   readonly workspaceRuntimeOwner: WorkspaceRuntimeOwner | null;

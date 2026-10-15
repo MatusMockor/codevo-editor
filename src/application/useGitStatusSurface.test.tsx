@@ -1,37 +1,16 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
-import { useWorkbenchSidebarDataRefresh } from "./useWorkbenchSidebarDataRefresh";
-import { initialIndexProgress } from "../domain/indexProgress";
+import { act, useEffect } from "react";
 import { emptyGitStatus } from "../domain/git";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { GitChangedFile, GitGateway, GitStatus } from "../domain/git";
-import type { EditorDocument } from "../domain/workspace";
 import { defaultWorkspaceSettings } from "../domain/settings";
-import {
-  editorGitBaselineCacheKey,
-  useGitStatusSurface,
-  type GitStatusSurfaceDependencies,
-} from "./useGitStatusSurface";
-import { gitDiffDocumentPath } from "./useGitDiffWorkspace";
+import { useGitStatusSurface, type GitStatusSurfaceDependencies } from "./useGitStatusSurface";
 import { useGitOperationCurrency } from "./useGitOperationCurrency";
 import type { GitOperationCurrency } from "./useGitOperationCurrency";
 
 const ROOT = "/workspace";
-
-describe("editorGitBaselineCacheKey", () => {
-  it("joins the repo root and path with a NUL separator, never a plain space", () => {
-    expect(editorGitBaselineCacheKey("/repo", "a.ts")).toBe("/repo\0a.ts");
-  });
-
-  it("never collides two distinct (repoRoot, path) pairs that would tie under a space join", () => {
-    const first = editorGitBaselineCacheKey("/repo", "a b/c.ts");
-    const second = editorGitBaselineCacheKey("/repo a", "b/c.ts");
-
-    expect(first).not.toBe(second);
-  });
-});
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -97,21 +76,11 @@ function renderSurface(
   const reconcileSelectedGitDiffPreviewForRepository = vi.fn();
   const reportError = vi.fn();
   const deps: Omit<GitStatusSurfaceDependencies, "gitOperationCurrency"> = {
-    activeDocument: null,
     activePath: null,
     reconcileSelectedGitDiffPreviewForRepository,
     getSelectedGitDiffDocument: () =>
-      selectedGitChange
-        ? {
-            change: selectedGitChange,
-            diff: null,
-            documentPath: gitDiffDocumentPath(selectedGitChange),
-            isLoading: false,
-            repositoryRoot: selectedRepositoryRoot,
-          }
-        : null,
+      selectedGitChange ? { repositoryRoot: selectedRepositoryRoot } : null,
     currentWorkspaceRootRef: { current: ROOT },
-    editorGitBaselineRequestTokenRef: { current: 0 },
     gitGateway: {
       getStatus,
       ...(detectedRepositories === undefined
@@ -128,15 +97,13 @@ function renderSurface(
   function HookHarness() {
     const gitOperationCurrency = useGitOperationCurrency(deps.workspaceRoot);
     capturedCurrency.currency = gitOperationCurrency;
-    captured.surface = useGitStatusSurface({ ...deps, gitOperationCurrency });
-    useWorkbenchSidebarDataRefresh({
-      sidebarView: "files",
-      agentDiffVisible,
-      indexProgress: initialIndexProgress(),
-      workspaceRoot: deps.workspaceRoot,
-      refreshGitStatus: captured.surface.refreshGitStatus,
-      refreshPhpTree: () => undefined,
-    });
+    const surface = useGitStatusSurface({ ...deps, gitOperationCurrency });
+    captured.surface = surface;
+    const { refreshGitStatus } = surface;
+    useEffect(() => {
+      if (!agentDiffVisible) return;
+      void refreshGitStatus();
+    }, [refreshGitStatus]);
     return null;
   }
 
@@ -588,177 +555,7 @@ describe("useGitStatusSurface", () => {
     harness.unmount();
   });
 
-  it("skips the baseline status request when the activated document is already cached", async () => {
-    const getStatus = vi.fn(async () => status("main"));
-    const harness = renderBaselineSurface(getStatus, editorDocument("a.ts"));
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const initialCalls = getStatus.mock.calls.length;
-
-    harness.activate(editorDocument("b.ts"));
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const afterSecondDocument = getStatus.mock.calls.length;
-
-    expect(afterSecondDocument).toBeGreaterThan(initialCalls);
-
-    harness.activate(editorDocument("a.ts"));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(getStatus.mock.calls.length).toBe(afterSecondDocument);
-    harness.unmount();
-  });
-
-  it("reloads a cached baseline after the git status is refreshed", async () => {
-    const getStatus = vi.fn(async () => status("main"));
-    const harness = renderBaselineSurface(getStatus, editorDocument("a.ts"));
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-    await act(async () => {
-      await harness.surface().refreshGitStatus();
-    });
-    const afterRefresh = getStatus.mock.calls.length;
-
-    harness.activate(editorDocument("b.ts"));
-    await act(async () => {
-      await Promise.resolve();
-    });
-    harness.activate(editorDocument("a.ts"));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(getStatus.mock.calls.length).toBeGreaterThan(afterRefresh + 1);
-    harness.unmount();
-  });
-
-  it("keeps the baseline map identity when an unchanged baseline is republished", async () => {
-    const getStatus = vi.fn(async () => status("main"));
-    const harness = renderBaselineSurface(getStatus, editorDocument("a.ts"));
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-    const baselines = harness.surface().editorGitBaselinesByPath;
-
-    harness.activate(editorDocument("b.ts"));
-    await act(async () => {
-      await Promise.resolve();
-    });
-    harness.activate(editorDocument("a.ts"));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(harness.surface().editorGitBaselinesByPath).not.toBe(baselines);
-    const afterCycle = harness.surface().editorGitBaselinesByPath;
-
-    harness.activate(editorDocument("b.ts"));
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(harness.surface().editorGitBaselinesByPath).toBe(afterCycle);
-    harness.unmount();
-  });
 });
-
-function editorDocument(name: string): EditorDocument {
-  return {
-    content: `// ${name}`,
-    language: "typescript",
-    name,
-    path: `${ROOT}/${name}`,
-    savedContent: `// ${name}`,
-  };
-}
-
-interface BaselineHarness extends Harness {
-  activate: (nextDocument: EditorDocument) => void;
-}
-
-function renderBaselineSurface(
-  getStatus: (rootPath: string) => Promise<GitStatus>,
-  initialDocument: EditorDocument,
-): BaselineHarness {
-  const container = document.createElement("div");
-  const root = createRoot(container);
-  const captured: { surface: GitStatusSurface | null } = { surface: null };
-  const capturedCurrency: { currency: GitOperationCurrency | null } = { currency: null };
-  const reconcileSelectedGitDiffPreviewForRepository = vi.fn();
-  const reportError = vi.fn();
-  const editorGitBaselineRequestTokenRef = { current: 0 };
-  const discoveryTokenRef = { current: 0 };
-  const currentWorkspaceRootRef = { current: ROOT as string | null };
-  const gitGateway = {
-    getStatus,
-    getDiff: async (_rootPath: string, change: GitChangedFile) => ({
-      change,
-      language: "plaintext",
-      modifiedContent: "",
-      originalContent: "baseline",
-    }),
-  } as unknown as GitGateway;
-
-  function BaselineHookHarness({ activeDocument }: { activeDocument: EditorDocument }) {
-    const gitOperationCurrency = useGitOperationCurrency(ROOT);
-    capturedCurrency.currency = gitOperationCurrency;
-    captured.surface = useGitStatusSurface({
-      activeDocument,
-      activePath: activeDocument.path,
-      reconcileSelectedGitDiffPreviewForRepository,
-      getSelectedGitDiffDocument: () => null,
-      currentWorkspaceRootRef,
-      editorGitBaselineRequestTokenRef,
-      gitGateway,
-      gitOperationCurrency,
-      gitRepositoryDiscoveryRequestTokenRef: discoveryTokenRef,
-      reportError,
-      reportErrorForActiveWorkspaceRoot: vi.fn(),
-      setMessage: vi.fn(),
-      workspaceRoot: ROOT,
-    });
-    return null;
-  }
-
-  act(() => {
-    root.render(<BaselineHookHarness activeDocument={initialDocument} />);
-  });
-
-  return {
-    activate: (nextDocument) => {
-      act(() => {
-        root.render(<BaselineHookHarness activeDocument={nextDocument} />);
-      });
-    },
-    currency: () => {
-      if (!capturedCurrency.currency) {
-        throw new Error("currency not mounted");
-      }
-
-      return capturedCurrency.currency;
-    },
-    reconcileSelectedGitDiffPreviewForRepository,
-    reportError,
-    surface: () => {
-      if (!captured.surface) {
-        throw new Error("surface not mounted");
-      }
-
-      return captured.surface;
-    },
-    unmount: () => {
-      act(() => root.unmount());
-    },
-  };
-}
 
 describe("Git status read readiness", () => {
   it("stays unread until status settles and resets after discovery", async () => {

@@ -95,7 +95,6 @@ describe("downloading a file attachment from the agent view", () => {
           chrome={chromeFixture({
             layout: {
               layout,
-              effectiveLayout: "agent",
               persistedBottomPanel: false,
               dispatch,
             },

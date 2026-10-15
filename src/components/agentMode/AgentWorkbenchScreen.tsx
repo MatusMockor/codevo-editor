@@ -1,6 +1,5 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
-import { workbenchPanelPlacement } from "../../domain/editorDrawer";
 import { rightPanelCoversThread } from "../workbenchShellPlacement";
 import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
 import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/browserAgentRailProjectCollapsePreference";
@@ -55,9 +54,6 @@ import {
   useAgentProjectWorkspaceSync,
   type AgentProjectWorkspaceTarget,
 } from "./useAgentProjectWorkspaceSync";
-import { useAgentCheckoutDirtyRevision } from "../../application/useAgentCheckoutDirtyRevision";
-import { getEditorDocumentDirtySnapshot } from "../../application/editorSessionDirtyProjection";
-import type { WorkspaceFileChangeGateway } from "../../domain/workspaceFileChange";
 import { runningTurn } from "../../domain/agentThread";
 import type { ComposerBranchGateway } from "../../application/useComposerBranchPicker";
 import { agentBranchCheckoutGuardReason } from "../../application/agentBranchCheckoutGuard";
@@ -87,7 +83,6 @@ import type {
   SelectedAgentProviderAuthority,
 } from "../../application/useAgentProviderManagement";
 import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
-import type { useWorkbenchController } from "../../application/useWorkbenchController";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import { normalizeAgentModelFavoriteKeys } from "../../domain/agentSettings";
 import {
@@ -131,62 +126,13 @@ import type { FilePreviewReader } from "../../application/filePreview/filePrevie
 import { AgentFileViewerProvider } from "./rightPanel/fileViewer/AgentFileViewerProvider";
 import { CodeHighlighterProvider } from "../../infrastructure/codeHighlight/CodeHighlighterProvider";
 import { createTauriFilePreviewReader } from "../../infrastructure/tauriFilePreviewReader";
+import type { AgentAppSurface } from "./agentAppSurface";
 import {
   useAgentFileViewerLayout,
   useAgentFileViewerOpeners,
 } from "./AgentWorkbenchScreenFileViewer";
 
-type Workbench = ReturnType<typeof useWorkbenchController>;
-
-export type AgentWorkbenchScreenWorkbench = Pick<
-  Workbench,
-  | "activePath"
-  | "agentModeActive"
-  | "agentWorkbench"
-  | "appSettings"
-  | "bottomPanelView"
-  | "bottomPanelVisible"
-  | "closeWorkspaceTab"
-  | "hideBottomPanel"
-  | "nodePackageScripts"
-  | "openPinnedFile"
-  | "openProblemNotice"
-  | "openWorkspaceRootWithReceipt"
-  | "settingsOpen"
-  | "previewFile"
-  | "runCommand"
-  | "saveWorkbenchSettings"
-  | "showBottomPanelView"
-  | "workspaceIdentityDescriptor"
-  | "workspaceRoot"
-  | "workspaceSettings"
-  | "workspaceTrust"
-> &
-  Partial<
-    Pick<
-      Workbench,
-      | "openDocuments"
-      | "activateWorkspaceTab"
-      | "openSettingsSection"
-      | "gitStatus"
-      | "gitRepositoryStatuses"
-      | "gitLoading"
-      | "gitStatusLoaded"
-      | "gitDiffPreview"
-      | "gitDiffLoading"
-      | "refreshGitStatus"
-      | "previewGitChange"
-      | "openGitChange"
-      | "closeGitDiffPreview"
-      | "agentWorktreeFileSync"
-      | "resolveDocumentSessionDirtyProjection"
-      | "documentSessionAuthorityRevision"
-      | "setStatusBarItemVisibility"
-      | "vscodeProcessTasks"
-    >
-  > & {
-    readonly agents: WorkbenchAgentsSurface;
-  };
+export type AgentWorkbenchScreenWorkbench = AgentAppSurface;
 
 export interface AgentWorkbenchScreenProps {
   readonly questionGateway?: AgentModeViewProps["questionGateway"];
@@ -198,7 +144,6 @@ export interface AgentWorkbenchScreenProps {
   readonly terminalGateway: TerminalGateway;
   readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
   readonly gitBranchGateway?: ComposerBranchGateway | null;
-  readonly worktreeFileChanges?: WorkspaceFileChangeGateway | null;
   readonly monacoTheme: MonacoAppTheme;
   readonly terminalTheme: TerminalTheme;
   readonly textClipboard?: TextClipboardGateway | null;
@@ -261,7 +206,6 @@ export function AgentWorkbenchScreen({
   files,
   gitHistoryGateway = null,
   gitBranchGateway = null,
-  worktreeFileChanges = null,
   monacoTheme,
   onResizeRightPanelStart,
   onTrustWorkspace,
@@ -282,7 +226,7 @@ export function AgentWorkbenchScreen({
   workbench,
 }: AgentWorkbenchScreenProps) {
   const restoredSession = useAgentSessionRestore(sessionRestore);
-  const threadViewVisible = workbench.settingsOpen !== true && workbench.agentModeActive !== false;
+  const threadViewVisible = workbench.settingsOpen !== true;
   const threadNotifications = useAgentThreadNotificationCenter(
     {
       enabled: workbench.appSettings.agentThreadNotifications !== false,
@@ -387,7 +331,7 @@ export function AgentWorkbenchScreen({
     [appSettings.keymap],
   );
   const { saveWorkbenchSettings } = workbench;
-  const { bottomPanelView, bottomPanelVisible, hideBottomPanel, showBottomPanelView } = workbench;
+  const { bottomPanelVisible, hideBottomPanel, showTerminalPanel } = workbench;
   const workspaceId = workbench.workspaceIdentityDescriptor?.workspaceId ?? null;
   const admissionToken = workbench.workspaceIdentityDescriptor?.admissionToken ?? null;
   const remotePortPreview = useMemo(
@@ -451,6 +395,7 @@ export function AgentWorkbenchScreen({
 
   const fileViewer = useAgentFileViewerOpeners(agentWorkbench.dispatch);
   const viewerLayout = useAgentFileViewerLayout(agentWorkbench, fileViewer.sessions);
+  const viewerActivePath = agentWorkbench.fileReveal?.path ?? null;
 
   const openScriptsView = useCallback(() => {
     agentWorkbench.dispatch({ kind: "openSurface", surface: "scripts" });
@@ -459,10 +404,6 @@ export function AgentWorkbenchScreen({
   const openSourceControl = useCallback(() => {
     agentWorkbench.dispatch({ kind: "openSurface", surface: "git" });
   }, [agentWorkbench]);
-
-  const showTerminalPanel = useCallback(() => {
-    showBottomPanelView("terminal");
-  }, [showBottomPanelView]);
 
   const vscodeProcessTasks = workbench.vscodeProcessTasks ?? null;
   const scriptsSurface = useMemo<AgentScriptsChrome>(
@@ -474,37 +415,26 @@ export function AgentWorkbenchScreen({
     [nodePackageScripts, showTerminalPanel, vscodeProcessTasks],
   );
 
-  const terminalVisible = workbenchPanelPlacement(bottomPanelView, bottomPanelVisible).terminal;
   const onToggleBottomPanel = useCallback(() => {
-    if (terminalVisible) {
+    if (bottomPanelVisible) {
       hideBottomPanel();
       return;
     }
     showTerminalPanel();
-  }, [hideBottomPanel, showTerminalPanel, terminalVisible]);
+  }, [bottomPanelVisible, hideBottomPanel, showTerminalPanel]);
 
   const intentRef = useRef(initialAgentTerminalPanelIntentState);
   const { persistedBottomPanel } = agentWorkbench;
-  const agentLayoutActive = agentWorkbench.effectiveLayout === "agent";
   useEffect(() => {
     const result = agentTerminalPanelIntent(intentRef.current, {
       owner: workspaceRoot,
-      active: agentLayoutActive,
       visible: bottomPanelVisible,
-      view: bottomPanelView,
       persisted: persistedBottomPanel,
     });
     intentRef.current = result.state;
     if (!result.showTerminal) return;
-    showBottomPanelView("terminal");
-  }, [
-    agentLayoutActive,
-    bottomPanelView,
-    bottomPanelVisible,
-    persistedBottomPanel,
-    showBottomPanelView,
-    workspaceRoot,
-  ]);
+    showTerminalPanel();
+  }, [bottomPanelVisible, persistedBottomPanel, showTerminalPanel, workspaceRoot]);
 
   const revealRoots = useMemo(
     () => [...projects.projects.map((project) => project.rootPath), workspaceRoot ?? ""],
@@ -601,16 +531,10 @@ export function AgentWorkbenchScreen({
   });
 
   const shortcuts = useMemo(() => layoutShortcuts(appSettings.keymap), [appSettings.keymap]);
-  const checkoutDirtyRevision = useAgentCheckoutDirtyRevision(
-    workbench.openDocuments,
-    workbench.resolveDocumentSessionDirtyProjection,
-    workbench.documentSessionAuthorityRevision?.ownerDirtyCountProjection ?? null,
-  );
   const branchCheckout = useMemo(() => {
     if (gitBranchGateway === null) return null;
     return {
       gateway: gitBranchGateway,
-      dirtyRevision: checkoutDirtyRevision,
       guard: (target: { readonly rootPath: string; readonly ownerKey: string }) => {
         const current = workbench;
         return agentBranchCheckoutGuardReason(target.rootPath, {
@@ -622,18 +546,11 @@ export function AgentWorkbenchScreen({
             rootPath: thread.target.worktreePath ?? thread.owner.repositoryRoot,
             running: runningTurn(thread) !== null,
           })),
-          documents: current.openDocuments,
           dispatching: current.agents.dispatching,
-          isLiveDocumentDirty: (path) => {
-            const projection = current.resolveDocumentSessionDirtyProjection?.(path) ?? null;
-            if (projection === null) return false;
-            const snapshot = getEditorDocumentDirtySnapshot(projection);
-            return snapshot.status === "unavailable" || snapshot.dirty;
-          },
         });
       },
     };
-  }, [checkoutDirtyRevision, gitBranchGateway, workbench]);
+  }, [gitBranchGateway, workbench]);
   const runCommand = workbench.runCommand;
   const defaultNewThreadPicker = useMemo(
     () =>
@@ -676,7 +593,7 @@ export function AgentWorkbenchScreen({
       workspaceActivation,
       rightPanel,
       layout: viewerLayout,
-      bottomPanelVisible: terminalVisible,
+      bottomPanelVisible,
       shortcuts,
       scripts,
       scriptsSurface,
@@ -686,25 +603,11 @@ export function AgentWorkbenchScreen({
       branchCheckout,
       liveCheckoutBranches,
       threadBranchMemory: DEFAULT_THREAD_BRANCH_MEMORY,
-      worktreeSync:
-        workbench.agentWorktreeFileSync === undefined || worktreeFileChanges === null
-          ? null
-          : {
-              gateway: worktreeFileChanges,
-              control: workbench.agentWorktreeFileSync,
-              workspaceOwnerKey: workbench.agentWorktreeFileSync.workspaceOwnerKey,
-              openWorkspaceRoots: [
-                ...new Set([
-                  ...appSettings.workspaceTabs,
-                  ...(workbench.workspaceRoot === null ? [] : [workbench.workspaceRoot]),
-                ]),
-              ],
-            },
       fileTree: {
         editorFontSize: appSettings.editorFontSize,
         files,
         fileChanges,
-        activePath: workbench.activePath,
+        activePath: viewerActivePath,
         revealActivePathSignal: activeFileRevealSignal,
         fileStatusesByPath,
         searchFilesShortcut,
@@ -750,10 +653,6 @@ export function AgentWorkbenchScreen({
       gitHistoryGateway,
       branchCheckout,
       liveCheckoutBranches,
-      workbench.agentWorktreeFileSync,
-      workbench.workspaceRoot,
-      worktreeFileChanges,
-      appSettings.workspaceTabs,
       monacoTheme,
       onResizeRightPanelStart,
       onToggleBottomPanel,
@@ -771,8 +670,8 @@ export function AgentWorkbenchScreen({
       terminalTheme,
       threadActivity,
       fileViewer,
-      workbench.activePath,
-      terminalVisible,
+      viewerActivePath,
+      bottomPanelVisible,
       workspaceId,
       workspaceTrusted,
     ],

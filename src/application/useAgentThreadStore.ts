@@ -100,7 +100,6 @@ export interface AgentThreadLegacyPinStorage {
 export interface AgentThreadStoreDependencies {
   readonly agentThreadStoreGateway: AgentThreadStoreGateway;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
-  readonly agentModeActive: boolean;
   readonly reportError: (source: string, error: unknown) => void;
   readonly setNotice: (notice: AgentTasksNotice | null) => void;
   readonly now?: () => number;
@@ -631,9 +630,8 @@ export function useAgentThreadStore(
       clearedLegacyPinRootsRef.current.delete(rootKey);
     }
     setLoadedRootKeys((current) => retainRoots(current, present));
-    if (!dependenciesRef.current.agentModeActive) return;
     for (const project of projects) void loadProject(projectAuthority(project));
-  }, [dependencies.agentModeActive, loadProject, projectsSignature]);
+  }, [loadProject, projectsSignature]);
 
   const flushThread = useCallback(
     async (threadId: string): Promise<boolean> => {

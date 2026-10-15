@@ -20,31 +20,7 @@ describe("parseQuickOpenQuery", () => {
     });
   });
 
-  it("parses a bare line as a location in the current file", () => {
-    expect(parseQuickOpenQuery(":42")).toEqual({
-      kind: "currentFileLocation",
-      column: null,
-      line: 42,
-    });
-  });
-
-  it.each([
-    [":", "empty"],
-    [":abc", "invalid"],
-    [":4a", "invalid"],
-    [":0", "zero"],
-    [":00", "zero"],
-    [":42:0", "zero"],
-  ] as const)("keeps %s in current-file line mode with the %s reason", (input, reason) => {
-    expect(parseQuickOpenQuery(input)).toEqual({ kind: "currentFileLinePrompt", reason });
-  });
-
   it("accepts a trailing colon after a line as that line", () => {
-    expect(parseQuickOpenQuery(":42:")).toEqual({
-      kind: "currentFileLocation",
-      column: null,
-      line: 42,
-    });
     expect(parseQuickOpenQuery("src/foo.ts:42:")).toEqual({
       kind: "fileLocation",
       column: null,
@@ -53,20 +29,21 @@ describe("parseQuickOpenQuery", () => {
     });
   });
 
-  it.each([
-    ["@handler", "currentFileSymbols", "handler"],
-    ["#handler", "workspaceSymbols", "handler"],
-    [">format", "commands", "format"],
-  ] as const)("routes %s to %s", (input, kind, query) => {
-    expect(parseQuickOpenQuery(input)).toEqual({ kind, query });
-  });
+  it.each([":", ":42", ":42:", ":42:7", ":0", "@handler", "#handler", ">format"])(
+    "keeps the removed current-file and symbol syntax %s as a plain file query",
+    (input) => {
+      expect(parseQuickOpenQuery(input)).toEqual({ kind: "files", query: input });
+    },
+  );
 
-  it.each(["@scope/pkg/index.ts", "#src/generated/index.ts"])(
-    "keeps slash-containing symbol prefix input as a file query for %s",
+  it.each(["@scope/pkg/index.ts:3", "#src/generated/index.ts:3"])(
+    "parses a location on a path that starts with a former picker prefix for %s",
     (input) => {
       expect(parseQuickOpenQuery(input)).toEqual({
-        kind: "files",
-        query: input,
+        kind: "fileLocation",
+        column: null,
+        line: 3,
+        pathQuery: input.slice(0, -2),
       });
     },
   );
@@ -112,11 +89,4 @@ describe("parseQuickOpenQuery", () => {
       });
     },
   );
-
-  it("gives picker prefixes precedence over location suffixes", () => {
-    expect(parseQuickOpenQuery("@handler:42")).toEqual({
-      kind: "currentFileSymbols",
-      query: "handler:42",
-    });
-  });
 });

@@ -113,7 +113,7 @@ async function bootstrap(): Promise<void> {
   ] = await Promise.all([
     import("react"),
     import("react-dom/client"),
-    import("./App"),
+    import("./AgentApp"),
     import("./components/ErrorBoundary"),
     import("./infrastructure/globalErrorSafetyNet"),
     import("./perfLaneRenderMode"),

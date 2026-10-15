@@ -301,48 +301,43 @@ describe("TauriWorkspaceIdentityGateway", () => {
           unicodeNormalizationPolicy: "preserved",
         }),
       )
-      .mockResolvedValue({
-        status: "success",
-        content: "content",
-        revision: null,
-      });
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ status: "success" })
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ status: "success" });
     const identities = new TauriWorkspaceIdentityGateway();
     const files = new TauriWorkspaceGateway(identities);
     await identities.openPath("/alias-one/project");
     await identities.openPath("/alias-two/project");
 
-    await files.readTextFile("/alias-one/project/src/One.ts");
-    await files.writeTextFile("/alias-one/project/src/One.ts", "one", revision());
-    await files.readTextFile("/alias-two/project/src/Two.ts");
-    await files.writeTextFile("/alias-two/project/src/Two.ts", "two", revision());
+    await files.readDirectory("/alias-one/project/src");
+    await files.createDirectoryForWorkspace("ws-shared", "/alias-one/project/src/one");
+    await files.readDirectory("/alias-two/project/src");
+    await files.createDirectoryForWorkspace("ws-shared", "/alias-two/project/src/two");
 
-    expect(invoke).toHaveBeenNthCalledWith(3, "workspace_read_text_file", {
+    expect(invoke).toHaveBeenNthCalledWith(3, "workspace_read_directory", {
       workspaceId: "ws-shared",
-      relativePath: "src/One.ts",
+      relativePath: "src",
     });
-    expect(invoke).toHaveBeenNthCalledWith(4, "workspace_save_text_file", {
+    expect(invoke).toHaveBeenNthCalledWith(4, "workspace_create_directory", {
       workspaceId: "ws-shared",
-      relativePath: "src/One.ts",
-      content: "one",
-      expectedRevision: revision(),
+      relativePath: "src/one",
     });
-    expect(invoke).toHaveBeenNthCalledWith(5, "workspace_read_text_file", {
+    expect(invoke).toHaveBeenNthCalledWith(5, "workspace_read_directory", {
       workspaceId: "ws-shared",
-      relativePath: "src/Two.ts",
+      relativePath: "src",
     });
-    expect(invoke).toHaveBeenNthCalledWith(6, "workspace_save_text_file", {
+    expect(invoke).toHaveBeenNthCalledWith(6, "workspace_create_directory", {
       workspaceId: "ws-shared",
-      relativePath: "src/Two.ts",
-      content: "two",
-      expectedRevision: revision(),
+      relativePath: "src/two",
     });
 
     invoke.mockResolvedValueOnce(RELEASED);
     await identities.unregister(owner("ws-shared", "/real/project"));
-    expect(() => files.writeTextFile("/alias-one/project/src/One.ts", "one", revision())).toThrow(
+    expect(() => files.readDirectoryBounded("/alias-one/project/src/one", 10)).toThrow(
       "Reopen it explicitly",
     );
-    expect(() => files.writeTextFile("/alias-two/project/src/Two.ts", "two", revision())).toThrow(
+    expect(() => files.readDirectoryBounded("/alias-two/project/src/two", 10)).toThrow(
       "Reopen it explicitly",
     );
   });
@@ -1085,16 +1080,5 @@ function registration(descriptor: Record<string, unknown>, admissionToken = 1) {
   return {
     descriptor,
     registration: receipt(String(descriptor.workspaceId), admissionToken),
-  };
-}
-
-function revision() {
-  return {
-    device: "1",
-    inode: "2",
-    size: 3,
-    modifiedSeconds: 4,
-    modifiedNanoseconds: 5,
-    contentHash: "6",
   };
 }

@@ -8,21 +8,7 @@ import type {
   RemoteSurfaceScope,
 } from "../../domain/remoteRunnerSurfaces";
 import { RemoteGitHistoryPanel } from "./RemoteGitHistoryPanel";
-vi.mock("../GitDiffPreview", () => ({
-  GitDiffPreview: ({
-    diff,
-  }: {
-    diff: {
-      originalContent: string;
-      modifiedContent: string;
-      previewUnavailableReason: string | null;
-    };
-  }) => (
-    <div data-diff>
-      {diff.previewUnavailableReason ?? `${diff.originalContent} → ${diff.modifiedContent}`}
-    </div>
-  ),
-}));
+import { waitForReact } from "../../test/reactTestLifecycle";
 let host: HTMLDivElement;
 let root: Root;
 const scope: RemoteSurfaceScope = {
@@ -93,7 +79,13 @@ it("loads commits, files and a read-only diff using the exact remote checkout", 
   expect(api.commitFiles).toHaveBeenCalledWith({ ...scope, commit });
   await click("src/index.ts");
   expect(api.commitDiff).toHaveBeenCalledWith({ ...scope, commit, path: "src/index.ts" });
-  expect(host.textContent).toContain("before → after");
+  await waitForReact(() => {
+    const diff = host.querySelector(".cv-diff-file")?.textContent ?? "";
+    expect(diff).toContain("before");
+    expect(diff).toContain("after");
+  });
+  expect(host.querySelector(".cv-diff-file")?.textContent).toContain("Parent");
+  expect(host.querySelector(".cv-diff-file")?.textContent).toContain("Commit");
   await click("Back to history");
   await click("Older commits");
   expect(api.history).toHaveBeenLastCalledWith({ ...scope, offset: 100 });
@@ -137,7 +129,7 @@ it("discards a pending diff when navigating back and surfaces failures without a
       unavailableReason: null,
     }),
   );
-  expect(host.querySelector("[data-diff]")).toBeNull();
+  expect(host.querySelector(".cv-diff-file")).toBeNull();
   api.commitFiles.mockRejectedValueOnce(new Error("offline"));
   await click("Initial commit");
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("Could not load");
@@ -174,7 +166,8 @@ it("does not refetch on equivalent scope objects and preserves binary preview st
   expect(api.history).toHaveBeenCalledTimes(1);
   await click("Initial commit");
   await click("src/index.ts");
-  expect(host.querySelector("[data-diff]")?.textContent).toBe("binary");
+  expect(host.querySelector(".cv-diff-file")).toBeNull();
+  expect(host.textContent).toContain("This is a binary file; no text diff is shown.");
 });
 
 it("discards commit files returned for a checkout that was replaced", async () => {
@@ -215,4 +208,15 @@ it("bounds large commit file lists to 100 rows per page", async () => {
   await click("Back to history");
   await click("Initial commit");
   expect(host.textContent).toContain("1–100 of 350 files");
+});
+
+it("closes a commit diff and keeps the commit file list", async () => {
+  const api = gateway();
+  await render(api);
+  await click("Initial commit");
+  await click("src/index.ts");
+  await waitForReact(() => expect(host.querySelector(".cv-diff-file")).not.toBeNull());
+  await click("Close diff");
+  expect(host.querySelector(".cv-diff-file")).toBeNull();
+  expect(host.querySelectorAll('[aria-label="Commit files"] button')).toHaveLength(1);
 });

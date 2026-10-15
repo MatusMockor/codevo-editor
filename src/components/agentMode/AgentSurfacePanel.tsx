@@ -88,7 +88,6 @@ export interface AgentSurfacePanelProps {
   readonly chooserAutoFocus: boolean;
   readonly fileTree: AgentSurfaceFileTreeProps | null;
   readonly fileReveal?: AgentFileViewerReveal | null;
-  readonly remoteMonacoTheme?: AgentSurfaceDiffPanelProps["monacoTheme"];
   readonly terminal: AgentSurfaceTerminalPanelProps | null;
   readonly history?: AgentSurfaceHistoryProps | null;
   readonly agentsPanel?: ReactNode;
@@ -108,7 +107,6 @@ export function AgentSurfacePanel({
   remoteFileReveal = null,
   remoteTerminalTheme,
   chooserAutoFocus,
-  remoteMonacoTheme,
   fileTree,
   fileReveal = null,
   hidden,
@@ -245,7 +243,6 @@ export function AgentSurfacePanel({
                     fileReveal={remoteFileReveal}
                     active={!hidden && activeSurface === kind}
                     terminalTheme={remoteTerminalTheme}
-                    monacoTheme={remoteMonacoTheme}
                   />
                 </Suspense>
               ) : (
@@ -311,32 +308,19 @@ function RemoteSurfaceBody({
   fileReveal,
   active,
   terminalTheme,
-  monacoTheme,
 }: {
   readonly kind: AgentRemoteSurfaceKind;
   readonly surface: AgentRemoteSurface;
   readonly fileReveal: RemoteFileRevealRequest | null;
   readonly active: boolean;
   readonly terminalTheme: AgentSurfaceTerminalPanelProps["terminalTheme"] | undefined;
-  readonly monacoTheme: AgentSurfaceDiffPanelProps["monacoTheme"] | undefined;
 }) {
   if (surface.gateway === null) return null;
   if (kind === "files")
-    return (
-      <RemoteFilesPanel
-        scope={surface.scope}
-        gateway={surface.gateway}
-        monacoTheme={monacoTheme}
-        reveal={fileReveal}
-      />
-    );
+    return <RemoteFilesPanel scope={surface.scope} gateway={surface.gateway} reveal={fileReveal} />;
   if (kind === "history")
     return active ? (
-      <RemoteGitHistoryPanel
-        scope={surface.scope}
-        gateway={surface.gateway}
-        monacoTheme={monacoTheme}
-      />
+      <RemoteGitHistoryPanel scope={surface.scope} gateway={surface.gateway} />
     ) : null;
   return (
     <RemoteTerminalPanel

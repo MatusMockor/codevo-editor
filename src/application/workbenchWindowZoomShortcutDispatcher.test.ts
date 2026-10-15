@@ -7,8 +7,6 @@ import {
 } from "./workbenchWindowZoomShortcutDispatcher";
 
 const commandContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: false,
 };
 
@@ -102,9 +100,9 @@ describe("dispatchWorkbenchWindowZoomPhysicalShortcut", () => {
     { "workbench.zoomIn": "" },
     { "workbench.zoomIn": "Cmd+I" },
     { "workbench.zoomIn": "Cmd+K Cmd+=" },
-    { "editor.save": "Cmd+ž" },
-    { "editor.save": "Cmd+=" },
-    { "editor.save": "Cmd+= Cmd+S" },
+    { "app.quit": "Cmd+ž" },
+    { "app.quit": "Cmd+=" },
+    { "app.quit": "Cmd+= Cmd+S" },
   ])("leaves removals, rebinding, collisions and chord prefixes intact: %j", (overrides) => {
     const { registry, run } = zoomRegistry("workbench.zoomIn");
     const event = keyEvent();
@@ -129,7 +127,7 @@ describe("dispatchWorkbenchWindowZoomPhysicalShortcut", () => {
           commandContext,
           commandRegistry: registry,
           event: keyEvent({ shiftKey: true }),
-          keymap: { ...defaultKeymapSettings("mac"), "editor.save": shortcut },
+          keymap: { ...defaultKeymapSettings("mac"), "app.quit": shortcut },
           platform: "mac",
           runCommand: (id, context = commandContext) => executeCommand(registry, id, context),
         }),
@@ -191,7 +189,7 @@ describe("windowZoomShortcutNeedsCapture", () => {
     const readSaveShortcut = vi.fn(() => "Cmd+S");
     const keymap = {
       ...defaultKeymapSettings("mac"),
-      get "editor.save"() {
+      get "app.quit"() {
         return readSaveShortcut();
       },
     };
@@ -232,7 +230,7 @@ describe("windowZoomShortcutNeedsCapture", () => {
     ).toBe(false);
     expect(
       windowZoomShortcutNeedsCapture(
-        { ...defaultKeymapSettings("mac"), "editor.save": "Cmd+= Cmd+S" },
+        { ...defaultKeymapSettings("mac"), "app.quit": "Cmd+= Cmd+S" },
         keyEvent({ key: "=" }),
         "mac",
       ),

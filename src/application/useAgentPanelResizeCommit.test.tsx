@@ -27,7 +27,6 @@ describe("useAgentPanelResizeCommit", () => {
   function layoutState(dispatch: AgentWorkbenchLayoutState["dispatch"]): AgentWorkbenchLayoutState {
     return {
       layout: initialAgentWorkbenchLayout,
-      effectiveLayout: "agent",
       persistedBottomPanel: false,
       dispatch,
     };

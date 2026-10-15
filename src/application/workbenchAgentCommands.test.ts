@@ -17,14 +17,10 @@ import {
 } from "./workbenchAgentCommands";
 
 const disabledContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: false,
 };
 
 const enabledContext: CommandContext = {
-  activeDocumentDirty: true,
-  hasActiveDocument: true,
   hasWorkspace: true,
 };
 
@@ -330,8 +326,7 @@ describe("workbenchAgentCommands", () => {
     return agentLayout.actions;
   }
 
-  it("toggles the sidebar only in agent mode and yields the shortcut to a focused editor", async () => {
-    let editorFocused = false;
+  it("toggles the sidebar only in agent mode", async () => {
     const bridge = createAgentViewCommandBridge();
     const agentLayout = recordingLayout();
     const commands = workbenchAgentCommands({ agentLayout, viewCommands: bridge });
@@ -342,16 +337,11 @@ describe("workbenchAgentCommands", () => {
     expect(toggle.isEnabled(enabledContext)).toBe(false);
     expect(toggle.isShortcutEnabled(enabledContext)).toBe(false);
 
-    bridge.bind({ ...handlers(), editorTextFocused: () => editorFocused });
+    bridge.bind(handlers());
 
     expect(toggle.isEnabled(enabledContext)).toBe(true);
     expect(toggle.isShortcutEnabled(enabledContext)).toBe(true);
     expect(toggle.isEnabled(disabledContext)).toBe(false);
-
-    editorFocused = true;
-
-    expect(toggle.isEnabled(enabledContext)).toBe(true);
-    expect(toggle.isShortcutEnabled(enabledContext)).toBe(false);
 
     await toggle.run();
 

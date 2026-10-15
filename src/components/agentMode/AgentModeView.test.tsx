@@ -1659,7 +1659,7 @@ describe("AgentModeView", () => {
     expect(activeSurfaceTab()).toBe("Diff");
   });
 
-  it("places the surface host from the effective layout, not the reducer layout", () => {
+  it("places the surface host from the reducer layout", () => {
     const docked = recordedLayoutState({
       rightPanel: "open",
       openSurfaces: ["diff"],
@@ -1670,18 +1670,6 @@ describe("AgentModeView", () => {
       chrome: chromeFixture({ layout: docked }),
     });
     expect(host.querySelector('[data-slot="surface"]')).not.toBeNull();
-
-    const forcedEditor = recordedLayoutState(
-      { rightPanel: "open", openSurfaces: ["diff"], activeSurface: "diff" },
-      false,
-      "editor-only",
-    );
-    render({
-      agents: surface({ threads: [threadView({ threadId: "agt-1" })] }),
-      chrome: chromeFixture({ layout: forcedEditor }),
-    });
-
-    expect(host.querySelector('[data-slot="surface"]')).toBeNull();
   });
 
   it("hands the rail state to the layout so the shell frame owns the rail track", () => {

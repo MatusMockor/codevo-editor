@@ -10,23 +10,17 @@ import {
 } from "./workbenchNativeMenuCommandDispatcher";
 
 const commandContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: false,
 };
 
 describe("dispatchNativeMenuCommand", () => {
   it("dispatches every mapped native menu event through the command runner", () => {
     const expectedCommandIds = [
-      "editor.closeTab",
+      "workbench.closeActive",
       "workbench.zoomIn",
       "workbench.zoomOut",
       "workbench.zoomReset",
-      "editor.fontZoomIn",
-      "editor.fontZoomOut",
-      "editor.fontZoomReset",
       "workbench.openAppearanceSettings",
-      "editor.toggleFontLigatures",
     ];
     const runCommand = commandRunner("executed");
 
@@ -43,11 +37,7 @@ describe("dispatchNativeMenuCommand", () => {
       "mockor-window-zoom-in",
       "mockor-window-zoom-out",
       "mockor-window-zoom-reset",
-      "mockor-editor-font-zoom-in",
-      "mockor-editor-font-zoom-out",
-      "mockor-editor-font-zoom-reset",
       "mockor-open-appearance-settings",
-      "mockor-toggle-font-ligatures",
     ]);
     expect(results).toEqual(NATIVE_MENU_EVENT_NAMES.map(() => true));
     expect(runCommand.mock.calls).toEqual(
@@ -56,9 +46,9 @@ describe("dispatchNativeMenuCommand", () => {
   });
 
   it.each([false, true])(
-    "dispatches window zoom without depending on an active editor (%s)",
-    (hasActiveDocument) => {
-      const context = { ...commandContext, hasActiveDocument };
+    "dispatches window zoom regardless of the workspace (%s)",
+    (hasWorkspace) => {
+      const context = { ...commandContext, hasWorkspace };
       const runCommand = commandRunner("executed");
 
       for (const eventName of [
@@ -93,15 +83,21 @@ describe("dispatchNativeMenuCommand", () => {
     });
 
     expect(dispatched).toBe(true);
-    expect(runCommand).toHaveBeenCalledWith("editor.closeTab", commandContext);
+    expect(runCommand).toHaveBeenCalledWith("workbench.closeActive", commandContext);
   });
 
-  it("returns false for an unknown event name", () => {
+  it.each([
+    "mockor-unknown-event",
+    "mockor-editor-font-zoom-in",
+    "mockor-editor-font-zoom-out",
+    "mockor-editor-font-zoom-reset",
+    "mockor-toggle-font-ligatures",
+  ])("returns false for the unmapped event %s", (eventName) => {
     const runCommand = commandRunner("executed");
 
     const dispatched = dispatchNativeMenuCommand({
       commandContext,
-      eventName: "mockor-unknown-event",
+      eventName,
       runCommand,
     });
 
@@ -114,12 +110,12 @@ describe("dispatchNativeMenuCommand", () => {
 
     const dispatched = dispatchNativeMenuCommand({
       commandContext,
-      eventName: "mockor-editor-font-zoom-in",
+      eventName: "mockor-open-appearance-settings",
       runCommand,
     });
 
     expect(dispatched).toBe(false);
-    expect(runCommand).toHaveBeenCalledWith("editor.fontZoomIn", commandContext);
+    expect(runCommand).toHaveBeenCalledWith("workbench.openAppearanceSettings", commandContext);
   });
 });
 

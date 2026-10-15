@@ -1,14 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type MutableRefObject,
-  type SetStateAction,
-} from "react";
-import type { NpmRunSelectedScriptContextCapture } from "../domain/command";
+import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
 import type {
   NodePackageTaskLaunchTarget,
   NodePackageScript,
@@ -31,17 +21,7 @@ import {
   type NodePackageTaskState,
 } from "./nodePackageTaskLifecycle";
 import { useNodePackageScripts } from "./useNodePackageScripts";
-import { useWorkbenchNodePackageTaskProblems } from "./useWorkbenchNodePackageTaskProblems";
-import type { WorkbenchNotice } from "./workbenchNotice";
-import {
-  createNpmRunSelectedScriptCoordinator,
-  type NpmRunSelectedScriptAuthority,
-} from "./npmRunSelectedScriptCoordinator";
-import {
-  createWorkspaceRoot,
-  type WorkspacePathPolicy,
-  type WorkspaceRootDescriptor,
-} from "../domain/workspacePath";
+import type { WorkspacePathPolicy } from "../domain/workspacePath";
 
 interface NodePackageWorkspaceIdentity {
   readonly canonicalRoot: string;
@@ -75,7 +55,6 @@ interface UseWorkbenchNodePackageScriptsOptions {
   readonly hasJavaScriptTypeScriptWorkspace: boolean;
   readonly identity?: NodePackageWorkspaceIdentity | null;
   readonly rootPath: string | null;
-  readonly setNotices: Dispatch<SetStateAction<WorkbenchNotice[]>>;
   readonly trusted: boolean;
   readonly workspaceId?: string | null;
   reportErrorForActiveWorkspaceRoot(
@@ -109,7 +88,6 @@ export function useWorkbenchNodePackageScripts({
   reportErrorForActiveWorkspaceRoot,
   requestTerminalSession,
   rootPath,
-  setNotices,
   trusted,
   workspaceId: requestedWorkspaceId,
 }: UseWorkbenchNodePackageScriptsOptions) {
@@ -127,9 +105,7 @@ export function useWorkbenchNodePackageScripts({
   const discoveryEnabled = Boolean(gateway) && hasJavaScriptTypeScriptWorkspace;
   const executionEnabled = discoveryEnabled && trusted;
   const available = executionEnabled;
-  const problemSubscriptionReadyRef = useRef<Promise<void>>(Promise.resolve());
   const workbench = useNodePackageScriptWorkbench({
-    additionalSubscriptionReadyRef: problemSubscriptionReadyRef,
     discoveryGateway: resolvedGateway,
     discoveryEnabled,
     discoveryVersion,
@@ -140,163 +116,10 @@ export function useWorkbenchNodePackageScripts({
     runGateway: resolvedGateway,
     workspaceId,
   });
-  const workspaceRoots = useMemo(() => nodePackageWorkspaceRoots(identity), [identity]);
-  const activationRef = useRef({
-    epoch: 0,
-    identity: null as NodePackageWorkspaceIdentity | null,
-    rootPath: null as string | null,
-    workspaceRoots: null as readonly WorkspaceRootDescriptor[] | null,
-  });
-  if (
-    activationRef.current.identity !== identity ||
-    activationRef.current.rootPath !== rootPath ||
-    activationRef.current.workspaceRoots !== workspaceRoots
-  ) {
-    activationRef.current = {
-      epoch: activationRef.current.epoch + 1,
-      identity,
-      rootPath,
-      workspaceRoots,
-    };
-  }
-  const activationEpoch = activationRef.current.epoch;
-  const authorityGenerationRef = useRef(0);
-  const authoritySignatureRef = useRef<readonly unknown[]>([]);
-  const authoritySignature = [
-    activationEpoch,
-    available,
-    identity,
-    rootPath,
-    trusted,
-    workspaceRoots,
-  ] as const;
-  if (!sameReferenceTuple(authoritySignatureRef.current, authoritySignature)) {
-    authoritySignatureRef.current = authoritySignature;
-    authorityGenerationRef.current += 1;
-  }
-  const discoveryGenerationRef = useRef(0);
-  const discoverySignatureRef = useRef<readonly unknown[]>([]);
-  const discoverySignature = [discoveryVersion, workbench.scripts] as const;
-  if (!sameReferenceTuple(discoverySignatureRef.current, discoverySignature)) {
-    discoverySignatureRef.current = discoverySignature;
-    discoveryGenerationRef.current += 1;
-  }
-  const workbenchRef = useRef(workbench);
-  workbenchRef.current = workbench;
-  const rawCaptureRef = useRef<NpmRunSelectedScriptContextCapture | null>(null);
-  const npmAuthorityRef = useRef<NpmRunSelectedScriptAuthority | null>(null);
-  npmAuthorityRef.current =
-    identity && rootPath && workspaceRoots
-      ? {
-          activationEpoch,
-          authorityGeneration: authorityGenerationRef.current,
-          discoveryGeneration: discoveryGenerationRef.current,
-          editor: rawCaptureRef.current
-            ? {
-                ...rawCaptureRef.current,
-                activationEpoch,
-                ownerKey: `npm-run-selected-script:${identity.workspaceId}:${activationEpoch}`,
-                rootPath,
-                workspaceId: identity.workspaceId,
-              }
-            : null,
-          executionAvailable: available,
-          ownerKey: `npm-run-selected-script:${identity.workspaceId}:${activationEpoch}`,
-          rootPath,
-          scripts: workbench.scripts,
-          trusted,
-          workspaceId: identity.workspaceId,
-          workspaceRoots,
-        }
-      : null;
-  const npmCoordinator = useMemo(
-    () =>
-      createNpmRunSelectedScriptCoordinator(
-        () => npmAuthorityRef.current,
-        {
-          isActive: () => workbenchRef.current.isActive(),
-          run: (script) => {
-            workbenchRef.current.run(script);
-          },
-        },
-        (error) => reportError(error),
-      ),
-    [reportError],
-  );
-  const runSelectedScript = useCallback(
-    (capture: NpmRunSelectedScriptContextCapture): boolean => {
-      authorityGenerationRef.current += 1;
-      rawCaptureRef.current = capture;
-      const current = npmAuthorityRef.current;
-      if (current) {
-        npmAuthorityRef.current = {
-          ...current,
-          authorityGeneration: authorityGenerationRef.current,
-          editor: {
-            ...capture,
-            activationEpoch: current.activationEpoch,
-            ownerKey: current.ownerKey,
-            rootPath: current.rootPath,
-            workspaceId: current.workspaceId,
-          },
-        };
-      }
-      try {
-        return npmCoordinator.runSelectedScript();
-      } finally {
-        rawCaptureRef.current = null;
-        authorityGenerationRef.current += 1;
-        if (npmAuthorityRef.current) {
-          npmAuthorityRef.current = {
-            ...npmAuthorityRef.current,
-            authorityGeneration: authorityGenerationRef.current,
-            editor: null,
-          };
-        }
-      }
-    },
-    [npmCoordinator],
-  );
-  const problems = useWorkbenchNodePackageTaskProblems({
-    enabled: executionEnabled,
-    gateway: resolvedGateway,
-    rootPath,
-    setNotices,
-    task: workbench.task,
-    workspaceId,
-  });
-  problemSubscriptionReadyRef.current = problems.ready;
   return {
     ...workbench,
     available,
-    problemNotices: problems.notices,
-    problemState: problems.state,
-    runSelectedScript,
   };
-}
-
-function nodePackageWorkspaceRoots(
-  identity: NodePackageWorkspaceIdentity | null,
-): readonly WorkspaceRootDescriptor[] | null {
-  if (!identity) return null;
-  const selected = createWorkspaceRoot(
-    identity.workspaceId,
-    identity.selectedPath,
-    identity.policy,
-  );
-  const canonical = createWorkspaceRoot(
-    identity.workspaceId,
-    identity.canonicalRoot,
-    identity.policy,
-  );
-  if (!selected.ok || !canonical.ok) return null;
-  return selected.value.nativePath === canonical.value.nativePath
-    ? [selected.value]
-    : [selected.value, canonical.value];
-}
-
-function sameReferenceTuple(left: readonly unknown[], right: readonly unknown[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 export function useNodePackageScriptWorkbench({

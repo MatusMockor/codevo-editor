@@ -37,8 +37,6 @@ describe("workbenchWindowZoomCommands", () => {
     "runs every zoom command with workspace availability %s",
     async (hasWorkspace) => {
       const context: CommandContext = {
-        activeDocumentDirty: false,
-        hasActiveDocument: false,
         hasWorkspace,
       };
       const actions = {

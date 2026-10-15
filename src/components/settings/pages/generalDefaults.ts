@@ -9,9 +9,7 @@ export function restoreGeneralAppDefaults(current: AppSettings): AppSettings {
     editorFontFamily: defaults.editorFontFamily,
     editorFontLigatures: defaults.editorFontLigatures,
     editorFontSize: defaults.editorFontSize,
-    minimapEnabled: defaults.minimapEnabled,
     runtimePolicy: defaults.runtimePolicy,
     terminalShellIntegrationEnabled: defaults.terminalShellIntegrationEnabled,
-    wordWrapEnabled: defaults.wordWrapEnabled,
   };
 }

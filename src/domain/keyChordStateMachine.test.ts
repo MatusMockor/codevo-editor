@@ -88,7 +88,7 @@ describe("KeyChordStateMachine", () => {
     expect(prefixOnly.expire(1_100)).toEqual({ reason: "timeout", type: "cancelled" });
   });
 
-  it.each(["escape", "blur", "keymap-replaced", "editor-replaced", "unmount"] as const)(
+  it.each(["escape", "blur", "keymap-replaced", "unmount"] as const)(
     "exposes deterministic %s reset semantics",
     (reason) => {
       const chord = machine();

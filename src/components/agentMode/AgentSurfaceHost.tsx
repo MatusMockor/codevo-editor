@@ -1,4 +1,3 @@
-import { useAgentWorktreeFileChanges } from "../../application/useAgentWorktreeFileChanges";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { AgentTaskIsolation } from "../../domain/agentTask";
@@ -184,7 +183,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
       !remote || !hasThread || folderProject
         ? null
         : {
-            ...chrome.diff,
             summary: changeSummary,
             onShowChanges: (threadId) => void agents.showChanges(threadId),
             onRefreshChanges: (threadId) => void agents.showChanges(threadId),
@@ -194,7 +192,7 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
             onOpenChangedFileDiff: (threadId, change) =>
               void agents.openChangedFileDiff(threadId, change),
           },
-    [agents, changeSummary, chrome.diff, folderProject, hasThread, remote],
+    [agents, changeSummary, folderProject, hasThread, remote],
   );
 
   const terminalChrome = chrome.terminal;
@@ -244,18 +242,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
     [projects, thread, scope, historyScope],
   );
 
-  useAgentWorktreeFileChanges({
-    project:
-      historyScope.kind === "available" && thread !== null
-        ? (projects.find((candidate) => candidate.rootKey === thread.thread.owner.rootKey) ?? null)
-        : null,
-    thread: available ? (thread?.thread ?? null) : null,
-    workspaceOwnerKey: chrome.worktreeSync?.workspaceOwnerKey ?? null,
-    openWorkspaceRoots: chrome.worktreeSync?.openWorkspaceRoots ?? [],
-    gateway: chrome.worktreeSync?.gateway ?? null,
-    handleChange: chrome.worktreeSync?.control.refreshDocuments ?? unavailableWorktreeRefresh,
-    reportError: chrome.worktreeSync?.control.reportError ?? unavailableWorktreeError,
-  });
   const checkout = useMemo(() => {
     const control = chrome.branchCheckout;
     if (control === undefined || control === null) return null;
@@ -327,7 +313,6 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
           }}
           chooserAutoFocus={chooserAutoFocus}
           fileReveal={remote ? null : (chrome.layout.fileReveal ?? null)}
-          remoteMonacoTheme={chrome.diff.monacoTheme}
           hidden={hidden}
           fileTree={fileTree}
           layout={layout}
@@ -351,6 +336,3 @@ export const AgentSurfaceHost = memo(function AgentSurfaceHost({
 });
 
 const ignoreDiffScope = (): void => undefined;
-
-const unavailableWorktreeRefresh = async () => undefined;
-const unavailableWorktreeError = () => undefined;

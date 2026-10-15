@@ -18,11 +18,11 @@ function row(
 }
 
 const rows: ReadonlyArray<SettingsRowDescriptor> = [
-  row("general.autoSave", "Zebra crossing", "Formats the file on save.", []),
+  row("general.terminalShellIntegration", "Zebra crossing", "Formats the file on save.", []),
   row("appearance.palette", "Alpha", null, ["prettier"]),
-  row("general.formatOnPaste", "Reformat on save", null, []),
-  row("general.formatOnSave", "Format on save", "Runs the formatter.", ["save"]),
-  row("php.inlayHints", "Format on paste", null, [], "workspace"),
+  row("general.workspaceRoot", "Reformat on save", null, []),
+  row("general.trustedWorkspace", "Format on save", "Runs the formatter.", ["save"]),
+  row("git.directoryMappings", "Format on paste", null, [], "workspace"),
 ];
 
 describe("searchSettingsRows", () => {
@@ -34,9 +34,9 @@ describe("searchSettingsRows", () => {
     const hits = searchSettingsRows("format on save", rows, true);
 
     expect(hits.map((hit) => hit.row.id)).toEqual([
-      "general.formatOnSave",
-      "general.formatOnPaste",
-      "general.autoSave",
+      "general.trustedWorkspace",
+      "general.workspaceRoot",
+      "general.terminalShellIntegration",
     ]);
     expect(hits[0]?.matchedIn).toBe("title");
     expect(hits[2]?.matchedIn).toBe("description");
@@ -51,7 +51,7 @@ describe("searchSettingsRows", () => {
 
   it("hides workspace-only rows without a workspace", () => {
     expect(searchSettingsRows("paste", rows, true).map((hit) => hit.row.id)).toEqual([
-      "php.inlayHints",
+      "git.directoryMappings",
     ]);
     expect(searchSettingsRows("paste", rows, false)).toEqual([]);
   });
@@ -61,15 +61,18 @@ describe("searchSettingsRows", () => {
     expect(searchSettingsRows("o", rows, true, 0)).toEqual([]);
   });
 
-  it("finds the real on-save settings across sections", () => {
-    const hits = searchSettingsRows("on save", SETTINGS_ROWS, true);
-    const ids = hits.map((hit) => hit.row.id);
+  it("finds the git mapping rows and no removed editor setting", () => {
+    const ids = (query: string): ReadonlyArray<string> =>
+      searchSettingsRows(query, SETTINGS_ROWS, true).map((hit) => hit.row.id);
 
-    expect(hits.length).toBeLessThanOrEqual(50);
-    expect(ids).toContain("general.formatOnSave");
-    expect(ids).toContain("general.optimizeImportsOnSave");
-    expect(ids).toContain("index.eslintFixOnSave");
-    expect(ids).toContain("php.phpstanAnalyseOnSave");
+    expect(ids("git")).toEqual(
+      expect.arrayContaining(["git.directoryMappingsAuto", "git.directoryMappings"]),
+    );
+    for (const query of ["phpstan", "minimap", "format on save", "snippet"]) {
+      expect(
+        ids(query).filter((id) => /^(php|index|snippets)\./u.test(id) || id.endsWith("minimap")),
+      ).toEqual([]);
+    }
   });
 
   it("finds the agent thread text size by title, keyword and description", () => {

@@ -410,7 +410,7 @@ fn registered_workspace_teardown_executes_each_collaborator_once_in_owned_order(
 }
 
 #[test]
-fn mixed_teardown_errors_run_best_effort_order_and_restore_identity_without_history_cleanup() {
+fn mixed_teardown_errors_run_best_effort_order_and_restore_identity() {
     let registry = WorkspaceRegistry::new();
     let root = temporary_workspace("exact-mixed-errors");
     let registration = registry
@@ -427,17 +427,14 @@ fn mixed_teardown_errors_run_best_effort_order_and_restore_identity_without_hist
             execute_registered_workspace_teardown(|step| {
                 steps.push(step);
                 match step {
-                    RegisteredWorkspaceTeardownStep::DocumentAdmission => {
-                        Some("document cleanup failed".to_string())
+                    RegisteredWorkspaceTeardownStep::FileSearch => {
+                        Some("file search cleanup failed".to_string())
                     }
                     RegisteredWorkspaceTeardownStep::Runtime => {
                         Some("terminal cleanup failed".to_string())
                     }
                     RegisteredWorkspaceTeardownStep::AgentTasks
-                    | RegisteredWorkspaceTeardownStep::FileSearch
-                    | RegisteredWorkspaceTeardownStep::JavascriptTasks
-                    | RegisteredWorkspaceTeardownStep::SmartMode
-                    | RegisteredWorkspaceTeardownStep::LocalHistory => None,
+                    | RegisteredWorkspaceTeardownStep::JavascriptTasks => None,
                 }
             })
         },
@@ -448,7 +445,7 @@ fn mixed_teardown_errors_run_best_effort_order_and_restore_identity_without_hist
         ExactWorkspaceTeardownOutcome::Incomplete(errors) => {
             assert_eq!(
                 errors,
-                vec!["document cleanup failed", "terminal cleanup failed"]
+                vec!["file search cleanup failed", "terminal cleanup failed"]
             );
         }
         ExactWorkspaceTeardownOutcome::Closed
@@ -458,10 +455,7 @@ fn mixed_teardown_errors_run_best_effort_order_and_restore_identity_without_hist
             panic!("mixed errors must remain incomplete")
         }
     }
-    assert_eq!(
-        steps,
-        complete_teardown_order()[..complete_teardown_order().len() - 1]
-    );
+    assert_eq!(steps, complete_teardown_order());
     assert_eq!(
         registry
             .descriptor(&registration.receipt.workspace_id)
@@ -489,10 +483,7 @@ fn complete_teardown_order() -> Vec<RegisteredWorkspaceTeardownStep> {
         RegisteredWorkspaceTeardownStep::AgentTasks,
         RegisteredWorkspaceTeardownStep::FileSearch,
         RegisteredWorkspaceTeardownStep::JavascriptTasks,
-        RegisteredWorkspaceTeardownStep::DocumentAdmission,
         RegisteredWorkspaceTeardownStep::Runtime,
-        RegisteredWorkspaceTeardownStep::SmartMode,
-        RegisteredWorkspaceTeardownStep::LocalHistory,
     ]
 }
 

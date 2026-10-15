@@ -912,6 +912,35 @@ describe("legacy editor surface migration", () => {
     ).toEqual({ openSurfaces: ["files"], activeSurface: "files" });
   });
 
+  it("normalizes a legacy editor-only blob with editor surfaces and a Problems bottom view", () => {
+    const legacy = {
+      layout: "editor-only",
+      rightPanel: "open",
+      openSurfaces: ["editor", "diff"],
+      activeSurface: "editor",
+      bottomPanel: true,
+      bottomPanelView: "problems",
+      bottomPanelHeight: 320,
+    };
+
+    const restored = parseAgentWorkbenchLayout(legacy);
+    const persisted = serializeAgentWorkbenchLayout(
+      restored,
+      parsePersistedAgentBottomPanel(legacy),
+    );
+
+    expect(restored).toEqual({
+      ...initialAgentWorkbenchLayout,
+      rightPanel: "open",
+      openSurfaces: ["diff"],
+      activeSurface: "diff",
+      bottomPanelHeight: 320,
+    });
+    expect(persisted.bottomPanel).toBe(true);
+    expect("layout" in persisted).toBe(false);
+    expect("bottomPanelView" in persisted).toBe(false);
+  });
+
   it("never reintroduces the editor through the serialized snapshot", () => {
     const restored = parseAgentWorkbenchLayout({
       rightPanel: "open",

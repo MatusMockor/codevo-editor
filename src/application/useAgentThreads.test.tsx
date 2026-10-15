@@ -68,7 +68,6 @@ interface Environment {
   generation: number;
   rootKey: string;
   ownerId: string;
-  agentModeActive: boolean;
   worktrees: ReadonlyArray<GitWorktreeDescriptor>;
   storedThreads: ReadonlyArray<AgentThread>;
   shipStatus: GitShipStatus;
@@ -429,7 +428,6 @@ function renderThreads(overrides: Partial<Environment> = {}) {
     generation: 1,
     rootKey: ROOT,
     ownerId: OWNER,
-    agentModeActive: true,
     worktrees: [],
     storedThreads: [],
     shipStatus: shipStatus(),
@@ -559,7 +557,6 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       editorBridge: environment.withEditor ? editor : null,
       prompter: { confirm: () => true, prompt: () => null },
       projects: [project()],
-      agentModeActive: environment.agentModeActive,
       getAgentCliKind: () => environment.cliKind,
       currentCliVersion: () => environment.cliVersion,
       getAgentProviderAdmissionAuthority: (provider) => ({
@@ -571,7 +568,6 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       getMaxConcurrentAgentTasks: () => 4,
       launchIdentityForProject: () => ({ workspaceId: environment.ownerId, generation: 1 }),
       getRepositoryStatus: () => ({ known: true, dirty: false }),
-      getDirtyEditorDocumentCount: () => 0,
       reportError,
       openAgentSettings,
       onProviderTurnCompleted: environment.onProviderTurnCompleted,

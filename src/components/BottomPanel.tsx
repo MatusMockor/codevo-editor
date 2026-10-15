@@ -1,31 +1,27 @@
 import { ShieldCheck, Terminal, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
-import type { TerminalProfile } from "../domain/terminal";
+import type { CSSProperties, PointerEvent } from "react";
+import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
+import type { WorkbenchNotice } from "../domain/workbenchNotice";
+import type { TerminalTheme } from "../domain/settings";
+import type { TerminalGateway, TerminalProfile } from "../domain/terminal";
 import { workspaceRelativePath } from "../domain/pathDerivation";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import type { WorkbenchPanelProps } from "./workbenchPanelViews";
 
-export type BottomPanelProps = BottomPanelVisibility &
-  Pick<
-    WorkbenchPanelProps,
-    | "onClose"
-    | "onOpenProblem"
-    | "onResizeStart"
-    | "onRevealDirectoryInTree"
-    | "onTerminalSessionReady"
-    | "onTrustWorkspace"
-    | "providerSignIn"
-    | "terminalGateway"
-    | "terminalOwnerKey"
-    | "terminalShellIntegrationEnabled"
-    | "terminalTheme"
-    | "workspaceRoot"
-    | "workspaceTrusted"
-  >;
-
-interface BottomPanelVisibility {
-  readonly hidden?: boolean;
+export interface BottomPanelProps {
+  onClose(): void;
+  onOpenProblem(notice: WorkbenchNotice): Promise<boolean>;
+  onRevealDirectoryInTree?(path: string): void;
+  onResizeStart(event: PointerEvent<HTMLDivElement>): void;
+  onTerminalSessionReady?(sessionId: number | null): void;
+  onTrustWorkspace(): void;
+  providerSignIn?: AgentProviderSignInSurface;
+  terminalGateway: TerminalGateway;
+  terminalOwnerKey?: string | null;
+  terminalShellIntegrationEnabled: boolean;
+  terminalTheme: TerminalTheme;
+  workspaceRoot: string | null;
+  workspaceTrusted: boolean;
 }
 
 const LazyTerminalTabsPanel = lazy(() =>
@@ -35,7 +31,6 @@ const LazyTerminalTabsPanel = lazy(() =>
 );
 
 export function BottomPanel({
-  hidden = false,
   onClose,
   onOpenProblem,
   onResizeStart,
@@ -99,7 +94,6 @@ export function BottomPanel({
       aria-label="Panel"
       className="bottom-panel bottom-panel--agent"
       data-active-view="terminal"
-      hidden={hidden}
       style={{ "--terminal-surface-background": terminalTheme.background } as CSSProperties}
     >
       <div
@@ -175,7 +169,7 @@ export function BottomPanel({
           fallback={<div aria-label="Terminal" className="terminal-panel" role="tabpanel" />}
         >
           <LazyTerminalTabsPanel
-            isActive={!hidden}
+            isActive
             key={terminalTabsOwnerKey(terminalOwnerKey, workspaceRoot)}
             onActiveCwdChange={setTerminalCwd}
             onActiveProfileChange={(profileId) =>

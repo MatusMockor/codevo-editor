@@ -213,8 +213,6 @@ describe("AgentComposer dictation ownership", () => {
 
 describe("AgentComposer dictation shortcut", () => {
   const context: CommandContext = {
-    activeDocumentDirty: false,
-    hasActiveDocument: false,
     hasWorkspace: true,
   };
   const viewHandlers: AgentViewCommandHandlers = {

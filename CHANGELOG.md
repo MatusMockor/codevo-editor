@@ -7,6 +7,29 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- Codevo is now an agent app. The code editor (Monaco) and the classic workbench
+  are gone, together with the language servers (LSP), the Problems view, the test
+  explorer and coverage, eslint/prettier integration, and the PHP, Laravel, Nette,
+  and JavaScript/TypeScript language intelligence. Edit code through the agents or
+  in your own editor.
+- Files on a remote runner are now read-only: the Files surface views them but no
+  longer edits or saves them. The local Files surface is a read-only viewer as well.
+
+### Notes
+
+- Data that only the removed features used stays on disk and is no longer read.
+  You can delete it manually:
+  - in the app config folder (on macOS
+    `~/Library/Application Support/dev.mockor.editor/`): `local-history/` and
+    `workspace-indexes/*.sqlite3*`;
+  - in the app data folder (the same folder on macOS): the test-result and
+    coverage caches `js-test-results/`, `php-test-results/`, `js-test-coverage/`,
+    and `php-test-coverage/`;
+  - the managed language-server tools in `~/.codevo-editor/tools` (on macOS also
+    `~/Library/Application Support/Codevo Editor/tools`).
+
 ## [0.2.0-beta.125] - 2026-10-15
 
 ### Fixed

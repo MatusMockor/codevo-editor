@@ -1,131 +1,90 @@
 # Codevo Editor Project Plan
 
-Date: 2026-07-28
+Date: 2026-10-15
 
 Status: Active product plan
 
 ## Active Vision
 
-Build a native, keyboard-first desktop IDE that feels immediate for everyday
-JavaScript, TypeScript, Node.js, and Express work. The editor should preserve the
-workflows developers expect from VS Code's editor core while using strict workspace
+Build a native desktop agent app, in the spirit of T3 Code, for running coding agents
+(Claude Code, Codex) against local and remote projects. Developers start project-scoped
+threads, follow the agent as it works, review the changes, and ship them without
+leaving the app. The app should feel immediate while keeping strict workspace
 ownership, bounded resource use, and native Rust services.
 
-This is a practical workflow target, not a 1:1 VS Code claim. The extension ecosystem,
-arbitrary DAP adapters, remote development, containers, and unsupported platforms are
-separate product-sized areas.
+Codevo is not an IDE. The code editor (Monaco), LSP, Problems, test explorer, coverage,
+eslint/prettier integration, PHP/JavaScript language intelligence, and the classic
+workbench were removed by owner decision; do not reintroduce them unless the user
+explicitly asks. The interactive debugger was removed earlier for the same reason.
 
-PHP, Nette, Laravel, and related tools remain supported, but they are secondary to the
-current JS/TS/Node/Express direction.
+This is a practical workflow target, not a parity claim with other agent apps or the
+agent CLIs' own interfaces. Remote development, containers, an extension ecosystem,
+and unsupported platforms are separate product-sized areas.
 
 ## Historical Context
 
-The repository started as a Fleet-like, PHP-focused editor with Basic, Light Smart, and
-Full Smart modes. That plan explains the existing PHPactor, Composer, SQLite index,
-PHP-tree, Nette, and framework modules, but it is no longer the active prioritization
-model. Do not use the old Fleet/PHP MVP sequence to choose new work.
+The repository started as a Fleet-like, PHP-focused editor and later pursued VS Code
+parity for JavaScript, TypeScript, Node.js, and Express. Both directions are
+historical. `docs/archive/PROGRESS.md` and `docs/ARCHITECTURE_REVIEWS.md` keep that
+record; do not use them to choose new work.
 
 ## Product Priorities
 
-1. Fast editing and navigation for large files, repositories, and monorepos.
-2. Reliable JS/TS language intelligence with exact capability and session ownership.
-3. Keyboard-first file, symbol, command, history, and editor switching.
-4. Node and Express project awareness: packages, tasks, tests, Problems, routes, and
-   launch configuration.
-5. Truthful degradation under hard limits instead of freezes or silent partial data.
-6. Preserve existing PHP/framework capabilities; targeted expansion requires explicit
-   user reprioritization.
-
-Debug Console expansion and broad debugger parity are not the current editor-core
-priority unless a required daily Node workflow depends on them.
+1. Fast, reliable agent threads: streaming transcripts, approvals, questions,
+   steering, checkpoints, and notifications.
+2. Safe checkouts: local checkout or isolated Git worktree, with exact project and
+   thread ownership.
+3. The right panel: terminal, read-only Files viewer, diff, Git, package scripts, pull
+   request, history, and agents.
+4. Review and shipping: commit, push, pull request, and worktree integration.
+5. Settings, providers and MCP servers, the remote runner over SSH, and the updater.
+6. Truthful degradation under hard limits instead of freezes or silent partial data.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    UI["React + Monaco workbench"] --> APP["Application use cases"]
+    UI["React agent app"] --> APP["Application use cases"]
     APP --> PORTS["Typed ports"]
     PORTS --> TAURI["Tauri adapters"]
     PORTS --> WORKERS["Browser workers"]
     TAURI --> RUST["Rust services"]
-    RUST --> FS["Bounded filesystem/search"]
-    RUST --> WATCH["Workspace watchers"]
-    RUST --> PROC["Process and LSP supervision"]
-    RUST --> INDEX["Workspace indexes"]
+    RUST --> AGENTS["Agent CLI sessions"]
+    RUST --> GIT["Git and worktrees"]
+    RUST --> FS["Bounded filesystem"]
+    RUST --> PROC["Terminals and scripts"]
+    RUST --> RUNNER["Remote runner over SSH"]
 ```
 
-Dependencies point inward. React, Monaco, Tauri, workers, filesystem, processes, and
-language servers remain adapters around application and domain policies.
-
-## Completed Editor And Project Foundation
-
-- Monaco editing, multi-group tabs, preview tabs, dirty tracking, save/close flows, and
-  workspace-scoped session persistence.
-- MRU switching per project and editor group, with bounded retained scope state.
-- Navigation history that persists sufficient view state while closed transient Monaco
-  models are disposed when they are neither open nor retained by navigation ownership.
-- Quick Open file search with `>`, `@`, and `#` dispatch, exact seed handoff,
-  `path:line[:column]`, backend truncation truth, and accessible syntax guidance.
-- Docked text search with bounded Rust disk scanning and a latest-wins worker overlay
-  for dirty buffers.
-- Bounded workspace package graphs for npm/pnpm/yarn/bun-style monorepos, including
-  package ownership used by scripts, tests, Express routes, and Problems attribution.
-- JavaScript/TypeScript LSP requests with exact session authority, cancellation,
-  latest-value document changes, and watcher-triggered project resynchronization.
-- Background editor change-hunk computation with large-file degradation.
-- Watcher overflow/retry behavior that requests an exact-session project resync or
-  publishes a truthful rescan rather than replaying an unsafe partial event set.
+Dependencies point inward. React, Tauri, workers, filesystem, processes, agent CLIs,
+and SSH remain adapters around application and domain policies.
 
 ## Current Performance Contract
 
-- Typing, cursor movement, scrolling, and tab switching must not wait for filesystem
-  crawls, full-workspace parsing, large diffs, or language-server process work.
+- Composer typing, transcript scrolling, thread switching, and panel switching must not
+  wait for filesystem crawls, large diffs, Git, or agent process work.
 - Expensive main-thread work moves to a browser worker or Rust blocking pool.
-- Search, package graphs, models, decorations, events, and cached owners have explicit
-  caps and deterministic cleanup.
-- Requests are cancellable and latest-owner-wins; A→B→A workspace reuse is a new
+- Transcripts, viewer files, diffs, events, and cached owners have explicit caps and
+  deterministic cleanup.
+- Requests are cancellable and latest-owner-wins; A->B->A workspace reuse is a new
   generation, not permission for old work to publish.
-- Large-file reductions are visible and reversible when the exact document becomes
-  eligible again.
-
-## Search Semantics And Limits
-
-Disk search is authoritative for the on-disk workspace. Dirty-buffer overlay search is
-deliberately narrower:
-
-- literal case-sensitive or case-insensitive matching is supported;
-- regex and `wholeWord` dirty-buffer matching are unsupported because JavaScript
-  `RegExp` does not share Rust's linear-time regex language or Unicode word-boundary
-  semantics;
-- non-empty file masks are unsupported for dirty overlays until they can share the
-  native ignore/mask policy;
-- unsupported dirty semantics produce an explicit limitation/truncated state rather
-  than approximate rows.
-
-The worker structured-clone boundary accepts at most 16 dirty documents, 4,096 dirty
-paths, 256 Ki UTF-16 code units per document, 1 Mi aggregate code units, 768 KiB UTF-8
-per document, 3 MiB aggregate UTF-8, 500 results, and a 2 MiB response. Requests time
-out and superseded workers are terminated.
+- Large-content reductions are visible and do not leak to another thread or workspace.
 
 ## Near-Term Plan
 
-1. Finish integration and full-gate validation of the current editing/navigation wave.
-2. Profile representative large files and monorepos, then fix measured latency and
-   retention regressions without weakening ownership.
-3. Close the highest-value JS/TS editor gaps in completion, navigation, refactoring,
-   Problems, workspace/package awareness, and search UX.
-4. Improve task/test/Express project workflows where they affect everyday Node work.
-5. Reassess PHP/Nette work only when the user explicitly reprioritizes it; completing
-   or stabilizing a JS/TS milestone never triggers that transition automatically.
+1. Finish the IDE removal and full-gate validation.
+2. Measure startup, bundle size, idle memory, and transcript/diff latency, then fix
+   measured regressions without weakening ownership.
+3. Close the highest-value gaps in agent threads, review, and shipping.
+4. Harden the remote runner and the read-only remote Files viewer.
 
 ## Explicit Non-Goals For The Current Phase
 
-- Claiming 1:1 VS Code parity or assigning an unsupported completion percentage.
-- Recreating VS Code's extension marketplace.
-- Universal DAP, remote/container runtimes, or arbitrary executable launch recipes.
-- Running unbounded regex, parsing, indexing, diffing, or workspace scans on the UI
-  thread.
-- Replacing established PHP capabilities merely to fit the new priority.
+- Reintroducing a code editor, language servers, Problems, test explorer, or coverage
+  views.
+- An extension marketplace, universal DAP, remote/container runtimes, or arbitrary
+  executable launch recipes.
+- Running unbounded parsing, diffing, or workspace scans on the UI thread.
 
 ## Completion Evidence
 

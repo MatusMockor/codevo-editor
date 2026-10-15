@@ -34,7 +34,7 @@ export function GitDirectoryMappingsRows({ actions, draft, env }: SettingsPagePr
 
   return (
     <SettingsSectionHeading title="Git directory mappings">
-      <SettingsRow rowId="index.gitDirectoryMappingsAuto">
+      <SettingsRow rowId="git.directoryMappingsAuto">
         <SettingsSwitch
           checked={settings.gitDirectoryMappingsAuto}
           disabled={disabled}
@@ -44,7 +44,7 @@ export function GitDirectoryMappingsRows({ actions, draft, env }: SettingsPagePr
         />
       </SettingsRow>
 
-      <SettingsRow layout="stacked" rowId="index.gitDirectoryMappings">
+      <SettingsRow layout="stacked" rowId="git.directoryMappings">
         <div className="settings-mappings">
           {settings.gitDirectoryMappingsAuto && detected.length > 0 ? (
             <ul className="settings-mappings__list">

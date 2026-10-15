@@ -1,15 +1,27 @@
 import { useCallback, useRef, type MutableRefObject } from "react";
 import type { AppSettings } from "../domain/settings";
-import type { CloseCompletion } from "../domain/dirtyClose";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
-import type {
-  WorkbenchDirtyCloseTarget,
-  WorkspaceCloseOwnership,
-  WorkspaceCloseSessionPort,
-} from "./useWorkbenchCloseLifecycle";
 
 type CloseScopeGuard = () => boolean;
+
+export interface WorkspaceCloseOwnership {
+  readonly isCurrent: () => boolean;
+}
+
+export interface WorkspaceTabCloseSessionPort {
+  readonly current: () => { readonly activeRoot: string | null };
+}
+
+export type WorkspaceTabCloseCompletion = "blocked" | "cancelled" | "closed" | "stale";
+
+export type WorkspaceTabCloseCommit = (scopeIsCurrent: CloseScopeGuard) => Promise<boolean>;
+
+export interface WorkspaceTabCloseGuardRequest {
+  readonly commit: WorkspaceTabCloseCommit;
+  readonly roots: readonly string[];
+  readonly targetRoot: string;
+}
 
 export type WorkspaceTabDisposalResult =
   | "backend-closed-local-stale"
@@ -27,25 +39,17 @@ export interface WorkbenchWorkspaceTabCloseCoordinatorDependencies {
   >;
   readonly openWorkspaceRequestPathRef: MutableRefObject<string | null>;
   readonly openWorkspaceRequestTokenRef: MutableRefObject<number>;
-  readonly openFileRequestTokenRef: MutableRefObject<number>;
-  readonly gitDiffRequestTokenRef: MutableRefObject<number>;
-  readonly editorGitBaselineRequestTokenRef: MutableRefObject<number>;
-  readonly workspaceCloseSession: WorkspaceCloseSessionPort;
-  readonly captureDirtyCloseTargets: (
-    rootPath: string | null,
-  ) => readonly WorkbenchDirtyCloseTarget[] | null;
-  readonly executeDirtyClose: (
-    captureTargets: () => readonly WorkbenchDirtyCloseTarget[] | null,
-    roots: readonly string[],
-    scope: "workspace",
-    commit: (scopeIsCurrent: CloseScopeGuard) => Promise<boolean>,
-  ) => Promise<CloseCompletion>;
+  readonly invalidateActiveWorkspaceRequests?: () => void;
+  readonly workspaceCloseSession: WorkspaceTabCloseSessionPort;
+  readonly guardClose?: (
+    request: WorkspaceTabCloseGuardRequest,
+  ) => Promise<WorkspaceTabCloseCompletion>;
   readonly commitWorkspaceClose: (
     rootPath: string,
     identity: WorkspaceIdentityDescriptor | null,
   ) => WorkspaceCloseOwnership | void;
   readonly persistAppSettings: (settings: AppSettings) => Promise<void>;
-  readonly persistWorkspaceSession: (rootPath: string) => Promise<void>;
+  readonly persistWorkspaceSession?: (rootPath: string) => Promise<void>;
   readonly disposeWorkspaceTabResources: (
     tabPath: string,
     targetRootPath: string,
@@ -73,6 +77,16 @@ const alwaysCurrentWorkspaceCloseOwnership: WorkspaceCloseOwnership = {
   isCurrent: () => true,
 };
 
+async function commitUnguardedClose({
+  commit,
+}: WorkspaceTabCloseGuardRequest): Promise<WorkspaceTabCloseCompletion> {
+  return (await commit(() => true)) ? "closed" : "stale";
+}
+
+function ignoreActiveWorkspaceRequests(): void {}
+
+async function persistNoWorkspaceSession(): Promise<void> {}
+
 export function useWorkbenchWorkspaceTabCloseCoordinator(
   dependencies: WorkbenchWorkspaceTabCloseCoordinatorDependencies,
 ): (path: string) => Promise<void> {
@@ -82,15 +96,12 @@ export function useWorkbenchWorkspaceTabCloseCoordinator(
     workspaceIdentityByRootRef,
     openWorkspaceRequestPathRef,
     openWorkspaceRequestTokenRef,
-    openFileRequestTokenRef,
-    gitDiffRequestTokenRef,
-    editorGitBaselineRequestTokenRef,
+    invalidateActiveWorkspaceRequests = ignoreActiveWorkspaceRequests,
     workspaceCloseSession,
-    captureDirtyCloseTargets,
-    executeDirtyClose,
+    guardClose = commitUnguardedClose,
     commitWorkspaceClose,
     persistAppSettings,
-    persistWorkspaceSession,
+    persistWorkspaceSession = persistNoWorkspaceSession,
     disposeWorkspaceTabResources,
     openWorkspacePath,
     clearActiveWorkspace,
@@ -197,9 +208,7 @@ export function useWorkbenchWorkspaceTabCloseCoordinator(
       }
       if (!ownership.isCurrent() || !scopeIsCurrent()) return false;
 
-      openFileRequestTokenRef.current += 1;
-      gitDiffRequestTokenRef.current += 1;
-      editorGitBaselineRequestTokenRef.current += 1;
+      invalidateActiveWorkspaceRequests();
       const currentIndex = workspaceTabIndexForPath(currentTabs, tabPath);
       const nextPath =
         nextTabs[Math.min(currentIndex, nextTabs.length - 1)] ??
@@ -295,9 +304,7 @@ export function useWorkbenchWorkspaceTabCloseCoordinator(
       clearActiveWorkspace,
       commitWorkspaceClose,
       disposeWorkspaceTabResources,
-      editorGitBaselineRequestTokenRef,
-      gitDiffRequestTokenRef,
-      openFileRequestTokenRef,
+      invalidateActiveWorkspaceRequests,
       openWorkspacePath,
       openWorkspaceRequestPathRef,
       openWorkspaceRequestTokenRef,
@@ -311,7 +318,7 @@ export function useWorkbenchWorkspaceTabCloseCoordinator(
   );
 
   const closeOperation = useCallback(
-    async (path: string): Promise<CloseCompletion> => {
+    async (path: string): Promise<WorkspaceTabCloseCompletion> => {
       const tabPath =
         workspaceTabPathForIdentity(
           appSettingsRef.current.workspaceTabs,
@@ -331,21 +338,13 @@ export function useWorkbenchWorkspaceTabCloseCoordinator(
         workspaceRootKeysEqual(tabPath, activeRoot) ||
         Boolean(identity && activeIdentity && identity.workspaceId === activeIdentity.workspaceId);
       const targetRoot = closingActive && activeRoot ? activeRoot : tabPath;
-      return executeDirtyClose(
-        () => captureDirtyCloseTargets(targetRoot),
-        workspaceResourceRoots(tabPath, targetRoot, identity),
-        "workspace",
-        (scopeIsCurrent) => commitTabClose(tabPath, scopeIsCurrent),
-      );
+      return guardClose({
+        commit: (scopeIsCurrent) => commitTabClose(tabPath, scopeIsCurrent),
+        roots: workspaceResourceRoots(tabPath, targetRoot, identity),
+        targetRoot,
+      });
     },
-    [
-      appSettingsRef,
-      captureDirtyCloseTargets,
-      commitTabClose,
-      executeDirtyClose,
-      workspaceCloseSession,
-      workspaceIdentityByRootRef,
-    ],
+    [appSettingsRef, commitTabClose, guardClose, workspaceCloseSession, workspaceIdentityByRootRef],
   );
 
   return useCallback(

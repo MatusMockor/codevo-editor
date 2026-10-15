@@ -15,13 +15,8 @@ import {
   type CssRule,
 } from "./cssContractTestSupport";
 
-const RATCHET_FROZEN_SIZE = 138;
-const RATCHET_SHEETS = [
-  "App.css",
-  "components/DirtyCloseDecisionDialogHost.css",
-  "components/ExternalFileConflict.css",
-  "components/PhpChangeSignatureDialog.css",
-] as const;
+const RATCHET_FROZEN_SIZE = 0;
+const RATCHET_SHEETS: readonly string[] = [];
 
 const parsed = parseAllStyleSheets();
 const tokenTable = buildTokenTable(
@@ -65,7 +60,7 @@ describe("css border contract", () => {
 
   it("limits the ratchet to the legacy workbench sheets", () => {
     const foreign = LEGACY_BORDER_RATCHET.filter(
-      (entry) => !(RATCHET_SHEETS as readonly string[]).includes(entry.sheet),
+      (entry) => !RATCHET_SHEETS.includes(entry.sheet),
     ).map(describeEntry);
 
     expect(foreign).toEqual([]);

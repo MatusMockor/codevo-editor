@@ -33,7 +33,7 @@ describe("handing the startup skeleton to React", () => {
     const ready = bootstrap.indexOf("await startupWindowReady");
     expect(ready).toBeGreaterThanOrEqual(0);
     expect(ready).toBeLessThan(bootstrap.indexOf("await waitForStartupShellPaint"));
-    expect(ready).toBeLessThan(bootstrap.indexOf('import("./App")'));
+    expect(ready).toBeLessThan(bootstrap.indexOf('import("./AgentApp")'));
     expect(MAIN_SOURCE).toContain("level: readBrowserStartupWindowZoomLevel()");
   });
 

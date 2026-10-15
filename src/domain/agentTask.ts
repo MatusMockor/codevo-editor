@@ -173,19 +173,17 @@ export interface AgentTaskIsolationContext {
   readonly workspacePolicy: AgentIsolationPolicy;
   readonly repositoryStatusKnown: boolean;
   readonly repositoryDirty: boolean;
-  readonly dirtyEditorDocumentsInRepository: number;
   readonly liveAgentTasksInRepository: number;
   readonly plannedParallelDispatch: boolean;
 }
 
-export type AgentIsolationReason =
-  "policy" | "parallel-dispatch" | "status-unknown" | "dirty-tree" | "dirty-editors";
+export type AgentIsolationReason = "policy" | "parallel-dispatch" | "status-unknown" | "dirty-tree";
 
 export type AgentIsolationDefault =
   | { readonly kind: "in-place" }
   | { readonly kind: "worktree"; readonly reason: AgentIsolationReason };
 
-export type InPlaceDispatchUnsafeReason = "dirty-tree" | "dirty-editors" | "status-unknown";
+export type InPlaceDispatchUnsafeReason = "dirty-tree" | "status-unknown";
 
 export type InPlaceDispatchGuard =
   | { readonly kind: "safe" }
@@ -243,15 +241,11 @@ export function defaultAgentTaskIsolation(
   if (context.workspacePolicy === "in-place") return { kind: "in-place" };
   if (!context.repositoryStatusKnown) return { kind: "worktree", reason: "status-unknown" };
   if (context.repositoryDirty) return { kind: "worktree", reason: "dirty-tree" };
-  if (context.dirtyEditorDocumentsInRepository > 0) {
-    return { kind: "worktree", reason: "dirty-editors" };
-  }
   return { kind: "in-place" };
 }
 
 export function inPlaceDispatchGuard(context: AgentTaskIsolationContext): InPlaceDispatchGuard {
   const reasons: InPlaceDispatchUnsafeReason[] = [];
-  if (context.dirtyEditorDocumentsInRepository > 0) reasons.push("dirty-editors");
   if (!context.repositoryStatusKnown) reasons.push("status-unknown");
   if (reasons.length === 0) return { kind: "safe" };
   return { kind: "unsafe", reasons };

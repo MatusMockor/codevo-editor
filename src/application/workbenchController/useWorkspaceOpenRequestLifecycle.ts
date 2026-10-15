@@ -1,6 +1,4 @@
 import { useCallback, useRef, type MutableRefObject } from "react";
-import { parseComposerScripts, type PackageScript } from "../../domain/packageScripts";
-import { joinWorkspacePath, type FileEntry } from "../../domain/workspace";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import type {
   WorkspaceIdentityDescriptor,
@@ -15,66 +13,6 @@ interface WorkspaceCloseOwnership {
 interface OpenWorkspacePathOptions {
   readonly cachePreviousWorkspace?: boolean;
   readonly isOpenIntentCurrent?: () => boolean;
-}
-
-interface WorkspacePackageScriptsProjection {
-  readonly composerScripts: PackageScript[];
-  readonly hasArtisan: boolean;
-}
-
-interface WorkspacePackageScriptHydrationOptions {
-  readonly currentWorkspaceRootRef: MutableRefObject<string | null>;
-  readonly readFileIfExists: (path: string) => Promise<string | null>;
-  readonly setPackageScriptsByRoot: (
-    update: (
-      current: Record<string, WorkspacePackageScriptsProjection>,
-    ) => Record<string, WorkspacePackageScriptsProjection>,
-  ) => void;
-}
-
-async function loadWorkspacePackageScriptsForOpen(
-  rootPath: string,
-  entries: readonly FileEntry[],
-  readFileIfExists: (path: string) => Promise<string | null>,
-  isCurrent: () => boolean,
-  publish: (rootPath: string, projection: WorkspacePackageScriptsProjection) => void,
-): Promise<void> {
-  const hasComposerManifest = entries.some(
-    (entry) => entry.kind === "file" && entry.name === "composer.json",
-  );
-  const hasArtisan = entries.some((entry) => entry.kind === "file" && entry.name === "artisan");
-  const composerJson = await (hasComposerManifest
-    ? readFileIfExists(joinWorkspacePath(rootPath, "composer.json"))
-    : Promise.resolve(null));
-  if (!isCurrent()) return;
-  publish(rootPath, {
-    composerScripts: composerJson ? parseComposerScripts(composerJson) : [],
-    hasArtisan,
-  });
-}
-
-export function useWorkspacePackageScriptHydration({
-  currentWorkspaceRootRef,
-  readFileIfExists,
-  setPackageScriptsByRoot,
-}: WorkspacePackageScriptHydrationOptions) {
-  return useCallback(
-    (rootPath: string, entries: readonly FileEntry[], isMutationOwnerCurrent?: () => boolean) =>
-      loadWorkspacePackageScriptsForOpen(
-        rootPath,
-        entries,
-        readFileIfExists,
-        () =>
-          workspaceRootKeysEqual(currentWorkspaceRootRef.current, rootPath) &&
-          (!isMutationOwnerCurrent || isMutationOwnerCurrent()),
-        (projectionRoot, projection) =>
-          setPackageScriptsByRoot((current) => ({
-            ...current,
-            [projectionRoot]: projection,
-          })),
-      ),
-    [currentWorkspaceRootRef, readFileIfExists, setPackageScriptsByRoot],
-  );
 }
 
 export type WorkspaceOpenReceipt =

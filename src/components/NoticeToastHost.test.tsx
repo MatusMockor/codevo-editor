@@ -3,12 +3,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  createWorkbenchNotice,
-  languageServerRequestErrorNoticeGroupKey,
-  languageServerRequestErrorToastDismissKey,
-  type WorkbenchNotice,
-} from "../application/workbenchNotice";
+import { createWorkbenchNotice, type WorkbenchNotice } from "../application/workbenchNotice";
 import { NoticeToastHost } from "./NoticeToastHost";
 
 describe("NoticeToastHost", () => {
@@ -53,11 +48,10 @@ describe("NoticeToastHost", () => {
 
   it("keeps duplicate request failures dismissed but shows a later unrelated failure", () => {
     const workspaceRoot = "/workspace";
-    const groupKey = languageServerRequestErrorNoticeGroupKey(workspaceRoot)!;
+    const groupKey = `request-error:${workspaceRoot}`;
     const requestNotice = (message: string): WorkbenchNotice => ({
-      ...createWorkbenchNotice("error", "Language Server", message, groupKey),
-      toastDismissKey:
-        languageServerRequestErrorToastDismissKey(workspaceRoot, message) ?? undefined,
+      ...createWorkbenchNotice("error", "Agents", message, groupKey),
+      toastDismissKey: JSON.stringify(["request-error", workspaceRoot, message]),
     });
 
     renderNotices([requestNotice("Completion failed")]);
@@ -72,12 +66,12 @@ describe("NoticeToastHost", () => {
   });
 
   it("keeps an active crash group dismissed when its notice identity changes", () => {
-    const groupKey = "language-server-crash:/workspace";
+    const groupKey = "process-crash:/workspace";
 
-    renderNotices([createWorkbenchNotice("error", "Language Server", "First crash", groupKey)]);
+    renderNotices([createWorkbenchNotice("error", "Agents", "First crash", groupKey)]);
     act(() => host.querySelector("button")?.click());
 
-    renderNotices([createWorkbenchNotice("error", "Language Server", "Second crash", groupKey)]);
+    renderNotices([createWorkbenchNotice("error", "Agents", "Second crash", groupKey)]);
     expect(host.textContent).toBe("");
   });
 

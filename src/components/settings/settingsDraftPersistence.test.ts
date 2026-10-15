@@ -13,7 +13,10 @@ describe("settingsDraftPersistence", () => {
       ...defaultAppSettings(),
       appearance: { ...DEFAULT_APPEARANCE, colorScheme: "light" },
     });
-    harness.actions.updateWorkspaceSettings({ ...defaultWorkspaceSettings(), autoSave: true });
+    harness.actions.updateWorkspaceSettings({
+      ...defaultWorkspaceSettings(),
+      gitDirectoryMappingsAuto: false,
+    });
     harness.actions.updateTrusted(true);
 
     expect(
@@ -21,7 +24,7 @@ describe("settingsDraftPersistence", () => {
     ).toEqual(["light"]);
     expect(harness.saved).toHaveLength(3);
     expect(harness.saved[0]?.appSettings.appearance.colorScheme).toBe("light");
-    expect(harness.saved[1]?.workspaceSettings.autoSave).toBe(true);
+    expect(harness.saved[1]?.workspaceSettings.gitDirectoryMappingsAuto).toBe(false);
     expect(harness.saved[2]?.trusted).toBe(true);
   });
 

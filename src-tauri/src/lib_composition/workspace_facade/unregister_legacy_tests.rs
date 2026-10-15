@@ -5,8 +5,7 @@ use crate::workspace_registry::unregister::WorkspaceOwnerScope;
 use crate::workspace_registry::RegistrationOwner;
 use crate::workspace_registry::WorkspaceRegistry;
 use crate::workspace_runtime::{
-    LanguageServerDisposer, TerminalSessionDisposer, WorkspaceIndexLifecycleDisposer,
-    WorkspaceProcessDisposer, WorkspaceRuntimeDisposal, WorkspaceWatchDisposer,
+    TerminalSessionDisposer, WorkspaceRuntimeDisposal, WorkspaceWatchDisposer,
 };
 use std::{
     collections::BTreeSet,
@@ -68,24 +67,6 @@ impl WorkspaceWatchDisposer for RecordingDisposer {
     }
 }
 
-impl LanguageServerDisposer for RecordingDisposer {
-    fn stop_language_server(&self, root_path: &str) {
-        self.stop(root_path);
-    }
-}
-
-impl WorkspaceIndexLifecycleDisposer for RecordingDisposer {
-    fn cancel_workspace_index_lifecycle(&self, root_path: &str) {
-        self.stop(root_path);
-    }
-}
-
-impl WorkspaceProcessDisposer for RecordingDisposer {
-    fn stop_workspace_processes(&self, root_path: &Path) {
-        self.stop(&root_path.to_string_lossy());
-    }
-}
-
 impl TerminalSessionDisposer for RecordingDisposer {
     fn stop_terminal_sessions(&self, root_path: &Path) -> Result<(), String> {
         self.stop(&root_path.to_string_lossy());
@@ -97,7 +78,7 @@ impl TerminalSessionDisposer for RecordingDisposer {
 }
 
 #[test]
-fn unregister_stops_exact_language_services_before_descriptor_removal_and_reports_errors() {
+fn unregister_stops_exact_runtime_before_descriptor_removal_and_reports_errors() {
     let registry = WorkspaceRegistry::new();
     let root_a = temporary_workspace("unregister-a");
     let root_b = temporary_workspace("unregister-b");
@@ -112,17 +93,11 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
         .to_string_lossy()
         .into_owned();
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let index = RecordingDisposer::new("index", [root_a_key.clone(), root_b_key.clone()], &calls);
-    let watcher = RecordingDisposer::new("watch", [root_a_key.clone(), root_b_key.clone()], &calls);
     let file_watcher = RecordingDisposer::new(
         "file-watch",
         [root_a_key.clone(), root_b_key.clone()],
         &calls,
     );
-    let javascript_typescript =
-        RecordingDisposer::new("js-lsp", [root_a_key.clone(), root_b_key.clone()], &calls);
-    let php = RecordingDisposer::new("php-lsp", [root_a_key.clone(), root_b_key.clone()], &calls);
-    let eslint = RecordingDisposer::new("eslint", [root_a_key.clone(), root_b_key.clone()], &calls);
     let terminal = RecordingDisposer::failing_terminal(
         "terminal",
         [root_a_key.clone(), root_b_key.clone()],
@@ -141,12 +116,7 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
             expected_canonical_root: None,
         },
         WorkspaceRuntimeDisposal {
-            index_lifecycle: &index,
-            javascript_typescript_language_servers: &javascript_typescript,
-            javascript_typescript_watch_registry: &watcher,
             workspace_file_change_watch_registry: &file_watcher,
-            php_language_servers: &php,
-            eslint_processes: &eslint,
             terminal_sessions: &terminal,
         },
         |descriptor| {
@@ -160,7 +130,7 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
                 "after:{}",
                 descriptor.canonical_root_path.to_string_lossy()
             ));
-            errors.push("document cleanup failed".to_string());
+            errors.push("file search cleanup failed".to_string());
         },
     )
     .expect("unregister after best-effort cleanup");
@@ -169,23 +139,13 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
         errors,
         WorkspaceOwnerCloseOutcome::Released(vec![
             "Workspace runtime cleanup failed: terminal stop failed".to_string(),
-            "document cleanup failed".to_string(),
+            "file search cleanup failed".to_string(),
         ])
     );
     assert!(registry.descriptor(&descriptor_a.workspace_id).is_err());
     assert!(registry.descriptor(&descriptor_b.workspace_id).is_ok());
-    assert!(!index.contains(&root_a_key));
-    assert!(index.contains(&root_b_key));
-    assert!(!watcher.contains(&root_a_key));
-    assert!(watcher.contains(&root_b_key));
     assert!(!file_watcher.contains(&root_a_key));
     assert!(file_watcher.contains(&root_b_key));
-    assert!(!javascript_typescript.contains(&root_a_key));
-    assert!(javascript_typescript.contains(&root_b_key));
-    assert!(!php.contains(&root_a_key));
-    assert!(php.contains(&root_b_key));
-    assert!(!eslint.contains(&root_a_key));
-    assert!(eslint.contains(&root_b_key));
     assert!(!terminal.contains(&root_a_key));
     assert!(terminal.contains(&root_b_key));
     let retry = release_workspace_owner_with_runtime_cleanup(
@@ -199,12 +159,7 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
             expected_canonical_root: None,
         },
         WorkspaceRuntimeDisposal {
-            index_lifecycle: &index,
-            javascript_typescript_language_servers: &javascript_typescript,
-            javascript_typescript_watch_registry: &watcher,
             workspace_file_change_watch_registry: &file_watcher,
-            php_language_servers: &php,
-            eslint_processes: &eslint,
             terminal_sessions: &terminal,
         },
         |_| panic!("an idempotent unregister retry must not repeat cleanup"),
@@ -216,12 +171,7 @@ fn unregister_stops_exact_language_services_before_descriptor_removal_and_report
         calls.lock().expect("calls").as_slice(),
         &[
             format!("before:{root_a_key}"),
-            format!("index:{root_a_key}"),
-            format!("watch:{root_a_key}"),
             format!("file-watch:{root_a_key}"),
-            format!("js-lsp:{root_a_key}"),
-            format!("php-lsp:{root_a_key}"),
-            format!("eslint:{root_a_key}"),
             format!("terminal:{root_a_key}"),
             format!("after:{root_a_key}"),
         ]

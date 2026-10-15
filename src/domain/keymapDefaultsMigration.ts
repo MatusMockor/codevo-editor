@@ -2,36 +2,22 @@ import {
   defaultShortcutForCommand,
   detectKeymapPlatform,
   isNewThreadDefaultShortcut,
+  keymapCommands,
   normalizeShortcutInput,
   normalizeShortcutSequenceInput,
-  rebindableKeymapCommands,
   restoredNewThreadPickerShortcut,
   shortcutSequenceForPlatform,
+  withCloseActiveBindingMigrated,
   type KeymapPlatform,
-  type RebindableKeymapCommandId,
 } from "./keymap";
 import { windowZoomDefaultConflictsWithShortcut } from "./windowZoomDefaultConflicts";
 
-export const KEYMAP_DEFAULTS_REVISION = 3;
+export const KEYMAP_DEFAULTS_REVISION = 4;
 
 export interface KeymapDefaultsMigration {
   readonly keymap: unknown;
   readonly revision: number;
 }
-
-interface RetiredKeymapDefault {
-  readonly commandId: RebindableKeymapCommandId;
-  readonly retiredInRevision: number;
-  readonly shortcut: string;
-}
-
-const RETIRED_KEYMAP_DEFAULTS: readonly RetiredKeymapDefault[] = Object.freeze([
-  Object.freeze({ commandId: "editor.fontZoomIn", retiredInRevision: 2, shortcut: "Cmd+=" }),
-  Object.freeze({ commandId: "editor.fontZoomOut", retiredInRevision: 2, shortcut: "Cmd+-" }),
-  Object.freeze({ commandId: "editor.fontZoomReset", retiredInRevision: 2, shortcut: "Cmd+0" }),
-  Object.freeze({ commandId: "editor.foldAll", retiredInRevision: 1, shortcut: "Cmd+Shift+-" }),
-  Object.freeze({ commandId: "editor.unfoldAll", retiredInRevision: 1, shortcut: "Cmd+Shift+=" }),
-]);
 
 export function migrateRetiredKeymapDefaults(
   persistedKeymap: unknown,
@@ -45,15 +31,11 @@ export function migrateRetiredKeymapDefaults(
     return { keymap: persistedKeymap, revision };
   }
 
-  const keymap = { ...persistedKeymap };
-  for (const retired of RETIRED_KEYMAP_DEFAULTS) {
-    if (retired.retiredInRevision <= appliedRevision) continue;
-    if (!isRetiredDefault(persistedKeymap[retired.commandId], retired, platform)) continue;
-    keymap[retired.commandId] = defaultShortcutForCommand(retired.commandId, platform);
-  }
+  const keymap = { ...withCloseActiveBindingMigrated(persistedKeymap) };
 
   if (appliedRevision < 2) preserveCustomBindingsFromNewZoomDefaults(keymap, platform);
   if (appliedRevision < 3) separateNewThreadPickerFromNewThread(keymap, platform);
+  if (appliedRevision < 4) retireGitCommitEnterDefault(keymap, platform);
 
   return { keymap, revision };
 }
@@ -62,7 +44,7 @@ function preserveCustomBindingsFromNewZoomDefaults(
   keymap: Record<string, unknown>,
   platform: KeymapPlatform,
 ): void {
-  const customShortcuts = rebindableKeymapCommands.flatMap(({ id }) => {
+  const customShortcuts = keymapCommands.flatMap(({ id }) => {
     const value = keymap[id];
     if (typeof value !== "string") return [];
     const shortcut = canonicalShortcut(value);
@@ -93,23 +75,19 @@ function separateNewThreadPickerFromNewThread(
   keymap["agent.newThreadIn"] = restoredNewThreadPickerShortcut(keymap, platform);
 }
 
+function retireGitCommitEnterDefault(
+  keymap: Record<string, unknown>,
+  platform: KeymapPlatform,
+): void {
+  const value = keymap["git.commit"];
+  if (typeof value !== "string") return;
+  const retired = platform === "mac" ? ["Cmd+Enter"] : ["Cmd+Enter", "Ctrl+Enter"];
+  if (retired.includes(canonicalShortcut(value))) delete keymap["git.commit"];
+}
+
 function normalizeKeymapDefaultsRevision(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return 0;
   return value;
-}
-
-function isRetiredDefault(
-  persistedShortcut: unknown,
-  retired: RetiredKeymapDefault,
-  platform: KeymapPlatform,
-): boolean {
-  if (typeof persistedShortcut !== "string") return false;
-
-  const shortcut = canonicalShortcut(persistedShortcut);
-  return (
-    shortcut === retired.shortcut ||
-    shortcut === shortcutSequenceForPlatform(retired.shortcut, platform)
-  );
 }
 
 function canonicalShortcut(value: string): string {

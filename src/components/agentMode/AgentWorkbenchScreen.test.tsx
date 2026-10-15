@@ -449,64 +449,28 @@ describe("AgentWorkbenchScreen", () => {
     render(hidden);
 
     click('button[aria-label="Toggle terminal panel"]');
-    expect(hidden.showBottomPanelView).toHaveBeenCalledWith("terminal");
+    expect(hidden.showTerminalPanel).toHaveBeenCalledTimes(1);
     expect(hidden.hideBottomPanel).not.toHaveBeenCalled();
 
-    const visible = createWorkbench(ROOT_A, {
-      agentWorkbench: layout,
-      bottomPanelView: "terminal",
-      bottomPanelVisible: true,
-    });
+    const visible = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: true });
     render(visible);
     click('button[aria-label="Toggle terminal panel"]');
     expect(visible.hideBottomPanel).toHaveBeenCalledTimes(1);
-
-    const staleDrawer = createWorkbench(ROOT_A, {
-      agentWorkbench: layout,
-      bottomPanelView: "problems",
-      bottomPanelVisible: true,
-    });
-    render(staleDrawer);
-    click('button[aria-label="Toggle terminal panel"]');
-    expect(staleDrawer.showBottomPanelView).toHaveBeenCalledWith("terminal");
-    expect(staleDrawer.hideBottomPanel).not.toHaveBeenCalled();
+    expect(visible.showTerminalPanel).not.toHaveBeenCalled();
   });
 
-  it("keeps an unchanged drawer view the controller shows again in the agent layout", () => {
-    const layout = recordedLayoutState();
-    render(
-      createWorkbench(ROOT_A, {
-        agentWorkbench: layout,
-        bottomPanelView: "problems",
-        bottomPanelVisible: false,
-      }),
-    );
-
-    const opened = createWorkbench(ROOT_A, {
-      agentWorkbench: layout,
-      bottomPanelView: "problems",
-      bottomPanelVisible: true,
-    });
-    render(opened);
-    expect(opened.showBottomPanelView).not.toHaveBeenCalled();
-
-    const closed = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false });
-    render(closed);
-    expect(closed.showBottomPanelView).not.toHaveBeenCalled();
-    expect(layout.actions).toEqual([]);
-  });
-
-  it("keeps a view the controller opened together with the panel", () => {
+  it("keeps a panel the controller shows again out of the persisted reveal", () => {
     const layout = recordedLayoutState();
     render(createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false }));
 
-    const problems = createWorkbench(ROOT_A, {
-      agentWorkbench: layout,
-      bottomPanelView: "problems",
-      bottomPanelVisible: true,
-    });
-    render({ ...problems, bottomPanelView: "terminal" });
-    expect(problems.showBottomPanelView).not.toHaveBeenCalled();
+    const opened = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: true });
+    render(opened);
+    expect(opened.showTerminalPanel).not.toHaveBeenCalled();
+
+    const closed = createWorkbench(ROOT_A, { agentWorkbench: layout, bottomPanelVisible: false });
+    render(closed);
+    expect(closed.showTerminalPanel).not.toHaveBeenCalled();
+    expect(layout.actions).toEqual([]);
   });
 
   it("applies a persisted open bottom panel once at hydration", () => {
@@ -516,24 +480,23 @@ describe("AgentWorkbenchScreen", () => {
       bottomPanelVisible: false,
     });
     render(workbench);
-    expect(workbench.showBottomPanelView).not.toHaveBeenCalled();
+    expect(workbench.showTerminalPanel).not.toHaveBeenCalled();
 
     const hydrated = createWorkbench(ROOT_A, {
       agentWorkbench: recordedLayoutState({}, true),
       bottomPanelVisible: false,
     });
     render(hydrated);
-    expect(hydrated.showBottomPanelView).toHaveBeenCalledWith("terminal");
+    expect(hydrated.showTerminalPanel).toHaveBeenCalledTimes(1);
 
     const settled = createWorkbench(ROOT_A, {
       agentWorkbench: recordedLayoutState({}, true),
-      bottomPanelView: "terminal",
       bottomPanelVisible: true,
     });
     render(settled);
     render({ ...settled, bottomPanelVisible: false });
     render({ ...settled, bottomPanelVisible: false });
-    expect(settled.showBottomPanelView).not.toHaveBeenCalled();
+    expect(settled.showTerminalPanel).not.toHaveBeenCalled();
     expect(layout.actions).toEqual([]);
   });
 
@@ -559,7 +522,6 @@ describe("AgentWorkbenchScreen", () => {
           {...defaultProps({
             ...workbench,
             agentWorkbench,
-            bottomPanelView: terminalShown ? "terminal" : "problems",
             bottomPanelVisible: terminalShown,
           })}
         />
@@ -568,13 +530,12 @@ describe("AgentWorkbenchScreen", () => {
 
     await act(async () => root.render(<Hydrated terminalShown={false} />));
 
-    expect(workbench.showBottomPanelView).toHaveBeenCalledTimes(1);
-    expect(workbench.showBottomPanelView).toHaveBeenCalledWith("terminal");
+    expect(workbench.showTerminalPanel).toHaveBeenCalledTimes(1);
 
     await act(async () => root.render(<Hydrated terminalShown={true} />));
     await act(async () => root.render(<Hydrated terminalShown={true} />));
 
-    expect(workbench.showBottomPanelView).toHaveBeenCalledTimes(1);
+    expect(workbench.showTerminalPanel).toHaveBeenCalledTimes(1);
   });
 
   it("does not leak a persisted open panel across a workspace switch", () => {
@@ -591,7 +552,7 @@ describe("AgentWorkbenchScreen", () => {
     });
     render(other);
 
-    expect(other.showBottomPanelView).not.toHaveBeenCalled();
+    expect(other.showTerminalPanel).not.toHaveBeenCalled();
   });
 
   it("hints the Quick Open chord on the Files surface search field", () => {
@@ -646,7 +607,7 @@ describe("AgentWorkbenchScreen", () => {
   });
 
   it("opens a clicked Files entry in the built-in viewer without touching the editor", async () => {
-    const { layout, previewFile, workbench, row } = await renderFilesTree();
+    const { layout, row } = await renderFilesTree();
 
     click(row);
     await waitForReact(() =>
@@ -662,8 +623,6 @@ describe("AgentWorkbenchScreen", () => {
       async () => new Promise((resolve) => setTimeout(resolve, PREVIEW_REVEAL_DELAY_MS * 2)),
     );
 
-    expect(previewFile).not.toHaveBeenCalled();
-    expect(workbench.openPinnedFile).not.toHaveBeenCalled();
     expect(layout.actions).toEqual([]);
   });
 
@@ -673,13 +632,7 @@ describe("AgentWorkbenchScreen", () => {
       openSurfaces: ["files"],
       activeSurface: "files",
     });
-    const previewFile = vi.fn(async () => true);
-    const openPinnedFile = vi.fn(async () => true);
-    const workbench = {
-      ...createWorkbench(ROOT_A, { agentWorkbench: layout }),
-      openPinnedFile,
-      previewFile,
-    };
+    const workbench = createWorkbench(ROOT_A, { agentWorkbench: layout });
     act(() =>
       root.render(
         <AgentWorkbenchScreen
@@ -691,7 +644,7 @@ describe("AgentWorkbenchScreen", () => {
     click('[data-thread-id="agt-1"]');
     const row = '.tree-row[title$="orders.ts"]';
     await waitForReact(() => expect(host.querySelector(row)).not.toBeNull());
-    return { layout, previewFile, workbench, row };
+    return { layout, row };
   }
 
   it("opens the Scripts surface from the scripts menu", async () => {
@@ -735,7 +688,7 @@ describe("AgentWorkbenchScreen", () => {
   });
 
   it("shows a linked file outside every project as an external Files viewer preview", async () => {
-    const { workbench, readOutsideTextFile, snapshots, link, layout } = await renderOutsideLink({
+    const { readOutsideTextFile, link, layout } = await renderOutsideLink({
       kind: "file",
       canonicalPath: OUTSIDE_FILE,
       content: "# Handoff\n",
@@ -752,12 +705,10 @@ describe("AgentWorkbenchScreen", () => {
       }),
     );
     expect(readOutsideTextFile).toHaveBeenCalledExactlyOnceWith(OUTSIDE_FILE);
-    expect(snapshots).toEqual([]);
-    expect(workbench.openProblemNotice).not.toHaveBeenCalled();
   });
 
   it("reveals a linked project file in the Files viewer at the linked line", async () => {
-    const { workbench, link, layout } = await renderOutsideLink(
+    const { link, layout } = await renderOutsideLink(
       { kind: "doesNotExist" },
       `${ROOT_A}/src/orders.ts`,
     );
@@ -772,7 +723,6 @@ describe("AgentWorkbenchScreen", () => {
         request: expect.any(Number),
       }),
     );
-    expect(workbench.openProblemNotice).not.toHaveBeenCalled();
     expect(host.querySelector(".agent-notice")).toBeNull();
   });
 
@@ -786,20 +736,10 @@ describe("AgentWorkbenchScreen", () => {
       ...view,
       thread: { ...view.thread, turns: [{ ...turn, events: [answer] }] },
     };
-    const snapshots: Array<string | null> = [];
-    const openProblemNotice: AgentWorkbenchScreenWorkbench["openProblemNotice"] = async (
-      _notice,
-      options,
-    ) => {
-      const snapshot = (await options?.readOnlySnapshot?.()) ?? null;
-      snapshots.push(snapshot);
-      return snapshot !== null && options?.shouldCommit?.() !== false;
-    };
     const layout = recordedLayoutState();
     const workbench = createWorkbench(ROOT_A, {
       agents: { ...agents, threads: [linked] },
       agentWorkbench: layout,
-      openProblemNotice: vi.fn(openProblemNotice),
     });
     const readOutsideTextFile = vi.fn(async (_path: string) => file);
     act(() =>
@@ -814,7 +754,7 @@ describe("AgentWorkbenchScreen", () => {
     const selector = "a.agent-md__link";
     await waitForReact(() => expect(host.querySelector(selector)).not.toBeNull());
     const link = host.querySelector<HTMLAnchorElement>(selector)!;
-    return { workbench, readOutsideTextFile, snapshots, link, layout };
+    return { readOutsideTextFile, link, layout };
   }
 
   describe("project switcher with background workspace tabs", () => {
@@ -893,11 +833,13 @@ describe("AgentWorkbenchScreen", () => {
       const pending: Array<() => void> = [];
       const admitted = new Set([EDITOR]);
       const show = (active: string) => {
-        const workbench = setup(active, new Set(admitted));
-        workbench.activateWorkspaceTab = vi.fn((path: string) => {
-          tabs.push(path);
-          return new Promise<void>((resolve) => pending.push(resolve));
-        }) as MockedWorkbench["activateWorkspaceTab"];
+        const workbench: MockedWorkbench = {
+          ...setup(active, new Set(admitted)),
+          activateWorkspaceTab: vi.fn((path: string) => {
+            tabs.push(path);
+            return new Promise<void>((resolve) => pending.push(resolve));
+          }),
+        };
         render(workbench);
         return workbench;
       };
@@ -1616,14 +1558,7 @@ describe("AgentWorkbenchScreen", () => {
     expect(host.textContent).toContain(ADD_PROJECT_REFUSED_REASON);
   });
 
-  it("updates branch checkout availability immediately after saving and dispatch settlement", async () => {
-    const dirty = {
-      path: `${ROOT_A}/file.ts`,
-      name: "file.ts",
-      language: "typescript",
-      content: "draft",
-      savedContent: "saved",
-    };
+  it("blocks branch checkout while a turn is running or dispatching and allows it otherwise", async () => {
     const gateway: NonNullable<AgentWorkbenchScreenProps["gitHistoryGateway"]> = {
       getRepoStatus: async () => ({ gitAvailable: true, isRepository: true }),
       getBranches: async () => ({ current: "main", local: ["main", "feature"], remotes: {} }),
@@ -1637,7 +1572,6 @@ describe("AgentWorkbenchScreen", () => {
       },
     };
     let workbench = createWorkbench(ROOT_A, {
-      openDocuments: [dirty],
       workspaceTrust: { rootPath: ROOT_A, trusted: true },
       agentWorkbench: recordedLayoutState({
         rightPanel: "open",
@@ -1676,8 +1610,12 @@ describe("AgentWorkbenchScreen", () => {
         (item) => item.textContent === "Switch to this branch",
       );
     await waitForReact(() => expect(switchButton()).toBeDefined());
+    expect(switchButton()?.disabled).toBe(false);
+    const idleAgents = workbench.agents;
+    workbench = { ...workbench, agents: withRunningTurn(idleAgents) };
+    await show();
     expect(switchButton()?.disabled).toBe(true);
-    workbench = { ...workbench, openDocuments: [{ ...dirty, savedContent: "draft" }] };
+    workbench = { ...workbench, agents: idleAgents };
     await show();
     expect(switchButton()?.disabled).toBe(false);
     workbench = { ...workbench, agents: { ...workbench.agents, dispatching: true } };
@@ -1691,7 +1629,6 @@ describe("AgentWorkbenchScreen", () => {
 
   it.each<[string, Partial<AgentWorkbenchScreenWorkbench>]>([
     ["Settings covers the workbench", { settingsOpen: true }],
-    ["the editor layout replaces the agent layout", { agentModeActive: false }],
     [
       "the maximized right panel covers the thread",
       { agentWorkbench: recordedLayoutState({ rightPanel: "open", rightPanelMaximized: true }) },
@@ -1945,7 +1882,7 @@ type MockedWorkbench = AgentWorkbenchScreenWorkbench & {
   readonly hideBottomPanel: ReturnType<typeof vi.fn>;
   readonly runCommand: ReturnType<typeof vi.fn>;
   readonly setSidebarView: ReturnType<typeof vi.fn>;
-  readonly showBottomPanelView: ReturnType<typeof vi.fn>;
+  readonly showTerminalPanel: ReturnType<typeof vi.fn>;
 };
 
 function createWorkbench(
@@ -1980,16 +1917,12 @@ function createWorkbench(
   } as unknown as AgentWorkbenchScreenWorkbench["nodePackageScripts"];
 
   return {
-    activePath: null,
     agentWorkbench: recordedLayoutState(),
     agents: surface(workspaceRoot),
     appSettings: defaultAppSettings(),
-    bottomPanelView: "problems",
     bottomPanelVisible: false,
     hideBottomPanel: vi.fn(),
     nodePackageScripts,
-    openPinnedFile: vi.fn(),
-    openProblemNotice: vi.fn(async () => true),
     openWorkspaceRootWithReceipt: vi.fn(async () => ({
       isCurrent: () => true,
       outcome: {
@@ -2012,10 +1945,9 @@ function createWorkbench(
         },
       },
     })),
-    previewFile: vi.fn(),
     runCommand: vi.fn(() => "executed" as const),
     setSidebarView: vi.fn(),
-    showBottomPanelView: vi.fn(),
+    showTerminalPanel: vi.fn(),
     workspaceIdentityDescriptor: {
       canonicalRoot: workspaceRoot,
       caseSensitive: true,
@@ -2138,6 +2070,19 @@ function project(root: string): AgentProjectDescriptor {
     ],
     isolationPolicy: "auto",
     leaseToken: null,
+  };
+}
+
+function withRunningTurn(agents: WorkbenchAgentsSurface): WorkbenchAgentsSurface {
+  return {
+    ...agents,
+    threads: agents.threads.map((view) => ({
+      ...view,
+      thread: {
+        ...view.thread,
+        turns: view.thread.turns.map((turn) => ({ ...turn, status: { kind: "running" as const } })),
+      },
+    })),
   };
 }
 

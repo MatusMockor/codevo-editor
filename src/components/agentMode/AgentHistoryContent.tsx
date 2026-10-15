@@ -1,17 +1,12 @@
 import { FolderGit2, RefreshCw, X } from "lucide-react";
-import { Suspense, lazy, useMemo, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { AgentHistoryCheckoutAction } from "./AgentHistoryCheckoutAction";
 import { AgentHistoryGraph } from "./AgentHistoryGraph";
 import { historyDate, historyMessage } from "./agentHistoryPresentation";
 import { AgentHistoryBranchPicker } from "./AgentHistoryBranchPicker";
 import { useAgentGitHistory } from "../../application/useAgentGitHistory";
-import type { DiffPayload, GitFileDiff } from "../../domain/git";
+import { AgentTextDiffView } from "./rightPanel/diff/AgentTextDiffView";
 import "./agentHistory.css";
-
-const LazyGitDiffPreview = lazy(() =>
-  import("../GitDiffPreview").then((module) => ({ default: module.GitDiffPreview })),
-);
-
 import type { AgentSurfaceHistoryProps } from "./AgentSurfaceHistory";
 
 export function AgentHistoryContent({
@@ -20,13 +15,12 @@ export function AgentHistoryContent({
   repositoryPicker,
   checkout,
   fileChanges,
-  ...editor
 }: AgentSurfaceHistoryProps & { readonly repositoryPicker?: ReactNode }) {
   const target = scope.kind === "available" ? scope.target : null;
   const history = useAgentGitHistory({ target, gateway, fileChanges });
   const message =
     history.details === null ? "" : historyMessage(history.details.subject, history.details.body);
-  const diff = useMemo(() => historyDiff(history.diff), [history.diff]);
+  const diff = history.diff;
   return (
     <section aria-label="Git history" className="agent-history">
       <header className="agent-history__toolbar">
@@ -162,49 +156,32 @@ export function AgentHistoryContent({
       )}
       {(history.diffLoading || diff !== null) && (
         <div className="agent-history__diff">
-          <Suspense fallback={<p className="agent-note">Loading diff…</p>}>
-            <LazyGitDiffPreview
-              {...editor}
-              canRevertChange={false}
-              comparisonLabels={{
-                original: history.details?.parents.length === 0 ? "Empty tree" : "Parent",
-                modified:
-                  history.details?.abbrevHash ?? history.selectedHash?.slice(0, 8) ?? "Commit",
-              }}
-              diff={diff}
-              isLoading={history.diffLoading}
-              onClose={history.closeDiff}
-              previewIdentity={`${target?.ownerKey}:${history.selectedHash}:${history.selectedFile?.path}`}
-            />
-          </Suspense>
+          <header className="agent-history__inspector-heading">
+            <span title={diff?.oldPath ?? undefined}>
+              {diff?.path ?? history.selectedFile?.path ?? "Diff"}
+            </span>
+            <button
+              aria-label="Close diff"
+              className="agent-iconbutton"
+              onClick={history.closeDiff}
+              type="button"
+            >
+              <X size={13} />
+            </button>
+          </header>
+          <AgentTextDiffView
+            labels={{
+              original: history.details?.parents.length === 0 ? "Empty tree" : "Parent",
+              modified:
+                history.details?.abbrevHash ?? history.selectedHash?.slice(0, 8) ?? "Commit",
+            }}
+            loading={history.diffLoading}
+            modified={diff?.modifiedContent ?? ""}
+            original={diff?.originalContent ?? ""}
+            path={diff?.path ?? history.selectedFile?.path ?? ""}
+          />
         </div>
       )}
     </section>
   );
-}
-
-function historyDiff(payload: DiffPayload | null): GitFileDiff | null {
-  if (payload === null) return null;
-  const status =
-    payload.status === "A"
-      ? "added"
-      : payload.status === "D"
-        ? "deleted"
-        : payload.status === "R"
-          ? "renamed"
-          : "modified";
-  return {
-    change: {
-      isStaged: false,
-      isUnversioned: false,
-      path: payload.path,
-      relativePath: payload.path,
-      oldPath: payload.oldPath,
-      oldRelativePath: payload.oldPath,
-      status,
-    },
-    language: payload.language,
-    originalContent: payload.originalContent,
-    modifiedContent: payload.modifiedContent,
-  };
 }

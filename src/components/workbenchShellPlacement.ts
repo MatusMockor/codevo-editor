@@ -1,9 +1,4 @@
-import {
-  DEFAULT_AGENT_RAIL_WIDTH,
-  type AgentRailState,
-  type AgentWorkbenchLayout,
-  type AgentWorkbenchLayoutMode,
-} from "../domain/agentWorkbenchLayout";
+import type { AgentRailState, AgentWorkbenchLayout } from "../domain/agentWorkbenchLayout";
 import {
   responsiveAgentPanelPlacement,
   type ResponsivePanelRestore,
@@ -16,7 +11,6 @@ export const WORKBENCH_FRAME_BOTTOM_PANEL_VARIABLE = "--agent-bottom-panel-commi
 export const WORKBENCH_FRAME_RAIL_VARIABLE = "--agent-rail-committed";
 
 export interface WorkbenchShellPlacementInput {
-  readonly effectiveLayout: AgentWorkbenchLayoutMode;
   readonly layout: Pick<
     AgentWorkbenchLayout,
     | "rightPanel"
@@ -33,8 +27,6 @@ export interface WorkbenchShellPlacementInput {
 }
 
 export interface WorkbenchShellPlacement {
-  readonly layout: AgentWorkbenchLayoutMode;
-  readonly editorHidden: boolean;
   readonly rightPanelHidden: boolean;
   readonly surfacesMounted: boolean;
   readonly rightPanelMaximized: boolean;
@@ -67,32 +59,12 @@ export function rightPanelCoversThread(
 
 export function workbenchShellPlacement({
   bottomPanelVisible,
-  effectiveLayout,
   layout,
   viewportWidth = Number.POSITIVE_INFINITY,
 }: WorkbenchShellPlacementInput): WorkbenchShellPlacement {
-  if (effectiveLayout === "editor-only") {
-    return {
-      layout: effectiveLayout,
-      editorHidden: false,
-      rightPanelHidden: true,
-      surfacesMounted: false,
-      rightPanelMaximized: true,
-      responsiveMaximized: false,
-      rightPanelOverlay: false,
-      responsiveRestore: "none",
-      rail: "collapsed",
-      railWidth: DEFAULT_AGENT_RAIL_WIDTH,
-      rightPanelWidth: 0,
-      bottomPanelHeight: bottomPanelVisible ? layout.bottomPanelHeight : 0,
-    };
-  }
-
   const host = agentSurfaceHostPlacement(layout);
   const rightPanelHidden = host.hidden;
   const placement: WorkbenchShellPlacement = {
-    layout: effectiveLayout,
-    editorHidden: true,
     rightPanelHidden,
     surfacesMounted: host.mounted,
     rightPanelMaximized: rightPanelCoversThread(layout),
@@ -111,7 +83,6 @@ export function responsiveWorkbenchShellPlacement(
   placement: WorkbenchShellPlacement,
   viewportWidth: number,
 ): WorkbenchShellPlacement {
-  if (placement.layout !== "agent") return placement;
   const responsive = responsiveAgentPanelPlacement({
     hidden: placement.rightPanelHidden,
     maximized: placement.rightPanelMaximized,

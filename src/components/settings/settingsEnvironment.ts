@@ -47,13 +47,9 @@ export function settingsEnvironment({
       .filter((path) => path !== ""),
     hasWorkspace: Boolean(workbench.workspaceRoot),
     onCopyInstallCommand: writeClipboardText,
-    onOpenJavaScriptTypeScriptServiceLog: workbench.openJavaScriptTypeScriptServiceLog,
-    onRestartJavaScriptTypeScriptService: workbench.restartJavaScriptTypeScriptService,
-    phpTools: workbench.phpTools,
     providerManagement,
     providerSignIn: workbench.agents?.providerSignIn ?? null,
     systemFontGateway,
-    workspaceDescriptor: workbench.workspaceDescriptor,
     workspaceRoot: workbench.workspaceRoot,
   };
 }

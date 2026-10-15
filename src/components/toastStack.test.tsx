@@ -11,7 +11,6 @@ import { parseCssRules, readStyleSheet } from "./cssContractTestSupport";
 import { NoticeToastHost } from "./NoticeToastHost";
 
 const WORKBENCH = {
-  agentModeActive: true,
   appSettings: { agentThreadFontSize: 13, keymap: defaultKeymapSettings("linux") },
   runCommand: () => "missing" as const,
   settingsOpen: false,

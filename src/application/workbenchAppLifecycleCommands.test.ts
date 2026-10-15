@@ -3,14 +3,10 @@ import type { CommandContext } from "./commandRegistry";
 import { workbenchAppLifecycleCommands } from "./workbenchAppLifecycleCommands";
 
 const noWorkspaceContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: false,
 };
 
 const workspaceContext: CommandContext = {
-  activeDocumentDirty: true,
-  hasActiveDocument: true,
   hasWorkspace: true,
 };
 

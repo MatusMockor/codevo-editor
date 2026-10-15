@@ -676,13 +676,18 @@ export function AgentComposer({
     if (event.shiftKey || event.altKey) return;
     if (event.repeat || dictation.submitBlockedReason !== null) {
       event.preventDefault();
+      event.stopPropagation();
       return;
     }
     if (commands.open) {
-      if (commands.interceptSubmit()) event.preventDefault();
+      if (commands.interceptSubmit()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       return;
     }
     event.preventDefault();
+    event.stopPropagation();
     if (commands.interceptSubmit()) return;
     if (blocked) return;
     dispatch(event.metaKey || event.ctrlKey);

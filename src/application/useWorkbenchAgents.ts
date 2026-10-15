@@ -29,7 +29,6 @@ import type {
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
 import {
   repositoryRootForMapping,
-  resolveGitRepositoryForPath,
   type GitRepositoryMapping,
   type GitRepositoryStatus,
   type ResolvedGitRepository,
@@ -42,7 +41,6 @@ import type {
   WorkspaceSettings,
 } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
-import { isDirty, type EditorDocument } from "../domain/workspace";
 import { runningTurn } from "../domain/agentThread";
 import {
   useAgentProjects,
@@ -55,7 +53,7 @@ import type {
   AgentThreadsSurface,
   ExternalSessionsSurface,
 } from "./agentThreadPorts";
-import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
+import type { AgentFileNavigationPort } from "./useAgentFileNavigation";
 import type { ExternalUrlOpenerPort } from "./useAgentShipFlow";
 import { useAgentThreads, type AgentThreadsGitGateway } from "./useAgentThreads";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
@@ -78,7 +76,7 @@ import {
   defaultExternalSessionGateway,
   defaultGitIntegrationGateway,
   defaultGitWorktreeGateway,
-} from "./workbenchDefaultGateways";
+} from "./agentApp/agentDefaultGateways";
 
 export interface WorkbenchAgentProjectGateways {
   readonly settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings">;
@@ -110,9 +108,8 @@ export interface WorkbenchAgentsOptions {
   readonly gitWorktreeGateway?: GitWorktreeGateway;
   readonly gitIntegrationGateway?: GitIntegrationGateway;
   readonly externalUrlOpener?: ExternalUrlOpenerPort | null;
-  readonly editorBridge?: AgentEditorBridgePort | null;
+  readonly editorBridge?: AgentFileNavigationPort | null;
   readonly agentProjectGateways?: WorkbenchAgentProjectGateways;
-  readonly agentModeActive: boolean;
   readonly trustRevisionForOwner?: (ownerId: string) => number;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly applyAppSettings: (settings: AppSettings) => void;
@@ -122,7 +119,6 @@ export interface WorkbenchAgentsOptions {
   readonly gitGateway: AgentThreadsGitGateway;
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
-  readonly openDocuments: ReadonlyArray<EditorDocument>;
   readonly onActiveWorkspaceTrustChanged: (
     rootPath: string,
     ownerId: string,
@@ -217,7 +213,6 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
   const {
     gitRepositoryMappings,
     gitRepositoryStatuses,
-    openDocuments,
     setSettingsInitialSection,
     setSettingsOpen,
     workspaceId,
@@ -254,29 +249,6 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
       return { known: true, dirty: entry.status.changes.length > 0 };
     },
     [gitRepositoryStatuses],
-  );
-
-  const getDirtyEditorDocumentCount = useCallback(
-    (repositoryRoot: string): number => {
-      if (!workspaceRoot) {
-        return 0;
-      }
-
-      return openDocuments.filter((document) => {
-        if (!isDirty(document)) {
-          return false;
-        }
-
-        const resolved = resolveGitRepositoryForPath(
-          [...gitRepositoryMappings],
-          workspaceRoot,
-          document.path,
-        );
-
-        return resolved?.repositoryRoot === repositoryRoot;
-      }).length;
-    },
-    [gitRepositoryMappings, openDocuments, workspaceRoot],
   );
 
   const openAgentSettings = useCallback(() => {
@@ -337,7 +309,7 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
 
   const agentProjects = useAgentProjects({
     enabled: projectGateways !== undefined,
-    autoAdmitOpenedProjects: options.agentModeActive,
+    autoAdmitOpenedProjects: true,
     trustRevisionForOwner: options.trustRevisionForOwner,
     appSettingsRef: options.appSettingsRef,
     activeWorkspaceId: workspaceId,
@@ -526,13 +498,11 @@ export function useWorkbenchAgents(options: WorkbenchAgentsOptions): WorkbenchAg
     editorBridge: options.editorBridge ?? null,
     prompter: options.prompter,
     projects: agentProjects.projects,
-    agentModeActive: options.agentModeActive,
     getAgentCliKind: () => options.appSettingsRef.current.agentCliKind,
     currentCliVersion: (provider) => providerCliVersion(providerManagement, provider),
     getAgentProviderAdmissionAuthority: providerManagement.admissionAuthority,
     getMaxConcurrentAgentTasks: () => options.appSettingsRef.current.maxConcurrentAgentTasks,
     getRepositoryStatus,
-    getDirtyEditorDocumentCount,
     onProjectDispatchTrustRejected: agentProjects.noteDispatchTrustRejected,
     onAccountUsageObserved: recordAccountUsage,
     onProviderTurnCompleted: refreshProviderUsageAfterTurn,

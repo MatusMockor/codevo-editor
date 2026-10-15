@@ -7,16 +7,15 @@ import {
   MAX_RECENT_WORKSPACE_PATHS,
   maxEditorFontSize,
   minEditorFontSize,
-  monacoFontLigaturesForEditorSetting,
   normalizeAppSettings,
   normalizeEditorFontSize,
   normalizeRecentWorkspacePaths,
   normalizeStatusBarItemVisibility,
   normalizeWorkspaceSession,
   normalizeWorkspaceSettings,
+  isSettingsSection,
+  parseSettingsSection,
   pushRecentWorkspacePath,
-  settingsIgnorePatternsFromText,
-  settingsIgnorePatternsText,
   WORKSPACE_SESSION_VERSION,
 } from "./settings";
 import { DEFAULT_APPEARANCE } from "./appearance";
@@ -28,16 +27,8 @@ import {
 } from "./agentSettings";
 import { defaultAgentNewThreadDefaults } from "./agentNewThreadDefaults";
 import { defaultAgentProviderPreferences } from "./agentProviderSettings";
-import { defaultKeymapSettings, detectKeymapPlatform, shortcutSequenceForPlatform } from "./keymap";
-import { keymapDefaultAliasIsActive, keymapDefaultAliases } from "./keymapDefaultAliases";
+import { defaultKeymapSettings } from "./keymap";
 import { KEYMAP_DEFAULTS_REVISION } from "./keymapDefaultsMigration";
-import {
-  LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-  LARGE_SMART_DOCUMENT_LINE_LIMIT,
-  MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-  MIN_LARGE_SMART_DOCUMENT_LINE_LIMIT,
-  normalizeLargeSmartDocumentPolicy,
-} from "./largeDocumentPolicy";
 
 describe("settings defaults", () => {
   it("creates app and workspace defaults", () => {
@@ -58,7 +49,6 @@ describe("settings defaults", () => {
       windowZoomLevel: 0,
       editorFontLigatures: false,
       editorFontSize: 14,
-      minimapEnabled: false,
       keymap: defaultKeymapSettings(),
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
@@ -67,88 +57,17 @@ describe("settings defaults", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
-      wordWrapEnabled: false,
-      userSnippets: [],
       workspaceTabs: [],
     });
     expect(defaultWorkspaceSettings()).toEqual({
       agentIsolationPolicy: "auto",
-      autoSave: true,
-      autoSaveConfigured: true,
-      defaultInsertSpaces: true,
-      defaultTabSize: 4,
-      extraIgnorePatterns: [],
-      eslintAnalyseOnSave: false,
-      eslintFixOnSave: false,
-      eslintPath: null,
-      formatOnPaste: false,
-      formatOnSave: false,
       gitCommitMessageHistory: [],
       gitDirectoryMappings: [],
       gitDirectoryMappingsAuto: true,
-      intelligenceMode: "basic",
-      intelephensePath: null,
-      javaScriptTypeScriptAddMissingImportsOnSave: false,
-      javaScriptTypeScriptAutoImports: true,
-      javaScriptTypeScriptAutomaticTypeAcquisition: false,
-      javaScriptTypeScriptCodeLens: false,
-      javaScriptTypeScriptReferencesCodeLensOnAllFunctions: false,
-      javaScriptTypeScriptCompleteFunctionCalls: false,
-      javaScriptTypeScriptFixAllOnSave: false,
-      javaScriptTypeScriptImportModuleSpecifierEnding: "auto",
-      javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
-      javaScriptTypeScriptInlayHints: true,
-      javaScriptTypeScriptOrganizeImportsOnSave: false,
-      javaScriptTypeScriptPreferTypeOnlyAutoImports: false,
-      javaScriptTypeScriptQuotePreference: "auto",
-      javaScriptTypeScriptRemoveUnusedOnSave: false,
-      javaScriptTypeScriptService: "auto",
-      javaScriptTypeScriptValidation: true,
-      javaScriptTypeScriptVersion: "bundled",
-      largeFileMode: {
-        characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-        lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
-      },
-      optimizeImportsOnSave: false,
-      phpBackend: "auto",
-      phpInlayHints: true,
-      phpstanAnalyseOnSave: false,
-      phpstanPath: null,
-      phpVersionOverride: null,
-      phpactorPath: null,
-      prettierFormatOnSave: false,
-      revealActiveFileInTree: true,
-      session: {
-        bottomPanelView: "problems",
-        editor: {
-          activeGroupId: "editor-main",
-          groups: {
-            "editor-main": { activePath: null, openPaths: [], previewPath: null },
-          },
-          layout: { groupId: "editor-main", kind: "group" },
-        },
-        sidebarView: "files",
-        version: 1,
-      },
-      statusBar: {
-        agentAttention: true,
-        cursorPosition: true,
-        index: true,
-        languageServer: true,
-      },
+      session: { version: 1 },
+      statusBar: { agentAttention: true },
     });
-    expect(defaultWorkspaceSessionState()).toEqual({
-      bottomPanelView: "problems",
-      editor: {
-        activeGroupId: "editor-main",
-        groups: {
-          "editor-main": { activePath: null, openPaths: [], previewPath: null },
-        },
-        layout: { groupId: "editor-main", kind: "group" },
-      },
-      sidebarView: "files",
-      version: 1,
-    });
+    expect(defaultWorkspaceSessionState()).toEqual({ version: 1 });
   });
 
   it("normalizes the exact skipped application update version", () => {
@@ -355,24 +274,6 @@ describe("normalizeAppSettings", () => {
       ).toMatchObject({ agentModelFavoriteKeys: [], agentModelFavoritesRevision: 0 });
     }
   });
-  it("round-trips a persisted word wrap setting", () => {
-    expect(normalizeAppSettings({ wordWrapEnabled: true }).wordWrapEnabled).toBe(true);
-    expect(normalizeAppSettings({ wordWrapEnabled: false }).wordWrapEnabled).toBe(false);
-  });
-
-  it("defaults a legacy app setting without word wrap state to false", () => {
-    expect(normalizeAppSettings({}).wordWrapEnabled).toBe(false);
-  });
-
-  it("round-trips a persisted minimap setting", () => {
-    expect(normalizeAppSettings({ minimapEnabled: true }).minimapEnabled).toBe(true);
-    expect(normalizeAppSettings({ minimapEnabled: false }).minimapEnabled).toBe(false);
-  });
-
-  it("defaults a legacy app setting without minimap state to false", () => {
-    expect(normalizeAppSettings({}).minimapEnabled).toBe(false);
-  });
-
   it("migrates the legacy four-task limit to shared parallel thread capacity", () => {
     expect(normalizeAppSettings({ maxConcurrentAgentTasks: 4 }).maxConcurrentAgentTasks).toBe(64);
   });
@@ -396,7 +297,6 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
-      minimapEnabled: false,
       recentWorkspacePath: "/project",
       recentWorkspacePaths: ["/project"],
       recentWorkspaceOpenedAt: {},
@@ -404,8 +304,6 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
-      wordWrapEnabled: false,
-      userSnippets: [],
       workspaceTabs: ["/project"],
     });
     expect(
@@ -414,12 +312,10 @@ describe("normalizeAppSettings", () => {
         windowZoomLevel: 0,
         editorFontLigatures: true,
         editorFontSize: 18,
-        keymap: { "editor.save": "Cmd+Shift+S" },
-        minimapEnabled: true,
+        keymap: { "commands.show": "Cmd+Shift+S" },
         recentWorkspacePath: null,
         runtimePolicy: "suspendOnBackground",
         theme: "light",
-        wordWrapEnabled: true,
         workspaceTabs: ["/project-a", " /project-b ", "/project-a", 42],
       }),
     ).toEqual({
@@ -441,9 +337,8 @@ describe("normalizeAppSettings", () => {
       editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
-        "editor.save": "Cmd+Shift+S",
+        "commands.show": "Cmd+Shift+S",
       },
-      minimapEnabled: true,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
       recentWorkspaceOpenedAt: {},
@@ -451,8 +346,6 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "suspendOnBackground",
       terminalShellIntegrationEnabled: false,
       appearance: { palette: "graphite-teal", colorScheme: "light", syntaxTheme: "matchPalette" },
-      wordWrapEnabled: true,
-      userSnippets: [],
       workspaceTabs: ["/project-a", "/project-b"],
     });
     expect(
@@ -478,7 +371,6 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
-      minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
       recentWorkspaceOpenedAt: {},
@@ -486,8 +378,6 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: { palette: "graphite-teal", colorScheme: "dark", syntaxTheme: "ayuMirage" },
-      wordWrapEnabled: false,
-      userSnippets: [],
       workspaceTabs: [],
     });
   });
@@ -563,7 +453,6 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
-      minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
       recentWorkspaceOpenedAt: {},
@@ -571,8 +460,6 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
-      wordWrapEnabled: false,
-      userSnippets: [],
       workspaceTabs: [],
     });
     expect(
@@ -628,7 +515,6 @@ describe("normalizeAppSettings", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
-      minimapEnabled: false,
       recentWorkspacePath: "/project/api",
       recentWorkspacePaths: ["/project/api"],
       recentWorkspaceOpenedAt: {},
@@ -636,8 +522,6 @@ describe("normalizeAppSettings", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
-      wordWrapEnabled: false,
-      userSnippets: [],
       workspaceTabs: ["/project/api/", "/project/web"],
     });
   });
@@ -699,56 +583,20 @@ describe("normalizeAppSettings", () => {
     expect(normalizeAppSettings({ recentWorkspacePath: 1 })).toEqual(defaultAppSettings());
     expect(normalizeAppSettings(null)).toEqual(defaultAppSettings());
   });
-
-  it("persists and normalizes user snippets", () => {
-    const normalized = normalizeAppSettings({
-      userSnippets: [
-        {
-          prefix: "  myhelper ",
-          body: "helper($0);",
-          description: " Call helper ",
-          languages: ["php", "php", "blade"],
-        },
-        { prefix: "", body: "x", description: "", languages: ["php"] },
-      ],
-    });
-
-    expect(normalized.userSnippets).toEqual([
-      {
-        prefix: "myhelper",
-        body: "helper($0);",
-        description: "Call helper",
-        languages: ["php", "blade"],
-      },
-    ]);
-  });
-
-  it("defaults user snippets to an empty array when absent or invalid", () => {
-    expect(normalizeAppSettings({}).userSnippets).toEqual([]);
-    expect(normalizeAppSettings({ userSnippets: "nope" }).userSnippets).toEqual([]);
-  });
 });
 
 describe("keymap defaults revision", () => {
-  const retiredFoldAll = shortcutSequenceForPlatform("Cmd+Shift+-", detectKeymapPlatform());
-  const retiredUnfoldAll = shortcutSequenceForPlatform("Cmd+Shift+=", detectKeymapPlatform());
-  const persistedBeforeRevision = {
+  const persistedWithRemovedCommands = {
     editorFontSize: 16,
     keymap: {
       ...defaultKeymapSettings(),
-      "editor.foldAll": retiredFoldAll,
-      "editor.unfoldAll": retiredUnfoldAll,
+      "editor.foldAll": "Cmd+Shift+-",
+      "editor.unfoldAll": "Cmd+Shift+=",
     },
   };
 
   function reloaded(settings: unknown): ReturnType<typeof normalizeAppSettings> {
     return normalizeAppSettings(JSON.parse(JSON.stringify(settings)));
-  }
-
-  function fontZoomInAliasActive(settings: ReturnType<typeof normalizeAppSettings>): boolean {
-    return keymapDefaultAliases().every((alias) =>
-      keymapDefaultAliasIsActive(settings.keymap, alias),
-    );
   }
 
   it("stamps fresh and unreadable settings with the current revision", () => {
@@ -757,48 +605,22 @@ describe("keymap defaults revision", () => {
     expect(normalizeAppSettings({}).keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
   });
 
-  it("migrates fold shortcuts persisted as the retired defaults and frees the zoom alias", () => {
-    const migrated = normalizeAppSettings(persistedBeforeRevision);
+  it("drops overrides of removed editor commands while settling the revision", () => {
+    const migrated = normalizeAppSettings(persistedWithRemovedCommands);
 
     expect(migrated.keymap).toEqual(defaultKeymapSettings());
     expect(migrated.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
     expect(migrated.editorFontSize).toBe(16);
-    expect(fontZoomInAliasActive(migrated)).toBe(true);
     expect(reloaded(migrated)).toEqual(migrated);
-  });
-
-  it("leaves customised fold shortcuts untouched while settling the revision", () => {
-    const customised = normalizeAppSettings({
-      keymap: {
-        ...defaultKeymapSettings(),
-        "editor.foldAll": "Shift+Alt+F9",
-        "editor.unfoldAll": "",
-      },
-    });
-
-    expect(customised.keymap["editor.foldAll"]).toBe("Shift+Alt+F9");
-    expect(customised.keymap["editor.unfoldAll"]).toBe("");
-    expect(customised.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
-  });
-
-  it("keeps a deliberate re-bind to the retired default across reloads", () => {
-    const migrated = normalizeAppSettings(persistedBeforeRevision);
-    const rebound = reloaded({
-      ...migrated,
-      keymap: { ...migrated.keymap, "editor.unfoldAll": retiredUnfoldAll },
-    });
-
-    expect(rebound.keymap["editor.unfoldAll"]).toBe(retiredUnfoldAll);
-    expect(rebound.keymap["editor.foldAll"]).toBe(defaultKeymapSettings()["editor.foldAll"]);
-    expect(rebound.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
-    expect(fontZoomInAliasActive(rebound)).toBe(false);
-    expect(reloaded(rebound)).toEqual(rebound);
   });
 
   it.each(["1", -1, 1.5, null, {}])(
     "treats the malformed persisted revision %j as never migrated",
     (keymapDefaultsRevision) => {
-      const migrated = normalizeAppSettings({ ...persistedBeforeRevision, keymapDefaultsRevision });
+      const migrated = normalizeAppSettings({
+        ...persistedWithRemovedCommands,
+        keymapDefaultsRevision,
+      });
 
       expect(migrated.keymap).toEqual(defaultKeymapSettings());
       expect(migrated.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
@@ -806,27 +628,12 @@ describe("keymap defaults revision", () => {
   );
 });
 
-describe("monacoFontLigaturesForEditorSetting", () => {
-  it("maps the boolean app setting to explicit Monaco font feature settings", () => {
-    expect(monacoFontLigaturesForEditorSetting(true)).toBe('"liga" on, "calt" on');
-    expect(monacoFontLigaturesForEditorSetting(false)).toBe('"liga" off, "calt" off');
-  });
-});
-
 describe("normalizeWorkspaceSettings", () => {
   it("accepts valid persisted workspace settings", () => {
     expect(
       normalizeWorkspaceSettings({
-        autoSave: true,
-        autoSaveConfigured: true,
-        defaultInsertSpaces: false,
-        defaultTabSize: 6,
-        extraIgnorePatterns: ["vendor/generated", " var/cache ", "var/cache"],
-        eslintAnalyseOnSave: true,
-        eslintFixOnSave: true,
-        eslintPath: " /tools/eslint ",
-        formatOnPaste: true,
-        formatOnSave: true,
+        agentIsolationPolicy: "worktree",
+        gitCommitMessageHistory: [" first ", "second"],
         gitDirectoryMappings: [
           "workbench/lcsk/x",
           "",
@@ -835,129 +642,19 @@ describe("normalizeWorkspaceSettings", () => {
           "../escape",
         ],
         gitDirectoryMappingsAuto: false,
-        intelligenceMode: "lightSmart",
-        intelephensePath: "/tools/intelephense",
-        javaScriptTypeScriptAddMissingImportsOnSave: true,
-        javaScriptTypeScriptAutoImports: false,
-        javaScriptTypeScriptAutomaticTypeAcquisition: true,
-        javaScriptTypeScriptCodeLens: true,
-        javaScriptTypeScriptReferencesCodeLensOnAllFunctions: true,
-        javaScriptTypeScriptCompleteFunctionCalls: true,
-        javaScriptTypeScriptFixAllOnSave: true,
-        javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-        javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
-        javaScriptTypeScriptInlayHints: false,
-        javaScriptTypeScriptOrganizeImportsOnSave: true,
-        javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
-        javaScriptTypeScriptQuotePreference: "single",
-        javaScriptTypeScriptRemoveUnusedOnSave: true,
-        javaScriptTypeScriptService: "off",
-        javaScriptTypeScriptValidation: false,
-        javaScriptTypeScriptVersion: "workspace",
-        largeFileMode: {
-          characterLimit: 512_000,
-          lineLimit: 10_000,
-        },
-        optimizeImportsOnSave: true,
-        phpBackend: "phpactor",
-        phpInlayHints: false,
-        phpstanAnalyseOnSave: true,
-        phpstanPath: " /tools/phpstan ",
-        phpVersionOverride: "8.3",
-        phpactorPath: " /tools/phpactor ",
-        prettierFormatOnSave: true,
-        revealActiveFileInTree: false,
-        session: {
-          activePath: "/project/src/User.php",
-          bottomPanelView: "history",
-          openPaths: ["/project/src/User.php", "/project/src/User.php", " /project/README.md "],
-          sidebarView: "git",
-        },
-        statusBar: {
-          activePath: true,
-          dirtyCount: false,
-          index: false,
-          language: true,
-          languageServer: true,
-          message: true,
-          mode: false,
-          workspaceInfo: false,
-          workspaceTrust: true,
-        },
+        statusBar: { agentAttention: false },
       }),
     ).toEqual({
-      agentIsolationPolicy: "auto",
-      autoSave: true,
-      autoSaveConfigured: true,
-      defaultInsertSpaces: false,
-      defaultTabSize: 6,
-      extraIgnorePatterns: ["vendor/generated", "var/cache"],
-      eslintAnalyseOnSave: true,
-      eslintFixOnSave: true,
-      eslintPath: "/tools/eslint",
-      formatOnPaste: true,
-      formatOnSave: true,
-      gitCommitMessageHistory: [],
+      agentIsolationPolicy: "worktree",
+      gitCommitMessageHistory: ["first", "second"],
       gitDirectoryMappings: ["", "workbench/lcsk/attendance", "workbench/lcsk/x"],
       gitDirectoryMappingsAuto: false,
-      intelligenceMode: "lightSmart",
-      intelephensePath: "/tools/intelephense",
-      javaScriptTypeScriptAddMissingImportsOnSave: true,
-      javaScriptTypeScriptAutoImports: false,
-      javaScriptTypeScriptAutomaticTypeAcquisition: true,
-      javaScriptTypeScriptCodeLens: true,
-      javaScriptTypeScriptReferencesCodeLensOnAllFunctions: true,
-      javaScriptTypeScriptCompleteFunctionCalls: true,
-      javaScriptTypeScriptFixAllOnSave: true,
-      javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-      javaScriptTypeScriptImportModuleSpecifierPreference: "project-relative",
-      javaScriptTypeScriptInlayHints: false,
-      javaScriptTypeScriptOrganizeImportsOnSave: true,
-      javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
-      javaScriptTypeScriptQuotePreference: "single",
-      javaScriptTypeScriptRemoveUnusedOnSave: true,
-      javaScriptTypeScriptService: "off",
-      javaScriptTypeScriptValidation: false,
-      javaScriptTypeScriptVersion: "workspace",
-      largeFileMode: {
-        characterLimit: 512_000,
-        lineLimit: 10_000,
-      },
-      optimizeImportsOnSave: true,
-      phpBackend: "phpactor",
-      phpInlayHints: false,
-      phpstanAnalyseOnSave: true,
-      phpstanPath: "/tools/phpstan",
-      phpVersionOverride: "8.3",
-      phpactorPath: "/tools/phpactor",
-      prettierFormatOnSave: true,
-      revealActiveFileInTree: false,
-      session: {
-        bottomPanelView: "history",
-        editor: {
-          activeGroupId: "editor-main",
-          groups: {
-            "editor-main": {
-              activePath: "/project/src/User.php",
-              openPaths: ["/project/src/User.php", "/project/README.md"],
-              previewPath: null,
-            },
-          },
-          layout: { groupId: "editor-main", kind: "group" },
-        },
-        sidebarView: "git",
-        version: 1,
-      },
-      statusBar: {
-        agentAttention: true,
-        cursorPosition: true,
-        index: false,
-        languageServer: true,
-      },
+      session: { version: 1 },
+      statusBar: { agentAttention: false },
     });
   });
 
-  it("keeps only the editor header readouts that still exist when reading old settings", () => {
+  it("drops the retired editor header readouts when reading old settings", () => {
     expect(
       normalizeStatusBarItemVisibility({
         activePath: false,
@@ -966,7 +663,7 @@ describe("normalizeWorkspaceSettings", () => {
         message: true,
         index: false,
       }),
-    ).toEqual({ agentAttention: true, cursorPosition: false, index: false, languageServer: true });
+    ).toEqual({ agentAttention: true });
   });
 
   it.each([undefined, null, "false", 0, {}, []])(
@@ -982,26 +679,6 @@ describe("normalizeWorkspaceSettings", () => {
     expect(
       normalizeWorkspaceSettings({ statusBar: { agentAttention } }).statusBar.agentAttention,
     ).toBe(agentAttention);
-  });
-
-  it("keeps old workspace settings compatible", () => {
-    expect(normalizeWorkspaceSettings({ intelligenceMode: "lightSmart" })).toEqual({
-      ...defaultWorkspaceSettings(),
-      intelligenceMode: "lightSmart",
-    });
-    expect(
-      normalizeWorkspaceSettings({
-        autoSave: false,
-        intelligenceMode: "basic",
-      }).autoSave,
-    ).toBe(true);
-    expect(
-      normalizeWorkspaceSettings({
-        autoSave: false,
-        autoSaveConfigured: true,
-        intelligenceMode: "basic",
-      }).autoSave,
-    ).toBe(false);
   });
 
   it("defaults git directory mappings to empty with auto-detect enabled", () => {
@@ -1041,494 +718,50 @@ describe("normalizeWorkspaceSettings", () => {
     ).toEqual([]);
   });
 
-  it("defaults formatOnSave to false and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).formatOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ formatOnSave: "yes" }).formatOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ formatOnSave: false }).formatOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ formatOnSave: true }).formatOnSave).toBe(true);
-  });
-
-  it("defaults analyse-on-save settings to false and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).eslintAnalyseOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({}).phpstanAnalyseOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ eslintAnalyseOnSave: "yes" }).eslintAnalyseOnSave).toBe(
-      false,
-    );
-    expect(normalizeWorkspaceSettings({ phpstanAnalyseOnSave: "yes" }).phpstanAnalyseOnSave).toBe(
-      false,
-    );
-    expect(normalizeWorkspaceSettings({ eslintAnalyseOnSave: true }).eslintAnalyseOnSave).toBe(
-      true,
-    );
-    expect(normalizeWorkspaceSettings({ phpstanAnalyseOnSave: true }).phpstanAnalyseOnSave).toBe(
-      true,
-    );
-  });
-
-  it("defaults eslintFixOnSave to false and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).eslintFixOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ eslintFixOnSave: "yes" }).eslintFixOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ eslintFixOnSave: false }).eslintFixOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ eslintFixOnSave: true }).eslintFixOnSave).toBe(true);
-  });
-
-  it("defaults prettierFormatOnSave to false and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).prettierFormatOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ prettierFormatOnSave: "yes" }).prettierFormatOnSave).toBe(
-      false,
-    );
-    expect(normalizeWorkspaceSettings({ prettierFormatOnSave: false }).prettierFormatOnSave).toBe(
-      false,
-    );
-    expect(normalizeWorkspaceSettings({ prettierFormatOnSave: true }).prettierFormatOnSave).toBe(
-      true,
-    );
-  });
-
-  it("defaults optimizeImportsOnSave to false and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).optimizeImportsOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({ optimizeImportsOnSave: "yes" }).optimizeImportsOnSave).toBe(
-      false,
-    );
-    expect(normalizeWorkspaceSettings({ optimizeImportsOnSave: true }).optimizeImportsOnSave).toBe(
-      true,
-    );
-    expect(normalizeWorkspaceSettings({ optimizeImportsOnSave: false }).optimizeImportsOnSave).toBe(
-      false,
-    );
-  });
-
-  it("defaults JS/TS on-save source actions to false and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptOrganizeImportsOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptRemoveUnusedOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptAddMissingImportsOnSave).toBe(false);
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptFixAllOnSave).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptAddMissingImportsOnSave: "yes",
-        javaScriptTypeScriptFixAllOnSave: "yes",
-        javaScriptTypeScriptOrganizeImportsOnSave: "yes",
-        javaScriptTypeScriptRemoveUnusedOnSave: "yes",
-      }).javaScriptTypeScriptOrganizeImportsOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptAddMissingImportsOnSave: "yes",
-        javaScriptTypeScriptFixAllOnSave: "yes",
-      }).javaScriptTypeScriptAddMissingImportsOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptAddMissingImportsOnSave: "yes",
-        javaScriptTypeScriptFixAllOnSave: "yes",
-      }).javaScriptTypeScriptFixAllOnSave,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptAddMissingImportsOnSave: true,
-        javaScriptTypeScriptFixAllOnSave: true,
-        javaScriptTypeScriptOrganizeImportsOnSave: true,
-        javaScriptTypeScriptRemoveUnusedOnSave: true,
-      }),
-    ).toEqual({
-      ...defaultWorkspaceSettings(),
-      javaScriptTypeScriptAddMissingImportsOnSave: true,
-      javaScriptTypeScriptFixAllOnSave: true,
-      javaScriptTypeScriptOrganizeImportsOnSave: true,
-      javaScriptTypeScriptRemoveUnusedOnSave: true,
-    });
-  });
-
-  it("normalizes JS/TS import preferences", () => {
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptImportModuleSpecifierEnding).toBe(
-      "auto",
-    );
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptImportModuleSpecifierPreference).toBe(
-      "shortest",
-    );
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptQuotePreference).toBe("auto");
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptPreferTypeOnlyAutoImports).toBe(
-      false,
-    );
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-        javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
-        javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
-        javaScriptTypeScriptQuotePreference: "double",
-      }),
-    ).toEqual({
-      ...defaultWorkspaceSettings(),
-      javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-      javaScriptTypeScriptImportModuleSpecifierPreference: "relative",
-      javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
-      javaScriptTypeScriptQuotePreference: "double",
-    });
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptImportModuleSpecifierEnding: "explicit",
-        javaScriptTypeScriptImportModuleSpecifierPreference: "absolute",
-        javaScriptTypeScriptPreferTypeOnlyAutoImports: "yes",
-        javaScriptTypeScriptQuotePreference: "backtick",
-      }),
-    ).toEqual(defaultWorkspaceSettings());
-  });
-
-  it("defaults JS/TS automatic type acquisition to false and respects explicit booleans", () => {
-    expect(normalizeWorkspaceSettings({}).javaScriptTypeScriptAutomaticTypeAcquisition).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptAutomaticTypeAcquisition: "yes",
-      }).javaScriptTypeScriptAutomaticTypeAcquisition,
-    ).toBe(false);
-    expect(
-      normalizeWorkspaceSettings({
-        javaScriptTypeScriptAutomaticTypeAcquisition: true,
-      }).javaScriptTypeScriptAutomaticTypeAcquisition,
-    ).toBe(true);
-  });
-
-  it("defaults phpInlayHints to true and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).phpInlayHints).toBe(true);
-    expect(normalizeWorkspaceSettings({ phpInlayHints: "yes" }).phpInlayHints).toBe(true);
-    expect(normalizeWorkspaceSettings({ phpInlayHints: false }).phpInlayHints).toBe(false);
-    expect(normalizeWorkspaceSettings({ phpInlayHints: true }).phpInlayHints).toBe(true);
-  });
-
-  it("defaults formatOnPaste to false and respects explicit boolean values", () => {
-    expect(normalizeWorkspaceSettings({}).formatOnPaste).toBe(false);
-    expect(normalizeWorkspaceSettings({ formatOnPaste: "yes" }).formatOnPaste).toBe(false);
-    expect(normalizeWorkspaceSettings({ formatOnPaste: false }).formatOnPaste).toBe(false);
-    expect(normalizeWorkspaceSettings({ formatOnPaste: true }).formatOnPaste).toBe(true);
-  });
-
   it("falls back for invalid workspace settings", () => {
     expect(
       normalizeWorkspaceSettings({
-        extraIgnorePatterns: ["var/cache", 4],
-        eslintPath: 10,
-        defaultInsertSpaces: "yes",
-        defaultTabSize: 0,
-        intelligenceMode: "unknown",
-        javaScriptTypeScriptService: "manual",
-        javaScriptTypeScriptVersion: "manual",
-        phpBackend: "unknown",
-        phpactorPath: 10,
-        phpstanPath: 10,
+        agentIsolationPolicy: "sometimes",
+        gitCommitMessageHistory: "broken",
+        gitDirectoryMappings: 7,
+        gitDirectoryMappingsAuto: "yes",
+        statusBar: [],
       }),
-    ).toEqual({
-      ...defaultWorkspaceSettings(),
-      defaultTabSize: 1,
-      extraIgnorePatterns: ["var/cache"],
-    });
+    ).toEqual(defaultWorkspaceSettings());
     expect(normalizeWorkspaceSettings(null)).toEqual(defaultWorkspaceSettings());
   });
 });
 
-describe("normalizeLargeSmartDocumentPolicy", () => {
-  it("accepts positive numeric thresholds", () => {
-    expect(
-      normalizeLargeSmartDocumentPolicy({
-        characterLimit: 512_000.9,
-        lineLimit: 10_000.4,
-      }),
-    ).toEqual({
-      characterLimit: 512_000,
-      lineLimit: 10_000,
-    });
-  });
-
-  it("clamps small numeric thresholds and falls back for non-numeric thresholds", () => {
-    expect(
-      normalizeLargeSmartDocumentPolicy({
-        characterLimit: 0,
-        lineLimit: "lots",
-      }),
-    ).toEqual({
-      characterLimit: MIN_LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-      lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
-    });
-    expect(normalizeLargeSmartDocumentPolicy({ lineLimit: 1 })).toEqual({
-      characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-      lineLimit: MIN_LARGE_SMART_DOCUMENT_LINE_LIMIT,
-    });
-  });
-});
-
 describe("normalizeWorkspaceSession", () => {
-  it("restores bounded recent files, locations, and navigation stacks", () => {
+  it("keeps the agent workbench and drops the retired editor session fields", () => {
+    const agentWorkbench = serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, true);
     const normalized = normalizeWorkspaceSession({
-      ...defaultWorkspaceSessionState(),
-      navigation: {
-        backStack: [
-          {
-            path: "/project/a.ts",
-            position: { column: 2, lineNumber: 3 },
-          },
-        ],
-        forwardStack: [
-          {
-            path: "/project/b.ts",
-            position: { column: 4, lineNumber: 5 },
-          },
-        ],
-        recentFiles: [{ name: "a.ts", path: "/project/a.ts" }],
-        recentLocations: [
-          {
-            column: 2,
-            line: 3,
-            name: "a.ts",
-            path: "/project/a.ts",
-            relativePath: "a.ts",
-            snippet: "const a = 1;",
-          },
-        ],
-      },
-    });
-
-    expect(normalized.navigation).toEqual({
-      backStack: [
-        {
-          path: "/project/a.ts",
-          position: { column: 2, lineNumber: 3 },
-        },
-      ],
-      forwardStack: [
-        {
-          path: "/project/b.ts",
-          position: { column: 4, lineNumber: 5 },
-        },
-      ],
-      recentFiles: [{ name: "a.ts", path: "/project/a.ts" }],
-      recentLocations: [
-        {
-          column: 2,
-          line: 3,
-          name: "a.ts",
-          path: "/project/a.ts",
-          relativePath: "a.ts",
-          snippet: "const a = 1;",
-        },
-      ],
-    });
-  });
-
-  it("drops malformed elements without discarding valid entries or sibling lists", () => {
-    const normalized = normalizeWorkspaceSession({
-      ...defaultWorkspaceSessionState(),
-      navigation: {
-        additiveField: true,
-        backStack: [
-          { path: "src/valid.ts", position: { column: 1, lineNumber: 2 } },
-          { path: 42, position: { column: 1, lineNumber: 2 } },
-        ],
-        forwardStack: [{ path: "src/forward.ts", position: { column: 2, lineNumber: 3 } }],
-        recentFiles: [
-          { name: "valid.ts", path: "src/valid.ts" },
-          { name: "bad.ts", path: 42 },
-          { extra: true, name: "extra.ts", path: "src/extra.ts" },
-        ],
-        recentLocations: [
-          {
-            column: 1,
-            line: 2,
-            name: "valid.ts",
-            path: "src/valid.ts",
-            relativePath: "src/valid.ts",
-            snippet: "valid",
-          },
-          {
-            column: Number.NaN,
-            line: 2,
-            name: "bad.ts",
-            path: "src/bad.ts",
-            relativePath: "src/bad.ts",
-            snippet: "bad",
-          },
-        ],
-      },
-    });
-
-    expect(normalized.navigation).toEqual({
-      backStack: [{ path: "src/valid.ts", position: { column: 1, lineNumber: 2 } }],
-      forwardStack: [{ path: "src/forward.ts", position: { column: 2, lineNumber: 3 } }],
-      recentFiles: [{ name: "valid.ts", path: "src/valid.ts" }],
-      recentLocations: [
-        {
-          column: 1,
-          line: 2,
-          name: "valid.ts",
-          path: "src/valid.ts",
-          relativePath: "src/valid.ts",
-          snippet: "valid",
-        },
-      ],
-    });
-  });
-
-  it("caps each list after filtering instead of rejecting oversized arrays", () => {
-    const normalized = normalizeWorkspaceSession({
-      ...defaultWorkspaceSessionState(),
-      navigation: {
-        backStack: Array.from({ length: 125 }, (_, index) => ({
-          path: `src/back-${index}.ts`,
-          position: { column: 1, lineNumber: index + 1 },
-        })),
-        forwardStack: [],
-        recentFiles: Array.from({ length: 75 }, (_, index) => ({
-          name: `file-${index}.ts`,
-          path: `src/file-${index}.ts`,
-        })),
-        recentLocations: [],
-      },
-    });
-
-    expect(normalized.navigation?.backStack).toHaveLength(100);
-    expect(normalized.navigation?.recentFiles).toHaveLength(50);
-  });
-
-  it("preserves bounded siblings when one list is not an array", () => {
-    const normalized = normalizeWorkspaceSession({
-      ...defaultWorkspaceSessionState(),
-      navigation: {
-        backStack: [],
-        forwardStack: [],
-        recentFiles: {},
-        recentLocations: [
-          {
-            column: 1,
-            line: 1,
-            name: "a.ts",
-            path: "a.ts",
-            relativePath: "a.ts",
-            snippet: "a",
-          },
-        ],
-      },
-    });
-
-    expect(normalized.navigation?.recentFiles).toEqual([]);
-    expect(normalized.navigation?.recentLocations).toHaveLength(1);
-  });
-
-  it("rejects a navigation record with a polluted prototype", () => {
-    const navigation = Object.create({ polluted: true }) as Record<string, unknown>;
-    navigation.backStack = [];
-    navigation.forwardStack = [];
-    navigation.recentFiles = [];
-    navigation.recentLocations = [];
-
-    expect(
-      normalizeWorkspaceSession({
-        ...defaultWorkspaceSessionState(),
-        navigation,
-      }).navigation,
-    ).toBeUndefined();
-  });
-
-  it("truncates an oversized snippet without discarding its location", () => {
-    const normalized = normalizeWorkspaceSession({
-      ...defaultWorkspaceSessionState(),
-      navigation: {
-        backStack: [],
-        forwardStack: [],
-        recentFiles: [],
-        recentLocations: [
-          {
-            column: 1,
-            line: 1,
-            name: "a.ts",
-            path: "/project/a.ts",
-            relativePath: "a.ts",
-            snippet: "x".repeat(200_000),
-          },
-        ],
-      },
-    });
-
-    expect(normalized.navigation?.recentLocations).toHaveLength(1);
-    expect(
-      new TextEncoder().encode(normalized.navigation?.recentLocations[0]?.snippet).byteLength,
-    ).toBeLessThanOrEqual(256);
-  });
-
-  it("restores the Scripts sidebar view", () => {
-    expect(
-      normalizeWorkspaceSession({
-        ...defaultWorkspaceSessionState(),
-        sidebarView: "scripts",
-      }).sidebarView,
-    ).toBe("scripts");
-  });
-
-  it("falls back to the Files sidebar view for a legacy persisted agents view", () => {
-    expect(
-      normalizeWorkspaceSession({
-        ...defaultWorkspaceSessionState(),
-        sidebarView: "agents",
-      }).sidebarView,
-    ).toBe("files");
-  });
-
-  it("migrates legacy flat fields into the primary group and unpins preview", () => {
-    const normalized = normalizeWorkspaceSession({
-      activePath: "/project/Preview.php",
-      bottomPanelView: "history",
-      openPaths: ["/project/A.php", "/project/Preview.php"],
-      previewPath: "/project/Preview.php",
-      sidebarView: "git",
-      viewStates: {
-        "/project/Preview.php": { column: 9, foldedLines: [3, 2, 2], line: 14 },
-      },
-    });
-
-    expect(normalized).toMatchObject({
-      bottomPanelView: "history",
+      agentWorkbench,
+      bottomPanelView: "problems",
       editor: {
         activeGroupId: "editor-main",
-        groups: {
-          "editor-main": {
-            activePath: "/project/Preview.php",
-            openPaths: ["/project/A.php"],
-            previewPath: "/project/Preview.php",
-          },
-        },
+        groups: { "editor-main": { activePath: "/p/A.ts", openPaths: ["/p/A.ts"] } },
         layout: { groupId: "editor-main", kind: "group" },
       },
+      navigation: { backStack: [], forwardStack: [], recentFiles: [], recentLocations: [] },
       sidebarView: "git",
-      version: 1,
-      viewStates: {
-        "editor-main": {
-          "/project/Preview.php": { column: 9, foldedLines: [2, 3], line: 14 },
-        },
-      },
+      version: WORKSPACE_SESSION_VERSION,
+      viewStates: { "editor-main": { "/p/A.ts": { column: 1, line: 2 } } },
     });
+
+    expect(normalized).toEqual({ agentWorkbench, version: WORKSPACE_SESSION_VERSION });
   });
 
-  it("keeps independent same-file view states in split groups", () => {
-    const normalized = normalizeWorkspaceSession(splitSessionFixture());
-    expect(normalized.viewStates).toEqual({
-      left: { "/project/A.php": { column: 2, line: 3 } },
-      right: { "/project/A.php": { column: 8, line: 9 } },
-    });
+  it("keeps the agent workbench of a legacy unversioned session", () => {
+    const agentWorkbench = serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, false);
+
+    expect(
+      normalizeWorkspaceSession({ agentWorkbench, openPaths: ["/p/A.ts"], activePath: "/p/A.ts" }),
+    ).toEqual({ agentWorkbench, version: WORKSPACE_SESSION_VERSION });
   });
 
-  it("repairs corrupt layouts through editor group normalization", () => {
-    const normalized = normalizeWorkspaceSession({
-      ...splitSessionFixture(),
-      editor: {
-        activeGroupId: "missing",
-        groups: {
-          valid: { activePath: "/project/A.php", openPaths: ["/project/A.php"], previewPath: null },
-          "": { activePath: null, openPaths: [], previewPath: null },
-        },
-        layout: { kind: "group", groupId: "missing" },
-      },
-    });
-    expect(normalized.editor).toMatchObject({
-      activeGroupId: "valid",
-      layout: { groupId: "valid", kind: "group" },
-    });
+  it("keeps the session version at 1", () => {
+    expect(WORKSPACE_SESSION_VERSION).toBe(1);
   });
 
   it("returns the safe default for unsupported explicit versions", () => {
@@ -1719,58 +952,29 @@ describe("recent workspace paths", () => {
   });
 });
 
-function splitSessionFixture() {
-  return {
-    version: 1,
-    bottomPanelView: "problems",
-    editor: {
-      activeGroupId: "right",
-      groups: {
-        left: { activePath: "/project/A.php", openPaths: ["/project/A.php"], previewPath: null },
-        right: { activePath: "/project/A.php", openPaths: ["/project/A.php"], previewPath: null },
-      },
-      layout: {
-        kind: "split",
-        orientation: "horizontal",
-        sizes: [0.4, 0.6],
-        children: [
-          { kind: "group", groupId: "left" },
-          { kind: "group", groupId: "right" },
-        ],
-      },
+describe("parseSettingsSection", () => {
+  it.each([
+    "general",
+    "keymap",
+    "git",
+    "appearance",
+    "agents",
+    "environments",
+    "mcp",
+    "usage",
+    "archive",
+  ])("accepts the kept section %s", (section) => {
+    expect(isSettingsSection(section)).toBe(true);
+    expect(parseSettingsSection(section)).toBe(section);
+  });
+
+  it.each(["php", "snippets", "index", "", "General", null, undefined, 3, {}])(
+    "falls back to general for the unknown section %j",
+    (section) => {
+      expect(isSettingsSection(section)).toBe(false);
+      expect(parseSettingsSection(section)).toBe("general");
     },
-    sidebarView: "files",
-    viewStates: {
-      left: { "/project/A.php": { column: 2, line: 3 } },
-      right: { "/project/A.php": { column: 8, line: 9 } },
-    },
-  };
-}
-
-describe("workspace commit message history", () => {
-  it("defaults legacy workspace settings to empty history", () => {
-    expect(normalizeWorkspaceSettings({}).gitCommitMessageHistory).toEqual([]);
-  });
-
-  it("defensively normalizes persisted history", () => {
-    expect(
-      normalizeWorkspaceSettings({
-        gitCommitMessageHistory: [" first ", null, "", "first", "second"],
-      }).gitCommitMessageHistory,
-    ).toEqual(["first", "second"]);
-    expect(
-      normalizeWorkspaceSettings({ gitCommitMessageHistory: "broken" }).gitCommitMessageHistory,
-    ).toEqual([]);
-  });
-});
-
-describe("settings ignore pattern text", () => {
-  it("round trips trimmed unique patterns", () => {
-    const patterns = settingsIgnorePatternsFromText("vendor/generated\n\n var/cache \nvar/cache");
-
-    expect(patterns).toEqual(["vendor/generated", "var/cache"]);
-    expect(settingsIgnorePatternsText(patterns)).toBe("vendor/generated\nvar/cache");
-  });
+  );
 });
 
 describe("normalizeEditorFontSize", () => {

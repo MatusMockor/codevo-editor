@@ -107,20 +107,14 @@ pub(super) enum RegisteredWorkspaceTeardownStep {
     AgentTasks,
     FileSearch,
     JavascriptTasks,
-    DocumentAdmission,
     Runtime,
-    SmartMode,
-    LocalHistory,
 }
 
-const REGISTERED_WORKSPACE_TEARDOWN_STEPS: [RegisteredWorkspaceTeardownStep; 7] = [
+const REGISTERED_WORKSPACE_TEARDOWN_STEPS: [RegisteredWorkspaceTeardownStep; 4] = [
     RegisteredWorkspaceTeardownStep::AgentTasks,
     RegisteredWorkspaceTeardownStep::FileSearch,
     RegisteredWorkspaceTeardownStep::JavascriptTasks,
-    RegisteredWorkspaceTeardownStep::DocumentAdmission,
     RegisteredWorkspaceTeardownStep::Runtime,
-    RegisteredWorkspaceTeardownStep::SmartMode,
-    RegisteredWorkspaceTeardownStep::LocalHistory,
 ];
 
 pub(super) fn execute_registered_workspace_teardown(
@@ -128,9 +122,6 @@ pub(super) fn execute_registered_workspace_teardown(
 ) -> Vec<String> {
     let mut errors = Vec::new();
     for step in REGISTERED_WORKSPACE_TEARDOWN_STEPS {
-        if step == RegisteredWorkspaceTeardownStep::LocalHistory && !errors.is_empty() {
-            return errors;
-        }
         if let Some(error) = execute(step) {
             errors.push(bounded_workspace_close_error(&error));
         }
@@ -238,7 +229,6 @@ fn dispose_registered_workspace_blocking(
         |descriptor| {
             watch_disposal.stop_watches_before_arrival();
             let root = &descriptor.canonical_root_path;
-            let root_key = root.to_string_lossy().into_owned();
             execute_registered_workspace_teardown(|step| match step {
                 RegisteredWorkspaceTeardownStep::AgentTasks => {
                     end_sessions_for_workspace(app, descriptor.workspace_id.as_str());
@@ -252,48 +242,18 @@ fn dispose_registered_workspace_blocking(
                     None
                 }
                 RegisteredWorkspaceTeardownStep::JavascriptTasks => {
-                    app.request_stop_workspace_tasks(
-                        &descriptor.workspace_id,
-                        &state.js_test_batches,
-                    );
+                    app.request_stop_workspace_tasks(&descriptor.workspace_id);
                     None
                 }
-                RegisteredWorkspaceTeardownStep::DocumentAdmission => state
-                    .document_change_admission
-                    .purge_root(&root_key)
-                    .err()
-                    .map(|error| format!("Document change admission cleanup failed: {error}")),
                 RegisteredWorkspaceTeardownStep::Runtime => dispose_workspace_runtime_root(
                     root,
                     WorkspaceRuntimeDisposal {
-                        index_lifecycle: &*state.index_lifecycle,
-                        javascript_typescript_language_servers: &*state
-                            .javascript_typescript_language_servers,
-                        javascript_typescript_watch_registry: &*state
-                            .javascript_typescript_watch_registry,
                         workspace_file_change_watch_registry: watch_disposal,
-                        php_language_servers: &*state.php_language_servers,
-                        eslint_processes: &**state.eslint_processes,
                         terminal_sessions: &*state.terminal_sessions,
                     },
                 )
                 .err()
                 .map(|error| format!("Workspace runtime cleanup failed: {error}")),
-                RegisteredWorkspaceTeardownStep::SmartMode => {
-                    match state.smart_mode_service.lock() {
-                        Ok(mut smart_mode) => {
-                            smart_mode.remove_workspace(&root_key);
-                            None
-                        }
-                        Err(error) => Some(format!("Smart mode cleanup failed: {error}")),
-                    }
-                }
-                RegisteredWorkspaceTeardownStep::LocalHistory => {
-                    state
-                        .local_history_authorizer
-                        .revoke(&descriptor.workspace_id);
-                    None
-                }
             })
         },
     )

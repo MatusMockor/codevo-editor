@@ -17,7 +17,7 @@ import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPor
 import type { WorkspaceSettingsByRootSnapshot } from "../workspaceSettingsForRoot";
 import type { WorkspaceSettingsSaveCoordinator } from "../workspaceSettingsSaveCoordinator";
 import { appSettingsSaveCoordinatorFor } from "../appSettingsSaveCoordinator";
-import { workspaceSettingsIdentity } from "./workspaceIdentityPolicy";
+import { workspaceSettingsIdentity } from "../workspace/workspaceIdentityPolicy";
 
 interface UseWorkbenchSettingsPersistenceOptions {
   readonly appSettingsRef: MutableRefObject<AppSettings>;

@@ -1,6 +1,5 @@
 import { useCallback, useRef } from "react";
 import { LatestWorkspaceRequestTokenRegistry } from "./workspaceRequestTokenRegistry";
-import { ownedAndPendingWorkspaceIdentityIds } from "./workspaceRetainedStateCleanup";
 
 export function useWorkspaceIdentityAuthority() {
   const pendingWorkspaceIdentityRequestTokensRef = useRef(
@@ -39,4 +38,11 @@ export function useWorkspaceIdentityAuthority() {
     workspaceIdentityReleaseGenerationByIdRef,
     workspaceIdentityUnregisterByIdRef,
   } as const;
+}
+
+function ownedAndPendingWorkspaceIdentityIds(
+  ownedIds: ReadonlySet<string>,
+  pendingAdmissionsById: Readonly<Record<string, unknown>>,
+): string[] {
+  return [...new Set([...ownedIds, ...Object.keys(pendingAdmissionsById)])];
 }

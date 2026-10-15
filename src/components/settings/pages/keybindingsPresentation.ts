@@ -1,12 +1,10 @@
 import {
   defaultShortcutForCommand,
   findKeymapSequenceConflicts,
-  keymapCommandFocusScope,
   keymapCommands,
   parseShortcut,
   shortcutForCommand,
   type KeymapCommandId,
-  type KeymapFocusScope,
   type KeymapPlatform,
   type KeymapSettings,
 } from "../../../domain/keymap";
@@ -33,7 +31,6 @@ export interface KeybindingViewModel {
   readonly defaultShortcut: string;
   readonly label: string;
   readonly modified: boolean;
-  readonly rebindable: boolean;
   readonly strokes: ReadonlyArray<KeybindingStroke>;
 }
 
@@ -117,7 +114,6 @@ export function keybindingCategories(
       defaultShortcut,
       label: command.label,
       modified: currentShortcut !== defaultShortcut,
-      rebindable: !("rebindable" in command),
       strokes: keybindingStrokes(currentShortcut, platform),
     };
     const bucket = grouped.get(command.category);
@@ -131,27 +127,6 @@ export function keybindingCategories(
   }
 
   return [...grouped.entries()].map(([category, bindings]) => ({ bindings, category }));
-}
-
-export function keybindingWhenLabel(binding: KeybindingViewModel): string {
-  if (!binding.rebindable) return "Reserved";
-
-  return focusScopeLabel(keymapCommandFocusScope(binding.commandId));
-}
-
-function focusScopeLabel(scope: KeymapFocusScope): string {
-  switch (scope) {
-    case "editorText":
-      return "Editor text focused";
-    case "outsideEditorText":
-      return "Outside editor text";
-    case "any":
-      return "Always";
-    default: {
-      const unreachable: never = scope;
-      return unreachable;
-    }
-  }
 }
 
 export function keybindingCountLabel(categories: ReadonlyArray<KeybindingCategory>): string {

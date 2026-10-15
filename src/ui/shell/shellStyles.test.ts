@@ -96,7 +96,7 @@ describe("shell stylesheet", () => {
   });
 
   it("feeds the window inset and the sidebar track from the app shell and the agent frame", () => {
-    const appShell = parsed.rules.filter((rule) => rule.sheet === "App.css");
+    const appShell = parsed.rules.filter((rule) => rule.sheet === "agentApp.css");
     const frame = parsed.rules.filter(
       (rule) => rule.sheet === "components/workbenchShellFrame.css",
     );

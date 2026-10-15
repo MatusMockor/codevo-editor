@@ -38,8 +38,8 @@
     "publisher": "Matus Mockor",
     "copyright": "Copyright 2026 Matus Mockor",
     "category": "DeveloperTool",
-    "shortDescription": "A Fleet-like PHP-focused desktop code editor.",
-    "longDescription": "Codevo Editor is a lightweight desktop code editor with a fast basic editing loop and optional PHP project intelligence.",
+    "shortDescription": "A desktop app for running and reviewing AI coding agents.",
+    "longDescription": "Codevo is a native desktop app for running Claude and Codex coding agents on local and remote projects, with read-only file and diff review, Git, terminals and project scripts.",
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",

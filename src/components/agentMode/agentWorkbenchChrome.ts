@@ -6,10 +6,6 @@ import type { LocalProjectCloneSession } from "../../application/useLocalProject
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
 import type { AgentRightPanelChrome } from "./rightPanel/useAgentRightPanelChrome";
 import type { AgentProjectWorkspaceSync } from "./useAgentProjectWorkspaceSync";
-import type {
-  WorkspaceFileChangeGateway,
-  WorkspaceFileChangeEvent,
-} from "../../domain/workspaceFileChange";
 import type { ComposerBranchGateway } from "../../application/useComposerBranchPicker";
 import type { AgentGitHistoryTarget } from "../../application/useAgentGitHistory";
 import type { AgentGitHistoryGateway } from "../../application/useAgentGitHistory";
@@ -19,7 +15,6 @@ import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgen
 import type { AgentThreadScriptRunner } from "../../application/useAgentThreadScripts";
 import type { AgentWorkbenchLayoutState } from "../../application/useAgentWorkbenchLayout";
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
-import type { BottomPanelView } from "../../domain/bottomPanel";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import type { GitChangeStatus } from "../../domain/git";
 import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
@@ -149,15 +144,6 @@ export interface AgentWorkbenchChrome {
     readonly gateway: ComposerBranchGateway;
     readonly guard: (target: AgentGitHistoryTarget) => string | null;
   } | null;
-  readonly worktreeSync?: {
-    readonly gateway: WorkspaceFileChangeGateway;
-    readonly workspaceOwnerKey: string | null;
-    readonly openWorkspaceRoots: readonly string[];
-    readonly control: {
-      refreshDocuments(event: WorkspaceFileChangeEvent, isCurrent: () => boolean): Promise<void>;
-      reportError(error: unknown): void;
-    };
-  } | null;
   readonly addProject: AgentWorkbenchAddProjectChrome | null;
   readonly threadActivity?: AgentWorkbenchThreadActivityChrome;
   onToggleBottomPanel(): void;
@@ -172,15 +158,12 @@ export interface AgentWorkbenchChrome {
 export interface AgentTerminalPanelIntentState {
   readonly owner: string | null;
   readonly visible: boolean;
-  readonly view: BottomPanelView;
   readonly applied: boolean;
 }
 
 export interface AgentTerminalPanelIntentInput {
   readonly owner: string | null;
-  readonly active: boolean;
   readonly visible: boolean;
-  readonly view: BottomPanelView;
   readonly persisted: boolean;
 }
 
@@ -192,7 +175,6 @@ export interface AgentTerminalPanelIntentResult {
 export const initialAgentTerminalPanelIntentState: AgentTerminalPanelIntentState = Object.freeze({
   owner: null,
   visible: false,
-  view: "problems",
   applied: false,
 });
 
@@ -202,16 +184,12 @@ export function agentTerminalPanelIntent(
 ): AgentTerminalPanelIntentResult {
   if (state.owner !== next.owner) {
     return {
-      state: { owner: next.owner, visible: next.visible, view: next.view, applied: false },
+      state: { owner: next.owner, visible: next.visible, applied: false },
       showTerminal: false,
     };
   }
 
-  const tracked = { ...state, visible: next.visible, view: next.view };
-  if (!next.active) {
-    return { state: tracked, showTerminal: false };
-  }
-
+  const tracked = { ...state, visible: next.visible };
   if (state.visible !== next.visible) {
     return { state: { ...tracked, applied: true }, showTerminal: false };
   }

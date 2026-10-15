@@ -1,98 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { formatWindowTitle } from "./windowTitle";
+import { formatAgentModeWindowTitle } from "./windowTitle";
 
-describe("formatWindowTitle", () => {
+describe("formatAgentModeWindowTitle", () => {
   it.each([
-    {
-      input: {
-        activeFilePath: "/projects/myproject/src/index.ts",
-        isDirty: true,
-        workspaceName: "/projects/myproject",
-      },
-      expected: "• index.ts - myproject",
-    },
-    {
-      input: {
-        activeFilePath: "/projects/myproject/src/index.ts",
-        isDirty: false,
-        workspaceName: "/projects/myproject",
-      },
-      expected: "index.ts - myproject",
-    },
-    {
-      input: {
-        activeFilePath: null,
-        isDirty: false,
-        workspaceName: "/projects/myproject",
-      },
-      expected: "myproject",
-    },
-    {
-      input: {
-        activeFilePath: "/projects/myproject/src/index.ts",
-        isDirty: false,
-        workspaceName: null,
-      },
-      expected: "Codevo Editor",
-    },
-    {
-      input: {
-        activeFilePath: "/projects/myproject/src/index.ts",
-        isDirty: false,
-        workspaceName: "/projects/myproject/",
-      },
-      expected: "index.ts - myproject",
-    },
-    {
-      input: {
-        activeFilePath: "C:\\projects\\myproject\\src\\index.ts",
-        isDirty: false,
-        workspaceName: "C:\\projects\\myproject\\",
-      },
-      expected: "index.ts - myproject",
-    },
-    {
-      input: {
-        activeFilePath: "/index.ts",
-        isDirty: false,
-        workspaceName: "/projects/myproject",
-      },
-      expected: "index.ts - myproject",
-    },
-  ])("formats $expected", ({ input, expected }) => {
-    expect(formatWindowTitle(input)).toBe(expected);
+    { workspaceName: "/projects/myproject", expected: "Agents - myproject" },
+    { workspaceName: "/projects/myproject/", expected: "Agents - myproject" },
+    { workspaceName: "C:\\projects\\myproject\\", expected: "Agents - myproject" },
+    { workspaceName: "/projects/myproject//", expected: "Agents - myproject" },
+    { workspaceName: null, expected: "Agents" },
+    { workspaceName: "", expected: "Agents" },
+  ])("formats $expected for $workspaceName", ({ workspaceName, expected }) => {
+    expect(formatAgentModeWindowTitle(workspaceName)).toBe(expected);
   });
 
-  it("names the window after the workspace while agent mode is active", () => {
-    expect(
-      formatWindowTitle({
-        activeFilePath: "/projects/myproject/src/index.ts",
-        agentModeActive: true,
-        isDirty: true,
-        workspaceName: "/projects/myproject",
-      }),
-    ).toBe("Agents - myproject");
-  });
+  it("never names an active file or a dirty marker", () => {
+    const title = formatAgentModeWindowTitle("/projects/myproject");
 
-  it("stays truthful in agent mode without a workspace", () => {
-    expect(
-      formatWindowTitle({
-        activeFilePath: null,
-        agentModeActive: true,
-        isDirty: false,
-        workspaceName: null,
-      }),
-    ).toBe("Agents");
-  });
-
-  it("restores the editor title when agent mode ends", () => {
-    const input = {
-      activeFilePath: "/projects/myproject/src/index.ts",
-      isDirty: false,
-      workspaceName: "/projects/myproject",
-    };
-
-    expect(formatWindowTitle({ ...input, agentModeActive: true })).toBe("Agents - myproject");
-    expect(formatWindowTitle({ ...input, agentModeActive: false })).toBe("index.ts - myproject");
+    expect(title).not.toContain("•");
+    expect(title).not.toContain("Codevo Editor");
   });
 });

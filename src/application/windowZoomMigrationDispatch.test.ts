@@ -10,8 +10,6 @@ import {
 } from "./workbenchWindowZoomShortcutDispatcher";
 
 const commandContext: CommandContext = {
-  activeDocumentDirty: true,
-  hasActiveDocument: true,
   hasWorkspace: true,
 };
 
@@ -21,25 +19,25 @@ describe("persisted keymap window zoom migration dispatch", () => {
     ["workbench.zoomOut", "-", "Minus"],
     ["workbench.zoomReset", "0", "Digit0"],
   ] as const)(
-    "keeps Save on the preserved default of %s after settings roundtrip",
+    "keeps Quit on the preserved default of %s after settings roundtrip",
     (commandId, key, code) => {
       const platform = detectKeymapPlatform();
       const shortcut = `${platform === "mac" ? "Cmd" : "Ctrl"}+${key}`;
       const loaded = normalizeAppSettings({
-        keymap: { "editor.fontZoomIn": "", "editor.save": shortcut },
+        keymap: { "editor.fontZoomIn": "", "app.quit": shortcut },
         keymapDefaultsRevision: 1,
       });
       const settings = normalizeAppSettings(JSON.parse(JSON.stringify(loaded)));
       expect(settings.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
       expect(settings.keymap[commandId]).toBe("");
-      expect(settings.keymap["editor.save"]).toBe(shortcut);
+      expect(settings.keymap["app.quit"]).toBe(shortcut);
       expect(settings.keymap).toEqual(loaded.keymap);
 
       const save = vi.fn();
       const zoom = vi.fn();
       const commandRegistry = new CommandRegistry();
       for (const [id, run] of [
-        ["editor.save", save],
+        ["app.quit", save],
         [commandId, zoom],
       ] as const) {
         commandRegistry.register({
@@ -77,7 +75,7 @@ describe("persisted keymap window zoom migration dispatch", () => {
       expect(
         dispatchWorkbenchShortcutCommand({
           commandContext,
-          commandIds: ["editor.save", commandId] satisfies readonly KeymapCommandId[],
+          commandIds: ["app.quit", commandId] satisfies readonly KeymapCommandId[],
           commandRegistry,
           event,
           keymap: settings.keymap,

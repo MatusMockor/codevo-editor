@@ -29,7 +29,7 @@ export function GeneralTextEditorRows({ actions, draft, env }: SettingsPageProps
   const fonts = useMonospaceFontFamilies(env.systemFontGateway, appSettings.editorFontFamily);
 
   return (
-    <SettingsSectionHeading title="Text & editor">
+    <SettingsSectionHeading title="Text & code">
       <SettingsRow rowId="appearance.agentThreadFontSize">
         <Stepper
           label="Thread text size"
@@ -67,7 +67,7 @@ export function GeneralTextEditorRows({ actions, draft, env }: SettingsPageProps
 
       <SettingsRow rowId="appearance.editorFontSize">
         <Stepper
-          label="Editor font size"
+          label="Code font size"
           max={maxEditorFontSize}
           min={minEditorFontSize}
           onChange={(value) =>
@@ -102,24 +102,6 @@ export function GeneralTextEditorRows({ actions, draft, env }: SettingsPageProps
           checked={appSettings.editorFontLigatures}
           onChange={(editorFontLigatures) =>
             actions.updateAppSettings({ ...appSettings, editorFontLigatures })
-          }
-        />
-      </SettingsRow>
-
-      <SettingsRow rowId="appearance.minimap">
-        <SettingsSwitch
-          checked={appSettings.minimapEnabled === true}
-          onChange={(minimapEnabled) =>
-            actions.updateAppSettings({ ...appSettings, minimapEnabled })
-          }
-        />
-      </SettingsRow>
-
-      <SettingsRow rowId="appearance.wordWrap">
-        <SettingsSwitch
-          checked={appSettings.wordWrapEnabled === true}
-          onChange={(wordWrapEnabled) =>
-            actions.updateAppSettings({ ...appSettings, wordWrapEnabled })
           }
         />
       </SettingsRow>

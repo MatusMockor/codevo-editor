@@ -7,10 +7,8 @@
   --toast-inset: 16px;
   --toast-top: calc(var(--window-chrome-height, 36px) + 16px);
   --toast-surface: var(--cv-raised);
-  --toast-surface-raised: var(--cv-raised);
   --toast-well: var(--cv-raised);
   --toast-hover: var(--cv-tint-2);
-  --toast-active: var(--cv-s3);
   --toast-foreground: var(--cv-fg-strong);
   --toast-body: var(--cv-fg);
   --toast-muted: var(--cv-fg-muted);
@@ -330,11 +328,6 @@
 
 .toast-update-row__to {
   color: var(--toast-foreground);
-}
-
-.toast-install-progress-note {
-  color: var(--toast-warning);
-  font-size: 12px;
 }
 
 .toast-notification-actions {

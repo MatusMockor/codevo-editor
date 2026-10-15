@@ -363,7 +363,7 @@ export function vscodeProcessTaskProblemsToNotices(
       createWorkbenchNotice(
         "info",
         "Configured Task",
-        `${hiddenCount} more task problems hidden. Open the file to see complete diagnostics.`,
+        `${hiddenCount} more task problems hidden. See the task output for the complete list.`,
         groupKey,
         undefined,
         "overflow",

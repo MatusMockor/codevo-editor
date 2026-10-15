@@ -40,7 +40,7 @@ describe("AgentModeView thread action undo", () => {
       <AgentModeView
         agents={{ ...surface, providerManagement: PROVIDER_MANAGEMENT }}
         chrome={chromeFixture({
-          layout: { layout, effectiveLayout: "agent", persistedBottomPanel: false, dispatch },
+          layout: { layout, persistedBottomPanel: false, dispatch },
         })}
         onReleaseProject={() => undefined}
         onTrustProject={() => undefined}

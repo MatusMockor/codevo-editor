@@ -1,7 +1,3 @@
-use crate::eslint::EslintProcessRegistry;
-use crate::job_scheduler::WorkspaceIndexLifecycle;
-use crate::js_ts_file_watcher::JavaScriptTypeScriptWorkspaceWatchRegistry;
-use crate::lsp_session::{JavaScriptTypeScriptLanguageServerRegistry, PhpLanguageServerRegistry};
 use crate::terminal_session::TerminalSupervisor;
 use crate::workspace_file_watcher::WorkspaceFileChangeWatchRegistry;
 use std::{
@@ -9,33 +5,16 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-pub trait WorkspaceIndexLifecycleDisposer {
-    fn cancel_workspace_index_lifecycle(&self, root_path: &str);
-}
-
 pub trait WorkspaceWatchDisposer {
     fn stop_workspace_watch(&self, root_path: &str);
-}
-
-pub trait LanguageServerDisposer {
-    fn stop_language_server(&self, root_path: &str);
 }
 
 pub trait TerminalSessionDisposer {
     fn stop_terminal_sessions(&self, root_path: &Path) -> Result<(), String>;
 }
 
-pub trait WorkspaceProcessDisposer {
-    fn stop_workspace_processes(&self, root_path: &Path);
-}
-
 pub struct WorkspaceRuntimeDisposal<'a> {
-    pub index_lifecycle: &'a dyn WorkspaceIndexLifecycleDisposer,
-    pub javascript_typescript_language_servers: &'a dyn LanguageServerDisposer,
-    pub javascript_typescript_watch_registry: &'a dyn WorkspaceWatchDisposer,
     pub workspace_file_change_watch_registry: &'a dyn WorkspaceWatchDisposer,
-    pub php_language_servers: &'a dyn LanguageServerDisposer,
-    pub eslint_processes: &'a dyn WorkspaceProcessDisposer,
     pub terminal_sessions: &'a dyn TerminalSessionDisposer,
 }
 
@@ -46,19 +25,8 @@ pub fn dispose_workspace_root(
     let root_key = workspace_root_disposal_key(root_path);
 
     runtime
-        .index_lifecycle
-        .cancel_workspace_index_lifecycle(&root_key);
-    runtime
-        .javascript_typescript_watch_registry
-        .stop_workspace_watch(&root_key);
-    runtime
         .workspace_file_change_watch_registry
         .stop_workspace_watch(&root_key);
-    runtime
-        .javascript_typescript_language_servers
-        .stop_language_server(&root_key);
-    runtime.php_language_servers.stop_language_server(&root_key);
-    runtime.eslint_processes.stop_workspace_processes(root_path);
     runtime.terminal_sessions.stop_terminal_sessions(root_path)
 }
 
@@ -118,32 +86,8 @@ fn path_key(path: &Path) -> String {
         .to_string()
 }
 
-impl WorkspaceIndexLifecycleDisposer for WorkspaceIndexLifecycle {
-    fn cancel_workspace_index_lifecycle(&self, root_path: &str) {
-        self.cancel_workspace(root_path);
-    }
-}
-
-impl WorkspaceWatchDisposer for JavaScriptTypeScriptWorkspaceWatchRegistry {
-    fn stop_workspace_watch(&self, root_path: &str) {
-        self.stop(root_path);
-    }
-}
-
 impl WorkspaceWatchDisposer for WorkspaceFileChangeWatchRegistry {
     fn stop_workspace_watch(&self, root_path: &str) {
-        self.stop(root_path);
-    }
-}
-
-impl LanguageServerDisposer for JavaScriptTypeScriptLanguageServerRegistry {
-    fn stop_language_server(&self, root_path: &str) {
-        self.stop(root_path);
-    }
-}
-
-impl LanguageServerDisposer for PhpLanguageServerRegistry {
-    fn stop_language_server(&self, root_path: &str) {
         self.stop(root_path);
     }
 }
@@ -154,17 +98,10 @@ impl TerminalSessionDisposer for TerminalSupervisor {
     }
 }
 
-impl WorkspaceProcessDisposer for EslintProcessRegistry {
-    fn stop_workspace_processes(&self, root_path: &Path) {
-        self.stop_root(root_path);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        dispose_workspace_root, LanguageServerDisposer, TerminalSessionDisposer,
-        WorkspaceIndexLifecycleDisposer, WorkspaceProcessDisposer, WorkspaceRuntimeDisposal,
+        dispose_workspace_root, TerminalSessionDisposer, WorkspaceRuntimeDisposal,
         WorkspaceWatchDisposer,
     };
     use std::{
@@ -182,54 +119,26 @@ mod tests {
         let root_a_key = root_key(&root_a);
         let root_b_key = root_key(&root_b);
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let index = RecordingRootDisposer::new("index", [&root_a_key, &root_b_key], &calls);
-        let watch = RecordingRootDisposer::new("watch", [&root_a_key, &root_b_key], &calls);
         let file_watch =
             RecordingRootDisposer::new("file-watch", [&root_a_key, &root_b_key], &calls);
-        let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_a_key, &root_b_key], &calls);
-        let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_a_key, &root_b_key], &calls);
-        let eslint = RecordingTerminalDisposer::new("eslint", [&root_a, &root_b], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&root_a, &root_b], &calls);
 
         dispose_workspace_root(
             &root_a,
             WorkspaceRuntimeDisposal {
-                index_lifecycle: &index,
-                javascript_typescript_language_servers: &js_lsp,
-                javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
-                php_language_servers: &php_lsp,
-                eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
         )
         .expect("dispose workspace root");
 
-        assert!(!index.contains(&root_a_key));
-        assert!(index.contains(&root_b_key));
-        assert!(!watch.contains(&root_a_key));
-        assert!(watch.contains(&root_b_key));
         assert!(!file_watch.contains(&root_a_key));
         assert!(file_watch.contains(&root_b_key));
-        assert!(!js_lsp.contains(&root_a_key));
-        assert!(js_lsp.contains(&root_b_key));
-        assert!(!php_lsp.contains(&root_a_key));
-        assert!(php_lsp.contains(&root_b_key));
-        assert!(!eslint.contains(&root_a));
-        assert!(eslint.contains(&root_b));
         assert!(!terminals.contains(&root_a));
         assert!(terminals.contains(&root_b));
         assert_eq!(
             calls.lock().expect("calls").as_slice(),
-            &[
-                "index:/workspace-a",
-                "watch:/workspace-a",
-                "file-watch:/workspace-a",
-                "js-lsp:/workspace-a",
-                "php-lsp:/workspace-a",
-                "eslint:/workspace-a",
-                "terminal:/workspace-a",
-            ]
+            &["file-watch:/workspace-a", "terminal:/workspace-a",]
         );
     }
 
@@ -238,35 +147,21 @@ mod tests {
         let root = PathBuf::from("/workspace");
         let root_key = root_key(&root);
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let index = RecordingRootDisposer::new("index", [&root_key], &calls);
-        let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
         let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
-        let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
-        let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
-        let eslint = RecordingTerminalDisposer::new("eslint", [&root], &calls);
         let terminals =
             RecordingTerminalDisposer::failing("terminal", [&root], &calls, "terminal lock failed");
 
         let error = dispose_workspace_root(
             &root,
             WorkspaceRuntimeDisposal {
-                index_lifecycle: &index,
-                javascript_typescript_language_servers: &js_lsp,
-                javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
-                php_language_servers: &php_lsp,
-                eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
         )
         .expect_err("terminal stop should fail");
 
         assert_eq!(error, "terminal lock failed");
-        assert!(!index.contains(&root_key));
-        assert!(!watch.contains(&root_key));
         assert!(!file_watch.contains(&root_key));
-        assert!(!js_lsp.contains(&root_key));
-        assert!(!php_lsp.contains(&root_key));
     }
 
     #[test]
@@ -274,23 +169,13 @@ mod tests {
         let root = PathBuf::from("/missing-workspace");
         let root_key = root_key(&root);
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let index = RecordingRootDisposer::new("index", [&root_key], &calls);
-        let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
         let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
-        let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
-        let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
-        let eslint = RecordingTerminalDisposer::new("eslint", [&root], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&root], &calls);
 
         dispose_workspace_root(
             &root,
             WorkspaceRuntimeDisposal {
-                index_lifecycle: &index,
-                javascript_typescript_language_servers: &js_lsp,
-                javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
-                php_language_servers: &php_lsp,
-                eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
         )
@@ -299,12 +184,7 @@ mod tests {
         assert_eq!(
             calls.lock().expect("calls").as_slice(),
             &[
-                "index:/missing-workspace",
-                "watch:/missing-workspace",
                 "file-watch:/missing-workspace",
-                "js-lsp:/missing-workspace",
-                "php-lsp:/missing-workspace",
-                "eslint:/missing-workspace",
                 "terminal:/missing-workspace",
             ]
         );
@@ -324,12 +204,7 @@ mod tests {
         symlink(&parent, &alias_parent).expect("workspace parent symlink");
         let alias_root = alias_parent.join("workspace");
         let calls = Arc::new(Mutex::new(Vec::new()));
-        let index = RecordingRootDisposer::new("index", [&root_key], &calls);
-        let watch = RecordingRootDisposer::new("watch", [&root_key], &calls);
         let file_watch = RecordingRootDisposer::new("file-watch", [&root_key], &calls);
-        let js_lsp = RecordingRootDisposer::new("js-lsp", [&root_key], &calls);
-        let php_lsp = RecordingRootDisposer::new("php-lsp", [&root_key], &calls);
-        let eslint = RecordingTerminalDisposer::new("eslint", [&alias_root], &calls);
         let terminals = RecordingTerminalDisposer::new("terminal", [&alias_root], &calls);
 
         fs::remove_dir_all(&root).expect("remove workspace root");
@@ -337,33 +212,18 @@ mod tests {
         dispose_workspace_root(
             &alias_root,
             WorkspaceRuntimeDisposal {
-                index_lifecycle: &index,
-                javascript_typescript_language_servers: &js_lsp,
-                javascript_typescript_watch_registry: &watch,
                 workspace_file_change_watch_registry: &file_watch,
-                php_language_servers: &php_lsp,
-                eslint_processes: &eslint,
                 terminal_sessions: &terminals,
             },
         )
         .expect("dispose workspace root");
 
-        assert!(!index.contains(&root_key));
-        assert!(!watch.contains(&root_key));
         assert!(!file_watch.contains(&root_key));
-        assert!(!js_lsp.contains(&root_key));
-        assert!(!php_lsp.contains(&root_key));
-        assert!(!eslint.contains(&alias_root));
         assert!(!terminals.contains(&alias_root));
         assert_eq!(
             calls.lock().expect("calls").as_slice(),
             &[
-                format!("index:{root_key}"),
-                format!("watch:{root_key}"),
                 format!("file-watch:{root_key}"),
-                format!("js-lsp:{root_key}"),
-                format!("php-lsp:{root_key}"),
-                format!("eslint:{}", alias_root.to_string_lossy()),
                 format!("terminal:{}", alias_root.to_string_lossy()),
             ]
         );
@@ -401,20 +261,8 @@ mod tests {
         }
     }
 
-    impl WorkspaceIndexLifecycleDisposer for RecordingRootDisposer {
-        fn cancel_workspace_index_lifecycle(&self, root_path: &str) {
-            self.stop(root_path);
-        }
-    }
-
     impl WorkspaceWatchDisposer for RecordingRootDisposer {
         fn stop_workspace_watch(&self, root_path: &str) {
-            self.stop(root_path);
-        }
-    }
-
-    impl LanguageServerDisposer for RecordingRootDisposer {
-        fn stop_language_server(&self, root_path: &str) {
             self.stop(root_path);
         }
     }
@@ -470,17 +318,6 @@ mod tests {
                 Some(error) => Err(error.to_string()),
                 None => Ok(()),
             }
-        }
-    }
-
-    impl WorkspaceProcessDisposer for RecordingTerminalDisposer {
-        fn stop_workspace_processes(&self, root_path: &Path) {
-            self.calls.lock().expect("calls").push(format!(
-                "{}:{}",
-                self.label,
-                root_path.to_string_lossy()
-            ));
-            self.roots.lock().expect("roots").remove(root_path);
         }
     }
 

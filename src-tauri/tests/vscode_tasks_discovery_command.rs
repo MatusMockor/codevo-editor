@@ -16,7 +16,7 @@ where
     work()
 }
 
-mod managed_javascript_typescript {
+mod node_executable {
     pub(crate) fn node_executable_path() -> Option<String> {
         None
     }

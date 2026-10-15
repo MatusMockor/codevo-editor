@@ -1,6 +1,6 @@
-# Remote runner in the desktop editor
+# Remote runner in the desktop app
 
-The desktop editor can connect to an existing Linux Codevo Runner over SSH,
+The desktop app can connect to an existing Linux Codevo Runner over SSH,
 submit tasks against registered server projects, and display their saved output
 and diffs. **This computer remains the default execution environment.** Adding a
 server does not move a local project or install the runner.
@@ -18,12 +18,12 @@ Docker is not required. Follow the runner repository's
 for Node, Git, persistent SQLite storage, service configuration and lingering.
 Lingering keeps the user service running after SSH logout and starts it on boot.
 
-The editor connection requires:
+The app connection requires:
 
 - An SSH server reachable from the desktop and an account that can authenticate
   non-interactively using an existing key or the desktop's SSH agent.
 - A previously verified SSH host key in the desktop's known-hosts configuration.
-  The editor uses strict host-key checking and does not offer a password or
+  The app uses strict host-key checking and does not offer a password or
   first-time host-key acceptance dialog.
 - `python3` available to that account's non-interactive SSH session.
 - The runner listening on `127.0.0.1:4318` on the server.
@@ -33,7 +33,7 @@ The editor connection requires:
   under the service account, and project tools available in the systemd service's
   explicit `PATH`.
 
-The editor owns a persistent SSH tunnel for each connected server, forwarding a
+The app owns a persistent SSH tunnel for each connected server, forwarding a
 private local Unix socket to the loopback runner API. A fixed Python bootstrap
 reads the runner token once through SSH; the token is held only in the Rust
 backend's memory, never in the renderer, local settings, logs or command arguments.
@@ -72,7 +72,7 @@ requires a runner that advertises the `folderProjects` capability:
 
 - Conversations in a folder project run directly in the registered folder.
 - Worktrees, branches, diffs, commit and push are unavailable in a folder project.
-- The editor cannot tell whether the chosen folder is a repository before the
+- The app cannot tell whether the chosen folder is a repository before the
   runner answers. When the runner advertises `folderProjects`, the dialog says
   before adding what a folder that is not a repository will be limited to.
 - A runner without `folderProjects` refuses every folder that is not a
@@ -120,12 +120,12 @@ Submitting closes the dialog and shows a clone row in the rail with the project
 name, its status text, an indeterminate progress bar while the job is queued or
 running, and **Cancel** or **Dismiss**. A submission the server refused is kept in
 that row with its bounded reason until it is dismissed. The runner reports clone
-status only, so the editor shows no percentage. The row belongs to one workspace tab
+status only, so the app shows no percentage. The row belongs to one workspace tab
 and one server; another tab on the same server neither shows it nor can cancel it.
-The row does not survive an editor restart; the clone itself keeps running on the
+The row does not survive an app restart; the clone itself keeps running on the
 server. GitHub Enterprise hosts are not supported.
 
-When the clone succeeds the editor refreshes the server projects and selects the new
+When the clone succeeds the app refreshes the server projects and selects the new
 project for the draft thread only once that project is actually in the refreshed
 list, and only while the user selected nothing else meanwhile. Choosing a project in
 the draft chooser, picking one in the rail or the scope menu, opening a thread,
@@ -153,7 +153,7 @@ Existing destination folders and registered project names are refused, not repla
 
 A successful clone is registered in the runner's SQLite database and becomes a
 server project without editing a JSON file or restarting the service. Closing the
-editor does not cancel an accepted clone. Clone jobs support cancellation and
+app does not cancel an accepted clone. Clone jobs support cancellation and
 retry through the runner API. A runner restart marks unfinished clone jobs
 `interrupted`; it does not resume Git midway through a clone. An abrupt
 server/process failure can leave an incomplete destination folder. Inspect it on
@@ -170,7 +170,7 @@ server checkouts can still be registered through `CODEVO_PROJECTS_FILE`, for exa
 
 Each manually registered path must identify a real writable Git checkout on the
 server. Apply file registry changes using the runner's deployment workflow,
-including a service restart when required. The editor selects server project IDs
+including a service restart when required. The app selects server project IDs
 and names rather than accepting arbitrary server paths.
 
 In a Git repository project the runner prepares a separate Git worktree for a new
@@ -184,7 +184,7 @@ uncommitted local edits. Cloning does not synchronize local uncommitted files.
 1. Open **Settings → Environments → Add server**.
 2. Enter a display name, SSH host, username and SSH port. DNS names and IPv4
    addresses are supported; IPv6 addresses are not supported by this form.
-3. Connect. The editor verifies access and the runner protocol before saving the
+3. Connect. The app verifies access and the runner protocol before saving the
    connection. It does not install providers or sign them in.
 4. Create a new thread using the normal Agents interface. Choose the connected
    server with the execution-location picker. The normal project selector lists
@@ -195,7 +195,7 @@ uncommitted local edits. Cloning does not synchronize local uncommitted files.
 
 Sending the selected model and permission settings requires the runner to advertise
 `taskLaunchOptions`. A runner without that capability must be updated before using
-this launch flow; the editor does not silently replace the selected options with
+this launch flow; the app does not silently replace the selected options with
 runner defaults.
 
 Remote image staging accepts up to **eight PNG/JPEG images of at most 5 MiB each**
@@ -221,11 +221,11 @@ instructions are synchronized. A mapped source that is unavailable or untrusted
 must fail rather than silently fall back to global instructions.
 
 Before sending a new turn, continuing a conversation or queueing a message, the
-editor collects a bounded snapshot of saved instruction files. This includes the
+app collects a bounded snapshot of saved instruction files. This includes the
 local Claude configuration directory's `CLAUDE.md` and Markdown rules, and the
 mapped project's `CLAUDE.md`, `CLAUDE.local.md`, `.claude/CLAUDE.md` and nested
 instruction/rule files. Ignored and uncommitted instruction files are eligible;
-unsaved editor buffers must be saved first. Authentication, provider settings and
+the snapshot reads the files as saved on disk. Authentication, provider settings and
 other local project files are not synchronized by this feature.
 
 The snapshot is pinned to the submitted message. Retrying an uncertain submission
@@ -262,11 +262,10 @@ or the exact selected conversation checkout. They never substitute the local
 project's filesystem for a server checkout. Opening a new server draft uses its
 registered project; an existing conversation keeps its own execution environment.
 
-Files supports bounded directory browsing and editing text up to 64 KiB. Unsaved
-edits survive panel switches during the app session. Saves compare the version
-read from the server; a conflict retains the draft and offers comparison with the
-current server text. Binary files, symbolic links and oversized text are not
-editable here. Save or discard a dirty file before selecting another file.
+Files is a read-only viewer: it supports bounded directory browsing and viewing
+text files up to 64 KiB. It does not edit or save server files; change them through
+the agent or the terminal. Binary files, symbolic links and oversized text are not
+shown as text.
 
 History lists commits, changed files and read-only file comparisons. Large lists
 are paginated and partial results are identified. Diff continues to show the
@@ -287,15 +286,15 @@ silently choosing a different repository.
 
 ## History, reconnect and results
 
-Connection settings are saved locally. After restarting the editor, saved servers
+Connection settings are saved locally. After restarting the app, saved servers
 are connected automatically once. If a connection fails, retry it after restoring
 network access. Task data and execution
-belong to the runner: closing or disconnecting the editor does not cancel an
+belong to the runner: closing or disconnecting the app does not cancel an
 already queued or running task. Use the task's cancellation action to stop it.
 
 The existing conversation view receives persisted task state and events, output
 and terminal status. Reconnecting can replay saved output. Remote file changes use
-the editor's existing per-file changes viewer when the runner advertises
+the app's per-file changes viewer when the runner advertises
 `taskFileDiffs`. It includes untracked files and their text contents, as well as
 tracked changes, without applying those changes to the local checkout.
 
@@ -307,7 +306,7 @@ patch. That patch limitation does not apply to supported untracked text files in
 the per-file viewer. Output and both diff representations remain bounded.
 
 A runner service restart interrupts an already running provider process. Such a
-task becomes `interrupted`; reconnecting the editor does not resume that process.
+task becomes `interrupted`; reconnecting the app does not resume that process.
 Queued tasks remain eligible for execution.
 
 ## Continue a server conversation
@@ -343,7 +342,7 @@ local provider history to the server.
 
 A finished `interrupted`, `failed` or `cancelled` task can be eligible when its
 session and worktree are available. Continuing creates a new turn; it does not
-restart the old process automatically. Reopening the editor alone only restores
+restart the old process automatically. Reopening the app alone only restores
 access to saved task history.
 
 ## Runner identity
@@ -352,7 +351,7 @@ Connections retain the runner identity. The Rust transport checks it before requ
 and sends the optional `X-Codevo-Runner-Id` header. The updated runner deployment
 validates that header on the actual request and rejects a mismatch, protecting
 against replacement between the preliminary check and a mutation. Older clients
-may omit the header; the editor supplies it after connection. If a server is
+may omit the header; the app supplies it after connection. If a server is
 replaced with a different runner identity, remove the saved server and add it
 again deliberately.
 
@@ -362,9 +361,9 @@ Verification outcomes belong to the specific build being delivered. Source suppo
 and isolated-runner tests do not by themselves prove native app quit/reopen behavior.
 
 New conversations and follow-up turns use separate runner task records while each
-conversation remains one editor thread. This
+conversation remains one thread in the app. This
 integration does not yet provide interactive provider permission approvals, automatic copying
-of local projects or their uncommitted edits, a remote filesystem editor, or
+of local projects or their uncommitted edits, editing remote files, or
 applying remote changes to the local checkout. Reviewing a remote diff does not synchronize files to the PC.
 
 This document describes behavior and setup, not release availability or a test
@@ -379,8 +378,8 @@ choices and an optional custom answer. Sending an answer responds to the same li
 provider invocation; it does not queue another prompt. The ordinary composer draft
 is independent of the question form. Selecting an option alone never submits it.
 
-Pending question snapshots are persisted on the runner. Closing the editor leaves
-accepted work and pending questions on the server. After reconnect, the editor reads
+Pending question snapshots are persisted on the runner. Closing the app leaves
+accepted work and pending questions on the server. After reconnect, the app reads
 the pending snapshot again. Duplicate delivery of the same answer is idempotent;
 different or stale answers are rejected. Stop cancels waiting questions along with
 the task. A runner restart expires pending interactions because their provider RPC
@@ -394,11 +393,11 @@ questions are tied to the local child process and do not survive quitting that p
 The runner reports `executionTimeoutMs` and the server settings show it. The default
 is twelve hours, configurable with `CODEVO_EXECUTION_TIMEOUT_MS` from one minute to
 seven days. The deadline includes waiting for an answer. Queue waiting before execution
-is separate. Disconnecting the editor does not reset the execution deadline; restarting
+is separate. Disconnecting the app does not reset the execution deadline; restarting
 the server interrupts active execution. Provider-side limits and network failures
 remain possible regardless of this runner policy.
 
-Deploy a compatible editor before the runner that adds these descriptor and question
+Deploy a compatible app before the runner that adds these descriptor and question
 contracts. Back up runner data before schema migration. Do not restart the production
 service while user tasks are active.
 
@@ -406,7 +405,7 @@ service while user tasks are active.
 
 The agent composer can turn speech into prompt text. Dictation needs a connected
 server whose runner has `CODEVO_SPEECH_URL` configured; such a runner advertises
-the `speechTranscription` capability. The editor uses the conversation's own server
+the `speechTranscription` capability. The app uses the conversation's own server
 when it is connected and advertises the capability, otherwise the first connected
 server that does. Without one, the microphone button is unavailable: its tooltip and
 accessible description say why, and activating it shows the reason in the composer.
@@ -425,8 +424,8 @@ the microphone is starting, while recording and while a transcript is still pend
 and you send it yourself afterwards.
 Switching to another conversation or project cancels dictation, so a late transcript
 cannot land in a different draft. Recording also stops, and what was captured is
-still transcribed, when the composer is no longer on screen (Settings, the editor
-layout, a maximized right panel) or the window is hidden or minimised.
+still transcribed, when the composer is no longer on screen (Settings, a maximized
+right panel) or the window is hidden or minimised.
 
 Limits:
 
@@ -440,9 +439,9 @@ Limits:
   Automatic detection requires an updated runner and speech sidecar supporting
   `language=auto`.
 
-Privacy: audio is captured in the editor window and sent through the existing SSH
+Privacy: audio is captured in the app window and sent through the existing SSH
 tunnel only to your own connected server, whose runner passes it to the speech service
-configured in `CODEVO_SPEECH_URL`. The editor does not store audio and does not send
+configured in `CODEVO_SPEECH_URL`. The app does not store audio and does not send
 it to any other service. Only the returned text is kept, as part of your draft.
 
 Platform notes: macOS asks for microphone permission the first time; if it was

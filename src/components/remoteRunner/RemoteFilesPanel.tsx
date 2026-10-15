@@ -1,35 +1,26 @@
-import { Suspense, lazy } from "react";
 import { File, Folder, RefreshCw, ArrowUp } from "lucide-react";
-import type { RemoteSurfaceScope } from "../../domain/remoteRunnerSurfaces";
+import type { RemoteFileContent, RemoteSurfaceScope } from "../../domain/remoteRunnerSurfaces";
 import type { RemoteFileRevealRequest } from "../../application/remoteFileRevealRequest";
-import type { MonacoAppTheme } from "../../domain/settings";
-import { initializeMonacoRuntime } from "../monacoRuntimeLoader";
-import { useRemoteFiles, type RemoteFilesGateway } from "./useRemoteFiles";
+import { codeLanguageForPath } from "../../domain/codeHighlight/codeLanguage";
+import { FileViewerCode } from "../agentMode/rightPanel/fileViewer/FileViewerCode";
+import { AgentTextDiffView } from "../agentMode/rightPanel/diff/AgentTextDiffView";
+import {
+  useRemoteFiles,
+  type RemoteFileRevealPosition,
+  type RemoteFilesGateway,
+} from "./useRemoteFiles";
+import "../agentMode/rightPanel/fileViewer/fileViewer.css";
 import "./remoteSurfacePanels.css";
 
-const RemoteEditor = lazy(async () => {
-  await initializeMonacoRuntime();
-  return import("./RemoteFileEditor");
-});
-const RemoteComparison = lazy(async () => {
-  await initializeMonacoRuntime();
-  return import("./RemoteFileComparison");
-});
 export interface RemoteFilesPanelProps {
   readonly scope: RemoteSurfaceScope;
   readonly gateway: RemoteFilesGateway;
-  readonly monacoTheme?: MonacoAppTheme;
   readonly reveal?: RemoteFileRevealRequest | null;
 }
 export function RemoteFilesPanel(props: RemoteFilesPanelProps) {
   return <RemoteFilesContent key={JSON.stringify(props.scope)} {...props} />;
 }
-function RemoteFilesContent({
-  scope,
-  gateway,
-  monacoTheme = "calm-dark",
-  reveal = null,
-}: RemoteFilesPanelProps) {
+function RemoteFilesContent({ scope, gateway, reveal = null }: RemoteFilesPanelProps) {
   const state = useRemoteFiles(scope, gateway, reveal);
   const parent = state.path.split("/").slice(0, -1).join("/");
   return (
@@ -39,7 +30,7 @@ function RemoteFilesContent({
         <button
           type="button"
           aria-label="Parent directory"
-          disabled={!state.path || state.busy || state.dirty}
+          disabled={!state.path || state.busy}
           onClick={() => void state.browse(parent)}
         >
           <ArrowUp size={14} />
@@ -47,7 +38,7 @@ function RemoteFilesContent({
         <button
           type="button"
           aria-label="Refresh server files"
-          disabled={state.busy || state.dirty}
+          disabled={state.busy}
           onClick={() => void state.browse(state.path, state.offset)}
         >
           <RefreshCw size={14} />
@@ -58,19 +49,13 @@ function RemoteFilesContent({
           {state.error}
         </p>
       )}
-      {state.dirty && (
-        <p className="remote-surface-notice">
-          Unsaved changes are kept while switching threads. Save or discard them before opening
-          another file.
-        </p>
-      )}
       <nav className="remote-surface-list" aria-label="Server directory">
         {state.directory?.entries.map((entry) => (
           <button
             key={entry.path}
             type="button"
             className="remote-surface-row"
-            disabled={state.busy || state.dirty || entry.kind === "symlink"}
+            disabled={state.busy || entry.kind === "symlink"}
             aria-current={state.file?.path === entry.path ? "true" : undefined}
             title={entry.kind === "symlink" ? "Symbolic links cannot be opened here." : entry.path}
             onClick={() =>
@@ -92,7 +77,7 @@ function RemoteFilesContent({
           {state.offset > 0 && (
             <button
               type="button"
-              disabled={state.busy || state.dirty}
+              disabled={state.busy}
               onClick={() => void state.browse(state.path)}
             >
               First page
@@ -101,7 +86,7 @@ function RemoteFilesContent({
           {state.directory?.nextOffset != null && (
             <button
               type="button"
-              disabled={state.busy || state.dirty}
+              disabled={state.busy}
               onClick={() => void state.browse(state.path, state.directory!.nextOffset!)}
             >
               Next files
@@ -117,21 +102,8 @@ function RemoteFilesContent({
       {state.file && (
         <>
           <header className="remote-surface-toolbar">
-            <strong>
-              {state.file.path}
-              {state.dirty ? " •" : ""}
-            </strong>
-            <button
-              type="button"
-              disabled={!state.dirty || state.busy}
-              onClick={() => void state.save()}
-            >
-              Save
-            </button>
-            <button type="button" disabled={!state.dirty || state.busy} onClick={state.discard}>
-              Discard changes
-            </button>
-            {state.dirty && (
+            <strong>{state.file.path}</strong>
+            {state.file.unavailableReason === null && state.comparison === null && (
               <button type="button" disabled={state.busy} onClick={() => void state.compare()}>
                 Compare with server
               </button>
@@ -139,65 +111,65 @@ function RemoteFilesContent({
           </header>
           {state.comparison && (
             <>
-              <p className="remote-surface-notice">
-                Server version on the left; your unsaved edits on the right. Keeping your version
-                prepares it to replace the server version when you save.
-              </p>
               <div className="remote-surface-toolbar">
-                <button type="button" onClick={() => state.resolveComparison(false)}>
-                  Use server version
+                <button type="button" disabled={state.busy} onClick={state.showLatest}>
+                  Show latest version
                 </button>
-                <button type="button" onClick={() => state.resolveComparison(true)}>
-                  Keep my version
+                <button type="button" onClick={state.closeComparison}>
+                  Close comparison
                 </button>
               </div>
-              <div className="remote-surface-editor">
-                <Suspense fallback={<p>Opening comparison…</p>}>
-                  <RemoteComparison
-                    height="100%"
-                    theme={monacoTheme}
-                    original={state.comparison.text}
-                    modified={state.text}
-                    options={{
-                      readOnly: true,
-                      originalEditable: false,
-                      automaticLayout: true,
-                      minimap: { enabled: false },
-                    }}
-                  />
-                </Suspense>
+              <div className="remote-surface-diff">
+                <AgentTextDiffView
+                  original={state.file.text}
+                  modified={state.comparison.text}
+                  path={state.file.path}
+                  labels={{ original: "Opened version", modified: "Latest on server" }}
+                />
               </div>
             </>
           )}
-          {state.file.unavailableReason !== null ? (
-            <p className="remote-surface-notice">
-              {state.file.unavailableReason === "binary"
-                ? "This is a binary file and cannot be edited as text."
-                : "This file is too large to open safely in this panel."}
-            </p>
-          ) : (
-            <div className="remote-surface-editor">
-              <Suspense fallback={<p className="remote-surface-note">Opening editor…</p>}>
-                <RemoteEditor
-                  height="100%"
-                  theme={monacoTheme}
-                  path={`remote-file:///${encodeURIComponent(JSON.stringify(scope))}/${encodeURIComponent(state.file.path)}`}
-                  value={state.text}
-                  onChange={(value) => state.edit(value ?? "")}
-                  reveal={state.revealAt?.path === state.file.path ? state.revealAt : null}
-                  options={{
-                    readOnly: state.file.version === null || !state.canEdit,
-                    automaticLayout: true,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                  }}
-                />
-              </Suspense>
-            </div>
-          )}
+          <RemoteFileBody file={state.file} revealAt={state.revealAt} />
         </>
       )}
     </section>
   );
+}
+
+function RemoteFileBody({
+  file,
+  revealAt,
+}: {
+  readonly file: RemoteFileContent;
+  readonly revealAt: RemoteFileRevealPosition | null;
+}) {
+  switch (file.unavailableReason) {
+    case "binary":
+      return (
+        <p className="remote-surface-notice">This is a binary file and is not shown as text.</p>
+      );
+    case "large":
+      return <p className="remote-surface-notice">This file is too large to show in this panel.</p>;
+    case null: {
+      const reveal = revealAt?.path === file.path ? revealAt : null;
+      return (
+        <div className="remote-surface-viewer">
+          <FileViewerCode
+            key={`${file.path}:${file.version ?? ""}`}
+            text={file.text}
+            language={codeLanguageForPath(file.path)}
+            wrap={false}
+            revealLine={reveal?.line ?? null}
+            revealSequence={reveal?.id ?? 0}
+          />
+        </div>
+      );
+    }
+    default:
+      return unsupportedReason(file.unavailableReason);
+  }
+}
+
+function unsupportedReason(reason: never): never {
+  throw new TypeError(`Unsupported remote file state: ${String(reason)}`);
 }

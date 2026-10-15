@@ -11,8 +11,6 @@ import {
   defaultAgentCliDiscoveryResult,
   type AgentCliDiscoveryGateway,
 } from "../domain/agentSettings";
-import type { BottomPanelView } from "../domain/bottomPanel";
-import { workbenchPanelPlacement } from "../domain/editorDrawer";
 import type {
   AgentProviderHealthGateway,
   AgentProviderPolicyGateway,
@@ -27,12 +25,12 @@ import type {
   WorkspaceSettings,
 } from "../domain/settings";
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
-import type { EditorDocument } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
 import type { AgentThreadStoreGateway } from "./agentThreadPorts";
-import type { AgentEditorBridgePort } from "./useAgentEditorBridge";
+import type { AgentFileNavigationPort } from "./useAgentFileNavigation";
 import {
   useAgentWorkbenchLayout,
+  type AgentSidebarRailPreferencePort,
   type AgentWorkbenchLayoutHydration,
   type AgentWorkbenchLayoutPersistencePort,
   type AgentWorkbenchLayoutState,
@@ -44,7 +42,6 @@ import {
   type WorkbenchAgentsOptions,
   type WorkbenchAgentsSurface,
 } from "./useWorkbenchAgents";
-import type { WorkbenchControllerOptions } from "./workbenchControllerContracts";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { WorkspaceTrustIntentCoordinator } from "./workspaceTrustIntentCoordinator";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
@@ -95,38 +92,35 @@ export type WorkbenchControllerPersistWorkspaceSettings = (
   nextSettings: WorkspaceSettings,
 ) => Promise<void>;
 
+export interface WorkbenchControllerAgentGateways {
+  readonly agentCliDiscoveryGateway?: WorkbenchAgentsOptions["agentCliDiscoveryGateway"];
+  readonly agentInlineImageGateway?: WorkbenchAgentsOptions["agentInlineImageGateway"];
+  readonly agentProviderGateway?: WorkbenchAgentsOptions["agentProviderGateway"];
+  readonly agentProviderSignInGateway?: WorkbenchAgentsOptions["agentProviderSignInGateway"];
+  readonly agentRootLeaseGateway?: AgentRootLeaseGateway;
+  readonly agentSidebarRailPreference?: AgentSidebarRailPreferencePort;
+  readonly agentTaskGateway?: WorkbenchAgentsOptions["agentTaskGateway"];
+  readonly agentThreadRequestFeed?: WorkbenchAgentsOptions["agentThreadRequestFeed"];
+  readonly agentThreadSessionGateway?: WorkbenchAgentsOptions["agentThreadSessionGateway"];
+  readonly gitWorktreeGateway?: WorkbenchAgentsOptions["gitWorktreeGateway"];
+  readonly turnChangesGateway?: WorkbenchAgentsOptions["turnChangesGateway"];
+}
+
 export interface WorkbenchControllerAgentsOptions {
   readonly activateWorkspaceRoot?: (rootPath: string) => Promise<void>;
-  readonly agentLayoutAvailable?: boolean;
   readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
   readonly appSettingsRef: { readonly current: AppSettings };
   readonly applyAppSettings: (settings: AppSettings) => void;
-  readonly bottomPanelView: BottomPanelView;
   readonly bottomPanelVisible: boolean;
-  readonly setBottomPanelView: Dispatch<SetStateAction<BottomPanelView>>;
   readonly setBottomPanelVisible: Dispatch<SetStateAction<boolean>>;
   readonly editorSessionOwnerKey: string | null;
-  readonly options: Pick<
-    WorkbenchControllerOptions,
-    | "agentCliDiscoveryGateway"
-    | "agentProviderGateway"
-    | "agentProviderSignInGateway"
-    | "agentRootLeaseGateway"
-    | "agentSidebarRailPreference"
-    | "agentTaskGateway"
-    | "agentThreadSessionGateway"
-    | "turnChangesGateway"
-    | "agentThreadRequestFeed"
-    | "agentInlineImageGateway"
-    | "gitWorktreeGateway"
-  >;
+  readonly options: WorkbenchControllerAgentGateways;
   readonly gitGateway: Pick<
     GitGateway,
     "getStatus" | "getDiff" | "detectRepositories" | "stageFiles" | "commit" | "deleteBranch"
   >;
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
-  readonly openDocuments: ReadonlyArray<EditorDocument>;
   readonly persistedAgentWorkbenchLayout?: AgentWorkbenchLayoutHydration | null;
   readonly persistWorkspaceSettings?: WorkbenchControllerPersistWorkspaceSettings;
   readonly prompter: WorkbenchPrompter;
@@ -183,10 +177,7 @@ export function useWorkbenchControllerAgents(
   const agentLayout = useAgentWorkbenchLayout({
     workspaceOwnerKey: options.editorSessionOwnerKey,
     hasWorkspace: options.workspaceRoot !== null,
-    agentLayoutAvailable:
-      options.agentLayoutAvailable ?? options.options.agentRootLeaseGateway !== undefined,
-    bottomPanelVisible: workbenchPanelPlacement(options.bottomPanelView, options.bottomPanelVisible)
-      .terminal,
+    bottomPanelVisible: options.bottomPanelVisible,
     hydration:
       options.persistedAgentWorkbenchLayout ??
       agentWorkbenchHydration(options.editorSessionOwnerKey, options.workspaceSettingsRef.current),
@@ -194,7 +185,7 @@ export function useWorkbenchControllerAgents(
     sidebarPreference: options.options.agentSidebarRailPreference ?? null,
     reportError: options.reportError,
   });
-  const { agentModeActive, agentWorkbench } = agentLayout;
+  const { agentWorkbench } = agentLayout;
 
   const agentProjectGateways = useAgentProjectGateways(
     options.options.agentRootLeaseGateway,
@@ -205,20 +196,18 @@ export function useWorkbenchControllerAgents(
     options.activateWorkspaceRoot,
   );
 
-  const editorBridge = useAgentEditorBridgePort(agentWorkbench.dispatch);
+  const editorBridge = useAgentFileNavigationPort(agentWorkbench.dispatch);
   const activeWorkspaceRoot = options.workspaceRoot;
   const activeWorkspaceId = options.workspaceIdentityDescriptor?.workspaceId ?? null;
   const setWorkspaceTrust = options.setWorkspaceTrust;
   const setSettingsOpen = options.setSettingsOpen;
-  const setBottomPanelView = options.setBottomPanelView;
   const setBottomPanelVisible = options.setBottomPanelVisible;
   const workspaceTrustIntentCoordinatorRef = options.workspaceTrustIntentCoordinatorRef;
   const workspaceTrustRevisionByOwnerRef = options.workspaceTrustRevisionByOwnerRef;
   const revealTerminal = useCallback((): void => {
     setSettingsOpen(false);
-    setBottomPanelView("terminal");
     setBottomPanelVisible(true);
-  }, [setBottomPanelView, setBottomPanelVisible, setSettingsOpen]);
+  }, [setBottomPanelVisible, setSettingsOpen]);
 
   const trustRevisionForOwner = useCallback(
     (ownerId: string): number => workspaceTrustRevisionByOwnerRef.current[ownerId] ?? 0,
@@ -270,7 +259,6 @@ export function useWorkbenchControllerAgents(
     gitWorktreeGateway: options.options.gitWorktreeGateway,
     editorBridge,
     agentProjectGateways,
-    agentModeActive,
     appSettingsRef: options.appSettingsRef,
     applyAppSettings: options.applyAppSettings,
     settingsHydrated: appSettingsHydrated,
@@ -279,7 +267,6 @@ export function useWorkbenchControllerAgents(
     gitGateway: options.gitGateway,
     gitRepositoryMappings: options.gitRepositoryMappings,
     gitRepositoryStatuses: options.gitRepositoryStatuses,
-    openDocuments: options.openDocuments,
     onActiveWorkspaceTrustChanged: handleActiveWorkspaceTrustChanged,
     trustRevisionForOwner,
     prompter: options.prompter,
@@ -296,12 +283,11 @@ export function useWorkbenchControllerAgents(
   return useMemo(
     () => ({
       ...agents,
-      agentModeActive,
       agentWorkbench,
       appSettingsHydrated,
       markAppSettingsHydrated: setAppSettingsHydrated,
     }),
-    [agentModeActive, agentWorkbench, agents, appSettingsHydrated, setAppSettingsHydrated],
+    [agentWorkbench, agents, appSettingsHydrated, setAppSettingsHydrated],
   );
 }
 
@@ -359,9 +345,9 @@ function useAgentWorkbenchLayoutPersistence(
   }, [persistWorkspaceSettings, workspaceRoot, workspaceSettingsRef]);
 }
 
-function useAgentEditorBridgePort(
+function useAgentFileNavigationPort(
   dispatchAgentLayout: AgentWorkbenchLayoutState["dispatch"],
-): AgentEditorBridgePort {
+): AgentFileNavigationPort {
   return useMemo(
     () => ({
       revealFile: (path) => dispatchAgentLayout({ kind: "revealFile", path }),

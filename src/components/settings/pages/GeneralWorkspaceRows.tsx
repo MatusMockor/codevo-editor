@@ -1,27 +1,18 @@
 import type { BackgroundRuntimePolicy } from "../../../domain/settings";
-import type { IntelligenceMode } from "../../../domain/workspace";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
-import { SettingsSegmented } from "../primitives/SettingsSegmented";
 import { SettingsSelect } from "../primitives/SettingsSelect";
 import { SettingsSwitch } from "../primitives/SettingsSwitch";
 import { SettingsTextField } from "../primitives/SettingsTextField";
 import type { SettingsPageProps } from "../settingsPageProps";
 
-const INTELLIGENCE_MODE_OPTIONS = [
-  { value: "basic", label: "Editor Mode" },
-  { value: "lightSmart", label: "Smart Index" },
-  { value: "fullSmart", label: "IDE Mode" },
-] as const;
-
 const RUNTIME_POLICY_OPTIONS = [
-  { value: "keepAlive", label: "Keep project engines alive" },
+  { value: "keepAlive", label: "Keep background projects running" },
   { value: "suspendOnBackground", label: "Suspend background projects" },
-  { value: "singleActive", label: "Only active project runs IDE" },
+  { value: "singleActive", label: "Run only the active project" },
 ] as const;
 
 export function GeneralWorkspaceRows({ actions, draft, env }: SettingsPageProps) {
-  const workspaceSettings = draft.workspaceSettings;
   const disabled = !env.hasWorkspace;
 
   return (
@@ -35,34 +26,11 @@ export function GeneralWorkspaceRows({ actions, draft, env }: SettingsPageProps)
         />
       </SettingsRow>
 
-      <SettingsRow rowId="general.intelligenceMode">
-        <SettingsSegmented
-          disabled={disabled}
-          onChange={(value) => {
-            if (!isIntelligenceMode(value)) return;
-
-            actions.updateWorkspaceSettings({ ...workspaceSettings, intelligenceMode: value });
-          }}
-          options={INTELLIGENCE_MODE_OPTIONS}
-          value={workspaceSettings.intelligenceMode}
-        />
-      </SettingsRow>
-
       <SettingsRow rowId="general.trustedWorkspace">
         <SettingsSwitch
           checked={draft.trusted}
           disabled={disabled}
           onChange={actions.updateTrusted}
-        />
-      </SettingsRow>
-
-      <SettingsRow rowId="general.revealActiveFileInTree">
-        <SettingsSwitch
-          checked={workspaceSettings.revealActiveFileInTree}
-          disabled={disabled}
-          onChange={(revealActiveFileInTree) =>
-            actions.updateWorkspaceSettings({ ...workspaceSettings, revealActiveFileInTree })
-          }
         />
       </SettingsRow>
 
@@ -89,10 +57,6 @@ export function GeneralWorkspaceRows({ actions, draft, env }: SettingsPageProps)
       </SettingsRow>
     </SettingsSectionHeading>
   );
-}
-
-function isIntelligenceMode(value: string): value is IntelligenceMode {
-  return INTELLIGENCE_MODE_OPTIONS.some((option) => option.value === value);
 }
 
 function isBackgroundRuntimePolicy(value: string): value is BackgroundRuntimePolicy {

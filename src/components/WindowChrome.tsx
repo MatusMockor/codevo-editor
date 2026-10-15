@@ -18,7 +18,7 @@ interface WindowChromeProps {
   onQuitApplication(): void;
 }
 
-type WindowMenuKey = "edit" | "file" | "view";
+type WindowMenuKey = "file" | "view";
 
 interface WindowMenuItem {
   command?: Command;
@@ -46,7 +46,6 @@ export function WindowChrome({
   );
   const menus = useMemo(
     () => ({
-      edit: editMenuItems(commandsById, commandContext),
       file: fileMenuItems(commandsById, commandContext, onQuitApplication, platform),
       view: viewMenuItems(commandsById, commandContext),
     }),
@@ -168,13 +167,6 @@ export function WindowChrome({
               onSelectItem={runMenuItem}
             />
             <WindowMenu
-              isOpen={openMenu === "edit"}
-              items={menus.edit}
-              label="Edit"
-              onOpen={() => setOpenMenu((current) => (current === "edit" ? null : "edit"))}
-              onSelectItem={runMenuItem}
-            />
-            <WindowMenu
               isOpen={openMenu === "view"}
               items={menus.view}
               label="View"
@@ -279,30 +271,14 @@ function fileMenuItems(
   platform: KeymapPlatform,
 ): WindowMenuItem[] {
   return [
-    commandMenuItem(commandsById, context, "file.new", "New File"),
-    commandMenuItem(commandsById, context, "file.quickOpen", "Quick Open"),
-    commandMenuItem(commandsById, context, "editor.save", "Save"),
-    commandMenuItem(commandsById, context, "editor.closeTab", "Close", true),
+    commandMenuItem(commandsById, context, "file.quickOpen", "Go to File"),
+    commandMenuItem(commandsById, context, "workbench.closeActive", "Close", true),
     {
       label: "Quit Codevo Editor",
       onSelect: onQuitApplication,
       separatorBefore: true,
       shortcut: platform === "mac" ? "Cmd+Q" : "Ctrl+Q",
     },
-  ];
-}
-
-function editMenuItems(
-  commandsById: Map<string, Command>,
-  context: CommandContext,
-): WindowMenuItem[] {
-  return [
-    commandMenuItem(commandsById, context, "edit.undo", "Undo"),
-    commandMenuItem(commandsById, context, "edit.redo", "Redo"),
-    commandMenuItem(commandsById, context, "edit.cut", "Cut", true),
-    commandMenuItem(commandsById, context, "edit.copy", "Copy"),
-    commandMenuItem(commandsById, context, "edit.paste", "Paste"),
-    commandMenuItem(commandsById, context, "edit.selectAll", "Select All", true),
   ];
 }
 
@@ -314,16 +290,6 @@ function viewMenuItems(
     commandMenuItem(commandsById, context, "workbench.zoomIn", "Zoom In"),
     commandMenuItem(commandsById, context, "workbench.zoomOut", "Zoom Out"),
     commandMenuItem(commandsById, context, "workbench.zoomReset", "Reset Zoom"),
-    commandMenuItem(commandsById, context, "editor.fontZoomIn", "Increase Editor Font Size", true),
-    commandMenuItem(commandsById, context, "editor.fontZoomOut", "Decrease Editor Font Size"),
-    commandMenuItem(commandsById, context, "editor.fontZoomReset", "Reset Editor Font Size"),
-    commandMenuItem(
-      commandsById,
-      context,
-      "editor.toggleFontLigatures",
-      "Toggle Editor Font Ligatures",
-      true,
-    ),
     commandMenuItem(
       commandsById,
       context,

@@ -11,14 +11,7 @@ export interface RemoteFileRevealTarget {
 }
 
 export type RemoteFileRevealOutcome =
-  | "opened"
-  | "notFound"
-  | "notRegularFile"
-  | "unreadable"
-  | "failed"
-  | "unsavedChanges"
-  | "saveInProgress"
-  | "superseded";
+  "opened" | "notFound" | "notRegularFile" | "unreadable" | "failed" | "superseded";
 
 export type RemoteFileRevealSettlement = RemoteFileRevealOutcome | "filesUnavailable";
 

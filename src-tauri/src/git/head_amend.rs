@@ -2,7 +2,6 @@ pub(crate) use super::amend_index::{GitAmendFile, GitAmendFileAction};
 use super::{
     amend_index::rewrite_head,
     bounded_process::CommandError,
-    git_output_vec,
     pinned_root::{repository_file_path, PinnedRoot},
 };
 use serde::Serialize;
@@ -126,36 +125,6 @@ pub(crate) fn amend_head(
         head_sha: head,
         index_synced: outcome.index_synced,
     })
-}
-
-pub(super) fn refuse_amend_of_pushed_head(root: &Path, trusted: bool) -> io::Result<()> {
-    let head = match git_output_vec(
-        root,
-        vec!["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
-        trusted,
-    ) {
-        Ok(head) => head.trim().to_string(),
-        Err(_) => return Ok(()),
-    };
-    let contains = format!("--contains={head}");
-    let remotes = git_output_vec(
-        root,
-        vec![
-            "for-each-ref",
-            "--count=1",
-            "--format=%(refname)",
-            contains.as_str(),
-            "refs/remotes/",
-        ],
-        trusted,
-    )?;
-    if remotes.trim().is_empty() {
-        return Ok(());
-    }
-    Err(io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "cannot amend a pushed commit",
-    ))
 }
 
 fn operation_in_progress(root: &PinnedRoot, trusted: bool) -> io::Result<bool> {

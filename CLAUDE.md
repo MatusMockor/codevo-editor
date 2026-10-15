@@ -4,25 +4,32 @@ These project rules take precedence over global Claude instructions where they c
 
 ## Product direction and current priority
 
-Codevo is a native desktop IDE, not a browser editor demo.
+Codevo is a native desktop agent app, in the spirit of T3 Code: developers run coding
+agents (Claude Code, Codex) against their projects and review, ship, and integrate the
+results. It is not an IDE and not a browser demo.
 
-The current priority is practical VS Code parity for everyday JavaScript, TypeScript,
-Node.js, and Express development. Work on PHP, Nette, Laravel, or PhpStorm parity only
-when the user explicitly changes the priority.
+The current priority is a fast, reliable, and safe agent workflow:
 
-Focus on workflows developers actually use:
+- project-scoped agent threads in the local checkout or an isolated Git worktree, with
+  streaming transcripts, approvals, checkpoints, and per-thread history;
+- the right panel: terminal, read-only Files viewer, diff, Git, package scripts, pull
+  request, history, and agents;
+- reviewing, committing, pushing, and integrating thread changes back into the main
+  checkout;
+- settings, the remote runner over SSH, MCP servers and provider setup, and the app
+  updater.
 
-- editing, navigation, diagnostics, completion, rename, references, and code actions;
-- project and monorepo awareness;
-- package scripts, tasks, Jest/Vitest, coverage, and Problems integration;
-- Express routes and server-oriented project intelligence.
+The code editor (Monaco), LSP, Problems, test explorer, coverage, eslint/prettier
+integration and the classic workbench were removed by owner decision; do not reintroduce
+them unless the user explicitly asks. The same applies to the PHP, Laravel, Nette, and
+JavaScript/TypeScript language intelligence that came with them.
 
 The interactive debugger (launch configurations, breakpoints, stepping, Debug Console)
 was removed by owner decision; AI agents handle debugging. Do not reintroduce it unless
 the user explicitly asks.
 
-Do not claim parity with VS Code's extension ecosystem, debugging, remote
-development, containers, or unsupported platforms. Report implemented capability and
+Do not claim parity with other agent apps, the agent CLIs' own interfaces, editors,
+remote development, containers, or unsupported platforms. Report implemented capability and
 remaining gaps separately.
 
 ## Autonomous execution and maximal safe delegation
@@ -90,7 +97,7 @@ Pure domain model and policies
 The domain contains immutable data, invariants, parsers, policies, state transitions,
 and pure transformations.
 
-- No React, Tauri, Monaco, filesystem, process, network, timer, or global-state imports.
+- No React, Tauri, filesystem, process, network, timer, or global-state imports.
 - Prefer discriminated unions/enums over combinations of booleans.
 - Make invalid states unrepresentable where practical.
 - Parse external input once into a closed internal type.
@@ -109,7 +116,7 @@ The application layer coordinates use cases and owns workflow state.
 ### Ports and infrastructure adapters
 
 Ports define the minimum capability required by the application. Adapters implement
-those ports for Tauri, Monaco, Node/CDP, LSP, filesystem, processes, or persistence.
+those ports for Tauri, agent CLIs, Git, filesystem, processes, SSH, or persistence.
 
 - IPC contracts are strict, bounded, typed, and reject unknown fields.
 - Do not pass raw shell commands, arbitrary runtime flags, regexes, environment maps,
@@ -118,9 +125,9 @@ those ports for Tauri, Monaco, Node/CDP, LSP, filesystem, processes, or persiste
 
 ### Framework and composition roots
 
-React, Tauri, Monaco, and runtime setup belong at the outside edge.
+React, Tauri, and runtime setup belong at the outside edge.
 
-- `App.tsx`, `useWorkbenchController.ts`, and Rust `lib.rs` are composition roots, not
+- `AgentApp.tsx`, `agentAppComposition.ts`, and Rust `lib.rs` are composition roots, not
   places for business logic.
 - Composition roots may wire dependencies but must delegate behavior to focused
   modules.
@@ -137,7 +144,7 @@ Use patterns because they clarify ownership or variability, not to decorate code
 These patterns define boundaries between larger parts of the system:
 
 - **Ports and Adapters / Hexagonal Architecture** — domain and application logic depend
-  on stable ports; Tauri, Monaco, CDP, LSP, filesystem, and process code are adapters.
+  on stable ports; Tauri, agent CLI, Git, filesystem, and process code are adapters.
 - **Clean Architecture dependency rule** — framework details depend on application
   policies, never the reverse.
 - **Application Service / Use Case** — one focused coordinator implements one workflow.
@@ -193,8 +200,8 @@ TypeScript and Rust should also use functional techniques:
 
 Per-project isolation is a critical invariant.
 
-- No runtime process, LSP response, agent event, index, diagnostic, completion,
-  watcher, terminal, task, or cached result may leak between workspace tabs.
+- No runtime process, agent event, thread, transcript, diff, watcher, terminal, task,
+  or cached result may leak between projects or workspace tabs.
 - Capture the exact workspace root, registered identity, session, generation, epoch,
   and owner before starting asynchronous work.
 - Revalidate the captured authority after every `await` and immediately before
@@ -202,7 +209,6 @@ Per-project isolation is a critical invariant.
 - Treat workspace A → B → A as different ownership generations.
 - A path string alone is not identity. Use canonical/descriptor-backed identity where
   security or correctness depends on the exact file.
-- Dirty editor state and on-disk state are distinct authorities.
 - Late, duplicate, foreign, reordered, or stale results must fail closed.
 - Use monotonic generations and exact owner leases rather than “currently active”
   guesses.
@@ -245,55 +251,58 @@ Drop, panic, disconnect, trust revocation, and workspace replacement.
 - Avoid giant hooks and forwarding-only abstractions. Extract coherent ownership and
   lifecycle responsibilities.
 
-## Performance, large files, and responsiveness
+## Performance, large outputs, and responsiveness
 
-The editor must feel as immediate and predictable as VS Code during everyday work,
-including large files, large repositories, and monorepos. Correct behavior that freezes
-typing, scrolling, navigation, or the window is not complete.
+The app must feel immediate and predictable during everyday agent work, including long
+transcripts, large diffs, large files in the read-only viewer, large repositories, and
+monorepos. Correct behavior that freezes typing in the composer, transcript scrolling,
+streaming, viewer or diff rendering, or the window is not complete.
 
 - Keep the UI/main thread free of filesystem crawling, parsing, indexing, hashing,
   process waits, large serialization, and other blocking work.
-- Never perform an unbounded full-file or full-workspace scan on every keystroke.
-- Prefer incremental parsing, incremental indexes, dirty-region updates, cached
-  immutable snapshots, and invalidation of only the affected owner.
-- Debounce and coalesce edit-driven work, cancel superseded requests, and publish only
+- Never perform an unbounded full-file or full-workspace scan on every keystroke or
+  streamed agent event.
+- Prefer incremental updates, cached immutable snapshots, and invalidation of only the
+  affected owner.
+- Debounce and coalesce event-driven work, cancel superseded requests, and publish only
   the latest exact-owner result.
 - Move CPU-heavy or blocking work to workers or Rust blocking pools. Returning a
   Promise does not make synchronous work non-blocking.
-- Avoid repeatedly cloning large strings, ASTs, arrays, maps, IPC payloads, or Monaco
-  models. Pass compact identities and bounded projections where possible.
+- Avoid repeatedly cloning large strings, transcripts, diffs, arrays, maps, or IPC
+  payloads. Pass compact identities and bounded projections where possible.
 - Paginate, stream, window, or virtualize large result sets. React must not render
   thousands of rows when a viewport-sized projection is sufficient.
-- Cap decorations, diagnostics, inline values, tree nodes, retained console output,
-  events, and cached documents. Eviction must be deterministic.
-- Keep frequently updated state local. Avoid rerendering the whole workbench for cursor,
-  scroll, terminal-output, agent-event, or single-document changes.
+- Cap transcript items, tree nodes, diff hunks, highlighted lines, retained terminal and
+  agent output, events, and cached files. Eviction must be deterministic.
+- Keep frequently updated state local. Avoid rerendering the whole app for scroll,
+  terminal-output, agent-event, or single-thread changes.
 - Batch related state changes and IPC/event delivery without hiding intermediate
   ownership or failure states.
 - Use fast-path checks before expensive canonicalization, parsing, indexing, or runtime
   discovery, while preserving the authoritative validation at the security boundary.
 
-Large-file behavior must degrade gracefully:
+Large transcripts, files, and diffs must degrade gracefully:
 
-- Detect expensive files by measured bytes, line count, and feature cost rather than
-  filename alone.
-- Preserve essential editing, save, search, go-to-line, and basic navigation.
-- Disable or reduce expensive semantic features explicitly and truthfully instead of
-  freezing, crashing, silently truncating, or publishing incomplete results as complete.
-- Show a bounded large-file/degraded-mode reason when a user-visible capability is
+- Detect expensive content by measured bytes, line count, and rendering cost rather
+  than filename alone.
+- Window or virtualize long transcripts, viewer files, and diffs instead of rendering
+  them whole.
+- Disable or reduce expensive work such as syntax highlighting explicitly and
+  truthfully instead of freezing, crashing, silently truncating, or presenting partial
+  content as complete.
+- Show a bounded large-content/degraded-mode reason when a user-visible capability is
   reduced.
-- Re-enable capabilities when the exact document becomes eligible again; do not leak a
-  degraded state to another tab or workspace generation.
+- Do not leak a degraded state to another thread, tab, or workspace generation.
 
 Performance work requires evidence:
 
 - Measure before and after changes using representative small, large, and adversarial
   files and repositories.
 - Add regression tests or benchmarks for hot paths when they can be deterministic.
-- Test rapid typing, scrolling, cancellation storms, repeated workspace switches,
-  large output bursts, and large result sets.
+- Test fast agent streaming, transcript scrolling, cancellation storms, repeated
+  workspace switches, large output bursts, large diffs, and large result sets.
 - Track latency, allocations/retained memory, IPC payload size, queue depth, and work
-  performed per edit where relevant.
+  performed per event where relevant.
 - Do not trade correctness, owner isolation, or cleanup for a benchmark result.
 - Do not call a performance task complete based only on successful functional tests.
 
@@ -344,7 +353,7 @@ Also run `git diff --check`.
 Test race and failure paths, not only success:
 
 - workspace A → B → A;
-- dirty document during pending work;
+- dirty worktree or unsent composer draft during pending work;
 - symlink/case/path aliases;
 - stale, duplicate, foreign, reordered, and late events;
 - timeout, cancellation, Stop, Drop, panic, and disconnect;

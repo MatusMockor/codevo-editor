@@ -9,7 +9,7 @@ import type {
 import type {
   WorkspaceIdentityReleaseDeferral,
   WorkspaceIdentityReleaseOutcome,
-} from "../useWorkbenchCloseLifecycle";
+} from "../agentApp/agentWorkspaceTabDisposal";
 import {
   createCancellableWorkspaceRetryScheduler,
   retryWhileWorkspaceReleasing,
@@ -18,7 +18,7 @@ import {
   type CancellableWorkspaceRetryScheduler,
   type WorkspaceReleaseRetryDelay,
 } from "../workspaceReleaseRetry";
-import { withWorkspaceIdentityLease } from "./workspaceIdentityPolicy";
+import { withWorkspaceIdentityLease } from "../workspace/workspaceIdentityPolicy";
 import type { WorkspaceRequestTokenRegistry } from "./workspaceRequestTokenRegistry";
 
 type BackendReleaseDisposition = "released" | "retained" | "stale";

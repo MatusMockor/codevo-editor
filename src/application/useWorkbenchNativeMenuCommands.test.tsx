@@ -3,10 +3,7 @@
 import { act, startTransition, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type {
-  CommandContext,
-  CommandExecutionRunner,
-} from "./commandRegistry";
+import type { CommandContext, CommandExecutionRunner } from "./commandRegistry";
 import { NATIVE_MENU_EVENT_NAMES } from "./workbenchNativeMenuCommandDispatcher";
 import { useWorkbenchNativeMenuCommands } from "./useWorkbenchNativeMenuCommands";
 
@@ -26,8 +23,6 @@ vi.mock("@tauri-apps/api/event", () => ({
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const initialContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: false,
 };
 
@@ -61,17 +56,13 @@ describe("useWorkbenchNativeMenuCommands", () => {
 
   it("dispatches with the latest runner and command context without re-registering", async () => {
     const listeners = new Map<string, () => void>();
-    tauriMocks.listen.mockImplementation(
-      async (eventName: string, listener: () => void) => {
-        listeners.set(eventName, listener);
-        return vi.fn();
-      },
-    );
+    tauriMocks.listen.mockImplementation(async (eventName: string, listener: () => void) => {
+      listeners.set(eventName, listener);
+      return vi.fn();
+    });
     const initialRunner = commandRunner();
     const latestRunner = commandRunner();
     const latestContext: CommandContext = {
-      activeDocumentDirty: true,
-      hasActiveDocument: true,
       hasWorkspace: true,
     };
     const harness = renderHook({ runCommand: initialRunner });
@@ -83,27 +74,21 @@ describe("useWorkbenchNativeMenuCommands", () => {
     });
     act(() => listeners.get("mockor-close-active-tab")?.());
 
-    expect(tauriMocks.listen).toHaveBeenCalledTimes(
-      NATIVE_MENU_EVENT_NAMES.length,
-    );
+    expect(tauriMocks.listen).toHaveBeenCalledTimes(NATIVE_MENU_EVENT_NAMES.length);
     expect(initialRunner).not.toHaveBeenCalled();
-    expect(latestRunner).toHaveBeenCalledWith("editor.closeTab", latestContext);
+    expect(latestRunner).toHaveBeenCalledWith("workbench.closeActive", latestContext);
     harness.unmount();
   });
 
   it("keeps dispatching through the latest committed runner during a suspended render", async () => {
     const listeners = new Map<string, () => void>();
-    tauriMocks.listen.mockImplementation(
-      async (eventName: string, listener: () => void) => {
-        listeners.set(eventName, listener);
-        return vi.fn();
-      },
-    );
+    tauriMocks.listen.mockImplementation(async (eventName: string, listener: () => void) => {
+      listeners.set(eventName, listener);
+      return vi.fn();
+    });
     const committedRunner = commandRunner();
     const suspendedRunner = commandRunner();
     const suspendedContext: CommandContext = {
-      activeDocumentDirty: true,
-      hasActiveDocument: true,
       hasWorkspace: true,
     };
     const harness = renderHook({ runCommand: committedRunner });
@@ -115,25 +100,20 @@ describe("useWorkbenchNativeMenuCommands", () => {
     });
     act(() => listeners.get("mockor-close-active-tab")?.());
 
-    expect(committedRunner).toHaveBeenCalledWith(
-      "editor.closeTab",
-      initialContext,
-    );
+    expect(committedRunner).toHaveBeenCalledWith("workbench.closeActive", initialContext);
     expect(suspendedRunner).not.toHaveBeenCalled();
     harness.unmount();
   });
 
   it("ignores retained native callbacks after unmount", async () => {
     let retainedListener: (() => void) | undefined;
-    tauriMocks.listen.mockImplementation(
-      async (eventName: string, listener: () => void) => {
-        if (eventName === "mockor-close-active-tab") {
-          retainedListener = listener;
-        }
+    tauriMocks.listen.mockImplementation(async (eventName: string, listener: () => void) => {
+      if (eventName === "mockor-close-active-tab") {
+        retainedListener = listener;
+      }
 
-        return vi.fn();
-      },
-    );
+      return vi.fn();
+    });
     const runCommand = commandRunner();
     const harness = renderHook({ runCommand });
     await flushAsyncTurns();
@@ -158,9 +138,7 @@ describe("useWorkbenchNativeMenuCommands", () => {
   });
 
   it("disposes listeners that finish registering after unmount", async () => {
-    const registrations = NATIVE_MENU_EVENT_NAMES.map(() =>
-      createDeferred<() => void>(),
-    );
+    const registrations = NATIVE_MENU_EVENT_NAMES.map(() => createDeferred<() => void>());
     tauriMocks.listen.mockImplementation(
       () => registrations[tauriMocks.listen.mock.calls.length - 1]!.promise,
     );

@@ -15,15 +15,17 @@ let counter = 0;
 const empty: RemoteDirectory = { entries: [], nextOffset: null, truncated: false };
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
-const file = (text = "original"): RemoteFileContent => ({
+const file = (text = "original", version = "hash-one"): RemoteFileContent => ({
   path: "index.ts",
   text,
-  version: "hash-one",
+  version,
   unavailableReason: null,
 });
 const scope = (): RemoteSurfaceScope => ({
@@ -43,9 +45,8 @@ beforeEach(() => {
 afterEach(() => act(() => root.unmount()));
 function api() {
   return {
-    listDirectory: vi.fn(async () => empty),
-    readFile: vi.fn(async () => file()),
-    writeFile: vi.fn(async () => file("edited")),
+    listDirectory: vi.fn<RemoteFilesGateway["listDirectory"]>(async () => empty),
+    readFile: vi.fn<RemoteFilesGateway["readFile"]>(async () => file()),
   };
 }
 it("rejects old directory responses across A to B to A", async () => {
@@ -62,68 +63,7 @@ it("rejects old directory responses across A to B to A", async () => {
   );
   expect(state.directory).toEqual(empty);
 });
-it("keeps dirty content after conflict and sends exact original version", async () => {
-  const gateway = api();
-  const owner = scope();
-  gateway.writeFile.mockRejectedValueOnce(
-    new Error("File changed on server. Reload before saving."),
-  );
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("mine"));
-  await act(async () => state.save());
-  expect(gateway.writeFile).toHaveBeenCalledWith({
-    ...owner,
-    path: "index.ts",
-    text: "mine",
-    expectedVersion: "hash-one",
-  });
-  expect(state.text).toBe("mine");
-  expect(state.dirty).toBe(true);
-  expect(state.error).toContain("File changed");
-  await act(async () => state.open("another.ts"));
-  expect(gateway.readFile).toHaveBeenCalledTimes(1);
-});
-it("preserves edits made during save and saves them against the new version", async () => {
-  const gateway = api();
-  const owner = scope();
-  const saved = deferred<RemoteFileContent>();
-  gateway.writeFile.mockImplementationOnce(() => saved.promise);
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("submitted"));
-  let saving!: Promise<void>;
-  act(() => {
-    saving = state.save();
-  });
-  act(() => state.edit("newer"));
-  await act(async () => {
-    saved.resolve({ ...file("submitted"), version: "hash-two" });
-    await saving;
-  });
-  expect(state.text).toBe("newer");
-  expect(state.dirty).toBe(true);
-  await act(async () => state.save());
-  expect(gateway.writeFile).toHaveBeenLastCalledWith({
-    ...owner,
-    path: "index.ts",
-    text: "newer",
-    expectedVersion: "hash-two",
-  });
-});
-it("retains unsaved text when the panel unmounts and returns to the same owner", async () => {
-  const gateway = api();
-  const owner = scope();
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("retained"));
-  act(() => root.render(null));
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  expect(state.text).toBe("retained");
-  expect(state.dirty).toBe(true);
-  expect(state.file?.version).toBe("hash-one");
-});
-it("does not publish late file content or start stale saves after switching owners", async () => {
+it("does not publish late file content after switching owners", async () => {
   const gateway = api();
   const old = deferred<RemoteFileContent>();
   gateway.readFile.mockImplementationOnce(() => old.promise);
@@ -134,158 +74,120 @@ it("does not publish late file content or start stale saves after switching owne
   act(() => {
     opening = state.open("index.ts");
   });
-  const stale = state;
   await act(async () => root.render(<Harness owner={b} gateway={gateway} />));
   await act(async () => {
     old.resolve(file("foreign"));
     await opening;
   });
   expect(state.file).toBeNull();
-  await act(async () => stale.save());
-  expect(gateway.writeFile).not.toHaveBeenCalled();
+  expect(state.busy).toBe(false);
 });
-it("keeps a revert typed during pending save as an unsaved draft", async () => {
+it("ignores calls from a stale owner's handle after the checkout changes", async () => {
   const gateway = api();
-  const owner = scope();
-  const saved = deferred<RemoteFileContent>();
-  gateway.writeFile.mockImplementationOnce(() => saved.promise);
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("submitted"));
-  let saving!: Promise<void>;
-  act(() => {
-    saving = state.save();
-  });
-  act(() => state.edit("original"));
-  await act(async () => {
-    saved.resolve({ ...file("submitted"), version: "hash-two" });
-    await saving;
-  });
-  act(() => root.render(null));
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  expect(state.text).toBe("original");
-  expect(state.file?.text).toBe("submitted");
-  expect(state.dirty).toBe(true);
-});
-it("clears exactly the submitted draft when a save finishes after unmount", async () => {
-  const gateway = api();
-  const owner = scope();
-  const saved = deferred<RemoteFileContent>();
-  gateway.writeFile.mockImplementationOnce(() => saved.promise);
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("submitted"));
-  let saving!: Promise<void>;
-  act(() => {
-    saving = state.save();
-  });
-  act(() => root.render(null));
-  await act(async () => {
-    saved.resolve(file("submitted"));
-    await saving;
-  });
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  expect(state.dirty).toBe(false);
+  const a = scope();
+  await act(async () => root.render(<Harness owner={a} gateway={gateway} />));
+  const stale = state;
+  await act(async () => root.render(<Harness owner={scope()} gateway={gateway} />));
+  const reads = gateway.readFile.mock.calls.length;
+  await act(async () => stale.open("index.ts"));
+  expect(gateway.readFile).toHaveBeenCalledTimes(reads);
   expect(state.file).toBeNull();
 });
-it("compares a conflict while retaining edits, and refreshes version only after explicit choice", async () => {
+it("lets a later open win over a slower earlier read", async () => {
   const gateway = api();
-  const owner = scope();
-  gateway.writeFile.mockRejectedValueOnce(new Error("File changed"));
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("mine"));
-  await act(async () => state.save());
-  gateway.readFile.mockResolvedValueOnce({ ...file("theirs"), version: "new-server-version" });
-  await act(async () => state.compare());
-  expect(state.text).toBe("mine");
-  expect(state.file?.version).toBe("hash-one");
-  act(() => state.resolveComparison(true));
-  expect(state.text).toBe("mine");
-  expect(state.file?.version).toBe("new-server-version");
-  await act(async () => state.save());
-  expect(gateway.writeFile).toHaveBeenLastCalledWith({
-    ...owner,
-    path: "index.ts",
-    text: "mine",
-    expectedVersion: "new-server-version",
-  });
-});
-it("does not let a stale editor callback overwrite the newly opened document", async () => {
-  const gateway = api();
+  const slow = deferred<RemoteFileContent>();
+  gateway.readFile.mockImplementationOnce(() => slow.promise);
+  gateway.readFile.mockResolvedValueOnce({ ...file("second"), path: "second.ts" });
   const owner = scope();
   await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  const stale = state;
-  gateway.readFile.mockResolvedValueOnce({ ...file("new file"), path: "second.ts" });
-  await act(async () => state.open("second.ts"));
-  act(() => stale.edit("late edit"));
-  expect(state.text).toBe("new file");
-});
-it.each([false, true])(
-  "reconciles reverted drafts after leaving during save (return before completion: %s)",
-  async (returnEarly) => {
-    const gateway = api();
-    const owner = scope();
-    const saved = deferred<RemoteFileContent>();
-    gateway.writeFile.mockImplementationOnce(() => saved.promise);
-    await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-    await act(async () => state.open("index.ts"));
-    act(() => state.edit("submitted"));
-    let saving!: Promise<void>;
-    act(() => {
-      saving = state.save();
-    });
-    act(() => state.edit("original"));
-    act(() => root.render(null));
-    if (returnEarly)
-      await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-    await act(async () => {
-      saved.resolve({ ...file("submitted"), version: "hash-new" });
-      await saving;
-    });
-    if (!returnEarly)
-      await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-    expect(state.text).toBe("original");
-    expect(state.file?.text).toBe("submitted");
-    expect(state.file?.version).toBe("hash-new");
-    expect(state.dirty).toBe(true);
-  },
-);
-it("invalidates an open comparison when save settles", async () => {
-  const gateway = api();
-  const owner = scope();
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("edited"));
-  await act(async () => state.compare());
-  expect(state.comparison).not.toBeNull();
-  await act(async () => state.save());
-  expect(state.comparison).toBeNull();
-  act(() => state.resolveComparison(false));
-  expect(state.text).toBe("edited");
-  expect(state.dirty).toBe(false);
-});
-it("retains a revert entered after remount while an earlier save is pending", async () => {
-  const gateway = api();
-  const owner = scope();
-  const saved = deferred<RemoteFileContent>();
-  gateway.writeFile.mockImplementationOnce(() => saved.promise);
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  await act(async () => state.open("index.ts"));
-  act(() => state.edit("submitted"));
-  let saving!: Promise<void>;
+  let first!: Promise<void>;
   act(() => {
-    saving = state.save();
+    first = state.open("index.ts");
   });
-  act(() => root.render(null));
-  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
-  act(() => state.edit("original"));
+  await act(async () => state.open("second.ts"));
   await act(async () => {
-    saved.resolve({ ...file("submitted"), version: "hash-new" });
-    await saving;
+    slow.resolve(file("first"));
+    await first;
   });
-  expect(state.text).toBe("original");
-  expect(state.file?.text).toBe("submitted");
-  expect(state.dirty).toBe(true);
+  expect(state.file?.path).toBe("second.ts");
+  expect(state.file?.text).toBe("second");
+});
+it("surfaces a runner outage on open and keeps the shown file unchanged", async () => {
+  const gateway = api();
+  const owner = scope();
+  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
+  await act(async () => state.open("index.ts"));
+  gateway.readFile.mockRejectedValueOnce(new Error("Runner connection failed."));
+  await act(async () => state.open("other.ts"));
+  expect(state.error).toBe("Runner connection failed.");
+  expect(state.file?.text).toBe("original");
+  expect(state.busy).toBe(false);
+});
+it("compares with the latest server text and adopts it only on request", async () => {
+  const gateway = api();
+  const owner = scope();
+  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
+  await act(async () => state.open("index.ts"));
+  gateway.readFile.mockResolvedValueOnce(file("theirs", "hash-two"));
+  await act(async () => state.compare());
+  expect(state.comparison?.text).toBe("theirs");
+  expect(state.file?.text).toBe("original");
+  act(() => state.showLatest());
+  expect(state.file?.text).toBe("theirs");
+  expect(state.file?.version).toBe("hash-two");
+  expect(state.comparison).toBeNull();
+});
+it("drops a comparison read that settles after the checkout changes", async () => {
+  const gateway = api();
+  const a = scope();
+  await act(async () => root.render(<Harness owner={a} gateway={gateway} />));
+  await act(async () => state.open("index.ts"));
+  const late = deferred<RemoteFileContent>();
+  gateway.readFile.mockImplementationOnce(() => late.promise);
+  let comparing!: Promise<void>;
+  act(() => {
+    comparing = state.compare();
+  });
+  await act(async () => root.render(<Harness owner={scope()} gateway={gateway} />));
+  await act(async () => {
+    late.resolve(file("foreign"));
+    await comparing;
+  });
+  expect(state.comparison).toBeNull();
+  expect(state.file).toBeNull();
+});
+it("drops a comparison when another file is opened first", async () => {
+  const gateway = api();
+  const owner = scope();
+  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
+  await act(async () => state.open("index.ts"));
+  const late = deferred<RemoteFileContent>();
+  gateway.readFile.mockImplementationOnce(() => late.promise);
+  gateway.readFile.mockResolvedValueOnce({ ...file("other"), path: "other.ts" });
+  let comparing!: Promise<void>;
+  act(() => {
+    comparing = state.compare();
+  });
+  await act(async () => state.open("other.ts"));
+  await act(async () => {
+    late.resolve(file("late"));
+    await comparing;
+  });
+  expect(state.file?.path).toBe("other.ts");
+  expect(state.comparison).toBeNull();
+});
+it("refuses to compare a server file that is no longer text", async () => {
+  const gateway = api();
+  const owner = scope();
+  await act(async () => root.render(<Harness owner={owner} gateway={gateway} />));
+  await act(async () => state.open("index.ts"));
+  gateway.readFile.mockResolvedValueOnce({
+    path: "index.ts",
+    text: "",
+    version: null,
+    unavailableReason: "large",
+  });
+  await act(async () => state.compare());
+  expect(state.comparison).toBeNull();
+  expect(state.error).toBe("The server file cannot be compared as text.");
 });

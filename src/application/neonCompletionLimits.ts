@@ -1,1 +1,0 @@
-export const NEON_MAX_COMPLETIONS = 100;

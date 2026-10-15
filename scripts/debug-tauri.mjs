@@ -1,53 +1,14 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import path from "node:path";
 import { spawnDebugApp } from "./debug-tauri-launcher.mjs";
 import { debugAppExecutables } from "./debug-tauri-processes.mjs";
-import {
-  cleanTargetIfOversized,
-  describeTargetClean,
-} from "./debug-tauri-target-clean.mjs";
+import { cleanTargetIfOversized, describeTargetClean } from "./debug-tauri-target-clean.mjs";
 
 const args = process.argv.slice(2);
 const smokeMode = args.includes("--smoke");
 const cleanForced = args.includes("--clean");
 const repoRoot = process.cwd();
 const devAppExecutables = debugAppExecutables(repoRoot);
-const managedPhpactorMarkers = [
-  path.join("Application Support", "Codevo Editor", "tools", "phpactor"),
-  path.join(".codevo-editor", "tools", "phpactor"),
-  path.join("Application Support", "Mockor Editor", "tools", "phpactor"),
-  path.join(".mockor-editor", "tools", "phpactor"),
-];
-const bundledTypescriptServerMarker = path.join(
-  repoRoot,
-  "node_modules",
-  ".bin",
-  "typescript-language-server",
-);
-const managedTypescriptServerMarkers = [
-  path.join(
-    "Application Support",
-    "Codevo Editor",
-    "tools",
-    "typescript-language-server",
-  ),
-  path.join(".codevo-editor", "tools", "typescript-language-server"),
-  path.join(
-    "Application Support",
-    "Mockor Editor",
-    "tools",
-    "typescript-language-server",
-  ),
-  path.join(".mockor-editor", "tools", "typescript-language-server"),
-];
-const bundledTsserverMarker = path.join(
-  repoRoot,
-  "node_modules",
-  "typescript",
-  "lib",
-  "tsserver.js",
-);
 const smokeRunMs = readPositiveIntegerEnv(
   "CODEVO_EDITOR_SMOKE_RUN_MS",
   5000,
@@ -103,69 +64,16 @@ function listProcesses() {
 }
 
 function isDevAppProcess(processInfo) {
-  return devAppExecutables.some((executable) =>
-    processInfo.command.includes(executable),
-  );
-}
-
-function isManagedPhpactorProcess(processInfo) {
-  return (
-    managedPhpactorMarkers.some((marker) =>
-      processInfo.command.includes(marker),
-    ) &&
-    processInfo.command.includes("language-server")
-  );
-}
-
-function isTypescriptLanguageServerProcess(processInfo) {
-  return (
-    (processInfo.command.includes(bundledTypescriptServerMarker) ||
-      managedTypescriptServerMarkers.some((marker) =>
-        processInfo.command.includes(marker),
-      )) &&
-    processInfo.command.includes("--stdio")
-  );
-}
-
-function isTsserverProcess(processInfo) {
-  return (
-    (processInfo.command.includes(bundledTsserverMarker) ||
-      managedTypescriptServerMarkers.some((marker) =>
-        processInfo.command.includes(marker),
-      )) &&
-    processInfo.command.includes("tsserver.js")
-  );
-}
-
-function isRuntimeProcess(processInfo) {
-  return (
-    isManagedPhpactorProcess(processInfo) ||
-    isTypescriptLanguageServerProcess(processInfo) ||
-    isTsserverProcess(processInfo)
-  );
+  return devAppExecutables.some((executable) => processInfo.command.includes(executable));
 }
 
 function matchingManagedProcesses(processes = listProcesses()) {
-  return processes.filter(
-    (processInfo) => isDevAppProcess(processInfo) || isRuntimeProcess(processInfo),
-  );
+  return processes.filter((processInfo) => isDevAppProcess(processInfo));
 }
 
 function processKind(processInfo) {
   if (isDevAppProcess(processInfo)) {
     return "debug app";
-  }
-
-  if (isManagedPhpactorProcess(processInfo)) {
-    return "phpactor";
-  }
-
-  if (isTypescriptLanguageServerProcess(processInfo)) {
-    return "typescript-language-server";
-  }
-
-  if (isTsserverProcess(processInfo)) {
-    return "tsserver";
   }
 
   return "unknown";
@@ -174,8 +82,7 @@ function processKind(processInfo) {
 function describeProcesses(processes) {
   return processes
     .map(
-      (processInfo) =>
-        `  ${processInfo.pid} (${processKind(processInfo)}): ${processInfo.command}`,
+      (processInfo) => `  ${processInfo.pid} (${processKind(processInfo)}): ${processInfo.command}`,
     )
     .join("\n");
 }
@@ -229,7 +136,6 @@ function cleanupDevAppProcesses() {
   cleanedUp = true;
 
   killDevAppProcesses();
-  killRuntimeProcesses();
 }
 
 function killDevAppProcesses() {
@@ -258,45 +164,15 @@ function killDevAppProcesses() {
   }, 750).unref();
 }
 
-function killRuntimeProcesses() {
-  const processes = listProcesses();
-  const runtimePids = processes
-    .filter((processInfo) => isRuntimeProcess(processInfo))
-    .map((processInfo) => processInfo.pid);
-
-  if (runtimePids.length === 0) {
-    return;
-  }
-
-  killPids(runtimePids, "SIGTERM");
-  setTimeout(() => {
-    const survivors = new Set(
-      listProcesses()
-        .filter((processInfo) => runtimePids.includes(processInfo.pid))
-        .map((processInfo) => processInfo.pid),
-    );
-    killPids(survivors, "SIGKILL");
-  }, 750).unref();
-}
-
 async function cleanupAndVerifySmoke(baselinePids) {
   const processes = listProcesses();
   const appPids = new Set(
     processes
-      .filter(
-        (processInfo) =>
-          isDevAppProcess(processInfo) && !baselinePids.has(processInfo.pid),
-      )
+      .filter((processInfo) => isDevAppProcess(processInfo) && !baselinePids.has(processInfo.pid))
       .map((processInfo) => processInfo.pid),
   );
   const childPids = descendantsOf(processes, appPids);
-  const runtimePids = processes
-    .filter(
-      (processInfo) =>
-        isRuntimeProcess(processInfo) && !baselinePids.has(processInfo.pid),
-    )
-    .map((processInfo) => processInfo.pid);
-  const targets = [...new Set([...childPids, ...appPids, ...runtimePids])];
+  const targets = [...new Set([...childPids, ...appPids])];
 
   killPids(targets, "SIGTERM");
   await sleep(smokeCleanupGraceMs);
@@ -308,9 +184,7 @@ async function cleanupAndVerifySmoke(baselinePids) {
   );
 
   if (survivors.length > 0) {
-    throw new Error(
-      `Smoke cleanup left matching process(es):\n${describeProcesses(survivors)}`,
-    );
+    throw new Error(`Smoke cleanup left matching process(es):\n${describeProcesses(survivors)}`);
   }
 }
 
@@ -338,7 +212,7 @@ async function runSmoke() {
 
   if (existingMatches.length > 0 && !smokeAllowExisting) {
     throw new Error(
-      "Refusing to run smoke while matching debug/runtime process(es) already exist.\n" +
+      "Refusing to run smoke while matching debug process(es) already exist.\n" +
         "Close them first, or set CODEVO_EDITOR_SMOKE_CLEAN_EXISTING=1 to let this script clean them.\n" +
         describeProcesses(existingMatches),
     );
@@ -357,7 +231,6 @@ async function runSmoke() {
 
   if (smokeAllowExisting) {
     killDevAppProcesses();
-    killRuntimeProcesses();
     await sleep(smokeCleanupGraceMs);
   }
 
@@ -394,7 +267,7 @@ async function runSmoke() {
     reportTargetClean(cleanTargetIfOversized({ forced: cleanForced, repoRoot }));
   }
 
-  console.log("Debug app boot smoke passed: no matching dev/runtime processes remain.");
+  console.log("Debug app boot smoke passed: no matching dev processes remain.");
 }
 
 function reportTargetClean(result) {
@@ -406,7 +279,6 @@ function reportTargetClean(result) {
 
 function runDebug() {
   killDevAppProcesses();
-  killRuntimeProcesses();
 
   reportTargetClean(cleanTargetIfOversized({ forced: cleanForced, repoRoot }));
   execFileSync("npm", ["run", "debug:build"], {

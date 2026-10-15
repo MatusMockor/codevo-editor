@@ -1,5 +1,4 @@
 import type { AgentProjectDescriptor } from "../domain/agentProject";
-import type { EditorDocument } from "../domain/workspace";
 import { agentBranchCheckoutBlockedReason } from "./agentBranchCheckoutPolicy";
 
 export interface AgentBranchCheckoutProject extends Pick<
@@ -20,10 +19,7 @@ export interface AgentBranchCheckoutGuardState {
   readonly workspaceTrusted: boolean;
   readonly projects: ReadonlyArray<AgentBranchCheckoutProject>;
   readonly threads: ReadonlyArray<AgentBranchCheckoutThread>;
-  readonly documents:
-    ReadonlyArray<Pick<EditorDocument, "path" | "content" | "savedContent">> | undefined;
   readonly dispatching: boolean;
-  isLiveDocumentDirty(path: string): boolean;
 }
 
 export const BRANCH_CHECKOUT_UNAVAILABLE_REASON =
@@ -39,13 +35,7 @@ export function agentBranchCheckoutGuardReason(
     return BRANCH_CHECKOUT_UNAVAILABLE_REASON;
   if (owners.some((project) => project.rootPath === state.workspaceRoot) && !state.workspaceTrusted)
     return BRANCH_CHECKOUT_UNAVAILABLE_REASON;
-  return agentBranchCheckoutBlockedReason(
-    rootPath,
-    state.documents,
-    state.threads,
-    state.dispatching,
-    state.isLiveDocumentDirty,
-  );
+  return agentBranchCheckoutBlockedReason(rootPath, state.threads, state.dispatching);
 }
 
 function owningProjects(

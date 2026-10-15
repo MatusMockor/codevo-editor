@@ -13,13 +13,11 @@ const tokens = buildTokenTable(
   parsed.rules.filter((rule) => (TOKEN_SHEETS as readonly string[]).includes(rule.sheet)),
 );
 const EDGE_WIDTH = "var(--agent-surface-edge-width)";
-const DOCKED_EDITOR_SLOT = '.workbench-frame[data-layout="agent"] > [data-slot="editor"]';
 const MAXIMIZED_SURFACE =
   '.workbench-frame[data-layout="agent"][data-right-panel="maximized"] .agent-surface';
 const CHROME_SHEETS = [
   "components/workbenchShellFrame.css",
   "components/agentMode/",
-  "components/editorPanel/",
   "ui/shell/",
 ] as const;
 
@@ -59,9 +57,9 @@ describe("right panel edge and hairlines", () => {
   });
 
   it("paints no editor overlay over the docked panel", () => {
-    expect(winning(DOCKED_EDITOR_SLOT, "display")).toBe("none");
-    expect(winning(DOCKED_EDITOR_SLOT, "padding-left")).toBeUndefined();
-    expect(winning(DOCKED_EDITOR_SLOT, "clip-path")).toBeUndefined();
+    expect(parsed.rules.filter((rule) => rule.selector.includes('[data-slot="editor"]'))).toEqual(
+      [],
+    );
   });
 
   it("lets the rail divider alone separate a maximized panel so no double rule appears", () => {
@@ -70,7 +68,7 @@ describe("right panel edge and hairlines", () => {
   });
 
   it("runs the panel hairlines edge to edge from the start of the panel content", () => {
-    for (const selector of [".cv-esub", ".cv-esub-notice", ".cv-rp-sub"]) {
+    for (const selector of [".cv-rp-sub"]) {
       expect(winning(selector, "box-shadow"), selector).toBe("var(--cv-edge-bottom-hair)");
       for (const property of ["margin", "margin-left", "margin-right", "margin-inline"]) {
         expect(winning(selector, property), `${selector} ${property}`).toBeUndefined();

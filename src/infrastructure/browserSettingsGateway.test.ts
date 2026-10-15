@@ -11,9 +11,9 @@ import {
 } from "../domain/keymap";
 import { KEYMAP_DEFAULTS_REVISION } from "../domain/keymapDefaultsMigration";
 import {
-  LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-  LARGE_SMART_DOCUMENT_LINE_LIMIT,
-} from "../domain/largeDocumentPolicy";
+  initialAgentWorkbenchLayout,
+  serializeAgentWorkbenchLayout,
+} from "../domain/agentWorkbenchLayout";
 import { defaultAppSettings, defaultWorkspaceSettings } from "../domain/settings";
 import { DEFAULT_APPEARANCE } from "../domain/appearance";
 
@@ -180,41 +180,38 @@ describe("BrowserSettingsGateway", () => {
     });
   });
 
-  it("migrates retired fold defaults on load and keeps a later deliberate re-bind", async () => {
+  it("drops overrides of removed editor commands on load and never writes them back", async () => {
     const storage = memoryStorage();
     const gateway = new BrowserSettingsGateway(storage);
-    const platform = detectKeymapPlatform();
-    const retiredFoldAll = shortcutSequenceForPlatform("Cmd+Shift+-", platform);
-    const retiredUnfoldAll = shortcutSequenceForPlatform("Cmd+Shift+=", platform);
+    const toggleSidebar = shortcutSequenceForPlatform("Cmd+Alt+B", detectKeymapPlatform());
     storage.setItem(
       "editor.settings.app",
       JSON.stringify({
         keymap: {
           ...defaultKeymapSettings(),
-          "editor.foldAll": retiredFoldAll,
+          "agent.toggleSidebar": toggleSidebar,
+          "editor.foldAll": "Cmd+Shift+-",
           "editor.save": "Cmd+Alt+S",
-          "editor.unfoldAll": retiredUnfoldAll,
+          "editor.unfoldAll": "Cmd+Shift+=",
         },
+        keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
       }),
     );
 
-    const migrated = await gateway.loadAppSettings();
+    const loaded = await gateway.loadAppSettings();
 
-    expect(migrated.keymap).toEqual({ ...defaultKeymapSettings(), "editor.save": "Cmd+Alt+S" });
-    expect(migrated.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
-
-    await gateway.saveAppSettings({
-      ...migrated,
-      keymap: { ...migrated.keymap, "editor.unfoldAll": retiredUnfoldAll },
-    });
-    const rebound = await new BrowserSettingsGateway(storage).loadAppSettings();
-
-    expect(rebound.keymap).toEqual({
+    expect(loaded.keymap).toEqual({
       ...defaultKeymapSettings(),
-      "editor.save": "Cmd+Alt+S",
-      "editor.unfoldAll": retiredUnfoldAll,
+      "agent.toggleSidebar": toggleSidebar,
     });
-    expect(rebound.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
+
+    await gateway.saveAppSettings(loaded);
+    const raw = storage.getItem("editor.settings.app") ?? "";
+
+    expect(raw).not.toContain("editor.foldAll");
+    expect(raw).not.toContain("editor.save");
+    expect(raw).not.toContain("editor.unfoldAll");
+    await expect(new BrowserSettingsGateway(storage).loadAppSettings()).resolves.toEqual(loaded);
   });
 
   it("recovers a corrupt favorite snapshot on reload", async () => {
@@ -239,71 +236,220 @@ describe("BrowserSettingsGateway", () => {
     }
   });
 
-  it("isolates split sessions per project even when group IDs match", async () => {
+  it("isolates agent workbench sessions per project", async () => {
     const gateway = new BrowserSettingsGateway(memoryStorage());
-    const sessionFor = (path: string) => ({
-      bottomPanelView: "problems" as const,
-      editor: {
-        activeGroupId: "main",
-        groups: {
-          main: { activePath: path, openPaths: [path], previewPath: null },
-        },
-        layout: { kind: "group" as const, groupId: "main" },
-      },
-      sidebarView: "files" as const,
+    const sessionFor = (bottomPanel: boolean) => ({
+      agentWorkbench: serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, bottomPanel),
       version: 1 as const,
     });
 
     await gateway.saveWorkspaceSettings("/project-a", {
       ...defaultWorkspaceSettings(),
-      session: sessionFor("/project-a/A.ts"),
+      session: sessionFor(true),
     });
     await gateway.saveWorkspaceSettings("/project-b", {
       ...defaultWorkspaceSettings(),
-      session: sessionFor("/project-b/B.ts"),
+      session: sessionFor(false),
     });
 
     await expect(gateway.loadWorkspaceSettings("/project-a")).resolves.toMatchObject({
-      session: sessionFor("/project-a/A.ts"),
+      session: sessionFor(true),
     });
     await expect(gateway.loadWorkspaceSettings("/project-b")).resolves.toMatchObject({
-      session: sessionFor("/project-b/B.ts"),
+      session: sessionFor(false),
     });
   });
 
-  it("migrates and round trips a legacy flat session as version one", async () => {
+  it("keeps agent state from a 0.2.0-beta.124 profile and drops every removed key on save", async () => {
     const storage = memoryStorage();
-    const key = "editor.settings.workspace:%2Flegacy";
-    storage.setItem(
-      key,
-      JSON.stringify({
-        session: {
-          activePath: "/legacy/Preview.ts",
-          bottomPanelView: "history",
-          openPaths: ["/legacy/A.ts", "/legacy/Preview.ts"],
-          previewPath: "/legacy/Preview.ts",
-          sidebarView: "git",
-        },
-      }),
-    );
-    const gateway = new BrowserSettingsGateway(storage);
-    const settings = await gateway.loadWorkspaceSettings("/legacy");
-
-    expect(settings.session).toMatchObject({
-      version: 1,
-      editor: {
-        groups: {
-          "editor-main": {
-            activePath: "/legacy/Preview.ts",
-            openPaths: ["/legacy/A.ts"],
-            previewPath: "/legacy/Preview.ts",
+    const legacyWorkspaceKey = "editor.settings.workspace:%2Fprojects%2Fapi";
+    const canonicalWorkspaceKey = "editor.settings.workspace:canonical:workspace-api";
+    const identity = { canonicalKey: "workspace-api", legacyRawKeys: ["/projects/api"] };
+    const toggleSidebar = shortcutSequenceForPlatform("Cmd+Alt+B", detectKeymapPlatform());
+    const legacyApp = {
+      agentCliKind: "codex",
+      agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: "/usr/local/bin/codex" },
+      agentFollowUpBehavior: "steer",
+      agentThreadFontSize: 16,
+      agentThreadNotifications: false,
+      appUpdaterSkippedVersion: "0.2.0-beta.125",
+      appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "ayuMirage" },
+      editorFontFamily: "Fira Code",
+      editorFontLigatures: true,
+      editorFontSize: 13,
+      keymap: {
+        "agent.toggleSidebar": toggleSidebar,
+        "editor.foldAll": "Cmd+K Cmd+0",
+        "editor.save": "Cmd+Alt+S",
+        "php.generateConstructor": "Cmd+Alt+G",
+        "testing.runAtCursor": "Cmd+Alt+T",
+      },
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
+      maxConcurrentAgentTasks: 8,
+      minimapEnabled: true,
+      recentWorkspacePath: "/projects/api",
+      recentWorkspacePaths: ["/projects/api", "/projects/web"],
+      runtimePolicy: "singleActive",
+      terminalShellIntegrationEnabled: true,
+      userSnippets: [{ prefix: "dd", body: "dd($0);", description: "Dump", languages: ["php"] }],
+      windowZoomLevel: 1,
+      wordWrapEnabled: true,
+      workspaceTabs: ["/projects/api", "/projects/web"],
+    };
+    const legacyAgentWorkbench = {
+      layout: "agent",
+      rightPanel: "open",
+      openSurfaces: ["files", "terminal", "editor"],
+      activeSurface: "terminal",
+      rightPanelMaximized: false,
+      rail: "expanded",
+      bottomPanel: true,
+      rightPanelWidth: 540,
+      bottomPanelHeight: 280,
+    };
+    const legacyWorkspace = {
+      agentIsolationPolicy: "worktree",
+      autoSave: false,
+      autoSaveConfigured: true,
+      defaultInsertSpaces: false,
+      defaultTabSize: 2,
+      eslintAnalyseOnSave: true,
+      eslintFixOnSave: true,
+      eslintPath: "/tools/eslint",
+      extraIgnorePatterns: ["var/cache"],
+      formatOnPaste: true,
+      formatOnSave: true,
+      gitCommitMessageHistory: ["feat: keep history"],
+      gitDirectoryMappings: ["", "packages/api"],
+      gitDirectoryMappingsAuto: false,
+      intelephensePath: "/tools/intelephense",
+      intelligenceMode: "fullSmart",
+      javaScriptTypeScriptAutoImports: false,
+      javaScriptTypeScriptService: "off",
+      javaScriptTypeScriptValidation: false,
+      javaScriptTypeScriptVersion: "workspace",
+      largeFileMode: { characterLimit: 512_000, lineLimit: 10_000 },
+      optimizeImportsOnSave: true,
+      phpBackend: "phpactor",
+      phpInlayHints: false,
+      phpVersionOverride: "8.3",
+      phpactorPath: "/tools/phpactor",
+      phpstanAnalyseOnSave: true,
+      phpstanPath: "/tools/phpstan",
+      prettierFormatOnSave: true,
+      revealActiveFileInTree: false,
+      session: {
+        agentWorkbench: legacyAgentWorkbench,
+        bottomPanelView: "problems",
+        editor: {
+          activeGroupId: "editor-main",
+          groups: {
+            "editor-main": {
+              activePath: "/projects/api/src/app.ts",
+              openPaths: ["/projects/api/src/app.ts"],
+              previewPath: null,
+            },
           },
+          layout: { groupId: "editor-main", kind: "group" },
+        },
+        navigation: {
+          backStack: [{ path: "/projects/api/src/app.ts", position: { column: 1, lineNumber: 2 } }],
+          forwardStack: [],
+          recentFiles: [{ name: "app.ts", path: "/projects/api/src/app.ts" }],
+          recentLocations: [],
+        },
+        sidebarView: "php",
+        version: 1,
+        viewStates: {
+          "editor-main": { "/projects/api/src/app.ts": { column: 1, line: 2, scrollTop: 0 } },
         },
       },
+      statusBar: {
+        agentAttention: false,
+        cursorPosition: false,
+        index: false,
+        languageServer: false,
+      },
+    };
+    storage.setItem("editor.settings.app", JSON.stringify(legacyApp));
+    storage.setItem(legacyWorkspaceKey, JSON.stringify(legacyWorkspace));
+    const gateway = new BrowserSettingsGateway(storage);
+
+    const app = await gateway.loadAppSettings();
+    const workspace = await gateway.loadWorkspaceSettings(identity);
+
+    expect(app).toMatchObject({
+      agentCliKind: "codex",
+      agentCliPaths: { claudeCode: "/usr/local/bin/claude", codex: "/usr/local/bin/codex" },
+      agentFollowUpBehavior: "steer",
+      agentThreadFontSize: 16,
+      agentThreadNotifications: false,
+      appUpdaterSkippedVersion: "0.2.0-beta.125",
+      appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "ayuMirage" },
+      editorFontFamily: "Fira Code, monospace",
+      editorFontLigatures: true,
+      editorFontSize: 13,
+      keymapDefaultsRevision: KEYMAP_DEFAULTS_REVISION,
+      maxConcurrentAgentTasks: 64,
+      recentWorkspacePath: "/projects/api",
+      recentWorkspacePaths: ["/projects/api", "/projects/web"],
+      runtimePolicy: "singleActive",
+      terminalShellIntegrationEnabled: true,
+      windowZoomLevel: 1,
+      workspaceTabs: ["/projects/api", "/projects/web"],
+    });
+    expect(app.keymap).toEqual({
+      ...defaultKeymapSettings(),
+      "agent.toggleSidebar": toggleSidebar,
+    });
+    expect(workspace).toEqual({
+      agentIsolationPolicy: "worktree",
+      gitCommitMessageHistory: ["feat: keep history"],
+      gitDirectoryMappings: ["", "packages/api"],
+      gitDirectoryMappingsAuto: false,
+      session: {
+        agentWorkbench: {
+          rightPanel: "open",
+          openSurfaces: ["files", "terminal"],
+          activeSurface: "terminal",
+          rightPanelMaximized: false,
+          rail: "expanded",
+          railWidth: 256,
+          rightPanelWidth: 540,
+          bottomPanelHeight: 280,
+          bottomPanel: true,
+        },
+        version: 1,
+      },
+      statusBar: { agentAttention: false },
     });
 
-    await gateway.saveWorkspaceSettings("/legacy", settings);
-    expect(JSON.parse(storage.getItem(key) ?? "{}").session).toEqual(settings.session);
+    await gateway.saveAppSettings(app);
+    await gateway.saveWorkspaceSettings(identity, workspace);
+    const savedApp = JSON.parse(storage.getItem("editor.settings.app") ?? "{}");
+    const savedWorkspace = JSON.parse(storage.getItem(canonicalWorkspaceKey) ?? "{}");
+
+    for (const removed of ["minimapEnabled", "wordWrapEnabled", "userSnippets"]) {
+      expect(savedApp).not.toHaveProperty(removed);
+    }
+    expect(Object.keys(savedApp.keymap).filter((id) => !(id in defaultKeymapSettings()))).toEqual(
+      [],
+    );
+    expect(Object.keys(savedWorkspace).sort()).toEqual([
+      "agentIsolationPolicy",
+      "gitCommitMessageHistory",
+      "gitDirectoryMappings",
+      "gitDirectoryMappingsAuto",
+      "session",
+      "statusBar",
+    ]);
+    expect(Object.keys(savedWorkspace.session).sort()).toEqual(["agentWorkbench", "version"]);
+    expect(savedWorkspace.statusBar).toEqual({ agentAttention: false });
+    expect(storage.getItem(legacyWorkspaceKey)).toBeNull();
+    await expect(new BrowserSettingsGateway(storage).loadAppSettings()).resolves.toEqual(app);
+    await expect(
+      new BrowserSettingsGateway(storage).loadWorkspaceSettings(identity),
+    ).resolves.toEqual(workspace);
   });
 
   it("keeps raw trailing-slash keys backward compatible", async () => {
@@ -311,7 +457,7 @@ describe("BrowserSettingsGateway", () => {
     const gateway = new BrowserSettingsGateway(storage);
     const settings = {
       ...defaultWorkspaceSettings(),
-      defaultTabSize: 2,
+      gitCommitMessageHistory: ["m2"],
     };
 
     await gateway.saveWorkspaceSettings("/project/", settings);
@@ -327,7 +473,7 @@ describe("BrowserSettingsGateway", () => {
     const directKey = "editor.settings.workspace:%2Freal%2Fproject";
     const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
     const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
-    const legacyValue = '{"defaultTabSize":2,"futureSetting":{"enabled":true}}';
+    const legacyValue = '{"gitCommitMessageHistory":["m2"],"futureSetting":{"enabled":true}}';
     storage.setItem(directKey, legacyValue);
     const gateway = new BrowserSettingsGateway(storage);
 
@@ -336,7 +482,7 @@ describe("BrowserSettingsGateway", () => {
       legacyRawKeys: ["/real/project", "/alias/project"],
     });
 
-    expect(settings.defaultTabSize).toBe(2);
+    expect(settings.gitCommitMessageHistory).toEqual(["m2"]);
     expect(storage.getItem(canonicalKey)).toBe(legacyValue);
     expect(storage.getItem(directKey)).toBeNull();
     expect(storage.getItem(aliasKey)).toBeNull();
@@ -347,7 +493,7 @@ describe("BrowserSettingsGateway", () => {
     const directKey = "editor.settings.workspace:%2Freal%2Fproject";
     const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
     const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
-    const legacyValue = '{"defaultTabSize":2,"unknown":true}';
+    const legacyValue = '{"gitCommitMessageHistory":["m2"],"unknown":true}';
     storage.setItem(aliasKey, legacyValue);
     const gateway = new BrowserSettingsGateway(storage);
 
@@ -356,7 +502,7 @@ describe("BrowserSettingsGateway", () => {
       legacyRawKeys: ["/real/project", "/alias/project"],
     });
 
-    expect(settings.defaultTabSize).toBe(2);
+    expect(settings.gitCommitMessageHistory).toEqual(["m2"]);
     expect(storage.getItem(canonicalKey)).toBe(legacyValue);
     expect(storage.getItem(directKey)).toBeNull();
     expect(storage.getItem(aliasKey)).toBeNull();
@@ -366,11 +512,11 @@ describe("BrowserSettingsGateway", () => {
     const storage = memoryStorage();
     const legacyKey = "editor.settings.workspace:%2Falias%2Fproject";
     const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
-    storage.setItem(legacyKey, JSON.stringify({ defaultTabSize: 8 }));
+    storage.setItem(legacyKey, JSON.stringify({ gitCommitMessageHistory: ["m8"] }));
     const gateway = new BrowserSettingsGateway(storage);
     const settings = {
       ...defaultWorkspaceSettings(),
-      defaultTabSize: 2,
+      gitCommitMessageHistory: ["m2"],
     };
 
     await gateway.saveWorkspaceSettings(
@@ -390,9 +536,9 @@ describe("BrowserSettingsGateway", () => {
     const canonicalKey = "editor.settings.workspace:canonical:workspace-1";
     const directKey = "editor.settings.workspace:%2Freal%2Fproject";
     const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
-    storage.setItem(canonicalKey, JSON.stringify({ defaultTabSize: 2 }));
-    storage.setItem(directKey, JSON.stringify({ defaultTabSize: 8 }));
-    storage.setItem(aliasKey, JSON.stringify({ defaultTabSize: 6 }));
+    storage.setItem(canonicalKey, JSON.stringify({ gitCommitMessageHistory: ["m2"] }));
+    storage.setItem(directKey, JSON.stringify({ gitCommitMessageHistory: ["m8"] }));
+    storage.setItem(aliasKey, JSON.stringify({ gitCommitMessageHistory: ["m6"] }));
     const gateway = new BrowserSettingsGateway(storage);
 
     const settings = await gateway.loadWorkspaceSettings({
@@ -400,7 +546,7 @@ describe("BrowserSettingsGateway", () => {
       legacyRawKeys: ["/real/project", "/alias/project"],
     });
 
-    expect(settings.defaultTabSize).toBe(2);
+    expect(settings.gitCommitMessageHistory).toEqual(["m2"]);
     expect(storage.getItem(directKey)).not.toBeNull();
     expect(storage.getItem(aliasKey)).not.toBeNull();
   });
@@ -409,8 +555,8 @@ describe("BrowserSettingsGateway", () => {
     const storage = memoryStorage();
     const directKey = "editor.settings.workspace:%2Freal%2Fproject";
     const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
-    storage.setItem(directKey, JSON.stringify({ defaultTabSize: 2 }));
-    storage.setItem(aliasKey, JSON.stringify({ defaultTabSize: 8 }));
+    storage.setItem(directKey, JSON.stringify({ gitCommitMessageHistory: ["m2"] }));
+    storage.setItem(aliasKey, JSON.stringify({ gitCommitMessageHistory: ["m8"] }));
     const gateway = new BrowserSettingsGateway(storage);
 
     const settings = await gateway.loadWorkspaceSettings({
@@ -418,7 +564,7 @@ describe("BrowserSettingsGateway", () => {
       legacyRawKeys: ["/real/project", "/alias/project"],
     });
 
-    expect(settings.defaultTabSize).toBe(2);
+    expect(settings.gitCommitMessageHistory).toEqual(["m2"]);
     expect(storage.getItem(directKey)).toBeNull();
     expect(storage.getItem(aliasKey)).not.toBeNull();
   });
@@ -427,8 +573,8 @@ describe("BrowserSettingsGateway", () => {
     const storage = memoryStorage();
     const directKey = "editor.settings.workspace:%2Freal%2Fproject";
     const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
-    const malformedValue = '{"defaultTabSize":2';
-    const aliasValue = JSON.stringify({ defaultTabSize: 8 });
+    const malformedValue = '{"gitCommitMessageHistory":["m2"]';
+    const aliasValue = JSON.stringify({ gitCommitMessageHistory: ["m8"] });
     storage.setItem(directKey, malformedValue);
     storage.setItem(aliasKey, aliasValue);
     const gateway = new BrowserSettingsGateway(storage);
@@ -438,7 +584,7 @@ describe("BrowserSettingsGateway", () => {
       legacyRawKeys: ["/real/project", "/alias/project"],
     });
 
-    expect(settings.defaultTabSize).toBe(8);
+    expect(settings.gitCommitMessageHistory).toEqual(["m8"]);
     expect(storage.getItem(directKey)).toBe(malformedValue);
     expect(storage.getItem(aliasKey)).toBeNull();
     expect(storage.getItem("editor.settings.workspace:canonical:workspace-1")).toBe(aliasValue);
@@ -446,8 +592,14 @@ describe("BrowserSettingsGateway", () => {
 
   it("does not delete any legacy settings when the canonical migration write fails", async () => {
     const values = new Map<string, string>([
-      ["editor.settings.workspace:%2Freal%2Fproject", JSON.stringify({ defaultTabSize: 2 })],
-      ["editor.settings.workspace:%2Falias%2Fproject", JSON.stringify({ defaultTabSize: 8 })],
+      [
+        "editor.settings.workspace:%2Freal%2Fproject",
+        JSON.stringify({ gitCommitMessageHistory: ["m2"] }),
+      ],
+      [
+        "editor.settings.workspace:%2Falias%2Fproject",
+        JSON.stringify({ gitCommitMessageHistory: ["m8"] }),
+      ],
     ]);
     const storage: KeyValueStorage = {
       getItem: (key) => values.get(key) ?? null,
@@ -472,8 +624,8 @@ describe("BrowserSettingsGateway", () => {
     const directKey = "editor.settings.workspace:%2Freal%2Fproject";
     const aliasKey = "editor.settings.workspace:%2Falias%2Fproject";
     const values = new Map<string, string>([
-      [directKey, JSON.stringify({ defaultTabSize: 2 })],
-      [aliasKey, JSON.stringify({ defaultTabSize: 8 })],
+      [directKey, JSON.stringify({ gitCommitMessageHistory: ["m2"] })],
+      [aliasKey, JSON.stringify({ gitCommitMessageHistory: ["m8"] })],
     ]);
     const storage: KeyValueStorage = {
       getItem: (key) => values.get(key) ?? null,
@@ -502,7 +654,7 @@ describe("BrowserSettingsGateway", () => {
     const currentKey = "editor.settings.workspace:canonical:current";
     const olderValue = JSON.stringify({
       ...defaultWorkspaceSettings(),
-      defaultTabSize: 8,
+      gitCommitMessageHistory: ["m8"],
     });
     const values = new Map<string, string>([[olderKey, olderValue]]);
     const events: string[] = [];
@@ -514,14 +666,8 @@ describe("BrowserSettingsGateway", () => {
       },
       setItem: (key, value) => {
         const session = JSON.parse(value).session;
-        events.push(
-          session.navigation
-            ? "write:navigation"
-            : session.editor.groups.main
-              ? "write:session"
-              : "write:default-session",
-        );
-        if (session.navigation || session.editor.groups.main) {
+        events.push(session.agentWorkbench ? "write:session" : "write:default-session");
+        if (session.agentWorkbench) {
           throw new DOMException("Quota exceeded", "QuotaExceededError");
         }
         values.set(key, value);
@@ -535,24 +681,8 @@ describe("BrowserSettingsGateway", () => {
         {
           ...defaultWorkspaceSettings(),
           session: {
-            ...defaultWorkspaceSettings().session,
-            editor: {
-              activeGroupId: "main",
-              groups: {
-                main: {
-                  activePath: "/current/a.ts",
-                  openPaths: ["/current/a.ts"],
-                  previewPath: null,
-                },
-              },
-              layout: { kind: "group", groupId: "main" },
-            },
-            navigation: {
-              backStack: [],
-              forwardStack: [],
-              recentFiles: [{ name: "a.ts", path: "a.ts" }],
-              recentLocations: [],
-            },
+            agentWorkbench: serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, true),
+            version: 1,
           },
         },
       ),
@@ -563,7 +693,7 @@ describe("BrowserSettingsGateway", () => {
     expect(JSON.parse(values.get(currentKey) ?? "{}").session).toEqual(
       defaultWorkspaceSettings().session,
     );
-    expect(events).toEqual(["write:navigation", "write:session", "write:default-session"]);
+    expect(events).toEqual(["write:session", "write:default-session"]);
   });
 
   it("preserves every workspace across A-B-A when all bounded current reductions exceed quota", async () => {
@@ -572,13 +702,13 @@ describe("BrowserSettingsGateway", () => {
     const legacyKey = "editor.settings.workspace:%2Falias%2Fproject";
     const workspaceAValue = JSON.stringify({
       ...defaultWorkspaceSettings(),
-      defaultTabSize: 2,
+      gitCommitMessageHistory: ["m2"],
     });
     const workspaceBValue = JSON.stringify({
       ...defaultWorkspaceSettings(),
-      defaultTabSize: 6,
+      gitCommitMessageHistory: ["m6"],
     });
-    const legacyValue = JSON.stringify({ defaultTabSize: 8 });
+    const legacyValue = JSON.stringify({ gitCommitMessageHistory: ["m8"] });
     const values = new Map<string, string>([
       [workspaceAKey, workspaceAValue],
       [workspaceBKey, workspaceBValue],
@@ -605,7 +735,7 @@ describe("BrowserSettingsGateway", () => {
         },
         {
           ...defaultWorkspaceSettings(),
-          defaultTabSize: 4,
+          gitCommitMessageHistory: ["m4"],
         },
       ),
     ).rejects.toMatchObject({ name: "QuotaExceededError" });
@@ -616,13 +746,13 @@ describe("BrowserSettingsGateway", () => {
     expect(values.get(legacyKey)).toBe(legacyValue);
     await expect(
       gateway.loadWorkspaceSettings({ canonicalKey: "workspace-a" }),
-    ).resolves.toMatchObject({ defaultTabSize: 2 });
+    ).resolves.toMatchObject({ gitCommitMessageHistory: ["m2"] });
     await expect(
       gateway.loadWorkspaceSettings({ canonicalKey: "workspace-b" }),
-    ).resolves.toMatchObject({ defaultTabSize: 6 });
+    ).resolves.toMatchObject({ gitCommitMessageHistory: ["m6"] });
     await expect(
       gateway.loadWorkspaceSettings({ canonicalKey: "workspace-a" }),
-    ).resolves.toMatchObject({ defaultTabSize: 2 });
+    ).resolves.toMatchObject({ gitCommitMessageHistory: ["m2"] });
   });
 
   it("returns defaults when settings are missing", async () => {
@@ -646,7 +776,6 @@ describe("BrowserSettingsGateway", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
-      minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
       recentWorkspaceOpenedAt: {},
@@ -654,75 +783,15 @@ describe("BrowserSettingsGateway", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
-      wordWrapEnabled: false,
-      userSnippets: [],
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
       agentIsolationPolicy: "auto",
-      autoSave: true,
-      autoSaveConfigured: true,
-      defaultInsertSpaces: true,
-      defaultTabSize: 4,
-      extraIgnorePatterns: [],
-      eslintAnalyseOnSave: false,
-      eslintFixOnSave: false,
-      eslintPath: null,
-      formatOnPaste: false,
-      formatOnSave: false,
       gitCommitMessageHistory: [],
       gitDirectoryMappings: [],
       gitDirectoryMappingsAuto: true,
-      intelligenceMode: "basic",
-      intelephensePath: null,
-      javaScriptTypeScriptAddMissingImportsOnSave: false,
-      javaScriptTypeScriptAutoImports: true,
-      javaScriptTypeScriptAutomaticTypeAcquisition: false,
-      javaScriptTypeScriptCodeLens: false,
-      javaScriptTypeScriptReferencesCodeLensOnAllFunctions: false,
-      javaScriptTypeScriptCompleteFunctionCalls: false,
-      javaScriptTypeScriptFixAllOnSave: false,
-      javaScriptTypeScriptImportModuleSpecifierEnding: "auto",
-      javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
-      javaScriptTypeScriptInlayHints: true,
-      javaScriptTypeScriptOrganizeImportsOnSave: false,
-      javaScriptTypeScriptPreferTypeOnlyAutoImports: false,
-      javaScriptTypeScriptQuotePreference: "auto",
-      javaScriptTypeScriptRemoveUnusedOnSave: false,
-      javaScriptTypeScriptService: "auto",
-      javaScriptTypeScriptValidation: true,
-      javaScriptTypeScriptVersion: "bundled",
-      largeFileMode: {
-        characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-        lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
-      },
-      optimizeImportsOnSave: false,
-      phpBackend: "auto",
-      phpInlayHints: true,
-      phpstanAnalyseOnSave: false,
-      phpstanPath: null,
-      phpVersionOverride: null,
-      phpactorPath: null,
-      prettierFormatOnSave: false,
-      revealActiveFileInTree: true,
-      session: {
-        bottomPanelView: "problems",
-        editor: {
-          activeGroupId: "editor-main",
-          groups: {
-            "editor-main": { activePath: null, openPaths: [], previewPath: null },
-          },
-          layout: { groupId: "editor-main", kind: "group" },
-        },
-        sidebarView: "files",
-        version: 1,
-      },
-      statusBar: {
-        agentAttention: true,
-        cursorPosition: true,
-        index: true,
-        languageServer: true,
-      },
+      session: { version: 1 },
+      statusBar: { agentAttention: true },
     });
   });
 
@@ -749,95 +818,27 @@ describe("BrowserSettingsGateway", () => {
       editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
-        "editor.save": "Cmd+Shift+S",
+        "commands.show": "Cmd+Shift+S",
       },
-      minimapEnabled: false,
       recentWorkspacePath: "/project",
       recentWorkspacePaths: ["/project"],
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: true,
       appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "ayuMirage" },
-      wordWrapEnabled: true,
-      userSnippets: [
-        {
-          prefix: "myhelper",
-          body: "helper($0);",
-          description: "Call helper",
-          languages: ["php"],
-        },
-      ],
       workspaceTabs: ["/project", "/another-project"],
     });
-    await gateway.saveWorkspaceSettings("/project", {
-      agentIsolationPolicy: "auto",
-      autoSave: true,
-      autoSaveConfigured: true,
-      defaultInsertSpaces: false,
-      defaultTabSize: 8,
-      extraIgnorePatterns: ["var/cache"],
-      eslintAnalyseOnSave: true,
-      eslintFixOnSave: true,
-      eslintPath: "/tools/eslint",
-      formatOnPaste: true,
-      formatOnSave: true,
+    const workspaceSettings = {
+      agentIsolationPolicy: "in-place" as const,
       gitCommitMessageHistory: ["feat: persisted history"],
       gitDirectoryMappings: ["", "workbench/lcsk/attendance"],
       gitDirectoryMappingsAuto: false,
-      intelligenceMode: "lightSmart",
-      intelephensePath: "/tools/intelephense",
-      javaScriptTypeScriptAddMissingImportsOnSave: true,
-      javaScriptTypeScriptAutoImports: false,
-      javaScriptTypeScriptAutomaticTypeAcquisition: true,
-      javaScriptTypeScriptCodeLens: true,
-      javaScriptTypeScriptReferencesCodeLensOnAllFunctions: true,
-      javaScriptTypeScriptCompleteFunctionCalls: true,
-      javaScriptTypeScriptFixAllOnSave: true,
-      javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-      javaScriptTypeScriptImportModuleSpecifierPreference: "non-relative",
-      javaScriptTypeScriptInlayHints: false,
-      javaScriptTypeScriptOrganizeImportsOnSave: true,
-      javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
-      javaScriptTypeScriptQuotePreference: "double",
-      javaScriptTypeScriptRemoveUnusedOnSave: true,
-      javaScriptTypeScriptService: "off",
-      javaScriptTypeScriptValidation: false,
-      javaScriptTypeScriptVersion: "workspace",
-      largeFileMode: {
-        characterLimit: 512_000,
-        lineLimit: 10_000,
-      },
-      optimizeImportsOnSave: true,
-      phpBackend: "phpactor",
-      phpInlayHints: true,
-      phpstanAnalyseOnSave: true,
-      phpstanPath: "/tools/phpstan",
-      phpVersionOverride: "8.2",
-      phpactorPath: "/tools/phpactor",
-      prettierFormatOnSave: true,
-      revealActiveFileInTree: false,
       session: {
-        bottomPanelView: "index",
-        editor: {
-          activeGroupId: "main",
-          groups: {
-            main: {
-              activePath: "/project/src/User.php",
-              openPaths: ["/project/src/User.php", "/project/README.md"],
-              previewPath: null,
-            },
-          },
-          layout: { groupId: "main", kind: "group" },
-        },
-        sidebarView: "php",
-        version: 1,
+        agentWorkbench: serializeAgentWorkbenchLayout(initialAgentWorkbenchLayout, true),
+        version: 1 as const,
       },
-      statusBar: {
-        agentAttention: true,
-        cursorPosition: true,
-        index: false,
-        languageServer: true,
-      },
-    });
+      statusBar: { agentAttention: false },
+    };
+    await gateway.saveWorkspaceSettings("/project", workspaceSettings);
 
     await expect(gateway.loadAppSettings()).resolves.toEqual({
       appUpdaterSkippedVersion: null,
@@ -858,9 +859,8 @@ describe("BrowserSettingsGateway", () => {
       editorFontSize: 18,
       keymap: {
         ...defaultKeymapSettings(),
-        "editor.save": "Cmd+Shift+S",
+        "commands.show": "Cmd+Shift+S",
       },
-      minimapEnabled: false,
       recentWorkspacePath: "/project",
       recentWorkspacePaths: ["/project"],
       recentWorkspaceOpenedAt: {},
@@ -868,87 +868,9 @@ describe("BrowserSettingsGateway", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: true,
       appearance: { palette: "ink-mint", colorScheme: "light", syntaxTheme: "ayuMirage" },
-      wordWrapEnabled: true,
-      userSnippets: [
-        {
-          prefix: "myhelper",
-          body: "helper($0);",
-          description: "Call helper",
-          languages: ["php"],
-        },
-      ],
       workspaceTabs: ["/project", "/another-project"],
     });
-    await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
-      agentIsolationPolicy: "auto",
-      autoSave: true,
-      autoSaveConfigured: true,
-      defaultInsertSpaces: false,
-      defaultTabSize: 8,
-      extraIgnorePatterns: ["var/cache"],
-      eslintAnalyseOnSave: true,
-      eslintFixOnSave: true,
-      eslintPath: "/tools/eslint",
-      formatOnPaste: true,
-      formatOnSave: true,
-      gitCommitMessageHistory: ["feat: persisted history"],
-      gitDirectoryMappings: ["", "workbench/lcsk/attendance"],
-      gitDirectoryMappingsAuto: false,
-      intelligenceMode: "lightSmart",
-      intelephensePath: "/tools/intelephense",
-      javaScriptTypeScriptAddMissingImportsOnSave: true,
-      javaScriptTypeScriptAutoImports: false,
-      javaScriptTypeScriptAutomaticTypeAcquisition: true,
-      javaScriptTypeScriptCodeLens: true,
-      javaScriptTypeScriptReferencesCodeLensOnAllFunctions: true,
-      javaScriptTypeScriptCompleteFunctionCalls: true,
-      javaScriptTypeScriptFixAllOnSave: true,
-      javaScriptTypeScriptImportModuleSpecifierEnding: "minimal",
-      javaScriptTypeScriptImportModuleSpecifierPreference: "non-relative",
-      javaScriptTypeScriptInlayHints: false,
-      javaScriptTypeScriptOrganizeImportsOnSave: true,
-      javaScriptTypeScriptPreferTypeOnlyAutoImports: true,
-      javaScriptTypeScriptQuotePreference: "double",
-      javaScriptTypeScriptRemoveUnusedOnSave: true,
-      javaScriptTypeScriptService: "off",
-      javaScriptTypeScriptValidation: false,
-      javaScriptTypeScriptVersion: "workspace",
-      largeFileMode: {
-        characterLimit: 512_000,
-        lineLimit: 10_000,
-      },
-      optimizeImportsOnSave: true,
-      phpBackend: "phpactor",
-      phpInlayHints: true,
-      phpstanAnalyseOnSave: true,
-      phpstanPath: "/tools/phpstan",
-      phpVersionOverride: "8.2",
-      phpactorPath: "/tools/phpactor",
-      prettierFormatOnSave: true,
-      revealActiveFileInTree: false,
-      session: {
-        bottomPanelView: "index",
-        editor: {
-          activeGroupId: "main",
-          groups: {
-            main: {
-              activePath: "/project/src/User.php",
-              openPaths: ["/project/src/User.php", "/project/README.md"],
-              previewPath: null,
-            },
-          },
-          layout: { groupId: "main", kind: "group" },
-        },
-        sidebarView: "php",
-        version: 1,
-      },
-      statusBar: {
-        agentAttention: true,
-        cursorPosition: true,
-        index: false,
-        languageServer: true,
-      },
-    });
+    await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual(workspaceSettings);
   });
 
   it("preserves hidden agent attention through saving and reloading a workspace", async () => {
@@ -963,7 +885,7 @@ describe("BrowserSettingsGateway", () => {
 
     const reloaded = await new BrowserSettingsGateway(storage).loadWorkspaceSettings(identity);
     expect(reloaded.statusBar.agentAttention).toBe(false);
-    expect(reloaded.statusBar.cursorPosition).toBe(true);
+    expect(reloaded.statusBar).toEqual({ agentAttention: false });
   });
 
   it("reads the initial appearance synchronously with the same normaliser the loader uses", async () => {
@@ -1016,7 +938,6 @@ describe("BrowserSettingsGateway", () => {
       editorFontLigatures: false,
       editorFontSize: 14,
       keymap: defaultKeymapSettings(),
-      minimapEnabled: false,
       recentWorkspacePath: null,
       recentWorkspacePaths: [],
       recentWorkspaceOpenedAt: {},
@@ -1024,75 +945,15 @@ describe("BrowserSettingsGateway", () => {
       runtimePolicy: "keepAlive",
       terminalShellIntegrationEnabled: false,
       appearance: DEFAULT_APPEARANCE,
-      wordWrapEnabled: false,
-      userSnippets: [],
       workspaceTabs: [],
     });
     await expect(gateway.loadWorkspaceSettings("/project")).resolves.toEqual({
       agentIsolationPolicy: "auto",
-      autoSave: true,
-      autoSaveConfigured: true,
-      defaultInsertSpaces: true,
-      defaultTabSize: 4,
-      extraIgnorePatterns: [],
-      eslintAnalyseOnSave: false,
-      eslintFixOnSave: false,
-      eslintPath: null,
-      formatOnPaste: false,
-      formatOnSave: false,
       gitCommitMessageHistory: [],
       gitDirectoryMappings: [],
       gitDirectoryMappingsAuto: true,
-      intelligenceMode: "basic",
-      intelephensePath: null,
-      javaScriptTypeScriptAddMissingImportsOnSave: false,
-      javaScriptTypeScriptAutoImports: true,
-      javaScriptTypeScriptAutomaticTypeAcquisition: false,
-      javaScriptTypeScriptCodeLens: false,
-      javaScriptTypeScriptReferencesCodeLensOnAllFunctions: false,
-      javaScriptTypeScriptCompleteFunctionCalls: false,
-      javaScriptTypeScriptFixAllOnSave: false,
-      javaScriptTypeScriptImportModuleSpecifierEnding: "auto",
-      javaScriptTypeScriptImportModuleSpecifierPreference: "shortest",
-      javaScriptTypeScriptInlayHints: true,
-      javaScriptTypeScriptOrganizeImportsOnSave: false,
-      javaScriptTypeScriptPreferTypeOnlyAutoImports: false,
-      javaScriptTypeScriptQuotePreference: "auto",
-      javaScriptTypeScriptRemoveUnusedOnSave: false,
-      javaScriptTypeScriptService: "auto",
-      javaScriptTypeScriptValidation: true,
-      javaScriptTypeScriptVersion: "bundled",
-      largeFileMode: {
-        characterLimit: LARGE_SMART_DOCUMENT_CHARACTER_LIMIT,
-        lineLimit: LARGE_SMART_DOCUMENT_LINE_LIMIT,
-      },
-      optimizeImportsOnSave: false,
-      phpBackend: "auto",
-      phpInlayHints: true,
-      phpstanAnalyseOnSave: false,
-      phpstanPath: null,
-      phpVersionOverride: null,
-      phpactorPath: null,
-      prettierFormatOnSave: false,
-      revealActiveFileInTree: true,
-      session: {
-        bottomPanelView: "problems",
-        editor: {
-          activeGroupId: "editor-main",
-          groups: {
-            "editor-main": { activePath: null, openPaths: [], previewPath: null },
-          },
-          layout: { groupId: "editor-main", kind: "group" },
-        },
-        sidebarView: "files",
-        version: 1,
-      },
-      statusBar: {
-        agentAttention: true,
-        cursorPosition: true,
-        index: true,
-        languageServer: true,
-      },
+      session: { version: 1 },
+      statusBar: { agentAttention: true },
     });
   });
 });

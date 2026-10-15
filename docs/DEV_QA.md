@@ -1,175 +1,71 @@
-# Dev QA Harness
+# Dev QA
 
-`scripts/qa-project-scenarios.mjs` is a small deterministic harness for real
-project editor checks. It calls the dev-only `window.__codevoQa` bridge directly
-and avoids pixel/token click automation.
+Codevo is an agent app. Development QA combines the scripted smoke runner with a
+short manual desktop pass over the agent workflows.
 
-## Current Scope
+## Scripted smoke
 
-The harness runs deterministic checks against real project files. When the
-dev-only bridge exposes `window.__codevoQa.openWorkspaceRoot(path)`, each
-scenario switches to its `projectRoot` before opening the scenario file. When the
-bridge also exposes `window.__codevoQa.openWorkspaceFile(path)`, each scenario
-opens its target file before setting the cursor and calling provider APIs. Older
-bridge builds are still supported: without `openWorkspaceRoot`, the harness keeps
-the previous behavior and verifies that the current active workspace/project
-matches the scenario before it opens the file. Without `openWorkspaceFile`, the
-active editor tab still needs to match the scenario file. When the bridge exposes
-`getWorkspaceRoot()`, the harness requires it to match the scenario
-`projectRoot`; until then it verifies the active editor file is under that
-project root.
-
-Built-in project roots:
-
-- `/Users/matusmockor/Developer/invoices`
-- `/Users/matusmockor/Developer/Efabrica/boxes/ebox-crm`
-
-List scenarios:
+`scripts/qa-smoke.mjs` runs a named smoke mode:
 
 ```sh
-node ./scripts/qa-project-scenarios.mjs --list
+npm run smoke            # same as fast
+npm run smoke:fast
+npm run smoke:extended
+npm run smoke:full
+npm run smoke:desktop
 ```
 
-Preflight selected scenarios before opening a live app/CDP session:
+Modes:
+
+- `fast`: TypeScript check and a targeted Vitest profile for agent layout and
+  surfaces, workspace runtime lifecycle, projects, thread store, turn dispatch,
+  stop, ship flow, and the Files viewer tree. This is the default.
+- `extended`: slower agent regression files for thread session lifecycle,
+  pending interactions, threads, scripts, Git history, providers, remote
+  projection, and the agent app workspace and close races.
+- `full`: TypeScript check, the full Vitest suite, targeted Rust backend tests
+  (agent turn changes and logs, agent history, terminal sessions, Git
+  worktrees), and the production build.
+- `desktop`: debug Tauri build, a short desktop boot, and a check that no
+  debug app process remains afterwards.
+
+Each step has a timeout, and the runner terminates the step's whole process tree
+on timeout, failure, or Ctrl+C. The profiles are defined in
+`scripts/qa-smoke.mjs` and checked by `scripts/qa-smoke.test.mjs`.
+
+The smoke modes are iteration tools. Before calling a slice complete, run the
+full gate list in `CLAUDE.md`.
+
+## Desktop debug launch
 
 ```sh
-node ./scripts/qa-project-scenarios.mjs --all --preflight
+npm run debug         # build and launch the desktop app in debug mode
+npm run debug:smoke   # build, boot for a few seconds, then verify cleanup
 ```
 
-The same preflight is available through npm:
+`scripts/debug-tauri.mjs` stops a previous debug app and its child processes
+before starting, cleans an oversized Rust target directory, and cleans up the
+app's process tree on exit. `debug:smoke` refuses to run while a matching debug
+app is already running; set `CODEVO_EDITOR_SMOKE_CLEAN_EXISTING=1` to let it stop
+that app first. `CODEVO_EDITOR_SMOKE_RUN_MS` and
+`CODEVO_EDITOR_SMOKE_CLEANUP_GRACE_MS` tune the boot and cleanup windows.
 
-```sh
-npm run qa:projects:preflight
-```
+## Manual desktop pass
 
-`--preflight` works with `--all` or repeated `--scenario <id>` flags. It checks
-that each scenario's `projectRoot`, `activeFile`, cursor anchor, and exact
-`expectActiveFile` definition target exist before the live bridge/snippet run.
-Cursor anchors report their match count; zero matches fail, while multiple
-matches warn because the live runner currently uses the first match.
+Run this against a real project after changes that touch the agent workflow:
 
-## Running
-
-### Manual macOS/Tauri flow
-
-Use this lane when Tauri WebView DevTools are available but Chromium CDP is not:
-
-```sh
-npm run qa:projects:manual
-```
-
-The manual command runs the same preflight first, then prints a bounded
-copy-paste snippet that can run all selected project roots on the new bridge.
-It also prints grouped fallback snippets for older bridges that do not expose
-`openWorkspaceRoot(path)`.
-
-1. Start the QA app:
-
-   ```sh
-   npm run debug:qa
-   ```
-
-2. Open Tauri WebView DevTools for the app window.
-3. Paste the all-project snippet into the DevTools Console. On bridges with
-   `openWorkspaceRoot(path)`, the snippet switches roots before each file open.
-4. If the bridge lacks `openWorkspaceRoot(path)`, open the matching project
-   workspace in the Tauri app and paste the grouped fallback snippet for that
-   project root. Repeat once per project root.
-
-The snippets use the same `window.__codevoQa` bridge as the CDP runner. If
-`window.__codevoQa` is missing, restart with `npm run debug:qa`; for an already
-running dev app, set the DEV-only fallback in the console:
-
-```js
-localStorage.setItem("codevo.qaBridge", "1");
-location.reload();
-```
-
-### CDP automation
-
-Start the app with the bridge enabled:
-
-```sh
-npm run debug:qa
-```
-
-If the app is available through a Chrome DevTools Protocol endpoint, run:
-
-```sh
-node ./scripts/qa-project-scenarios.mjs \
-  --cdp-url http://127.0.0.1:9222 \
-  --target-url localhost:1420 \
-  --all
-```
-
-The same CDP batch is available through the central smoke runner:
-
-```sh
-npm run smoke:projects
-```
-
-`smoke:projects` expects the app to already be running with `npm run debug:qa`
-and a reachable CDP endpoint. It runs `--preflight` first so missing real
-project files or cursor-anchor drift are reported before CDP connection issues.
-Override the defaults when needed:
-
-```sh
-CODEVO_EDITOR_QA_CDP_URL=http://127.0.0.1:9222 \
-CODEVO_EDITOR_QA_TARGET_URL=localhost:1420 \
-npm run smoke:projects
-```
-
-When CDP is missing or unreachable, start the app with `npm run debug:qa`, set
-`CODEVO_EDITOR_QA_CDP_URL` if DevTools is listening somewhere other than
-`http://127.0.0.1:9222`, or use `--print-snippet` and paste the generated code
-into Tauri WebView DevTools. If the page is reachable but
-`window.__codevoQa` is missing, restart with `npm run debug:qa`; for an already
-running dev app, set the DEV-only fallback in the console:
-
-```js
-localStorage.setItem("codevo.qaBridge", "1");
-location.reload();
-```
-
-`--all` runs every built-in scenario in order. To run a smaller deterministic
-set, repeat `--scenario <id>`:
-
-```sh
-node ./scripts/qa-project-scenarios.mjs \
-  --cdp-url http://127.0.0.1:9222 \
-  --target-url localhost:1420 \
-  --scenario invoices-php-request-completion \
-  --scenario invoices-blade-route-definition
-```
-
-For a raw Tauri WebView DevTools snippet without the grouped manual guide, print
-an in-page snippet and run it in the console:
-
-```sh
-node ./scripts/qa-project-scenarios.mjs \
-  --all \
-  --print-snippet
-```
-
-`--print-snippet` also accepts repeated `--scenario` flags for a subset. The
-CLI intentionally requires either `--all` or at least one `--scenario` so real
-project smoke checks are explicit.
-
-Each scenario opens the expected root when `openWorkspaceRoot(path)` is
-available, opens the expected file when `openWorkspaceFile(path)` is available,
-guards the workspace/project context and active file, sets the cursor from an
-anchor, then calls either `getCompletionItems()` or `triggerDefinition()`
-through the bridge. Older bridges keep the manual active-workspace and
-active-file checks so mismatch errors still tell you which project tab to open.
-
-The CDP runner prints one block per scenario with:
-
-- `PASS` or `FAIL`
-- scenario action
-- source active file
-- expected labels or definition target
-- actual labels or active file
-- error detail when a scenario fails
-
-The final summary reports passed and failed counts. Any failed scenario sets a
-non-zero process exit code.
+1. Open a project, trust it, and add a second project.
+2. Start a Claude Code or Codex thread in the local checkout; follow the
+   streaming transcript and answer an approval or question.
+3. Start a thread in an isolated worktree and send a follow-up.
+4. Switch projects and threads while a turn is running (A -> B -> A) and check
+   that no output, diff, or terminal leaks between them.
+5. Open each right-panel surface: terminal, Files (read-only viewer), diff,
+   Git, scripts, pull request, history, and agents.
+6. Commit and push thread changes, then integrate and remove the worktree.
+7. Stop a running turn, revoke trust on a project with a running agent, and
+   close a project tab with live work.
+8. Check **Settings**: providers, MCP servers, and keymap.
+9. If a runner is configured, run a remote thread and open the remote Files
+   viewer, diff, and terminal.
+10. Restart the app and confirm threads, projects, and layout restore.

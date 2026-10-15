@@ -81,14 +81,6 @@ export interface FileChange {
   status: "A" | "M" | "D" | "R";
 }
 
-export interface CommitGraphNode {
-  children: string[];
-  commit: Commit;
-  depth: number;
-  hash: string;
-  isMerge: boolean;
-}
-
 export interface DiffPayload {
   commitHash: string;
   isRename: boolean;
@@ -108,52 +100,12 @@ export interface GitFileDiff {
   previewUnavailableReason?: "binary" | "large" | null;
 }
 
-/**
- * A single hunk from `git diff` (or `git diff --cached`) for one file. `index`
- * is the hunk's position within that file's diff and is the stable id sent back
- * to stage, unstage, or revert exactly that hunk. The ranges are parsed from
- * `header` by the backend; counts can be zero for pure additions or deletions.
- */
-export interface GitDiffHunk {
-  header: string;
-  identity: string;
-  index: number;
-  lines: string[];
-  isStaged: boolean;
-  originalStart: number;
-  originalCount: number;
-  modifiedStart: number;
-  modifiedCount: number;
-}
-
-export interface GitBlameLine {
-  author: string;
-  lineNumber: number;
-  sha: string;
-  timestamp: number;
-}
-
-export interface GitFileHistoryEntry {
-  author: string;
-  sha: string;
-  subject: string;
-  timestamp: number;
-}
-
-export interface GitStashEntry {
-  branch: string | null;
-  index: number;
-  message: string;
-  timestamp: number;
-}
-
 export interface GitBranch {
   isCurrent: boolean;
   name: string;
 }
 
 export interface GitGateway {
-  blame(rootPath: string, relativePath: string): Promise<GitBlameLine[]>;
   commit(
     rootPath: string,
     message: string,
@@ -170,52 +122,10 @@ export interface GitGateway {
    * required to implement it.
    */
   detectRepositories?(rootPath: string, maxDepth?: number): Promise<string[] | null>;
-  fileCommitDiff(
-    rootPath: string,
-    relativePath: string,
-    sha: string,
-  ): Promise<GitFileDiff>;
-  fileHistory(
-    rootPath: string,
-    relativePath: string,
-  ): Promise<GitFileHistoryEntry[]>;
   getStatus(rootPath: string): Promise<GitStatus>;
   getDiff(rootPath: string, change: GitChangedFile): Promise<GitFileDiff>;
-  getFileHunks(
-    rootPath: string,
-    relativePath: string,
-    staged: boolean,
-  ): Promise<GitDiffHunk[]>;
   push(rootPath: string): Promise<GitStatus>;
-  revertHunk?(
-    rootPath: string,
-    relativePath: string,
-    hunkIndex: number,
-    expectedIdentity: string,
-  ): Promise<GitStatus>;
-  revertCommit?(rootPath: string, commitHash: string): Promise<Commit>;
-  cherryPickCommit?(rootPath: string, commitHash: string): Promise<Commit>;
-  revertFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
   stageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
-  stageHunk(
-    rootPath: string,
-    relativePath: string,
-    hunkIndex: number,
-    expectedIdentity: string,
-  ): Promise<GitStatus>;
-  unstageFiles(rootPath: string, changes: GitChangedFile[]): Promise<GitStatus>;
-  unstageHunk(
-    rootPath: string,
-    relativePath: string,
-    hunkIndex: number,
-    expectedIdentity: string,
-  ): Promise<GitStatus>;
-  stashSave(rootPath: string, message: string): Promise<void>;
-  stashList(rootPath: string): Promise<GitStashEntry[]>;
-  stashApply(rootPath: string, index: number): Promise<void>;
-  stashPop(rootPath: string, index: number): Promise<void>;
-  stashShow(rootPath: string, index: number): Promise<string>;
-  stashDrop(rootPath: string, index: number): Promise<void>;
   branchList(rootPath: string): Promise<GitBranch[]>;
   remoteBranchList?(rootPath: string): Promise<GitBranch[]>;
   checkoutRemoteBranch?(
@@ -228,11 +138,6 @@ export interface GitGateway {
     rootPath: string,
     name: string,
     options: { force: boolean },
-  ): Promise<void>;
-  renameBranch?(
-    rootPath: string,
-    oldName: string,
-    newName: string,
   ): Promise<void>;
   switchBranch(rootPath: string, name: string): Promise<void>;
 }
@@ -248,22 +153,11 @@ export interface GitHistoryGateway {
     files?: FileChange[],
   ): Promise<DiffPayload>;
   getCommitFiles(rootPath: string, commitHash: string): Promise<FileChange[]>;
-  getCommitGraphPage(
-    rootPath: string,
-    cursor?: string | null,
-  ): Promise<CommitGraphNode[]>;
   getCommitLog(
     rootPath: string,
     filters: GitCommitFilters,
   ): Promise<Commit[]>;
   getRepoStatus(rootPath: string): Promise<GitRepoStatus>;
-  rewordCommit(
-    rootPath: string,
-    commitHash: string,
-    message: string,
-  ): Promise<Commit>;
-  revertCommit(rootPath: string, commitHash: string): Promise<Commit>;
-  cherryPickCommit(rootPath: string, commitHash: string): Promise<Commit>;
 }
 
 export function gitChangeKey(change: GitChangedFile): string {
@@ -380,66 +274,4 @@ export function groupGitChanges(changes: GitChangedFile[]): GitChangeGroup[] {
 
 export function hasStagedGitChanges(changes: GitChangedFile[]): boolean {
   return changes.some((change) => change.isStaged);
-}
-
-const UNCOMMITTED_BLAME_SHA = /^0+$/;
-
-export function isUncommittedBlameLine(line: GitBlameLine): boolean {
-  return UNCOMMITTED_BLAME_SHA.test(line.sha);
-}
-
-export function gitBlameShaAtLine(
-  lines: readonly GitBlameLine[],
-  lineNumber: number,
-): string | null {
-  const line = lines.find((candidate) => candidate.lineNumber === lineNumber);
-
-  if (!line || !line.sha || isUncommittedBlameLine(line)) {
-    return null;
-  }
-
-  return line.sha;
-}
-
-export function gitBlameAnnotation(
-  line: GitBlameLine,
-  now: number = Date.now(),
-): string {
-  const author = line.author.trim() || "Unknown";
-
-  if (isUncommittedBlameLine(line)) {
-    return author;
-  }
-
-  return `${author}, ${gitBlameRelativeDate(line.timestamp, now)}`;
-}
-
-export function gitBlameRelativeDate(
-  timestampSeconds: number,
-  now: number = Date.now(),
-): string {
-  const elapsedSeconds = Math.max(0, Math.floor(now / 1000) - timestampSeconds);
-
-  if (elapsedSeconds < 60) {
-    return "just now";
-  }
-
-  const units: Array<{ label: string; seconds: number }> = [
-    { label: "year", seconds: 365 * 86400 },
-    { label: "month", seconds: 30 * 86400 },
-    { label: "week", seconds: 7 * 86400 },
-    { label: "day", seconds: 86400 },
-    { label: "hour", seconds: 3600 },
-    { label: "minute", seconds: 60 },
-  ];
-
-  for (const unit of units) {
-    const value = Math.floor(elapsedSeconds / unit.seconds);
-
-    if (value >= 1) {
-      return `${value} ${unit.label}${value === 1 ? "" : "s"} ago`;
-    }
-  }
-
-  return "just now";
 }

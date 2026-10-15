@@ -76,11 +76,11 @@ describe("agent.newThreadIn keybinding", () => {
     "leaves a missing %s picker unbound when a custom binding owns its default",
     (platform, newThread, owned) => {
       expect(
-        normalizeKeymapSettings({ "agent.newThread": newThread, "editor.save": owned }, platform),
+        normalizeKeymapSettings({ "agent.newThread": newThread, "app.quit": owned }, platform),
       ).toMatchObject({
         "agent.newThread": newThread,
         "agent.newThreadIn": "",
-        "editor.save": owned,
+        "app.quit": owned,
       });
     },
   );

@@ -9,8 +9,6 @@ type PaletteActionTarget =
       readonly kind: "page";
       readonly page: PalettePageId;
       readonly requires: PaletteRequirement;
-      readonly query?: string;
-      readonly representsCommandId?: string;
     }
   | { readonly kind: "command"; readonly commandIds: readonly string[] };
 
@@ -90,20 +88,6 @@ export const PALETTE_ACTIONS: readonly PaletteActionDefinition[] = [
     keywords: ["open file", "quick open"],
     shortcutCommandId: "file.quickOpen",
     target: page("files"),
-  },
-  {
-    id: "goToLine",
-    title: "Go to line",
-    glyph: "fileSearch",
-    keywords: ["line", "column", "goto"],
-    shortcutCommandId: "editor.gotoLine",
-    target: {
-      kind: "page",
-      page: "files",
-      requires: "none",
-      query: ":",
-      representsCommandId: "editor.gotoLine",
-    },
   },
   {
     id: "runScript",
@@ -196,12 +180,11 @@ export const PALETTE_ACTIONS: readonly PaletteActionDefinition[] = [
 ];
 
 export function paletteActionCommandIds(): ReadonlySet<string> {
-  return new Set(PALETTE_ACTIONS.flatMap((action) => representedCommandIds(action.target)));
-}
-
-function representedCommandIds(target: PaletteActionTarget): readonly string[] {
-  if (target.kind === "command") return target.commandIds;
-  return target.representsCommandId === undefined ? [] : [target.representsCommandId];
+  return new Set(
+    PALETTE_ACTIONS.flatMap((action) =>
+      action.target.kind === "command" ? action.target.commandIds : [],
+    ),
+  );
 }
 
 export function availablePaletteActions(
@@ -226,14 +209,11 @@ function actionView(
   };
   if (action.target.kind === "page") {
     if (!requirementMet(action.target.requires, availability)) return null;
-    const represented = action.target.representsCommandId;
-    const state = represented === undefined ? "enabled" : availability.commandState(represented);
-    if (state === "missing") return null;
     return {
       ...base,
-      commandIds: represented === undefined ? [] : [represented],
-      intent: pageIntent(action.target.page, action.target.query),
-      disabled: state !== "enabled",
+      commandIds: [],
+      intent: { kind: "page", page: action.target.page },
+      disabled: false,
     };
   }
   const registered = action.target.commandIds.filter(
@@ -258,9 +238,4 @@ function requirementMet(
   if (requirement === "agentProvider") return availability.agentProvider;
   if (requirement === "composerModels") return availability.composerModels;
   return true;
-}
-
-function pageIntent(target: PalettePageId, query: string | undefined): PaletteIntent {
-  if (query === undefined) return { kind: "page", page: target };
-  return { kind: "page", page: target, query };
 }

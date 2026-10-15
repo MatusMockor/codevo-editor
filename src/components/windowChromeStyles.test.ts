@@ -5,7 +5,7 @@ import { appShellClassName } from "./appShellClassName";
 
 describe("window chrome styles", () => {
   it("uses a pointer cursor on clickable chrome controls", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../App.css"), "utf8");
+    const css = readFileSync(resolve(import.meta.dirname, "../agentApp.css"), "utf8");
 
     expect(cssRule(css, ".window-menu-button")).toContain("cursor: pointer;");
     expect(cssRule(css, ".window-menu-item")).toContain("cursor: pointer;");
@@ -13,7 +13,7 @@ describe("window chrome styles", () => {
   });
 
   it("centers the macOS native traffic-light spacer within the title bar", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../App.css"), "utf8");
+    const css = readFileSync(resolve(import.meta.dirname, "../agentApp.css"), "utf8");
 
     expect(cssRule(css, ".window-native-control-space")).toContain("align-self: stretch;");
     expect(cssRule(css, ".window-chrome-action-spacer")).toContain("align-self: stretch;");
@@ -23,7 +23,7 @@ describe("window chrome styles", () => {
   });
 
   it("drops the app title row only for the macOS agent workbench", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../App.css"), "utf8");
+    const css = readFileSync(resolve(import.meta.dirname, "../agentApp.css"), "utf8");
     const macAgent = cssRule(css, ".app-shell--agent-mode.app-shell--mac");
 
     expect(css).toContain("--window-native-controls-inset: 0px;");
@@ -39,7 +39,7 @@ describe("window chrome styles", () => {
   });
 
   it("keeps the traffic lights inside the settings nav top bar", () => {
-    const appCss = readFileSync(resolve(import.meta.dirname, "../App.css"), "utf8");
+    const appCss = readFileSync(resolve(import.meta.dirname, "../agentApp.css"), "utf8");
     const semanticCss = readFileSync(
       resolve(import.meta.dirname, "../ui/tokens/semantic.css"),
       "utf8",
@@ -58,14 +58,12 @@ describe("window chrome styles", () => {
   });
 
   it("stamps the platform on the shell so the macOS rules need no :has() probe", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../App.css"), "utf8");
+    const css = readFileSync(resolve(import.meta.dirname, "../agentApp.css"), "utf8");
 
-    expect(appShellClassName(true, false, "mac")).toBe(
-      "app-shell app-shell--agent-mode app-shell--mac",
-    );
-    expect(appShellClassName(true, false, "linux")).toBe("app-shell app-shell--agent-mode");
-    expect(appShellClassName(false, true, "mac")).toBe(
-      "app-shell app-shell--settings app-shell--mac",
+    expect(appShellClassName(false, "mac")).toBe("app-shell app-shell--agent-mode app-shell--mac");
+    expect(appShellClassName(false, "linux")).toBe("app-shell app-shell--agent-mode");
+    expect(appShellClassName(true, "mac")).toBe(
+      "app-shell app-shell--agent-mode app-shell--settings app-shell--mac",
     );
     expect(css).not.toContain(".app-shell--agent-mode:has(");
   });

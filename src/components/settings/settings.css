@@ -1569,36 +1569,6 @@ code.settings-readout,
   flex: 1;
 }
 
-.settings-snippets {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.settings-snippet {
-  display: grid;
-  padding: 12px;
-  border: 0;
-  border-radius: var(--cv-r-control);
-  background: var(--cv-tint-1);
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
-.settings-snippet > .settings-input--area,
-.settings-snippet > .settings-chips {
-  grid-column: 1 / -1;
-}
-
-.settings-snippet > .settings-chips {
-  justify-content: flex-start;
-}
-
-.settings-snippet > .settings-btn {
-  justify-self: end;
-  grid-column: 1 / -1;
-}
-
 .settings-kb {
   display: flex;
   flex-direction: column;

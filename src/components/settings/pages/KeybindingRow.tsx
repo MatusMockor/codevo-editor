@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsKbd } from "../primitives/SettingsKbd";
 import { SettingsPopover } from "../primitives/SettingsPopover";
-import { keybindingWhenLabel, type KeybindingViewModel } from "./keybindingsPresentation";
+import type { KeybindingViewModel } from "./keybindingsPresentation";
 import type { KeybindingRecorder } from "./useKeybindingRecorder";
 
 export interface KeybindingRowProps {
@@ -32,7 +32,7 @@ export function KeybindingRow({ binding, onReset, onUnbind, recorder }: Keybindi
         </h4>
         <p className="settings-kb__when">
           <span className="settings-kb__when-label">When</span>
-          <span className="settings-kb__when-value">{keybindingWhenLabel(binding)}</span>
+          <span className="settings-kb__when-value">Always</span>
         </p>
       </div>
       <div className="settings-kb__controls">
@@ -46,7 +46,7 @@ export function KeybindingRow({ binding, onReset, onUnbind, recorder }: Keybindi
             <TriangleAlert aria-hidden="true" size={14} />
           </span>
         )}
-        {binding.rebindable && recording === null ? (
+        {recording === null ? (
           <>
             <SettingsButton
               expanded={menuOpen}
@@ -99,7 +99,6 @@ export function KeybindingRow({ binding, onReset, onUnbind, recorder }: Keybindi
           <button
             aria-label={`Edit shortcut for ${identity}`}
             className="settings-kb__edit"
-            disabled={!binding.rebindable}
             onClick={() => recorder.start(binding.commandId)}
             type="button"
           >

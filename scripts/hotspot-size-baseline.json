@@ -1,98 +1,13 @@
 {
   "productionLineLimit": 2000,
   "productionStructuralTokenLimit": 10000,
-  "groups": {
-    "workbench-controller-preview-tests": {
-      "patterns": [
-        "src/application/useWorkbenchController.preview.test.tsx",
-        "src/application/useWorkbenchController.preview/**/*.ts",
-        "src/application/useWorkbenchController.preview/**/*.tsx"
-      ],
-      "members": [
-        "src/application/useWorkbenchController.preview.test.tsx",
-        "src/application/useWorkbenchController.preview/editing-trust-events-and-settings.test.tsx",
-        "src/application/useWorkbenchController.preview/language-navigation-hierarchies-and-symbols.test.tsx",
-        "src/application/useWorkbenchController.preview/laravel-blade-translations-and-navigation.test.tsx",
-        "src/application/useWorkbenchController.preview/laravel-routes-config-and-views.test.tsx",
-        "src/application/useWorkbenchController.preview/php-refactors-completions-and-quickfixes.test.tsx",
-        "src/application/useWorkbenchController.preview/php-relations-and-diagnostics.test.tsx",
-        "src/application/useWorkbenchController.preview/php-resolution-generics-and-inference.test.tsx",
-        "src/application/useWorkbenchController.preview/testSupport.ts",
-        "src/application/useWorkbenchController.preview/workspace-diagnostics-cleanup-and-commands.test.tsx",
-        "src/application/useWorkbenchController.preview/workspace-git-session-and-editor.test.tsx",
-        "src/application/useWorkbenchController.preview/workspace-identity-and-project-lifecycle.test.tsx",
-        "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
-        "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx"
-      ],
-      "rawLines": 70668,
-      "structuralTokens": 331807
-    }
-  },
+  "groups": {},
   "files": {
-    "src-tauri/src/git.rs": { "rawLines": 6421, "structuralTokens": 40639 },
-    "src-tauri/src/index.rs": { "rawLines": 2089, "structuralTokens": 10272 },
-    "src-tauri/src/lib.rs": { "rawLines": 184, "structuralTokens": 723 },
-    "src-tauri/src/lsp_features.rs": {
-      "rawLines": 1260,
-      "structuralTokens": 7379
-    },
-    "src-tauri/src/lsp_session.rs": {
-      "rawLines": 4500,
-      "structuralTokens": 23619
-    },
-    "src-tauri/src/lsp.rs": { "rawLines": 2364, "structuralTokens": 10802 },
+    "src-tauri/src/git.rs": { "rawLines": 3513, "structuralTokens": 22322 },
+    "src-tauri/src/lib.rs": { "rawLines": 87, "structuralTokens": 424 },
     "src-tauri/src/workspace_file_commands.rs": {
-      "rawLines": 2145,
-      "structuralTokens": 14163
-    },
-    "src/App.tsx": { "rawLines": 1150, "structuralTokens": 5653 },
-    "src/application/useDocumentSync.ts": {
-      "rawLines": 1526,
-      "structuralTokens": 5300
-    },
-    "src/application/useLanguageServerRuntimeLifecycle.ts": {
-      "rawLines": 1979,
-      "structuralTokens": 6637
-    },
-    "src/application/useWorkbenchController.ts": {
-      "rawLines": 2848,
-      "structuralTokens": 9801
-    },
-    "src/components/EditorSurface.tsx": {
-      "rawLines": 1942,
-      "structuralTokens": 7647
-    },
-    "src/components/javascriptTypescriptLanguageServerMonacoProviders.ts": {
-      "rawLines": 2192,
-      "structuralTokens": 9224
-    },
-    "src/components/languageServerMonacoProviders.ts": {
-      "rawLines": 2972,
-      "structuralTokens": 7381
-    },
-    "src/domain/latteLinkNavigation.ts": {
-      "rawLines": 2446,
-      "structuralTokens": 5029
-    },
-    "src/domain/netteComponents.ts": {
-      "rawLines": 4267,
-      "structuralTokens": 16907
-    },
-    "src/domain/netteDiContainer.ts": {
-      "rawLines": 2362,
-      "structuralTokens": 1661
-    },
-    "src/domain/phpCreateFromUsage.ts": {
-      "rawLines": 2079,
-      "structuralTokens": 7734
-    },
-    "src/domain/phpFrameworkLaravel.ts": {
-      "rawLines": 7948,
-      "structuralTokens": 19189
-    },
-    "src/domain/phpInspections.ts": {
-      "rawLines": 2244,
-      "structuralTokens": 7852
+      "rawLines": 697,
+      "structuralTokens": 4479
     }
   }
 }

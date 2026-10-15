@@ -72,14 +72,7 @@ describe("SettingsPageActions", () => {
   });
 
   it("renders nothing for sections without page actions", () => {
-    for (const section of [
-      "environments",
-      "keymap",
-      "index",
-      "snippets",
-      "archive",
-      "php",
-    ] as const) {
+    for (const section of ["environments", "keymap", "git", "archive"] as const) {
       renderActions(section, {});
       expect(host.textContent).toBe("");
     }
@@ -157,7 +150,6 @@ describe("SettingsPageActions", () => {
 function draftWith(appSettings: AppSettings): SettingsDraft {
   return {
     appSettings,
-    ignorePatternsText: "",
     trusted: false,
     workspaceSettings: defaultWorkspaceSettings(),
   };
@@ -168,7 +160,6 @@ function actionsWith(overrides: Partial<SettingsDraftActions>): SettingsDraftAct
     publishAppSettings: vi.fn(),
     save: vi.fn(),
     updateAppSettings: vi.fn(),
-    updateIgnorePatternsText: vi.fn(),
     updateTrusted: vi.fn(),
     updateWorkspaceSettings: vi.fn(),
     ...overrides,
@@ -181,13 +172,9 @@ function environment(): SettingsEnvironment {
     gitDetectedRepositoryMappings: [],
     hasWorkspace: true,
     onCopyInstallCommand: () => undefined,
-    onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-    onRestartJavaScriptTypeScriptService: async () => undefined,
-    phpTools: null,
     providerManagement: null,
     providerSignIn: null,
     systemFontGateway: { listMonospaceFontFamilies: async () => [] },
-    workspaceDescriptor: null,
     workspaceRoot: "/workspace",
   };
 }

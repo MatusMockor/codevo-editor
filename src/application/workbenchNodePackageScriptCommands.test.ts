@@ -17,10 +17,6 @@ describe("workbenchNodePackageScriptCommands", () => {
 
     expect(commands.map(({ id, title }) => ({ id, title }))).toEqual([
       {
-        id: "npm.runSelectedScript",
-        title: "Run Script",
-      },
-      {
         id: "script.node.node-package-script:package.json:build",
         title: "pnpm: build (root · package.json)",
       },
@@ -33,72 +29,6 @@ describe("workbenchNodePackageScriptCommands", () => {
         title: "Stop Current Package Script",
       },
     ]);
-  });
-
-  it("keeps the official editor-context command hidden and delegates a live dirty capture", () => {
-    const runSelectedScript = vi.fn(() => true);
-    const commands = workbenchNodePackageScriptCommands({
-      enabled: true,
-      pending: false,
-      run: vi.fn(),
-      runSelectedScript,
-      scripts: [],
-      stop: vi.fn(),
-    });
-    const command = commands.find(({ id }) => id === "npm.runSelectedScript");
-    const capture = {
-      anchorOffset: 7,
-      content: '{"scripts":{"dev":"vite"}}',
-      documentPath: "/workspace/package.json",
-      modelIdentity: {},
-      modelVersion: 3,
-    };
-    const context = {
-      activeDocumentDirty: true,
-      hasActiveDocument: true,
-      hasWorkspace: true,
-      npmRunSelectedScriptCapture: capture,
-    };
-
-    expect(command).toMatchObject({
-      category: "NPM",
-      title: "Run Script",
-      visibleInCommandPalette: false,
-    });
-    expect(command?.isEnabled(context)).toBe(true);
-    command?.run(context);
-    expect(runSelectedScript).toHaveBeenCalledWith(capture);
-  });
-
-  it("disables the contextual command without an eligible capture/capability", () => {
-    const commandFor = (enabled: boolean, pending: boolean, withRunner = true) =>
-      workbenchNodePackageScriptCommands({
-        enabled,
-        pending,
-        run: vi.fn(),
-        ...(withRunner ? { runSelectedScript: vi.fn(() => true) } : {}),
-        scripts: [],
-        stop: vi.fn(),
-      }).find(({ id }) => id === "npm.runSelectedScript")!;
-    const context = {
-      activeDocumentDirty: false,
-      hasActiveDocument: true,
-      hasWorkspace: true,
-      npmRunSelectedScriptCapture: {
-        anchorOffset: 0,
-        content: "{}",
-        documentPath: "/workspace/package.json",
-        modelIdentity: {},
-        modelVersion: 1,
-      },
-    };
-
-    expect(commandFor(false, false).isEnabled(context)).toBe(false);
-    expect(commandFor(true, true).isEnabled(context)).toBe(false);
-    expect(commandFor(true, false, false).isEnabled(context)).toBe(false);
-    expect(
-      commandFor(true, false).isEnabled({ ...context, npmRunSelectedScriptCapture: undefined }),
-    ).toBe(false);
   });
 
   it("disables execution while untrusted or pending and delegates only the typed identity", () => {
@@ -122,15 +52,11 @@ describe("workbenchNodePackageScriptCommands", () => {
     expect(
       disabled?.isEnabled?.({
         hasWorkspace: true,
-        hasActiveDocument: false,
-        activeDocumentDirty: false,
       }),
     ).toBe(false);
     expect(
       pending?.isEnabled?.({
         hasWorkspace: true,
-        hasActiveDocument: false,
-        activeDocumentDirty: false,
       }),
     ).toBe(false);
 
@@ -147,9 +73,7 @@ describe("workbenchNodePackageScriptCommands", () => {
     expect(stopCommand?.id).toBe("script.node.stopCurrent");
     expect(
       stopCommand?.isEnabled?.({
-        activeDocumentDirty: false,
         hasWorkspace: true,
-        hasActiveDocument: false,
       }),
     ).toBe(true);
     stopCommand?.run();

@@ -1,17 +1,12 @@
 /*
   Workbench shell frame — the single place the agent workbench layout is expressed.
-  WorkbenchShellFrame stamps data-layout, data-rail, data-right-panel and data-editor
+  WorkbenchShellFrame stamps data-layout, data-rail, data-right-panel and data-surface
   on .workbench-frame, and every track, slot placement and layout token below derives from
   those attributes. agentMode.css owns agent visuals and never restates placement.
 */
 .workbench-frame {
-  --agent-row-pad: 8px 10px;
   --agent-surface-focus-gutter: 4px;
   --agent-rail-min-width: 208px;
-  --agent-rail-row-inset: 10px;
-  --agent-rail-gap: 8px;
-  --agent-rail-row-py: 8px;
-  --agent-rail-row-px: 30px;
   --agent-session-gutter: 24px;
   --agent-find-pill-top: 6px;
   --agent-find-pill-height: 34px;
@@ -19,7 +14,6 @@
   --agent-minimap-rail: 40px;
   --agent-minimap-inset: 12px;
   --agent-minimap-persistent-gutter: 48px;
-  --agent-turn-gap: 30px;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -61,7 +55,6 @@
     var(--agent-bottom-panel-limit, 75vh)
   );
   --agent-center-min-width: 560px;
-  --agent-rail-inset: 8px;
   --agent-rail-collapsed-width: 0px;
   --agent-rail-track: var(--agent-rail-width);
   --shell-sidebar-track: var(--agent-rail-track);
@@ -76,10 +69,6 @@
 
 .workbench-frame[data-layout="agent"][data-rail="collapsed"] {
   --agent-rail-track: var(--agent-rail-collapsed-width);
-}
-
-.workbench-frame__chrome {
-  display: contents;
 }
 
 .workbench-frame[data-layout="agent"] > [data-slot="agent"] {
@@ -104,17 +93,14 @@
   grid-row: 1 / -1;
 }
 
-.workbench-frame[data-layout="agent"] > [data-slot="editor"],
 .workbench-frame > [data-slot="surface"][hidden],
-.workbench-frame > [data-slot="editor"][hidden],
-.workbench-frame > [data-slot="bottom"][hidden],
-.workbench-frame__chrome[hidden] {
+.workbench-frame > [data-slot="bottom"][hidden] {
   display: none;
 }
 
 /*
   Settings surface: the frame drops its layout grid and the settings slot fills it; every
-  other child (agent, surface, editor, bottom, lazy fallbacks) stays mounted but takes no
+  other child (agent, surface, bottom, lazy fallbacks) stays mounted but takes no
   space.
 */
 .workbench-frame[data-surface="settings"] {
@@ -184,11 +170,6 @@
   overflow: hidden;
   visibility: hidden;
   content-visibility: hidden;
-}
-
-.workbench-frame[data-layout="editor-only"] > [data-slot="agent"],
-.workbench-frame[data-layout="editor-only"] > [data-slot="surface"] {
-  display: none;
 }
 
 .agent-frame-fallback {

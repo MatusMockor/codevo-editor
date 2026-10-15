@@ -22,7 +22,7 @@ import type {
   WorkspaceTrustState,
 } from "../domain/trust";
 import { normalizedWorkspaceRootKey, workspaceDisplayName } from "../domain/workspaceRootKey";
-import { workspaceSettingsIdentity } from "./workbenchController/workspaceIdentityPolicy";
+import { workspaceSettingsIdentity } from "./workspace/workspaceIdentityPolicy";
 import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import { AgentOpenedProjectAdmission } from "./agentOpenedProjectAdmission";

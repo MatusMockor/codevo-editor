@@ -24,13 +24,9 @@ vi.mock("@tauri-apps/api/window", () => ({
 
 describe("WindowChrome", () => {
   const commandContext: CommandContext = {
-    activeDocumentDirty: false,
-    hasActiveDocument: false,
     hasWorkspace: false,
   };
   let host: HTMLDivElement;
-  let originalExecCommandDescriptor: PropertyDescriptor | undefined;
-  let restoreExecCommand = false;
   let root: Root;
 
   beforeEach(() => {
@@ -38,8 +34,6 @@ describe("WindowChrome", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    originalExecCommandDescriptor = undefined;
-    restoreExecCommand = false;
     minimizeWindow.mockReset();
     toggleMaximizeWindow.mockReset();
     closeWindow.mockReset();
@@ -48,13 +42,6 @@ describe("WindowChrome", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
-    if (restoreExecCommand) {
-      if (originalExecCommandDescriptor) {
-        Object.defineProperty(document, "execCommand", originalExecCommandDescriptor);
-      } else {
-        Reflect.deleteProperty(document, "execCommand");
-      }
-    }
     vi.unstubAllGlobals();
   });
 
@@ -94,8 +81,8 @@ describe("WindowChrome", () => {
     const closeTab = vi.fn();
     const commands: Command[] = [
       {
-        category: "Editor",
-        id: "editor.closeTab",
+        category: "Workbench",
+        id: "workbench.closeActive",
         isEnabled: () => true,
         run: closeTab,
         shortcut: "Ctrl+W",
@@ -135,10 +122,6 @@ describe("WindowChrome", () => {
     const zoomOut = vi.fn();
     const resetZoom = vi.fn();
     const openAppearanceSettings = vi.fn();
-    const increaseFont = vi.fn();
-    const decreaseFont = vi.fn();
-    const resetFont = vi.fn();
-    const toggleLigatures = vi.fn();
     const commands: Command[] = [
       command("workbench.zoomIn", "Zoom In", zoomIn),
       command("workbench.zoomOut", "Zoom Out", zoomOut),
@@ -148,10 +131,6 @@ describe("WindowChrome", () => {
         "Open Appearance Settings",
         openAppearanceSettings,
       ),
-      command("editor.fontZoomIn", "Increase Editor Font Size", increaseFont),
-      command("editor.fontZoomOut", "Decrease Editor Font Size", decreaseFont),
-      command("editor.fontZoomReset", "Reset Editor Font Size", resetFont),
-      command("editor.toggleFontLigatures", "Toggle Editor Font Ligatures", toggleLigatures),
     ];
 
     await act(async () => {
@@ -188,106 +167,65 @@ describe("WindowChrome", () => {
       buttonWithText(host, "View").click();
     });
     await act(async () => {
-      buttonWithText(host, "Increase Editor Font Size").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "View").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "Decrease Editor Font Size").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "View").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "Reset Editor Font Size").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "View").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "Toggle Editor Font Ligatures").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "View").click();
-    });
-    await act(async () => {
       buttonWithText(host, "Open Appearance Settings").click();
     });
 
     expect(zoomIn).toHaveBeenCalledOnce();
     expect(zoomOut).toHaveBeenCalledOnce();
     expect(resetZoom).toHaveBeenCalledOnce();
-    expect(increaseFont).toHaveBeenCalledOnce();
-    expect(decreaseFont).toHaveBeenCalledOnce();
-    expect(resetFont).toHaveBeenCalledOnce();
-    expect(toggleLigatures).toHaveBeenCalledOnce();
     expect(openAppearanceSettings).toHaveBeenCalledOnce();
   });
 
-  it("runs enabled Edit menu commands from the registry", async () => {
+  it("offers only the File and View menus with app-level items", async () => {
     vi.stubGlobal("navigator", {
       platform: "Linux x86_64",
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
     });
-    const execCommand = vi.fn();
-    originalExecCommandDescriptor = Object.getOwnPropertyDescriptor(document, "execCommand");
-    restoreExecCommand = true;
-    Object.defineProperty(document, "execCommand", {
-      configurable: true,
-      value: execCommand,
-    });
-    const undo = vi.fn();
-    const selectAll = vi.fn();
-    const commands: Command[] = [
-      command("edit.undo", "Undo", undo),
-      command("edit.selectAll", "Select All", selectAll),
-    ];
 
     await act(async () => {
       root.render(
         <WindowChrome
           appTitle="Codevo Editor"
-          commandContext={{ ...commandContext, hasActiveDocument: true }}
-          commands={commands}
+          commandContext={commandContext}
+          commands={[]}
           onCommandError={vi.fn()}
           onQuitApplication={vi.fn()}
         />,
       );
     });
 
+    expect(
+      [...host.querySelectorAll(".window-menu-button")].map((button) => button.textContent),
+    ).toEqual(["File", "View"]);
     await act(async () => {
-      buttonWithText(host, "Edit").click();
+      buttonWithText(host, "File").click();
     });
+    expect(menuItemLabels(host)).toEqual(["Go to File", "Close", "Quit Codevo Editor"]);
     await act(async () => {
-      buttonWithText(host, "Undo").click();
+      buttonWithText(host, "View").click();
     });
-    await act(async () => {
-      buttonWithText(host, "Edit").click();
-    });
-    await act(async () => {
-      buttonWithText(host, "Select All").click();
-    });
-
-    expect(undo).toHaveBeenCalledOnce();
-    expect(selectAll).toHaveBeenCalledOnce();
-    expect(execCommand).not.toHaveBeenCalled();
+    expect(menuItemLabels(host)).toEqual([
+      "Zoom In",
+      "Zoom Out",
+      "Reset Zoom",
+      "Open Appearance Settings",
+    ]);
   });
 
-  it("keeps Edit menu commands disabled when the registry disables them", async () => {
+  it("keeps File menu commands disabled when the registry disables or lacks them", async () => {
     vi.stubGlobal("navigator", {
       platform: "Linux x86_64",
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
     });
-    const undoRun = vi.fn();
+    const quickOpenRun = vi.fn();
     const commands: Command[] = [
       {
-        category: "Editor",
-        id: "edit.undo",
+        category: "File",
+        id: "file.quickOpen",
         isEnabled: () => false,
-        run: undoRun,
-        shortcut: "Ctrl+Z",
-        title: "Undo",
+        run: quickOpenRun,
+        shortcut: "Ctrl+P",
+        title: "Go to File",
       },
     ];
 
@@ -295,7 +233,7 @@ describe("WindowChrome", () => {
       root.render(
         <WindowChrome
           appTitle="Codevo Editor"
-          commandContext={{ ...commandContext, hasActiveDocument: false }}
+          commandContext={commandContext}
           commands={commands}
           onCommandError={vi.fn()}
           onQuitApplication={vi.fn()}
@@ -304,19 +242,19 @@ describe("WindowChrome", () => {
     });
 
     await act(async () => {
-      buttonWithText(host, "Edit").click();
+      buttonWithText(host, "File").click();
     });
-    const undo = buttonWithText(host, "Undo");
-    const paste = buttonWithText(host, "Paste");
+    const quickOpen = buttonWithText(host, "Go to File");
+    const close = buttonWithText(host, "Close");
 
-    expect(undo.disabled).toBe(true);
-    expect(paste.disabled).toBe(true);
+    expect(quickOpen.disabled).toBe(true);
+    expect(close.disabled).toBe(true);
 
     await act(async () => {
-      undo.click();
+      quickOpen.click();
     });
 
-    expect(undoRun).not.toHaveBeenCalled();
+    expect(quickOpenRun).not.toHaveBeenCalled();
   });
 
   it("rechecks command enablement when a menu item is selected", async () => {
@@ -325,15 +263,15 @@ describe("WindowChrome", () => {
       userAgent: "Mozilla/5.0 X11 Linux x86_64",
     });
     let enabled = true;
-    const undoRun = vi.fn();
+    const quickOpenRun = vi.fn();
     const reportCommandError = vi.fn();
     const commands: Command[] = [
       {
-        category: "Editor",
-        id: "edit.undo",
+        category: "File",
+        id: "file.quickOpen",
         isEnabled: () => enabled,
-        run: undoRun,
-        title: "Undo",
+        run: quickOpenRun,
+        title: "Go to File",
       },
     ];
 
@@ -350,15 +288,15 @@ describe("WindowChrome", () => {
     });
 
     await act(async () => {
-      buttonWithText(host, "Edit").click();
+      buttonWithText(host, "File").click();
     });
     enabled = false;
     await act(async () => {
-      buttonWithText(host, "Undo").click();
+      buttonWithText(host, "Go to File").click();
     });
 
     expect(host.querySelector(".window-menu-popover")).toBeNull();
-    expect(undoRun).not.toHaveBeenCalled();
+    expect(quickOpenRun).not.toHaveBeenCalled();
     expect(reportCommandError).not.toHaveBeenCalled();
   });
 
@@ -382,7 +320,7 @@ describe("WindowChrome", () => {
         <WindowChrome
           appTitle="Codevo Editor"
           commandContext={commandContext}
-          commands={[command("editor.closeTab", "Close", run)]}
+          commands={[command("workbench.closeActive", "Close", run)]}
           onCommandError={reportCommandError}
           onQuitApplication={vi.fn()}
         />,
@@ -424,7 +362,7 @@ describe("WindowChrome", () => {
         <WindowChrome
           appTitle="Codevo Editor"
           commandContext={commandContext}
-          commands={[command("editor.closeTab", "Close", run)]}
+          commands={[command("workbench.closeActive", "Close", run)]}
           onCommandError={reportCommandError}
           onQuitApplication={vi.fn()}
         />,
@@ -459,8 +397,8 @@ describe("WindowChrome", () => {
           appTitle="Codevo Editor"
           commandContext={commandContext}
           commands={[
-            command("editor.closeTab", "Close", closeRun),
-            command("editor.save", "Save", saveRun),
+            command("workbench.closeActive", "Close", closeRun),
+            command("file.quickOpen", "Go to File", saveRun),
           ]}
           onCommandError={vi.fn()}
           onQuitApplication={vi.fn()}
@@ -487,7 +425,7 @@ describe("WindowChrome", () => {
       buttonWithText(host, "File").click();
     });
     await act(async () => {
-      buttonWithText(host, "Save").click();
+      buttonWithText(host, "Go to File").click();
     });
 
     expect(saveRun).toHaveBeenCalledOnce();
@@ -525,7 +463,7 @@ describe("WindowChrome", () => {
         <WindowChrome
           appTitle="Codevo Editor"
           commandContext={commandContext}
-          commands={[command("editor.closeTab", "Close", run)]}
+          commands={[command("workbench.closeActive", "Close", run)]}
           onCommandError={reportCommandError}
           onQuitApplication={vi.fn()}
         />,
@@ -653,7 +591,7 @@ describe("WindowChrome", () => {
       root.render(
         <WindowChrome
           appTitle="Codevo Editor"
-          commandContext={{ ...commandContext, hasActiveDocument: true }}
+          commandContext={commandContext}
           commands={[]}
           onCommandError={vi.fn()}
           onQuitApplication={vi.fn()}
@@ -662,7 +600,7 @@ describe("WindowChrome", () => {
     });
 
     await act(async () => {
-      buttonWithText(host, "Edit").click();
+      buttonWithText(host, "View").click();
     });
 
     const popover = host.querySelector(".window-menu-popover");
@@ -709,6 +647,12 @@ function buttonWithText(host: HTMLElement, text: string): HTMLButtonElement {
   }
 
   return button;
+}
+
+function menuItemLabels(host: HTMLElement): (string | null)[] {
+  return [...host.querySelectorAll(".window-menu-item")].map((item) =>
+    item.getAttribute("aria-label"),
+  );
 }
 
 function command(id: string, title: string, run: () => void | Promise<void>): Command {

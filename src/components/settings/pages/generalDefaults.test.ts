@@ -13,9 +13,7 @@ describe("restoreGeneralAppDefaults", () => {
       editorFontFamily: "Menlo",
       editorFontLigatures: true,
       editorFontSize: 30,
-      minimapEnabled: true,
       terminalShellIntegrationEnabled: true,
-      wordWrapEnabled: true,
     };
 
     const restored = restoreGeneralAppDefaults(current);
@@ -25,8 +23,6 @@ describe("restoreGeneralAppDefaults", () => {
     expect(restored.editorFontFamily).toBe(defaults.editorFontFamily);
     expect(restored.editorFontLigatures).toBe(defaults.editorFontLigatures);
     expect(restored.agentThreadFontSize).toBe(defaults.agentThreadFontSize);
-    expect(restored.minimapEnabled).toBe(false);
-    expect(restored.wordWrapEnabled).toBe(false);
     expect(restored.terminalShellIntegrationEnabled).toBe(false);
     expect(restored.agentModelFavoriteKeys).toEqual([favorite]);
   });

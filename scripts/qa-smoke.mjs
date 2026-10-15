@@ -6,142 +6,42 @@ import { fileURLToPath } from "node:url";
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), "..");
 const activeChildren = new Set();
-const defaultProjectQaCdpUrl = "http://127.0.0.1:9222";
-const defaultProjectQaTargetUrl = "localhost:1420";
+export const agentAppSuiteDirectories = ["src/application/agentApp", "src/components/agentApp"];
 
-export const workbenchControllerPreviewSuites = [
-  "src/application/useWorkbenchController.preview.test.tsx",
-  "src/application/useWorkbenchController.preview/editing-trust-events-and-settings.test.tsx",
-  "src/application/useWorkbenchController.preview/language-navigation-hierarchies-and-symbols.test.tsx",
-  "src/application/useWorkbenchController.preview/laravel-blade-translations-and-navigation.test.tsx",
-  "src/application/useWorkbenchController.preview/laravel-routes-config-and-views.test.tsx",
-  "src/application/useWorkbenchController.preview/php-refactors-completions-and-quickfixes.test.tsx",
-  "src/application/useWorkbenchController.preview/php-relations-and-diagnostics.test.tsx",
-  "src/application/useWorkbenchController.preview/php-resolution-generics-and-inference.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-diagnostics-cleanup-and-commands.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-git-session-and-editor.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-identity-and-project-lifecycle.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-save-and-runtime-coordination.test.tsx",
-  "src/application/useWorkbenchController.preview/workspace-search-tests-and-navigation.test.tsx",
+const vitestFastFiles = [
+  "src/domain/agentWorkbenchLayout.test.ts",
+  "src/domain/agentSurfaceActivation.test.ts",
+  "src/infrastructure/tauriWorkspaceRuntimeLifecycleGateway.test.ts",
+  "src/application/useAgentProjects.test.ts",
+  "src/application/useAgentThreadStore.test.tsx",
+  "src/application/useAgentTurnDispatch.test.tsx",
+  "src/application/useAgentStopController.test.tsx",
+  "src/application/useAgentShipFlow.test.tsx",
+  "src/application/useAgentSurfaceFileTree.test.tsx",
 ];
 
-const laravelWorkbenchControllerPreviewSuites = [
-  "src/application/useWorkbenchController.preview/laravel-blade-translations-and-navigation.test.tsx",
-  "src/application/useWorkbenchController.preview/laravel-routes-config-and-views.test.tsx",
+const vitestExtendedFiles = [
+  "src/application/useAgentThreadSessionLifecycle.test.tsx",
+  "src/application/useAgentPendingInteractions.test.tsx",
+  "src/application/useAgentThreads.test.tsx",
+  "src/application/useAgentThreadScripts.test.tsx",
+  "src/application/useAgentGitHistory.test.tsx",
+  "src/application/useAgentProviderManagement.test.tsx",
+  "src/application/remoteAgentProjection.test.ts",
 ];
 
 export const qaSmokeProfiles = {
   vitestFast: {
     description:
-      "Small Vitest smoke profile for runtime lifecycle, per-project isolation guards, quick-open basics, Git diff blank/recoverable paths, runtime observability UI contracts, index progress, and JS/TS workspace filtering.",
-    command: [
-      "npm",
-      "test",
-      "--",
-      "src/domain/languageServerRuntime.test.ts",
-      "src/domain/languageServerRuntimeStatusCache.test.ts",
-      "src/domain/runtimeObservability.test.ts",
-      "src/domain/indexProgress.test.ts",
-      "src/domain/javascriptTypeScriptFileReferences.test.ts",
-      "src/domain/javascriptTypeScriptWatchedFiles.test.ts",
-      "src/infrastructure/tauriWorkspaceRuntimeLifecycleGateway.test.ts",
-      "src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts",
-      "src/infrastructure/tauriRuntimeObservabilityGateway.test.ts",
-      "src/infrastructure/tauriIndexProgressGateway.test.ts",
-      "src/components/QuickOpen.test.tsx",
-      "src/components/GitDiffPreview.test.tsx",
-      "src/App.gitDiffClick.test.tsx",
-      "src/App.gitDiffBoundary.test.tsx",
-      "src/App.test.ts",
-    ],
-    files: [
-      "src/domain/languageServerRuntime.test.ts",
-      "src/domain/languageServerRuntimeStatusCache.test.ts",
-      "src/domain/runtimeObservability.test.ts",
-      "src/domain/indexProgress.test.ts",
-      "src/domain/javascriptTypeScriptFileReferences.test.ts",
-      "src/domain/javascriptTypeScriptWatchedFiles.test.ts",
-      "src/infrastructure/tauriWorkspaceRuntimeLifecycleGateway.test.ts",
-      "src/infrastructure/tauriLanguageServerRuntimeGateway.test.ts",
-      "src/infrastructure/tauriRuntimeObservabilityGateway.test.ts",
-      "src/infrastructure/tauriIndexProgressGateway.test.ts",
-      "src/components/QuickOpen.test.tsx",
-      "src/components/GitDiffPreview.test.tsx",
-      "src/App.gitDiffClick.test.tsx",
-      "src/App.gitDiffBoundary.test.tsx",
-      "src/App.test.ts",
-    ],
-  },
-  vitestBladeLaravelViews: {
-    description:
-      "Targeted Blade/Laravel view support smoke for view helper/facade completion and navigation, Blade directive/component navigation, view-data variables, per-project isolation, and baseline diagnostics quietness.",
-    command: [
-      "npm",
-      "test",
-      "--",
-      "src/domain/phpLaravelViews.test.ts",
-      "src/domain/phpLaravelViewData.test.ts",
-      "src/domain/bladeNavigation.test.ts",
-      "src/components/languageServerMonacoProviders.test.ts",
-      ...laravelWorkbenchControllerPreviewSuites,
-      "-t",
-      "phpLaravelViews|phpLaravelViewDataBindings|detectBladeReferenceAt|bladeViewCandidateRelativePaths|bladeComponentCandidateRelativePaths|bladeComponentClassCandidatePaths|registerLanguageServerMonacoProviders blade providers|Laravel Blade view|View::make|Route::view|basic Blade document|Blade Cmd\\+Click definition and completion|variables passed from a controller|built-in Blade variables|Laravel helpers in Blade",
-    ],
-    files: [
-      "src/domain/phpLaravelViews.test.ts",
-      "src/domain/phpLaravelViewData.test.ts",
-      "src/domain/bladeNavigation.test.ts",
-      "src/components/languageServerMonacoProviders.test.ts",
-      ...laravelWorkbenchControllerPreviewSuites,
-    ],
-  },
-  vitestNette: {
-    description:
-      "Targeted Nette smoke for Latte presenter links, quoted controls, NEON service references, DI completions, and Latte variable/member completions.",
-    command: [
-      "npm",
-      "test",
-      "--",
-      "src/domain/latteLinkNavigation.test.ts",
-      "src/domain/netteComponents.test.ts",
-      "src/domain/neonConfig.test.ts",
-      "src/domain/netteDiContainer.test.ts",
-      "src/application/netteProviderEboxCrmSmoke.test.tsx",
-      "src/application/latteTemplateCodeActions.test.ts",
-      "src/application/useLatteIntelligence.test.tsx",
-      "src/application/useNeonIntelligence.test.tsx",
-      "src/components/languageServerMonacoProviders.test.ts",
-      "-t",
-      "n:href|quoted static \\{control|@service|service reference|service completions|generated service|typed @|parameter and service completions|presenter link completion|presenter link definition|turns Nette missing-method diagnostics into presenter-method code actions|variable \\+ filter completion|member completion|registerLanguageServerMonacoProviders latte providers|registerLanguageServerMonacoProviders neon providers",
-    ],
-    files: [
-      "src/domain/latteLinkNavigation.test.ts",
-      "src/domain/netteComponents.test.ts",
-      "src/domain/neonConfig.test.ts",
-      "src/domain/netteDiContainer.test.ts",
-      "src/application/netteProviderEboxCrmSmoke.test.tsx",
-      "src/application/latteTemplateCodeActions.test.ts",
-      "src/application/useLatteIntelligence.test.tsx",
-      "src/application/useNeonIntelligence.test.tsx",
-      "src/components/languageServerMonacoProviders.test.ts",
-    ],
+      "Small Vitest smoke profile for agent layout and surfaces, workspace runtime lifecycle, projects, thread store, turn dispatch, stop, ship flow, and the Files viewer tree.",
+    command: ["npm", "test", "--", ...vitestFastFiles],
+    files: vitestFastFiles,
   },
   vitestExtended: {
     description:
-      "Slower frontend regression profile for runtime observability panel behavior, the Quick Open empty-tab editor race, and broad workbench per-project isolation regressions.",
-    command: [
-      "npm",
-      "test",
-      "--",
-      "src/components/RuntimeObservabilityPanel.test.tsx",
-      "src/components/EditorSurface.test.tsx",
-      ...workbenchControllerPreviewSuites,
-    ],
-    files: [
-      "src/components/RuntimeObservabilityPanel.test.tsx",
-      "src/components/EditorSurface.test.tsx",
-      ...workbenchControllerPreviewSuites,
-    ],
+      "Slower agent regression profile for thread session lifecycle, pending interactions, threads, scripts, Git history, providers, remote projection, and the agent app workspace and close races.",
+    command: ["npm", "test", "--", ...vitestExtendedFiles, ...agentAppSuiteDirectories],
+    files: [...vitestExtendedFiles, ...agentAppSuiteDirectories],
   },
   vitestFull: {
     description: "Full Vitest suite.",
@@ -150,40 +50,40 @@ export const qaSmokeProfiles = {
   },
   rustBackendSmoke: {
     description:
-      "Backend-only coverage for PHPactor/Imagick isolation, startup-noise parsing, runtime observability, index progress, and tsserver cleanup.",
+      "Backend-only coverage for agent turn changes and logs, agent history, terminal sessions, and Git worktrees.",
     command: [
       "cargo",
       "test",
       "--lib",
-      "phpactor",
+      "agent_turn_changes",
       "&&",
       "cargo",
       "test",
       "--lib",
-      "skips_startup_noise_before_headers",
+      "agent_turn_log",
       "&&",
       "cargo",
       "test",
       "--lib",
-      "runtime_observability",
+      "agent_history_store",
       "&&",
       "cargo",
       "test",
       "--lib",
-      "reindex_emits_incremental_progress_on_batch_boundaries",
+      "terminal_session",
       "&&",
       "cargo",
       "test",
       "--lib",
-      "tsserver",
+      "git_worktree",
     ],
     cwd: "src-tauri",
     filters: [
-      "phpactor",
-      "skips_startup_noise_before_headers",
-      "runtime_observability",
-      "reindex_emits_incremental_progress_on_batch_boundaries",
-      "tsserver",
+      "agent_turn_changes",
+      "agent_turn_log",
+      "agent_history_store",
+      "terminal_session",
+      "git_worktree",
     ],
   },
 };
@@ -193,21 +93,10 @@ const fastSteps = [
   profileStep("Fast Vitest smoke", qaSmokeProfiles.vitestFast, {
     timeoutMs: minutes(5),
   }),
-  profileStep("Blade/Laravel view Vitest smoke", qaSmokeProfiles.vitestBladeLaravelViews, {
-    timeoutMs: minutes(5),
-  }),
-  profileStep("Nette Vitest smoke", qaSmokeProfiles.vitestNette, {
-    timeoutMs: minutes(5),
-  }),
 ];
 
 const modeSteps = {
   fast: fastSteps,
-  nette: [
-    profileStep("Nette Vitest smoke", qaSmokeProfiles.vitestNette, {
-      timeoutMs: minutes(5),
-    }),
-  ],
   extended: [
     profileStep("Extended Vitest regression profile", qaSmokeProfiles.vitestExtended, {
       timeoutMs: minutes(10),
@@ -224,14 +113,6 @@ const modeSteps = {
   desktop: [
     npmStep("Debug desktop boot smoke", ["run", "debug:smoke"], {
       timeoutMs: minutes(20),
-    }),
-  ],
-  projects: [
-    commandStep("Real project scenario preflight", "node", projectQaPreflightArgs(), {
-      timeoutMs: minutes(2),
-    }),
-    commandStep("Real project provider smoke", "node", projectQaScenarioArgs(), {
-      timeoutMs: minutes(10),
     }),
   ],
 };
@@ -306,20 +187,10 @@ function printHelp() {
   console.log(`Usage: node ./scripts/qa-smoke.mjs [mode]
 
 Modes:
-  fast      TypeScript check and targeted Vitest smoke. Default.
-  nette     Targeted Nette Vitest smoke.
-  extended  Slower Vitest regression files for editor/workbench races.
+  fast      TypeScript check and targeted agent Vitest smoke. Default.
+  extended  Slower agent Vitest regression files for thread and workspace races.
   full      TypeScript check, full Vitest, backend smoke, and build.
   desktop   Debug Tauri build, short desktop boot, and process cleanup smoke.
-  projects  Real-project provider scenarios through the dev QA bridge.
-
-Project smoke expects an already running app started with npm run debug:qa and
-a reachable CDP endpoint. Configure with:
-  CODEVO_EDITOR_QA_CDP_URL     Default: ${defaultProjectQaCdpUrl}
-  CODEVO_EDITOR_QA_TARGET_URL  Default: ${defaultProjectQaTargetUrl}
-
-For macOS Tauri WebView manual QA without CDP, use:
-  npm run qa:projects:manual
 `);
 }
 
@@ -349,25 +220,6 @@ function rustBackendSteps(profile) {
       timeoutMs: minutes(5),
     }),
   );
-}
-
-function projectQaScenarioArgs() {
-  return [
-    "./scripts/qa-project-scenarios.mjs",
-    "--all",
-    "--cdp-url",
-    process.env.CODEVO_EDITOR_QA_CDP_URL ||
-      process.env.MOCKOR_EDITOR_QA_CDP_URL ||
-      defaultProjectQaCdpUrl,
-    "--target-url",
-    process.env.CODEVO_EDITOR_QA_TARGET_URL ||
-      process.env.MOCKOR_EDITOR_QA_TARGET_URL ||
-      defaultProjectQaTargetUrl,
-  ];
-}
-
-function projectQaPreflightArgs() {
-  return ["./scripts/qa-project-scenarios.mjs", "--all", "--preflight"];
 }
 
 function commandStep(name, command, args, options = {}) {

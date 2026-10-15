@@ -4,8 +4,6 @@ import { executePaletteIntent, type PaletteIntentPorts } from "./executePaletteI
 
 const context: CommandContext = {
   hasWorkspace: true,
-  hasActiveDocument: false,
-  activeDocumentDirty: false,
 };
 
 function ports(overrides: Partial<PaletteIntentPorts> = {}): PaletteIntentPorts {
@@ -15,8 +13,8 @@ function ports(overrides: Partial<PaletteIntentPorts> = {}): PaletteIntentPorts 
     agent: null,
     models: null,
     openFile: vi.fn(async () => undefined),
-    switchEditorProject: vi.fn(async () => true),
-    runEditorScript: vi.fn(async () => "executed" as const),
+    switchWorkspaceProject: vi.fn(async () => true),
+    runWorkspaceScript: vi.fn(async () => "executed" as const),
     switchBranch: vi.fn(async () => true),
     setPalette: vi.fn(async () => undefined),
     setColorScheme: vi.fn(async () => undefined),
@@ -71,23 +69,23 @@ describe("executePaletteIntent", () => {
     );
   });
 
-  it("routes editor scripts and projects when no agent provider exists", async () => {
-    const runEditorScript = vi.fn(async () => "executed" as const);
-    const switchEditorProject = vi.fn(async () => true);
-    const all = ports({ runEditorScript, switchEditorProject });
+  it("routes workspace scripts and projects when no agent provider exists", async () => {
+    const runWorkspaceScript = vi.fn(async () => "executed" as const);
+    const switchWorkspaceProject = vi.fn(async () => true);
+    const all = ports({ runWorkspaceScript, switchWorkspaceProject });
 
     expect(await executePaletteIntent({ kind: "runScript", scriptKey: "k" }, all)).toBe("close");
     expect(await executePaletteIntent({ kind: "switchProject", projectKey: "/p" }, all)).toBe(
       "close",
     );
-    expect(runEditorScript).toHaveBeenCalledWith("k");
-    expect(switchEditorProject).toHaveBeenCalledWith("/p");
+    expect(runWorkspaceScript).toHaveBeenCalledWith("k");
+    expect(switchWorkspaceProject).toHaveBeenCalledWith("/p");
   });
 
-  it("fails closed when an editor project, script or branch target is gone", async () => {
+  it("fails closed when a workspace project, script or branch target is gone", async () => {
     const gone = ports({
-      switchEditorProject: vi.fn(async () => false),
-      runEditorScript: vi.fn(async () => "missing" as const),
+      switchWorkspaceProject: vi.fn(async () => false),
+      runWorkspaceScript: vi.fn(async () => "missing" as const),
       switchBranch: vi.fn(async () => false),
     });
 
@@ -102,9 +100,9 @@ describe("executePaletteIntent", () => {
     ).toBe("failed");
   });
 
-  it("propagates a rejected editor script so the caller can report it", async () => {
+  it("propagates a rejected workspace script so the caller can report it", async () => {
     const failing = ports({
-      runEditorScript: vi.fn(async () => Promise.reject(new Error("boom"))),
+      runWorkspaceScript: vi.fn(async () => Promise.reject(new Error("boom"))),
     });
 
     await expect(

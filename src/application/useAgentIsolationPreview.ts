@@ -32,7 +32,6 @@ export interface AgentIsolationPreviewDependencies {
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly gitGateway: Pick<GitGateway, "getStatus">;
   readonly getRepositoryStatus: (repositoryRoot: string) => AgentRepositoryStatusSnapshot;
-  readonly getDirtyEditorDocumentCount: (repositoryRoot: string) => number;
   readonly liveAgentTasksInRepository: (repositoryRoot: string) => number;
   readonly reportError: (source: string, error: unknown) => void;
 }
@@ -101,10 +100,6 @@ export function useAgentIsolationPreview(
         workspacePolicy: normalizeAgentIsolationPolicy(project?.isolationPolicy ?? "auto"),
         repositoryStatusKnown: status.known,
         repositoryDirty: status.dirty,
-        dirtyEditorDocumentsInRepository:
-          project?.origin === "active-tab"
-            ? Math.max(0, Math.trunc(deps.getDirtyEditorDocumentCount(repositoryRoot)))
-            : 0,
         liveAgentTasksInRepository: deps.liveAgentTasksInRepository(repositoryRoot),
         plannedParallelDispatch: false,
       };
@@ -393,7 +388,6 @@ function isolationConfirmationKey(
     workspacePolicy: context.workspacePolicy,
     repositoryStatusKnown: context.repositoryStatusKnown,
     repositoryDirty: context.repositoryDirty,
-    dirtyEditorDocumentsInRepository: context.dirtyEditorDocumentsInRepository,
     plannedParallelDispatch: context.plannedParallelDispatch,
   });
 }
@@ -406,8 +400,6 @@ export function inPlaceGuardReasonLabel(reason: InPlaceDispatchUnsafeReason): st
   switch (reason) {
     case "dirty-tree":
       return "the working tree has uncommitted changes";
-    case "dirty-editors":
-      return "unsaved editors belong to this repository";
     case "status-unknown":
       return "the repository status is unknown";
     default:
@@ -428,8 +420,6 @@ export function agentIsolationReasonLabel(recommended: AgentIsolationDefault): s
       return "The repository status is unknown.";
     case "dirty-tree":
       return "The working tree has uncommitted changes.";
-    case "dirty-editors":
-      return "This repository has unsaved editors.";
     default:
       return unsupportedIsolationReason(recommended.reason);
   }

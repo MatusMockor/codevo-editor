@@ -4,14 +4,10 @@ import type { CommandContext } from "./commandRegistry";
 import { workbenchGitWorkflowCommands } from "./workbenchGitWorkflowCommands";
 
 const disabledContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: false,
 };
 
 const enabledContext: CommandContext = {
-  activeDocumentDirty: true,
-  hasActiveDocument: true,
   hasWorkspace: true,
 };
 
@@ -20,14 +16,9 @@ describe("workbenchGitWorkflowCommands", () => {
     const shortcut = (commandId: KeymapCommandId) => `shortcut:${commandId}`;
     const commands = workbenchGitWorkflowCommands({
       shortcut,
-      openGitStashPanel: vi.fn(),
       openGitBranchPanel: vi.fn(),
       createGitBranch: vi.fn(),
       commitGitChanges: vi.fn(),
-      revertSelectedGitCommit: vi.fn(),
-      cherryPickSelectedGitCommit: vi.fn(),
-      rewordSelectedGitCommit: vi.fn(),
-      canRewordSelectedGitCommit: vi.fn(() => true),
     });
 
     expect(
@@ -39,18 +30,6 @@ describe("workbenchGitWorkflowCommands", () => {
       })),
     ).toEqual([
       {
-        id: "git.stashChanges",
-        title: "Git: Stash Changes",
-        category: "Git",
-        shortcut: "shortcut:git.stashChanges",
-      },
-      {
-        id: "git.showStashes",
-        title: "Git: Show Stashes",
-        category: "Git",
-        shortcut: "shortcut:git.showStashes",
-      },
-      {
         id: "git.switchBranch",
         title: "Git: Switch Branch",
         category: "Git",
@@ -58,31 +37,13 @@ describe("workbenchGitWorkflowCommands", () => {
       },
       {
         id: "git.newBranch",
-        title: "Git: New Branch",
+        title: "Git: Open Branches",
         category: "Git",
         shortcut: "shortcut:git.newBranch",
       },
       {
-        id: "git.revertCommit",
-        title: "Git: Revert Selected Commit",
-        category: "Git",
-        shortcut: undefined,
-      },
-      {
-        id: "git.cherryPickCommit",
-        title: "Git: Cherry-Pick Selected Commit",
-        category: "Git",
-        shortcut: undefined,
-      },
-      {
-        id: "git.rewordCommit",
-        title: "Git: Reword Selected Commit",
-        category: "Git",
-        shortcut: "shortcut:git.rewordCommit",
-      },
-      {
         id: "git.commit",
-        title: "Git: Commit",
+        title: "Git: Open Commit",
         category: "Git",
         shortcut: "shortcut:git.commit",
       },
@@ -93,108 +54,53 @@ describe("workbenchGitWorkflowCommands", () => {
     const commands = createCommands();
 
     expect(commands.map((command) => command.isEnabled(disabledContext))).toEqual(
-      [false, false, false, false, false, false, false, false],
+      [false, false, false],
     );
   });
 
   it("enables commands with a workspace", () => {
     const commands = createCommands();
 
-    expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-      true,
-    ]);
+    expect(commands.map((command) => command.isEnabled(enabledContext))).toEqual([true, true, true]);
   });
 
   it("invokes the injected callbacks", () => {
-    const openGitStashPanel = vi.fn();
     const openGitBranchPanel = vi.fn();
     const createGitBranch = vi.fn();
     const commitGitChanges = vi.fn();
-    const revertSelectedGitCommit = vi.fn();
-    const cherryPickSelectedGitCommit = vi.fn();
-    const rewordSelectedGitCommit = vi.fn();
     const commands = workbenchGitWorkflowCommands({
       shortcut: (commandId) => commandId,
-      openGitStashPanel,
       openGitBranchPanel,
       createGitBranch,
       commitGitChanges,
-      revertSelectedGitCommit,
-      cherryPickSelectedGitCommit,
-      rewordSelectedGitCommit,
-      canRewordSelectedGitCommit: vi.fn(() => true),
     });
 
     for (const command of commands) {
       command.run();
     }
 
-    expect(openGitStashPanel).toHaveBeenCalledTimes(2);
     expect(openGitBranchPanel).toHaveBeenCalledTimes(1);
     expect(createGitBranch).toHaveBeenCalledTimes(1);
     expect(commitGitChanges).toHaveBeenCalledTimes(1);
-    expect(revertSelectedGitCommit).toHaveBeenCalledTimes(1);
-    expect(cherryPickSelectedGitCommit).toHaveBeenCalledTimes(1);
-    expect(rewordSelectedGitCommit).toHaveBeenCalledTimes(1);
   });
 
   it("returns undefined while callbacks have pending promises", () => {
     const commands = workbenchGitWorkflowCommands({
       shortcut: (commandId) => commandId,
-      openGitStashPanel: vi.fn(() => new Promise<void>(() => {})),
       openGitBranchPanel: vi.fn(() => new Promise<void>(() => {})),
       createGitBranch: vi.fn(() => new Promise<void>(() => {})),
       commitGitChanges: vi.fn(() => new Promise<void>(() => {})),
-      revertSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
-      cherryPickSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
-      rewordSelectedGitCommit: vi.fn(() => new Promise<void>(() => {})),
-      canRewordSelectedGitCommit: vi.fn(() => true),
     });
 
-    expect(commands.map((command) => command.run())).toEqual([
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-    ]);
-  });
-
-  it("enables reword only when the selected commit is unpushed HEAD", () => {
-    const canRewordSelectedGitCommit = vi.fn(() => false);
-    const commands = createCommands({ canRewordSelectedGitCommit });
-    const reword = commands.find((command) => command.id === "git.rewordCommit");
-
-    expect(reword?.isEnabled(enabledContext)).toBe(false);
-    canRewordSelectedGitCommit.mockReturnValue(true);
-    expect(reword?.isEnabled(enabledContext)).toBe(true);
-    expect(reword?.isEnabled(disabledContext)).toBe(false);
+    expect(commands.map((command) => command.run())).toEqual([undefined, undefined, undefined]);
   });
 });
 
-function createCommands(overrides: {
-  canRewordSelectedGitCommit?: () => boolean;
-} = {}) {
+function createCommands() {
   return workbenchGitWorkflowCommands({
     shortcut: (commandId) => commandId,
-    openGitStashPanel: vi.fn(),
     openGitBranchPanel: vi.fn(),
     createGitBranch: vi.fn(),
     commitGitChanges: vi.fn(),
-    revertSelectedGitCommit: vi.fn(),
-    cherryPickSelectedGitCommit: vi.fn(),
-    rewordSelectedGitCommit: vi.fn(),
-    canRewordSelectedGitCommit:
-      overrides.canRewordSelectedGitCommit ?? vi.fn(() => true),
   });
 }

@@ -132,22 +132,13 @@ describe("useWorkbenchControllerAgents layout surface", () => {
   it("serves the agent manager without a workspace", () => {
     const harness = renderAgents({ workspaceRoot: null, editorSessionOwnerKey: null });
 
-    expect(harness.result().agentModeActive).toBe(true);
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
-    harness.unmount();
-  });
-
-  it("keeps the agent layout unavailable without a root lease gateway", () => {
-    const harness = renderAgents({ withLeaseGateway: false });
-
-    expect(harness.result().agentModeActive).toBe(false);
+    expect(harness.result().agentWorkbench.layout.activeSurface).toBeNull();
     harness.unmount();
   });
 
   it("serves the agent layout for a leased workspace", () => {
     const harness = renderAgents();
 
-    expect(harness.result().agentModeActive).toBe(true);
     expect(harness.result().agentWorkbench.layout.activeSurface).toBeNull();
     harness.unmount();
   });
@@ -168,8 +159,6 @@ describe("useWorkbenchControllerAgents layout surface", () => {
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "diff" }));
     expect(harness.result().agentWorkbench.layout.activeSurface).toBe("diff");
-
-    expect(harness.result().agentModeActive).toBe(true);
     harness.unmount();
   });
 
@@ -211,21 +200,17 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     harness.unmount();
   });
 
-  it("persists only a shown terminal, never a drawer view, as the bottom panel", async () => {
-    const harness = renderAgents({ bottomPanelView: "problems", bottomPanelVisible: false });
+  it("persists the hidden terminal as a closed bottom panel", async () => {
+    const harness = renderAgents({ bottomPanelVisible: false });
 
     harness.rerender({ bottomPanelVisible: true });
-    await harness.settle();
-    expect(harness.persisted()).toEqual([]);
-
-    harness.rerender({ bottomPanelView: "terminal" });
     await harness.settle();
     expect(
       harness.persisted()[harness.persisted().length - 1]?.settings.session.agentWorkbench
         ?.bottomPanel,
     ).toBe(true);
 
-    harness.rerender({ bottomPanelView: "problems" });
+    harness.rerender({ bottomPanelVisible: false });
     await harness.settle();
     expect(
       harness.persisted()[harness.persisted().length - 1]?.settings.session.agentWorkbench
@@ -317,7 +302,6 @@ describe("useWorkbenchControllerAgents layout surface", () => {
     const harness = renderAgents();
 
     act(() => harness.result().agentWorkbench.dispatch({ kind: "openSurface", surface: "files" }));
-    expect(harness.result().agentWorkbench.effectiveLayout).toBe("agent");
     expect(harness.result().agentWorkbench.layout.activeSurface).toBe("files");
     harness.unmount();
   });
@@ -334,7 +318,6 @@ interface HarnessOverrides {
   initialTrust?: boolean;
   openedAdmission?: boolean;
   readonly bottomPanelVisible?: boolean;
-  readonly bottomPanelView?: WorkbenchControllerAgentsOptions["bottomPanelView"];
   readonly workspaceRoot?: string | null;
   readonly editorSessionOwnerKey?: string | null;
   readonly withLeaseGateway?: boolean;
@@ -418,9 +401,7 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     },
     agentThreadStoreGateway: threadStore,
     appSettingsRef,
-    bottomPanelView: overrides.bottomPanelView ?? "terminal",
     bottomPanelVisible: overrides.bottomPanelVisible ?? false,
-    setBottomPanelView: vi.fn(),
     setBottomPanelVisible: vi.fn(),
     editorSessionOwnerKey: overrides.editorSessionOwnerKey ?? ROOT_A,
     options: {
@@ -444,7 +425,6 @@ function renderAgents(overrides: HarnessOverrides = {}) {
     },
     gitRepositoryMappings: [],
     gitRepositoryStatuses: [],
-    openDocuments: [],
     persistedAgentWorkbenchLayout: overrides.persistedAgentWorkbenchLayout ?? null,
     persistWorkspaceSettings: async (rootPath, settings) => {
       persisted.push({ rootPath, settings });

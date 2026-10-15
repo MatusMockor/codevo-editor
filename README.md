@@ -1,13 +1,13 @@
 # Codevo Editor
 
-A native desktop IDE with an integrated agent workspace for **JavaScript,
-TypeScript, Node.js, and Express** development.
+A native desktop app for running coding agents against your projects.
 
-Codevo brings together a Monaco-based editor, language tooling, and project-scoped conversations with Claude Code and Codex. Edit code yourself,
-work with an agent in a local checkout or isolated Git worktree, then review and
-commit the changes in the same app.
+Codevo runs project-scoped conversations with **Claude Code and Codex**. Start an
+agent in a local checkout or an isolated Git worktree, follow its work as it
+streams, then review the diff, commit, push, and integrate the changes in the same
+app.
 
-Built with **Tauri 2 · React · TypeScript · Rust · Monaco**.
+Built with **Tauri 2 · React · TypeScript · Rust**.
 
 [Download macOS beta](https://github.com/MatusMockor/codevo-editor/releases) ·
 [Agent guide](docs/agent-mode.md) ·
@@ -16,34 +16,29 @@ Built with **Tauri 2 · React · TypeScript · Rust · Monaco**.
 
 ## What you can do
 
-### Edit and navigate
-
-- Work across multiple projects, editor tabs, and split groups, with unsaved-change
-  tracking, local history, and session restore.
-- Use JavaScript/TypeScript diagnostics, completion, hover, go to definition,
-  references, rename, code actions, formatting, and symbols through the language
-  server.
-- Jump to files, commands, symbols, or `path:line:column` with Quick Open.
-- Search across a workspace, including supported searches in unsaved documents.
-- Use integrated terminals, Git diffs, Source Control, and repository history.
-
-### Run and test
-
-- Discover package scripts and work with package and monorepo structure.
-- Run tasks and Jest/Vitest tests, inspect coverage, and navigate Problems.
-- Explore Express routes alongside the code that implements them.
-
 ### Work with agents
 
-- Run **Claude Code or Codex** in saved, project-scoped conversations.
+- Run **Claude Code or Codex** in saved, project-scoped conversations across
+  multiple projects.
 - Choose the project's local checkout or an isolated Git worktree for a task.
-- Review files, diffs, terminal output, and history from the agent workspace.
-- Commit and push thread changes, then integrate completed worktrees into the main
-  checkout.
+- Follow streaming transcripts, answer approvals and questions, and get notified
+  when a thread finishes or needs input.
 - Pin, search, rename, and archive conversations, and inspect locally recorded
   usage metrics.
+
+### Review and ship
+
+- Use the right panel next to a thread: terminal, a read-only Files viewer, diff,
+  Git, package scripts, pull request, history, and agents.
+- Commit and push thread changes, then integrate completed worktrees into the main
+  checkout.
+
+### Configure and connect
+
+- Set up providers, sign-in, MCP servers, and settings from **Settings**.
 - Connect to an existing **Linux Codevo Runner over SSH** to run agent tasks on
-  registered server projects and inspect their output and diffs.
+  registered server projects and inspect their output, files, and diffs.
+- Receive app updates from the beta channel.
 
 See the [Agent Mode guide](docs/agent-mode.md) for provider setup, permissions,
 checkout choices, and the review workflow. Remote execution requires a separately
@@ -95,27 +90,24 @@ Useful development commands:
 | `npm run debug:bundle` | Build a debug desktop bundle.                                           |
 
 Agent CLIs and project-specific runtimes are separate dependencies. Install the
-runtime and tools your project needs before running its scripts, tests, or agents.
+runtime and tools your project needs before running its scripts or agents.
 
 ## Scope and current limits
 
-The priority is practical everyday JavaScript/TypeScript and Node/Express work.
-PHP and framework-specific tooling remain secondary capabilities.
+Codevo is an agent app, not an IDE. There is no code editor, language server
+integration, Problems view, or test explorer; edit code through the agents or in
+your own editor.
 
-- Language features depend on the running language server and its advertised
-  capabilities.
 - There is no interactive debugger (no launch configurations, breakpoints, or
   Debug Console); debugging is done through the agents.
-- Codevo does not support the VS Code extension marketplace or claim full
-  remote-development or container parity. Remote agent execution has its own
+- Codevo does not claim remote-development or container support. Remote agent
+  execution has its own
   [supported workflows and prerequisites](docs/remote-runner-editor.md).
-- Large files, repositories, and result sets have explicit resource limits. Some
-  features reduce their scope or report partial results to keep editing responsive.
+- Large transcripts, files, diffs, repositories, and result sets have explicit
+  resource limits. Some features reduce their scope or report partial results to
+  keep the app responsive.
 - Agent usage is derived from conversations retained on this device; it is not an
   account billing or cost report.
-
-The [IDE parity inventory](docs/IDE_PARITY.md) tracks editor capabilities and gaps
-in more detail.
 
 ## Contributing and documentation
 

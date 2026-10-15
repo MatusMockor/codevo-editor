@@ -552,23 +552,6 @@ fn amend_batches_many_paths_and_records_a_reflog_message() {
 }
 
 #[test]
-fn history_reword_uses_the_same_pushed_check_as_amend() {
-    use crate::git::{CommandGitRepositoryGateway, GitRepositoryGateway};
-    let repo = TestRepo::new("reword-pushed");
-    repo.write("a.txt", "one\n");
-    repo.commit_all("shared");
-    let head = repo.git(&["rev-parse", "HEAD"]);
-    repo.git(&["update-ref", "refs/remotes/origin/other", &head]);
-
-    let error = CommandGitRepositoryGateway::new(true)
-        .reword(repo.path(), &head, "rewrite")
-        .expect_err("pushed to another remote branch");
-
-    assert!(error.to_string().contains("cannot amend a pushed commit"));
-    assert_eq!(repo.git(&["rev-parse", "HEAD"]), head);
-}
-
-#[test]
 fn amend_refuses_to_drop_files_that_were_not_selected_when_a_folder_became_a_file() {
     let repo = TestRepo::new("amend-dir-to-file");
     repo.write("d/x.txt", "x\n");

@@ -81,14 +81,10 @@ function renderCoordinator(
       workspaceIdentityByRootRef,
       openWorkspaceRequestPathRef: { current: null },
       openWorkspaceRequestTokenRef: { current: 0 },
-      openFileRequestTokenRef: { current: 0 },
-      gitDiffRequestTokenRef: { current: 0 },
-      editorGitBaselineRequestTokenRef: { current: 0 },
       workspaceCloseSession: {
-        current: () => ({ activeRoot: WORKSPACE_A, needsAttention: false }),
+        current: () => ({ activeRoot: WORKSPACE_A }),
       },
-      captureDirtyCloseTargets: () => [],
-      executeDirtyClose: async (_capture, _roots, _scope, commit) =>
+      guardClose: async ({ commit }) =>
         (await commit(() => scopeAuthority.current)) ? "closed" : "stale",
       commitWorkspaceClose: () => ({ isCurrent: () => authority.current }),
       persistAppSettings,
@@ -159,7 +155,7 @@ describe("useWorkbenchWorkspaceTabCloseCoordinator", () => {
   it("closes an inactive tab without opening another workspace", async () => {
     const harness = renderCoordinator({
       workspaceCloseSession: {
-        current: () => ({ activeRoot: WORKSPACE_B, needsAttention: false }),
+        current: () => ({ activeRoot: WORKSPACE_B }),
       },
     });
 
@@ -276,12 +272,12 @@ describe("useWorkbenchWorkspaceTabCloseCoordinator", () => {
     harness.unmount();
   });
 
-  it("fails closed when dirty-close scope changes during inactive disposal", async () => {
+  it("fails closed when the close guard scope changes during inactive disposal", async () => {
     const disposal = deferred<WorkspaceTabDisposalResult>();
     const harness = renderCoordinator({
       disposeWorkspaceTabResources: vi.fn(() => disposal.promise),
       workspaceCloseSession: {
-        current: () => ({ activeRoot: WORKSPACE_B, needsAttention: false }),
+        current: () => ({ activeRoot: WORKSPACE_B }),
       },
     });
     const closing = harness.closeWorkspaceTab(WORKSPACE_A);
@@ -291,6 +287,21 @@ describe("useWorkbenchWorkspaceTabCloseCoordinator", () => {
     await act(async () => closing);
 
     expect(harness.openWorkspacePath).not.toHaveBeenCalled();
+    harness.unmount();
+  });
+
+  it("commits without a close guard and invalidates active requests when closing the active tab", async () => {
+    const invalidateActiveWorkspaceRequests = vi.fn();
+    const harness = renderCoordinator({ guardClose: undefined, invalidateActiveWorkspaceRequests });
+
+    await act(async () => harness.closeWorkspaceTab(WORKSPACE_A));
+
+    expect(invalidateActiveWorkspaceRequests).toHaveBeenCalledOnce();
+    expect(harness.disposeWorkspaceTabResources).toHaveBeenCalledOnce();
+    expect(harness.openWorkspacePath).toHaveBeenCalledWith(WORKSPACE_B, {
+      cachePreviousWorkspace: false,
+    });
+    expect(harness.appSettingsRef.current.workspaceTabs).toEqual([WORKSPACE_B]);
     harness.unmount();
   });
 

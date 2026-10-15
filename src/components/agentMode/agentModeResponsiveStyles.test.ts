@@ -15,7 +15,7 @@ const semanticCss = readFileSync(
   resolve(import.meta.dirname, "../../ui/tokens/semantic.css"),
   "utf8",
 );
-const rootCss = readFileSync(resolve(import.meta.dirname, "../../App.css"), "utf8");
+const rootCss = readFileSync(resolve(import.meta.dirname, "../../agentApp.css"), "utf8");
 
 function block(source: string, marker: string): string {
   const start = source.indexOf(marker);
@@ -306,8 +306,7 @@ describe("agent mode responsive layout contract", () => {
   it("lets the Files tree fill its surface and never places an editor layer in the agent layout", () => {
     expect(shellCss).not.toContain("agent-surface-tree-width");
     expect(rule(".agent-surface-tree")).toContain("flex: 1 1 auto");
-    const editor = rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss);
-    expect(editor.trim()).toBe("display: none;");
+    expect(shellCss).not.toContain('[data-slot="editor"]');
   });
 
   it("places the docked bottom panel under the thread column beside full-height side rails", () => {
@@ -337,11 +336,8 @@ describe("agent mode responsive layout contract", () => {
     expect(surface).toContain("grid-column: 3");
     expect(surface).toContain("grid-row: 1 / -1");
     expect(
-      rule('.workbench-frame[data-layout="agent"] > [data-slot="editor"]', shellCss),
-    ).not.toContain("grid-column");
-    expect(
       rule(
-        '.workbench-frame > [data-slot="surface"][hidden],\n.workbench-frame > [data-slot="editor"][hidden]',
+        '.workbench-frame > [data-slot="surface"][hidden],\n.workbench-frame > [data-slot="bottom"][hidden]',
         shellCss,
       ),
     ).toContain("display: none");
@@ -349,8 +345,8 @@ describe("agent mode responsive layout contract", () => {
 
   it("places the agent slots as direct frame children and hides them only through the settings surface", () => {
     expect(shellCss).not.toContain("workbench-frame__agent");
-    expect(shellCss.match(/display: contents/g)).toHaveLength(1);
-    expect(rule(".workbench-frame__chrome {", shellCss)).toContain("display: contents");
+    expect(shellCss).not.toContain("display: contents");
+    expect(shellCss).not.toContain("workbench-frame__chrome");
 
     const surface = rule('.workbench-frame[data-layout="agent"] > [data-slot="surface"]', shellCss);
     expect(surface).toContain("grid-column: 3");
@@ -361,9 +357,7 @@ describe("agent mode responsive layout contract", () => {
         shellCss,
       ),
     ).toContain("grid-column: 2");
-    expect(
-      rule('.workbench-frame[data-layout="editor-only"] > [data-slot="surface"]', shellCss),
-    ).toContain("display: none");
+    expect(shellCss).not.toContain("editor-only");
 
     expect(rule('.workbench-frame[data-surface="settings"] {', shellCss)).toContain(
       "display: flex",
@@ -431,12 +425,6 @@ describe("agent mode responsive layout contract", () => {
     expect(rule(".cv-git-row__path", gitCss)).toContain("min-width: 0");
     expect(rule(".cv-git-banner__files", gitCss)).toContain("overflow-wrap: anywhere");
     expect(rule(".agent-files__row")).toContain("flex-wrap: wrap");
-  });
-
-  it("wraps the workbench toolbar on narrow windows", () => {
-    const narrow = block(appCss, "@media (max-width: 720px)");
-
-    expect(rule(".workbench-toolbar", narrow)).toContain("flex-wrap: wrap");
   });
 
   it("collapses the sidebar to a zero track and never leaves an empty stacked row", () => {

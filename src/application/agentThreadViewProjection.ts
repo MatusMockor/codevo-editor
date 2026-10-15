@@ -18,7 +18,7 @@ import {
 } from "../domain/agentShip";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
 import type { AgentTaskChangeSummary, AgentThreadView } from "./agentThreadPorts";
-import type { AgentEditorBridgeSurface } from "./useAgentEditorBridge";
+import type { AgentFileNavigationSurface } from "./useAgentFileNavigation";
 
 export function agentThreadViews(
   previous: ReadonlyMap<string, AgentThreadView>,
@@ -27,7 +27,7 @@ export function agentThreadViews(
   removedWorktrees: ReadonlySet<string>,
   missingWorktrees: ReadonlySet<string>,
   shipStates: ReadonlyMap<string, AgentShipState>,
-  editor: AgentEditorBridgeSurface,
+  editor: AgentFileNavigationSurface,
   projects: ReadonlyArray<AgentProjectDescriptor>,
   sessionBackgrounds: AgentSessionBackgrounds = NO_AGENT_SESSION_BACKGROUNDS,
 ): ReadonlyArray<AgentThreadView> {
@@ -56,7 +56,7 @@ export function agentThreadViews(
       worktreeMissing: missingWorktrees.has(thread.threadId),
       changeSummary: summaries.get(thread.threadId) ?? null,
       ship: shipStates.get(thread.threadId) ?? fallbackShipState(thread),
-      editorAvailability: editor.canOpenInEditor(thread.threadId),
+      editorAvailability: editor.canOpenFiles(thread.threadId),
       attention: agentThreadAttention(thread),
       unread: agentThreadUnread(thread),
       ...(sessionBackground === undefined ? {} : { sessionBackground }),

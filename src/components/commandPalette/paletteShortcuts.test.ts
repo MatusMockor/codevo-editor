@@ -18,6 +18,8 @@ describe("paletteShortcutGroups", () => {
     expect(groups[1]?.category).toBe("Agent");
     const workbench = groups[0]?.entries.map((entry) => entry.label) ?? [];
     expect(workbench).toContain("Open Command Palette");
+    expect(workbench).toContain("Close Active Panel");
+    expect(groups.map((group) => group.category)).not.toContain("Editor");
     expect(groups.flatMap((group) => group.entries).every((entry) => entry.shortcut !== "")).toBe(
       true,
     );

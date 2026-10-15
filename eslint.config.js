@@ -21,14 +21,12 @@ export default tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["react", "react-dom", "react-native", "monaco-editor", "vitest"],
+          paths: ["react", "react-dom", "react-native", "vitest"],
           patterns: [
             {
               group: [
                 "react*",
                 "@tauri-apps/*",
-                "@monaco-editor/*",
-                "monaco*",
                 "node:*",
                 "fs",
                 "path",
@@ -73,14 +71,12 @@ export default tseslint.config(
       "no-restricted-imports": [
         "error",
         {
-          paths: ["react", "react-dom", "react-native", "monaco-editor"],
+          paths: ["react", "react-dom", "react-native"],
           patterns: [
             {
               group: [
                 "react*",
                 "@tauri-apps/*",
-                "@monaco-editor/*",
-                "monaco*",
                 "fs",
                 "path",
                 "os",

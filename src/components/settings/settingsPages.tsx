@@ -2,11 +2,9 @@ import { AgentsSettingsPage } from "./pages/AgentsSettingsPage";
 import { ArchiveSettingsPage } from "./pages/ArchiveSettingsPage";
 import { EnvironmentsSettingsPage } from "./pages/EnvironmentsSettingsPage";
 import { GeneralSettingsPage } from "./pages/GeneralSettingsPage";
-import { IndexLanguagesSettingsPage } from "./pages/IndexLanguagesSettingsPage";
+import { GitDirectoryMappingsRows } from "./pages/GitDirectoryMappingsRows";
 import { KeybindingsSettingsPage } from "./pages/KeybindingsSettingsPage";
 import { McpServersSettingsPage } from "./pages/McpServersSettingsPage";
-import { PhpSettingsPage } from "./pages/PhpSettingsPage";
-import { SnippetsSettingsPage } from "./pages/SnippetsSettingsPage";
 import { UsageSettingsPage } from "./pages/UsageSettingsPage";
 import type { SettingsPageProps } from "./settingsPageProps";
 import type { SettingsSectionId } from "./settingsRegistry";
@@ -27,12 +25,8 @@ export function SettingsPageHost({ section, ...props }: SettingsPageHostProps) {
       return <McpServersSettingsPage {...props} />;
     case "keymap":
       return <KeybindingsSettingsPage {...props} />;
-    case "index":
-      return <IndexLanguagesSettingsPage {...props} />;
-    case "php":
-      return <PhpSettingsPage {...props} />;
-    case "snippets":
-      return <SnippetsSettingsPage {...props} />;
+    case "git":
+      return <GitDirectoryMappingsRows {...props} />;
     case "usage":
       return <UsageSettingsPage {...props} />;
     case "archive":

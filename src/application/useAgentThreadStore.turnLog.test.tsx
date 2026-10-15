@@ -224,7 +224,6 @@ function manualTimers() {
 
 interface Environment {
   projects: ReadonlyArray<AgentProjectDescriptor>;
-  agentModeActive: boolean;
 }
 
 interface StoreOptions extends Partial<Environment> {
@@ -236,7 +235,6 @@ interface StoreOptions extends Partial<Environment> {
 function renderStore(overrides: StoreOptions = {}) {
   const environment: Environment = {
     projects: overrides.projects ?? [project()],
-    agentModeActive: overrides.agentModeActive ?? true,
   };
 
   const snapshots = new Map<string, AgentThreadStoreSnapshot>();
@@ -305,7 +303,6 @@ function renderStore(overrides: StoreOptions = {}) {
   const dependencies = (): AgentThreadStoreDependencies => ({
     agentThreadStoreGateway: threadGateway as unknown as AgentThreadStoreGateway,
     projects: environment.projects,
-    agentModeActive: environment.agentModeActive,
     reportError: vi.fn(),
     setNotice: vi.fn(),
     turnLog,

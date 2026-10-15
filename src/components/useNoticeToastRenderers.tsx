@@ -2,7 +2,6 @@ import { useCallback, useMemo, useRef } from "react";
 import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import type { WorkbenchNotice } from "../application/workbenchNotice";
 import type { AppUpdateToastPresentation } from "../domain/appUpdater";
-import type { IntelligenceMode } from "../domain/workspace";
 import {
   createAgentProviderUpdateToastCallbacks,
   type AgentProviderUpdateToastPort,
@@ -13,21 +12,9 @@ import type {
 } from "./agentProviderUpdateToastPresenter";
 import { agentProviderUpdateNoticeToastRenderer } from "./agentProviderUpdateToastRenderer";
 import { appUpdateToastRenderer } from "./appUpdateToastRenderer";
-import {
-  languageServerCrashNoticeToastRenderer,
-  languageServerRequestErrorNoticeToastRenderer,
-} from "./LanguageServerCrashNotice";
-import { managedPhpactorSetupNoticeToastRenderer } from "./managedPhpactorSetupNoticeToastRenderer";
 import type { NoticeToastRenderer } from "./NoticeToastHost";
 
 export interface NoticeToastRendererContext {
-  intelligenceMode: IntelligenceMode;
-  onInstallManagedPhpactor: () => Promise<void> | void;
-  isInstallingManagedPhpactor: boolean;
-  onOpenLanguageServerSetup: () => void;
-  onOpenRuntimePanel: () => void;
-  workspaceRoot: string | null;
-  workspaceTrusted: boolean;
   appUpdate: AppUpdateToastPresentation | null;
   appUpdater: Pick<
     AppUpdaterSurface,
@@ -52,16 +39,6 @@ export type NoticeToastRendererFactory = (
 ) => NoticeToastRendererFactoryResult | null;
 
 const noticeToastRendererFactories: NoticeToastRendererFactory[] = [
-  managedPhpactorSetupNoticeToastRenderer,
-  (context) =>
-    languageServerCrashNoticeToastRenderer({
-      onOpenRuntimePanel: context.onOpenRuntimePanel,
-      workspaceRoot: context.workspaceRoot,
-    }),
-  (context) =>
-    languageServerRequestErrorNoticeToastRenderer({
-      workspaceRoot: context.workspaceRoot,
-    }),
   (context) =>
     agentProviderUpdateNoticeToastRenderer({
       callbacks: createAgentProviderUpdateToastCallbacks({
@@ -79,13 +56,6 @@ const noticeToastRendererFactories: NoticeToastRendererFactory[] = [
 
 export function useNoticeToastRenderers(context: NoticeToastRendererContext): NoticeToastRenderer {
   const {
-    intelligenceMode,
-    onInstallManagedPhpactor,
-    isInstallingManagedPhpactor,
-    onOpenLanguageServerSetup,
-    onOpenRuntimePanel,
-    workspaceRoot,
-    workspaceTrusted,
     appUpdate,
     appUpdater,
     copyText,
@@ -101,13 +71,6 @@ export function useNoticeToastRenderers(context: NoticeToastRendererContext): No
 
   const noticeRenderers = useMemo(() => {
     const factoryContext: NoticeToastRendererFactoryContext = {
-      intelligenceMode,
-      onInstallManagedPhpactor,
-      isInstallingManagedPhpactor,
-      onOpenLanguageServerSetup,
-      onOpenRuntimePanel,
-      workspaceRoot,
-      workspaceTrusted,
       appUpdate,
       appUpdater,
       copyText,
@@ -132,13 +95,6 @@ export function useNoticeToastRenderers(context: NoticeToastRendererContext): No
 
     return map;
   }, [
-    intelligenceMode,
-    onInstallManagedPhpactor,
-    isInstallingManagedPhpactor,
-    onOpenLanguageServerSetup,
-    onOpenRuntimePanel,
-    workspaceRoot,
-    workspaceTrusted,
     appUpdate,
     appUpdater,
     copyText,

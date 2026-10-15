@@ -213,7 +213,7 @@ describe("local file links in agent messages", () => {
         <AgentModeView
           agents={{ ...agents, providerManagement: unconfiguredAgentProviderManagement() }}
           chrome={chromeFixture({
-            layout: { layout, effectiveLayout: "agent", persistedBottomPanel: false, dispatch },
+            layout: { layout, persistedBottomPanel: false, dispatch },
             openFileLocation,
           })}
           navigationSession={session}

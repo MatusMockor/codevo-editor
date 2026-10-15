@@ -18,11 +18,8 @@ pub(super) fn app_update_install_mode() -> AppUpdateInstallMode {
 }
 
 #[tauri::command]
-pub(super) fn quit_application(
-    app: AppHandle,
-    js_test_batches: State<'_, Arc<JsTestBatchRegistry>>,
-) -> Result<(), String> {
-    shutdown_runtime_processes(&app, &js_test_batches)?;
+pub(super) fn quit_application(app: AppHandle) -> Result<(), String> {
+    shutdown_runtime_processes(&app)?;
     app.exit(0);
     Ok(())
 }
@@ -48,12 +45,8 @@ pub(super) fn set_native_close_listener_ready(
 }
 
 #[tauri::command]
-pub(super) fn confirm_native_shutdown(
-    app: AppHandle,
-    kind: NativeCloseKind,
-    js_test_batches: State<'_, Arc<JsTestBatchRegistry>>,
-) -> Result<(), String> {
-    shutdown_runtime_processes(&app, &js_test_batches)?;
+pub(super) fn confirm_native_shutdown(app: AppHandle, kind: NativeCloseKind) -> Result<(), String> {
+    shutdown_runtime_processes(&app)?;
     match kind {
         NativeCloseKind::Quit => app.exit(0),
         NativeCloseKind::Close => {

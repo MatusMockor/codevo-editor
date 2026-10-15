@@ -8,7 +8,6 @@ export function agentGitStatusDemand(workbench: AgentWorkbenchLayoutState): bool
   const activeSurface = layout.activeSurface;
   if (activeSurface === null) return false;
   return (
-    workbench.effectiveLayout === "agent" &&
     layout.rightPanel === "open" &&
     GIT_STATUS_SURFACES.includes(activeSurface) &&
     layout.openSurfaces.includes(activeSurface)

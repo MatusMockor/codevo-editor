@@ -118,7 +118,6 @@ describe("opening a recorded Claude turn file in the Diff surface", () => {
           chrome={chromeFixture({
             layout: {
               layout,
-              effectiveLayout: "agent",
               persistedBottomPanel: false,
               dispatch,
             },

@@ -588,7 +588,6 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
     agentThreadSessionGateway: sessions,
     agentThreadStoreGateway: threadStore,
     gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
-    agentModeActive: true,
     agentProjectGateways: {
       settingsGateway: { loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()) },
       trustGateway: {
@@ -618,7 +617,6 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
     externalUrlOpener: null,
     gitRepositoryMappings: [{ rootRelativePath: "" }],
     gitRepositoryStatuses: [],
-    openDocuments: [],
     onActiveWorkspaceTrustChanged: vi.fn(),
     prompter: { confirm: () => true, prompt: () => null },
     reportError: vi.fn(),

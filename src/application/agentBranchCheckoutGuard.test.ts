@@ -13,10 +13,6 @@ function project(rootPath: string, trust: AgentProjectTrust) {
   return { rootKey: rootPath, rootPath, repositories: [], trust };
 }
 
-function document(path: string, dirty: boolean) {
-  return { path, content: dirty ? "draft" : "saved", savedContent: "saved" };
-}
-
 function state(
   overrides: Partial<AgentBranchCheckoutGuardState> = {},
 ): AgentBranchCheckoutGuardState {
@@ -25,9 +21,7 @@ function state(
     workspaceTrusted: true,
     projects: [project(ROOT_A, "trusted"), project(ROOT_B, "trusted")],
     threads: [],
-    documents: [document(`${ROOT_A}/index.ts`, false)],
     dispatching: false,
-    isLiveDocumentDirty: () => false,
     ...overrides,
   };
 }
@@ -43,23 +37,11 @@ describe("agentBranchCheckoutGuardReason", () => {
     expect(agentBranchCheckoutGuardReason(ROOT_B, guard)).toBe(BRANCH_CHECKOUT_UNAVAILABLE_REASON);
   });
 
-  it("blocks a dirty target root while the active workspace is trusted and clean", () => {
-    const guard = state({
-      documents: [document(`${ROOT_A}/index.ts`, false), document(`${ROOT_B}/server.ts`, true)],
-    });
-    expect(agentBranchCheckoutGuardReason(ROOT_B, guard)).toContain("Save your unsaved files");
-  });
-
   it("allows a trusted clean target root while the active workspace is untrusted", () => {
     const guard = state({
       workspaceTrusted: false,
       projects: [project(ROOT_A, "untrusted"), project(ROOT_B, "trusted")],
     });
-    expect(agentBranchCheckoutGuardReason(ROOT_B, guard)).toBeNull();
-  });
-
-  it("allows a trusted clean target root while the active workspace is dirty", () => {
-    const guard = state({ documents: [document(`${ROOT_A}/index.ts`, true)] });
     expect(agentBranchCheckoutGuardReason(ROOT_B, guard)).toBeNull();
   });
 

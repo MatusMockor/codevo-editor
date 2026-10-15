@@ -110,8 +110,6 @@ function remoteOpenFailure(
     case "notRegularFile":
     case "unreadable":
     case "failed":
-    case "unsavedChanges":
-    case "saveInProgress":
     case "filesUnavailable":
       return agentLocalFileLinkFailure(outcome, path, place);
     default:

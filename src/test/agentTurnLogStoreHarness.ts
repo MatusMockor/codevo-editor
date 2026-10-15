@@ -345,7 +345,6 @@ export function renderLogStore(options: LogStoreOptions = {}) {
   const dependencies = (): AgentThreadStoreDependencies => ({
     agentThreadStoreGateway: threadGateway as unknown as AgentThreadStoreGateway,
     projects: environment.projects,
-    agentModeActive: true,
     reportError,
     setNotice: (notice) => notices.push(notice),
     turnLog,

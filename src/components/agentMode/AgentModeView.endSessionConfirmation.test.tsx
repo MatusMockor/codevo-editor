@@ -98,7 +98,6 @@ describe("where the End Claude session confirmation is rendered", () => {
           chrome={chromeFixture({
             layout: {
               layout,
-              effectiveLayout: "agent",
               persistedBottomPanel: false,
               dispatch,
             },

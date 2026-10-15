@@ -3,7 +3,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import {
   __resetKeymapPlatformCacheForTests,
   defaultKeymapSettings,
@@ -22,14 +21,7 @@ import { workbenchAgentCommands } from "./workbenchAgentCommands";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const context: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: true,
   hasWorkspace: true,
-};
-const EDITOR_SURFACE_IDENTITY = {};
-const DOUBLE_SHIFT_DETECTOR: DoubleShiftDetector = {
-  handleKeyDown: () => false,
-  reset: () => undefined,
 };
 const SHIFTED_N_EVENTS = [
   { code: "KeyN", key: "N" },
@@ -48,13 +40,11 @@ function Harness({
 }) {
   const appSettings: AppSettings = { ...defaultAppSettings(), keymap };
   useWorkbenchKeyboardShortcuts({
-    actions: { closeFloatingSurface: () => false, openSearchEverywhere: () => undefined },
     appSettingsRef: { current: appSettings },
     bareKeyShortcutsRef: { current: { keymap: null, keys: new Set<string>() } },
+    closeFloatingSurface: () => false,
     commandContext: context,
     commandRegistry: registry,
-    doubleShiftDetectorRef: { current: DOUBLE_SHIFT_DETECTOR },
-    editorSurfaceIdentity: EDITOR_SURFACE_IDENTITY,
     keymap,
     runCommand: (commandId, commandContext = context) =>
       executeCommand(registry, commandId, commandContext),
@@ -62,9 +52,7 @@ function Harness({
   return (
     <div>
       <textarea aria-label="composer" />
-      <div className="monaco-editor">
-        <textarea aria-label="editor" className="inputarea" />
-      </div>
+      <input aria-label="search" />
     </div>
   );
 }
@@ -77,7 +65,7 @@ function render(keymap: KeymapSettings, registry: CommandRegistry): void {
   act(() => mounted.render(<Harness keymap={keymap} registry={registry} />));
 }
 
-function target(label: "composer" | "editor"): Element {
+function target(label: "composer" | "search"): Element {
   const element = host?.querySelector(`[aria-label="${label}"]`) ?? null;
   expect(element).not.toBeNull();
   return element ?? document.body;
@@ -240,7 +228,7 @@ describe("default Shift+Cmd+letter shortcuts", () => {
 
       for (const key of [letter, letter.toLowerCase()]) {
         calls.length = 0;
-        for (const label of ["composer", "editor"] as const) {
+        for (const label of ["composer", "search"] as const) {
           keydown(target(label), { code: `Key${letter}`, key, metaKey: true, shiftKey: true });
         }
         expect(calls.length).toBeGreaterThan(0);

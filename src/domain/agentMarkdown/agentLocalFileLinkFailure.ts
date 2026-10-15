@@ -23,8 +23,6 @@ export type AgentLocalFileLinkFailureKind =
   | "serverAbsolutePath"
   | "checkoutFolder"
   | "notRegularFile"
-  | "unsavedChanges"
-  | "saveInProgress"
   | "filesUnavailable";
 
 export interface AgentLocalFileLinkPlace {
@@ -91,10 +89,6 @@ export function agentLocalFileLinkFailureMessage(failure: AgentLocalFileLinkFail
       return `${path} is the folder of ${place}, not a file.`;
     case "notRegularFile":
       return `${path} isn't a regular text file on the server.`;
-    case "unsavedChanges":
-      return `Save or discard your unsaved server file edits before opening ${path}.`;
-    case "saveInProgress":
-      return `Wait for the server file save to finish before opening ${path}.`;
     case "filesUnavailable":
       return `Server files aren't available for this thread right now, so ${path} wasn't opened.`;
     default:
@@ -120,8 +114,6 @@ export function agentLocalFileLinkFailureRemembered(kind: AgentLocalFileLinkFail
     case "notRegularFile":
       return true;
     case "busy":
-    case "unsavedChanges":
-    case "saveInProgress":
     case "filesUnavailable":
       return false;
     default:

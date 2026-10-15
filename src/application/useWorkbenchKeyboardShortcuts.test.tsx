@@ -5,7 +5,6 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { __resetKeymapPlatformCacheForTests } from "../domain/keymap";
 import { defaultAppSettings } from "../domain/settings";
-import type { DoubleShiftDetector } from "../domain/doubleShiftDetector";
 import {
   CommandRegistry,
   executeCommand,
@@ -17,11 +16,8 @@ import { useWorkbenchKeyboardShortcuts } from "./useWorkbenchKeyboardShortcuts";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 const commandContext: CommandContext = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: true,
 };
-const TEST_EDITOR_SURFACE_IDENTITY = {};
 const NAVIGATOR_BY_KEYMAP_PLATFORM = {
   linux: { platform: "Linux x86_64", userAgent: "Mozilla/5.0 (X11; Linux x86_64)" },
   mac: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" },
@@ -34,334 +30,97 @@ const SHIFTED_PLUS_BY_KEYMAP_PLATFORM = {
 } as const;
 
 describe("useWorkbenchKeyboardShortcuts", () => {
-  it("dispatches Refactor exactly once only from Monaco text focus", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.action.refactor",
-      isEnabled: () => true,
-      run,
-      title: "Refactor",
-    });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: { ...appSettings.keymap, "editor.action.refactor": "Cmd+Shift+R" },
-      },
-      commandRegistry: registry,
-    });
-    const monaco = createMonacoTextInput();
-    const outside = document.createElement("input");
-    document.body.append(outside);
-
-    expect(
-      dispatchKeyboardEventFrom(outside, { key: "r", metaKey: true, shiftKey: true })
-        .defaultPrevented,
-    ).toBe(false);
-    expect(run).not.toHaveBeenCalled();
-    expect(
-      dispatchKeyboardEventFrom(monaco.input, { key: "r", metaKey: true, shiftKey: true })
-        .defaultPrevented,
-    ).toBe(true);
-    expect(run).toHaveBeenCalledOnce();
-
-    outside.remove();
-    monaco.editor.remove();
-    harness.unmount();
-  });
-
-  it.each([
-    ["testing.runAtCursor", "Run Test at Cursor", "c"],
-    ["testing.runCurrentFile", "Run Tests in Current File", "f"],
-  ] as const)(
-    "keeps the global testing prefix outside Monaco without dispatching editor-scoped %s",
-    (commandId, title, secondKey) => {
-      const run = vi.fn();
-      const registry = new CommandRegistry();
-      registry.register({
-        category: "Test",
-        id: commandId,
-        isEnabled: () => true,
-        run,
-        title,
-      });
-      const appSettings = defaultAppSettings();
-      const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, [commandId]: `Cmd+; ${secondKey.toUpperCase()}` },
-        },
-        commandRegistry: registry,
-      });
-      const monaco = createMonacoTextInput();
-      const outside = document.createElement("input");
-      document.body.append(outside);
-
-      expect(dispatchKeyboardEventFrom(outside, { key: ";", metaKey: true }).defaultPrevented).toBe(
-        true,
-      );
-      expect(dispatchKeyboardEventFrom(outside, { key: secondKey }).defaultPrevented).toBe(true);
-      expect(run).not.toHaveBeenCalled();
-
-      expect(
-        dispatchKeyboardEventFrom(monaco.input, { key: ";", metaKey: true }).defaultPrevented,
-      ).toBe(true);
-      expect(dispatchKeyboardEventFrom(monaco.input, { key: secondKey }).defaultPrevented).toBe(
-        true,
-      );
-      expect(run).toHaveBeenCalledOnce();
-
-      outside.remove();
-      monaco.editor.remove();
-      harness.unmount();
-    },
-  );
-
   it.each([["agent.openDiffSurface", "∂", "KeyD"]] as const)(
     "dispatches %s from an Option-transformed macOS key",
     (commandId, key, code) => {
-      const run = vi.fn();
-      const registry = new CommandRegistry();
-      registry.register({
-        category: "Agent",
-        id: commandId,
-        isEnabled: () => true,
-        run,
-        title: commandId,
+      withKeymapPlatform("mac", () => {
+        const run = vi.fn();
+        const registry = registryWith(commandId, run);
+        const harness = renderHook({ commandRegistry: registry });
+
+        const event = dispatchKeyboardEvent({ altKey: true, code, key, metaKey: true });
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(run).toHaveBeenCalledOnce();
+
+        harness.unmount();
       });
-      const harness = renderHook({ commandRegistry: registry });
-
-      const event = dispatchKeyboardEvent({ altKey: true, code, key, metaKey: true });
-
-      expect(event.defaultPrevented).toBe(true);
-      expect(run).toHaveBeenCalledOnce();
-
-      harness.unmount();
     },
   );
 
-  it("runs the Run Test at Cursor chord exactly once in the same Monaco editor", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "testing.runAtCursor",
-      isEnabled: () => true,
-      run,
-      title: "Run Test at Cursor",
-    });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
-      },
-      commandRegistry: registry,
-    });
-    const { editor, input } = createMonacoTextInput();
+  it.each(["mac", "linux", "windows"] as const)(
+    "closes the active panel through workbench.closeActive on the %s primary+W",
+    (platform) => {
+      withKeymapPlatform(platform, () => {
+        const run = vi.fn();
+        const harness = renderHook({
+          commandRegistry: registryWith("workbench.closeActive", run),
+        });
+        const primary = platform === "mac" ? { metaKey: true } : { ctrlKey: true };
 
-    const first = dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
-    expect(first.defaultPrevented).toBe(true);
-    expect(run).not.toHaveBeenCalled();
+        expect(dispatchKeyboardEvent({ key: "w", ...primary }).defaultPrevented).toBe(true);
+        expect(run).toHaveBeenCalledOnce();
 
-    const second = dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
-    expect(second.defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledOnce();
-
-    editor.remove();
-    harness.unmount();
-  });
-
-  it("consumes the global testing prefix without dispatching Run Test at Cursor outside Monaco", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "testing.runAtCursor",
-      isEnabled: () => true,
-      run,
-      title: "Run Test at Cursor",
-    });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
-      },
-      commandRegistry: registry,
-    });
-    const input = document.createElement("input");
-    document.body.append(input);
-
-    expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
-      true,
-    );
-    expect(dispatchKeyboardEventFrom(input, { key: "c", metaKey: true }).defaultPrevented).toBe(
-      true,
-    );
-    expect(run).not.toHaveBeenCalled();
-
-    input.remove();
-    harness.unmount();
-  });
-
-  it("dispatches the global Rerun Last Run chord outside Monaco text focus", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "testing.reRunLastRun",
-      isEnabled: () => true,
-      run,
-      title: "Rerun Last Run",
-    });
-    const harness = renderHook({ commandRegistry: registry });
-    const input = document.createElement("input");
-    document.body.append(input);
-
-    expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
-      true,
-    );
-    expect(dispatchKeyboardEventFrom(input, { key: "l" }).defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledOnce();
-
-    input.remove();
-    harness.unmount();
-  });
-
-  it("honors a Rerun Last Run chord override and resets to its default chord", () => {
-    const host = document.createElement("div");
-    const root = createRoot(host);
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "testing.reRunLastRun",
-      isEnabled: () => true,
-      run,
-      title: "Rerun Last Run",
-    });
-    const defaults = defaultAppSettings();
-    const overridden = {
-      ...defaults,
-      keymap: { ...defaults.keymap, "testing.reRunLastRun": "Cmd+K L" },
-    };
-    const actions = createActions();
-    const detector = createDoubleShiftDetectorStub();
-    const render = (appSettings: typeof defaults) => {
-      act(() => {
-        root.render(
-          <HookHarness
-            actions={actions}
-            appSettings={appSettings}
-            commandRegistry={registry}
-            doubleShiftDetector={detector}
-            runCommand={(id, context = commandContext) => executeCommand(registry, id, context)}
-          />,
-        );
+        harness.unmount();
       });
-    };
-
-    render(overridden);
-    expect(dispatchKeyboardEvent({ key: "k", metaKey: true }).defaultPrevented).toBe(true);
-    expect(dispatchKeyboardEvent({ key: "l" }).defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledTimes(1);
-
-    dispatchKeyboardEvent({ key: "k", metaKey: true });
-    render(defaults);
-    expect(dispatchKeyboardEvent({ key: "l" }).defaultPrevented).toBe(false);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(true);
-    expect(dispatchKeyboardEvent({ key: "l" }).defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledTimes(2);
-
-    act(() => root.unmount());
-  });
-
-  it.each([
-    {
-      commandId: "testing.reRunFailTests",
-      second: { key: "e" },
-      title: "Rerun Failed Tests",
     },
-    {
-      commandId: "testing.cancelRun",
-      second: { key: "x", metaKey: true },
-      title: "Cancel Test Run",
-    },
-  ] as const)(
-    "dispatches the global $title chord outside Monaco text focus",
-    ({ commandId, second, title }) => {
+  );
+
+  it("dispatches a user-bound chord once from any focused field", () => {
+    withKeymapPlatform("mac", () => {
       const run = vi.fn();
-      const registry = new CommandRegistry();
-      registry.register({
-        category: "Test",
-        id: commandId,
-        isEnabled: () => true,
-        run,
-        title,
+      const harness = renderHook({
+        appSettings: settingsWithKeymap({ "agent.goToTurn": "Cmd+; C" }),
+        commandRegistry: registryWith("agent.goToTurn", run),
       });
-      const harness = renderHook({ commandRegistry: registry });
-      const input = document.createElement("input");
-      document.body.append(input);
+      const field = document.createElement("textarea");
+      document.body.append(field);
 
-      expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
+      expect(dispatchKeyboardEventFrom(field, { key: ";", metaKey: true }).defaultPrevented).toBe(
         true,
       );
-      expect(dispatchKeyboardEventFrom(input, second).defaultPrevented).toBe(true);
+      expect(run).not.toHaveBeenCalled();
+      expect(dispatchKeyboardEventFrom(field, { key: "c" }).defaultPrevented).toBe(true);
       expect(run).toHaveBeenCalledOnce();
 
-      input.remove();
+      field.remove();
       harness.unmount();
-    },
-  );
+    });
+  });
 
-  it.each([
-    {
-      commandId: "testing.reRunFailTests",
-      defaultSecond: { key: "e" },
-      override: "Cmd+K E",
-      overrideSecond: { key: "e" },
-      title: "Rerun Failed Tests",
-    },
-    {
-      commandId: "testing.cancelRun",
-      defaultSecond: { key: "x", metaKey: true },
-      override: "Cmd+K Cmd+X",
-      overrideSecond: { key: "x", metaKey: true },
-      title: "Cancel Test Run",
-    },
-  ] as const)(
-    "honors a global $title override and resets to its default chord",
-    ({ commandId, defaultSecond, override, overrideSecond, title }) => {
+  it("consumes a wrong second stroke without dispatching the chord", () => {
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const harness = renderHook({
+        appSettings: settingsWithKeymap({ "agent.goToTurn": "Cmd+; C" }),
+        commandRegistry: registryWith("agent.goToTurn", run),
+      });
+
+      expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent({ key: "x" }).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent({ key: "c" }).defaultPrevented).toBe(false);
+      expect(run).not.toHaveBeenCalled();
+
+      harness.unmount();
+    });
+  });
+
+  it("honors a chord override and returns to the default binding", () => {
+    withKeymapPlatform("mac", () => {
       const host = document.createElement("div");
       const root = createRoot(host);
       const run = vi.fn();
-      const registry = new CommandRegistry();
-      registry.register({
-        category: "Test",
-        id: commandId,
-        isEnabled: () => true,
-        run,
-        title,
-      });
+      const registry = registryWith("agent.goToTurn", run);
       const defaults = defaultAppSettings();
-      const overridden = {
-        ...defaults,
-        keymap: { ...defaults.keymap, [commandId]: override },
-      };
-      const actions = createActions();
-      const detector = createDoubleShiftDetectorStub();
+      const overridden = settingsWithKeymap({ "agent.goToTurn": "Cmd+; Cmd+T" });
+      const closeFloatingSurface = vi.fn(() => false);
       const render = (appSettings: typeof defaults) => {
         act(() => {
           root.render(
             <HookHarness
-              actions={actions}
               appSettings={appSettings}
+              closeFloatingSurface={closeFloatingSurface}
               commandRegistry={registry}
-              doubleShiftDetector={detector}
               runCommand={(id, context = commandContext) => executeCommand(registry, id, context)}
             />,
           );
@@ -369,775 +128,183 @@ describe("useWorkbenchKeyboardShortcuts", () => {
       };
 
       render(overridden);
-      expect(dispatchKeyboardEvent({ key: "k", metaKey: true }).defaultPrevented).toBe(true);
-      expect(dispatchKeyboardEvent(overrideSecond).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent({ key: "t", metaKey: true }).defaultPrevented).toBe(true);
       expect(run).toHaveBeenCalledTimes(1);
 
-      dispatchKeyboardEvent({ key: "k", metaKey: true });
       render(defaults);
-      expect(dispatchKeyboardEvent(overrideSecond).defaultPrevented).toBe(false);
-      expect(run).toHaveBeenCalledTimes(1);
-      expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(true);
-      expect(dispatchKeyboardEvent(defaultSecond).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(false);
+      expect(
+        dispatchKeyboardEvent({ key: "o", metaKey: true, shiftKey: true }).defaultPrevented,
+      ).toBe(true);
       expect(run).toHaveBeenCalledTimes(2);
 
       act(() => root.unmount());
-    },
-  );
-
-  it("cancels a pending editor chord across editor replacement and wrong second strokes", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "testing.runAtCursor",
-      isEnabled: () => true,
-      run,
-      title: "Run Test at Cursor",
     });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
-      },
-      commandRegistry: registry,
-    });
-    const firstEditor = createMonacoTextInput();
-    const secondEditor = createMonacoTextInput();
-
-    dispatchKeyboardEventFrom(firstEditor.input, { key: ";", metaKey: true });
-    expect(
-      dispatchKeyboardEventFrom(secondEditor.input, { key: "c", metaKey: true }).defaultPrevented,
-    ).toBe(false);
-    dispatchKeyboardEventFrom(firstEditor.input, { key: ";", metaKey: true });
-    expect(
-      dispatchKeyboardEventFrom(firstEditor.input, { key: "z", metaKey: true }).defaultPrevented,
-    ).toBe(true);
-    dispatchKeyboardEventFrom(firstEditor.input, { key: "c", metaKey: true });
-    expect(run).not.toHaveBeenCalled();
-
-    firstEditor.editor.remove();
-    secondEditor.editor.remove();
-    harness.unmount();
   });
 
-  it("revokes a pending editor chord on Escape and window blur", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "testing.runAtCursor",
-      isEnabled: () => true,
-      run,
-      title: "Run Test at Cursor",
-    });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
-      },
-      commandRegistry: registry,
-    });
-    const { editor, input } = createMonacoTextInput();
-
-    dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
-    dispatchKeyboardEventFrom(input, { key: "Escape" });
-    dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
-    dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
-    window.dispatchEvent(new Event("blur"));
-    dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
-
-    expect(run).not.toHaveBeenCalled();
-
-    editor.remove();
-    harness.unmount();
-  });
-
-  it("revokes a pending chord across observed keymap and editor A-B-A transitions", () => {
-    const host = document.createElement("div");
-    const root = createRoot(host);
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "testing.runAtCursor",
-      isEnabled: () => true,
-      run,
-      title: "Run Test at Cursor",
-    });
-    const settingsA = defaultAppSettings();
-    settingsA.keymap["testing.runAtCursor"] = "Cmd+; Cmd+C";
-    const settingsB = {
-      ...settingsA,
-      keymap: { ...settingsA.keymap, "testing.runAtCursor": "Cmd+K Cmd+C" },
-    };
-    const identityA = {};
-    const identityB = {};
-    const actions = createActions();
-    const detector = createDoubleShiftDetectorStub();
-    const render = (appSettings: typeof settingsA, editorSurfaceIdentity: object) => {
-      act(() => {
-        root.render(
-          <HookHarness
-            actions={actions}
-            appSettings={appSettings}
-            commandRegistry={registry}
-            doubleShiftDetector={detector}
-            editorSurfaceIdentity={editorSurfaceIdentity}
-            runCommand={(id, context = commandContext) => executeCommand(registry, id, context)}
-          />,
-        );
-      });
-    };
-    const { editor, input } = createMonacoTextInput();
-
-    render(settingsA, identityA);
-    dispatchKeyboardEventFrom(input, { key: ";", metaKey: true });
-    render(settingsB, identityB);
-    render(settingsA, identityA);
-    dispatchKeyboardEventFrom(input, { key: "c", metaKey: true });
-
-    expect(run).not.toHaveBeenCalled();
-
-    editor.remove();
-    act(() => root.unmount());
-  });
-
-  it.each([
-    {
-      commandId: "editor.splitRight",
-      event: { key: "\\", metaKey: true },
-      shortcut: "Cmd+\\",
-    },
-    {
-      commandId: "editor.reopenClosedTab",
-      event: { altKey: true, key: "t", metaKey: true, shiftKey: true },
-      shortcut: "Cmd+Alt+Shift+T",
-    },
-  ] as const)(
-    "dispatches registered keymap command $commandId without an allowlist entry",
-    ({ commandId, event: eventInit, shortcut }) => {
+  it("revokes a pending chord on Escape and window blur", () => {
+    withKeymapPlatform("mac", () => {
       const run = vi.fn();
-      const registry = new CommandRegistry();
-      registry.register({
-        category: "Test",
-        id: commandId,
-        isEnabled: () => true,
-        run,
-        title: commandId,
-      });
-      const appSettings = defaultAppSettings();
       const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: {
-            ...appSettings.keymap,
-            [commandId]: shortcut,
-          },
-        },
-        commandRegistry: registry,
+        appSettings: settingsWithKeymap({ "agent.goToTurn": "Cmd+; Cmd+C" }),
+        commandRegistry: registryWith("agent.goToTurn", run),
       });
 
-      const event = dispatchKeyboardEvent(eventInit);
+      dispatchKeyboardEvent({ key: ";", metaKey: true });
+      dispatchKeyboardEvent({ key: "Escape" });
+      dispatchKeyboardEvent({ key: "c", metaKey: true });
+      dispatchKeyboardEvent({ key: ";", metaKey: true });
+      window.dispatchEvent(new Event("blur"));
+      dispatchKeyboardEvent({ key: "c", metaKey: true });
+
+      expect(run).not.toHaveBeenCalled();
+
+      harness.unmount();
+    });
+  });
+
+  it("revokes a pending chord across a keymap A-B-A transition", () => {
+    withKeymapPlatform("mac", () => {
+      const host = document.createElement("div");
+      const root = createRoot(host);
+      const run = vi.fn();
+      const registry = registryWith("agent.goToTurn", run);
+      const settingsA = settingsWithKeymap({ "agent.goToTurn": "Cmd+; Cmd+C" });
+      const settingsB = settingsWithKeymap({ "agent.goToTurn": "Cmd+J Cmd+C" });
+      const closeFloatingSurface = vi.fn(() => false);
+      const render = (appSettings: typeof settingsA) => {
+        act(() => {
+          root.render(
+            <HookHarness
+              appSettings={appSettings}
+              closeFloatingSurface={closeFloatingSurface}
+              commandRegistry={registry}
+              runCommand={(id, context = commandContext) => executeCommand(registry, id, context)}
+            />,
+          );
+        });
+      };
+
+      render(settingsA);
+      dispatchKeyboardEvent({ key: ";", metaKey: true });
+      render(settingsB);
+      render(settingsA);
+      dispatchKeyboardEvent({ key: "c", metaKey: true });
+
+      expect(run).not.toHaveBeenCalled();
+
+      act(() => root.unmount());
+    });
+  });
+
+  it("dispatches registry shortcuts through the command registry", () => {
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const harness = renderHook({ commandRegistry: registryWith("workbench.openSettings", run) });
+
+      const event = dispatchKeyboardEvent({ key: ",", metaKey: true });
 
       expect(event.defaultPrevented).toBe(true);
       expect(run).toHaveBeenCalledTimes(1);
 
       harness.unmount();
-    },
-  );
-
-  it("dispatches a rebound editor-text scoped command only from Monaco text focus", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Test",
-      id: "editor.splitDown",
-      isEnabled: () => true,
-      run,
-      title: "editor.splitDown",
     });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: { ...appSettings.keymap, "editor.splitDown": "Cmd+Alt+2" },
-      },
-      commandRegistry: registry,
-    });
-    const monaco = createMonacoTextInput();
-
-    expect(dispatchKeyboardEvent({ altKey: true, key: "2", metaKey: true }).defaultPrevented).toBe(
-      false,
-    );
-    expect(run).not.toHaveBeenCalled();
-    expect(
-      dispatchKeyboardEventFrom(monaco.input, { altKey: true, key: "2", metaKey: true })
-        .defaultPrevented,
-    ).toBe(true);
-    expect(run).toHaveBeenCalledOnce();
-
-    monaco.editor.remove();
-    harness.unmount();
-  });
-
-  it("dispatches registry shortcuts through the command registry", () => {
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Workbench",
-      id: "workbench.openSettings",
-      isEnabled: () => true,
-      run,
-      title: "Settings",
-    });
-    const harness = renderHook({
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: ",", metaKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledTimes(1);
-
-    harness.unmount();
   });
 
   it("dispatches canonical shortcuts through the injected command runner", () => {
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Workbench",
-      id: "workbench.openSettings",
-      isEnabled: () => true,
-      run: vi.fn(),
-      title: "Settings",
+    withKeymapPlatform("mac", () => {
+      const registry = registryWith("workbench.openSettings", vi.fn());
+      const runCommand = vi.fn(() => "executed" as const);
+      const harness = renderHook({ commandRegistry: registry, runCommand });
+
+      const event = dispatchKeyboardEvent({ key: ",", metaKey: true });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(runCommand).toHaveBeenCalledWith("workbench.openSettings", commandContext);
+
+      harness.unmount();
     });
-    const runCommand = vi.fn(() => "executed" as const);
-    const harness = renderHook({ commandRegistry: registry, runCommand });
-
-    const event = dispatchKeyboardEvent({ key: ",", metaKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(runCommand).toHaveBeenCalledWith("workbench.openSettings", commandContext);
-
-    harness.unmount();
   });
 
-  it("consumes disabled editor save through the registry without manual fallback", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.save",
-      isEnabled: () => false,
-      run,
-      title: "Save File",
-    });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "s", metaKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-    expect(actions.saveActiveDocument).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("routes file structure through registry enablement", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.fileStructure",
-      isEnabled: () => false,
-      run,
-      title: "File Structure",
-    });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "r", metaKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-    expect(actions.openFileStructure).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("routes go to definition through registry enablement", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.goToDefinition",
-      isEnabled: () => true,
-      run,
-      title: "Go to Definition",
-    });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const { editor, input } = createMonacoTextInput();
-
-    const outside = dispatchKeyboardEvent({ key: "b", metaKey: true });
-    expect(outside.defaultPrevented).toBe(false);
-    expect(run).not.toHaveBeenCalled();
-
-    const event = dispatchKeyboardEventFrom(input, { key: "b", metaKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(actions.goToDefinition).not.toHaveBeenCalled();
-
-    editor.remove();
-    harness.unmount();
-  });
-
-  it("routes implementation and references through registry enablement", () => {
-    const actions = createActions();
-    const implementation = vi.fn();
-    const references = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.goToImplementation",
-      isEnabled: () => true,
-      run: implementation,
-      title: "Go to Implementation",
-    });
-    registry.register({
-      category: "Editor",
-      id: "editor.findReferences",
-      isEnabled: () => true,
-      run: references,
-      title: "Find All References",
-    });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const implementationEvent = dispatchKeyboardEvent({
-      altKey: true,
-      key: "b",
-      metaKey: true,
-    });
-    const referencesEvent = dispatchKeyboardEvent({
-      key: "F12",
-      shiftKey: true,
-    });
-
-    expect(implementationEvent.defaultPrevented).toBe(true);
-    expect(referencesEvent.defaultPrevented).toBe(true);
-    expect(implementation).toHaveBeenCalledTimes(1);
-    expect(references).toHaveBeenCalledTimes(1);
-    expect(actions.goToImplementation).not.toHaveBeenCalled();
-    expect(actions.openReferencesPanel).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("routes editor surface commands through registry enablement", () => {
-    const actions = createActions();
-    const quickFix = vi.fn();
-    const rename = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.quickFix",
-      isEnabled: () => true,
-      run: quickFix,
-      title: "Context Actions",
-    });
-    registry.register({
-      category: "Editor",
-      id: "editor.rename",
-      isEnabled: () => false,
-      run: rename,
-      title: "Rename Symbol",
-    });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const quickFixEvent = dispatchKeyboardEvent({
-      altKey: true,
-      key: "Enter",
-    });
-    const renameEvent = dispatchKeyboardEvent({ key: "F2" });
-
-    expect(quickFixEvent.defaultPrevented).toBe(true);
-    expect(renameEvent.defaultPrevented).toBe(true);
-    expect(quickFix).toHaveBeenCalledTimes(1);
-    expect(rename).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("routes bookmark, git history, and PHP test shortcuts through registry enablement", () => {
-    const actions = createActions();
-    const registry = new CommandRegistry();
-    const commands = [
-      commandShortcutCase("bookmark.toggle", "Bookmarks", "Toggle Bookmark", {
-        key: "F11",
-      }),
-      commandShortcutCase("editor.toggleGitBlame", "Editor", "Git Blame", {
-        altKey: true,
-        key: "g",
-        metaKey: true,
-      }),
-      commandShortcutCase("editor.showFileHistory", "Editor", "File History", {
-        altKey: true,
-        key: "h",
-        metaKey: true,
-      }),
-      commandShortcutCase("editor.showLocalHistory", "Editor", "Local History", {
-        key: "h",
-        metaKey: true,
-        shiftKey: true,
-      }),
-      commandShortcutCase("php.goToTest", "PHP", "Go to Test", {
-        key: "u",
-        metaKey: true,
-        shiftKey: true,
-      }),
-      commandShortcutCase("php.runTest", "PHP", "Run Test", {
-        altKey: true,
-        key: "t",
-        metaKey: true,
-        shiftKey: true,
-      }),
-      commandShortcutCase("php.runTestFile", "PHP", "Run Test File", {
-        altKey: true,
-        key: "y",
-        metaKey: true,
-        shiftKey: true,
-      }),
-    ];
-    commands.forEach(({ category, id, run, title }) => {
-      registry.register({
-        category,
-        id,
-        isEnabled: () => true,
-        run,
-        title,
+  it("consumes a disabled command's shortcut without running it", () => {
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const harness = renderHook({
+        commandRegistry: registryWith("workbench.closeActive", run, false),
       });
-    });
-    const harness = renderHook({
-      actions,
-      appSettings: {
-        ...defaultAppSettings(),
-        keymap: {
-          ...defaultAppSettings().keymap,
-          "bookmark.toggle": "F11",
-          "editor.showFileHistory": "Cmd+Alt+H",
-          "editor.showLocalHistory": "Cmd+Shift+H",
-          "editor.toggleGitBlame": "Cmd+Alt+G",
-          "php.goToTest": "Cmd+Shift+U",
-          "php.runTest": "Cmd+Shift+Alt+T",
-          "php.runTestFile": "Cmd+Shift+Alt+Y",
-        },
-      },
-      commandRegistry: registry,
-    });
 
-    commands.forEach(({ eventInit, run }) => {
-      expect(dispatchKeyboardEvent(eventInit).defaultPrevented).toBe(true);
-      expect(run).toHaveBeenCalledTimes(1);
-    });
-    expect(actions.toggleBookmarkAtCursor).not.toHaveBeenCalled();
-    expect(actions.toggleGitBlame).not.toHaveBeenCalled();
-    expect(actions.openFileHistory).not.toHaveBeenCalled();
-    expect(actions.openLocalHistory).not.toHaveBeenCalled();
-    expect(actions.goToTestForActiveDocument).not.toHaveBeenCalled();
-    expect(actions.runTestForActiveDocument).not.toHaveBeenCalled();
+      const event = dispatchKeyboardEvent({ key: "w", metaKey: true });
 
-    harness.unmount();
+      expect(event.defaultPrevented).toBe(true);
+      expect(run).not.toHaveBeenCalled();
+
+      harness.unmount();
+    });
   });
 
   it("runs the quit command through the registry on Cmd+Q", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Application",
-      id: "app.quit",
-      isEnabled: () => true,
-      run,
-      title: "Quit Application",
+    withKeymapPlatform("mac", () => {
+      const run = vi.fn();
+      const harness = renderHook({ commandRegistry: registryWith("app.quit", run) });
+
+      const event = dispatchKeyboardEvent({ key: "q", metaKey: true });
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(run).toHaveBeenCalledTimes(1);
+
+      harness.unmount();
     });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "q", metaKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(actions.quitApplication).not.toHaveBeenCalled();
-
-    harness.unmount();
   });
 
-  it("routes qualifying double-Shift through an enabled registry command", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    const doubleShiftDetector = createDoubleShiftDetectorStub(true);
-    registry.register({
-      category: "Workbench",
-      id: "workbench.searchEverywhere",
-      isEnabled: () => true,
-      run,
-      title: "Search Everywhere",
+  it("no longer turns a double Shift tap into a command", () => {
+    withKeymapPlatform("mac", () => {
+      const runCommand = vi.fn(() => "executed" as const);
+      const harness = renderHook({ runCommand });
+
+      const first = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
+      const second = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
+
+      expect(first.defaultPrevented).toBe(false);
+      expect(second.defaultPrevented).toBe(false);
+      expect(runCommand).not.toHaveBeenCalled();
+
+      harness.unmount();
     });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-      doubleShiftDetector,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(actions.openSearchEverywhere).not.toHaveBeenCalled();
-
-    harness.unmount();
   });
 
-  it("consumes qualifying double-Shift when the registry command is disabled", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    const doubleShiftDetector = createDoubleShiftDetectorStub(true);
-    registry.register({
-      category: "Workbench",
-      id: "workbench.searchEverywhere",
-      isEnabled: () => false,
-      run,
-      title: "Search Everywhere",
+  it("leaves F12 to the focused surface now that no command aliases it", () => {
+    withKeymapPlatform("mac", () => {
+      const runCommand = vi.fn(() => "executed" as const);
+      const harness = renderHook({ runCommand });
+
+      expect(dispatchKeyboardEvent({ key: "F12" }).defaultPrevented).toBe(false);
+      expect(runCommand).not.toHaveBeenCalled();
+
+      harness.unmount();
     });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-      doubleShiftDetector,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-    expect(actions.openSearchEverywhere).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("consumes qualifying double-Shift when the registry command is missing", () => {
-    const actions = createActions();
-    const doubleShiftDetector = createDoubleShiftDetectorStub(true);
-    const harness = renderHook({
-      actions,
-      doubleShiftDetector,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(actions.openSearchEverywhere).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("routes qualifying double-Shift through the injected command runner", () => {
-    const doubleShiftDetector = createDoubleShiftDetectorStub(true);
-    const runCommand = vi.fn(() => "missing" as const);
-    const harness = renderHook({ doubleShiftDetector, runCommand });
-
-    const event = dispatchKeyboardEvent({ key: "Shift", shiftKey: true });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(runCommand).toHaveBeenCalledWith("workbench.searchEverywhere", commandContext);
-
-    harness.unmount();
-  });
-
-  it("routes default F12 alias to go to definition through the registry", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.goToDefinition",
-      isEnabled: () => true,
-      run,
-      title: "Go to Definition",
-    });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "F12" });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).toHaveBeenCalledTimes(1);
-    expect(actions.goToDefinition).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("consumes default F12 alias without running a disabled go to definition command", () => {
-    const actions = createActions();
-    const run = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.goToDefinition",
-      isEnabled: () => false,
-      run,
-      title: "Go to Definition",
-    });
-    const harness = renderHook({
-      actions,
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "F12" });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(run).not.toHaveBeenCalled();
-    expect(actions.goToDefinition).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("honors a user rebind of F12 to another command", () => {
-    const definition = vi.fn();
-    const rebound = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.goToDefinition",
-      isEnabled: () => true,
-      run: definition,
-      title: "Go to Definition",
-    });
-    registry.register({
-      category: "Workbench",
-      id: "workbench.openSettings",
-      isEnabled: () => true,
-      run: rebound,
-      title: "Settings",
-    });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: {
-          ...appSettings.keymap,
-          "workbench.openSettings": "F12",
-        },
-      },
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "F12" });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(rebound).toHaveBeenCalledTimes(1);
-    expect(definition).not.toHaveBeenCalled();
-
-    harness.unmount();
-  });
-
-  it("gives the later catalog command precedence when commands share F12", () => {
-    const definition = vi.fn();
-    const save = vi.fn();
-    const settings = vi.fn();
-    const registry = new CommandRegistry();
-    registry.register({
-      category: "Editor",
-      id: "editor.goToDefinition",
-      isEnabled: () => true,
-      run: definition,
-      title: "Go to Definition",
-    });
-    registry.register({
-      category: "Editor",
-      id: "editor.save",
-      isEnabled: () => true,
-      run: save,
-      title: "Save File",
-    });
-    registry.register({
-      category: "Workbench",
-      id: "workbench.openSettings",
-      isEnabled: () => true,
-      run: settings,
-      title: "Settings",
-    });
-    const appSettings = defaultAppSettings();
-    const harness = renderHook({
-      appSettings: {
-        ...appSettings,
-        keymap: {
-          ...appSettings.keymap,
-          "editor.save": "F12",
-          "workbench.openSettings": "F12",
-        },
-      },
-      commandRegistry: registry,
-    });
-
-    const event = dispatchKeyboardEvent({ key: "F12" });
-
-    expect(event.defaultPrevented).toBe(true);
-    expect(settings).toHaveBeenCalledTimes(1);
-    expect(save).not.toHaveBeenCalled();
-    expect(definition).not.toHaveBeenCalled();
-
-    harness.unmount();
   });
 
   it.each(["mac", "linux", "windows"] as const)(
-    "increases the window zoom from the shifted + chord on %s with and without editor text focus",
+    "increases the window zoom from the shifted + chord on %s from any focused field",
     (platform) => {
       withKeymapPlatform(platform, () => {
         const zoomIn = vi.fn();
         const harness = renderHook({ commandRegistry: windowZoomInRegistry(zoomIn) });
-        const monaco = createMonacoTextInput();
-        const outside = document.createElement("input");
-        document.body.append(outside);
+        const field = document.createElement("textarea");
+        document.body.append(field);
         const shiftedPlus = SHIFTED_PLUS_BY_KEYMAP_PLATFORM[platform];
 
-        expect(dispatchKeyboardEventFrom(outside, shiftedPlus).defaultPrevented).toBe(true);
+        expect(dispatchKeyboardEvent(shiftedPlus).defaultPrevented).toBe(true);
         expect(zoomIn).toHaveBeenCalledTimes(1);
-        expect(dispatchKeyboardEventFrom(monaco.input, shiftedPlus).defaultPrevented).toBe(true);
+        expect(dispatchKeyboardEventFrom(field, shiftedPlus).defaultPrevented).toBe(true);
         expect(zoomIn).toHaveBeenCalledTimes(2);
         expect(
-          dispatchKeyboardEventFrom(monaco.input, { ...shiftedPlus, key: "=" }).defaultPrevented,
+          dispatchKeyboardEventFrom(field, { ...shiftedPlus, key: "=" }).defaultPrevented,
         ).toBe(true);
         expect(zoomIn).toHaveBeenCalledTimes(3);
 
-        outside.remove();
-        monaco.editor.remove();
+        field.remove();
         harness.unmount();
       });
     },
@@ -1174,23 +341,14 @@ describe("useWorkbenchKeyboardShortcuts", () => {
   it("drops the shifted + alias once window zoom in is rebound", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
-      const appSettings = defaultAppSettings();
       const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, "workbench.zoomIn": "Cmd+Alt+I" },
-        },
+        appSettings: settingsWithKeymap({ "workbench.zoomIn": "Cmd+Alt+I" }),
         commandRegistry: windowZoomInRegistry(zoomIn),
       });
-      const monaco = createMonacoTextInput();
 
       expect(dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented).toBe(
         false,
       );
-      expect(
-        dispatchKeyboardEventFrom(monaco.input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac)
-          .defaultPrevented,
-      ).toBe(false);
       expect(dispatchKeyboardEvent({ key: "=", metaKey: true }).defaultPrevented).toBe(false);
       expect(zoomIn).not.toHaveBeenCalled();
       expect(
@@ -1199,7 +357,6 @@ describe("useWorkbenchKeyboardShortcuts", () => {
       ).toBe(true);
       expect(zoomIn).toHaveBeenCalledTimes(1);
 
-      monaco.editor.remove();
       harness.unmount();
     });
   });
@@ -1207,57 +364,26 @@ describe("useWorkbenchKeyboardShortcuts", () => {
   it("lets a command explicitly bound to the shifted + chord win over the alias", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
-      const save = vi.fn();
+      const goToTurn = vi.fn();
       const registry = windowZoomInRegistry(zoomIn);
       registry.register({
-        category: "Editor",
-        id: "editor.save",
+        category: "Agents",
+        id: "agent.goToTurn",
         isEnabled: () => true,
-        run: save,
-        title: "Save File",
+        run: goToTurn,
+        title: "Go to Turn",
       });
-      const appSettings = defaultAppSettings();
       const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, "editor.save": "Cmd+Shift+=" },
-        },
+        appSettings: settingsWithKeymap({ "agent.goToTurn": "Cmd+Shift+=" }),
         commandRegistry: registry,
       });
 
       const event = dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac);
 
       expect(event.defaultPrevented).toBe(true);
-      expect(save).toHaveBeenCalledTimes(1);
+      expect(goToTurn).toHaveBeenCalledTimes(1);
       expect(zoomIn).not.toHaveBeenCalled();
 
-      harness.unmount();
-    });
-  });
-
-  it("leaves the shifted + chord to an editor-owned command explicitly bound to it", () => {
-    withKeymapPlatform("mac", () => {
-      const zoomIn = vi.fn();
-      const appSettings = defaultAppSettings();
-      const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, "editor.unfoldAll": "Cmd+Shift+=" },
-        },
-        commandRegistry: windowZoomInRegistry(zoomIn),
-      });
-      const monaco = createMonacoTextInput();
-
-      expect(
-        dispatchKeyboardEventFrom(monaco.input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac)
-          .defaultPrevented,
-      ).toBe(false);
-      expect(dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented).toBe(
-        false,
-      );
-      expect(zoomIn).not.toHaveBeenCalled();
-
-      monaco.editor.remove();
       harness.unmount();
     });
   });
@@ -1265,40 +391,32 @@ describe("useWorkbenchKeyboardShortcuts", () => {
   it("does not fire the shifted + alias while a chord awaits its second stroke", () => {
     withKeymapPlatform("mac", () => {
       const zoomIn = vi.fn();
-      const runAtCursor = vi.fn();
+      const goToTurn = vi.fn();
       const registry = windowZoomInRegistry(zoomIn);
       registry.register({
-        category: "Test",
-        id: "testing.runAtCursor",
+        category: "Agents",
+        id: "agent.goToTurn",
         isEnabled: () => true,
-        run: runAtCursor,
-        title: "Run Test at Cursor",
+        run: goToTurn,
+        title: "Go to Turn",
       });
-      const appSettings = defaultAppSettings();
       const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, "testing.runAtCursor": "Cmd+; Cmd+C" },
-        },
+        appSettings: settingsWithKeymap({ "agent.goToTurn": "Cmd+; Cmd+C" }),
         commandRegistry: registry,
       });
-      const { editor, input } = createMonacoTextInput();
 
-      expect(dispatchKeyboardEventFrom(input, { key: ";", metaKey: true }).defaultPrevented).toBe(
+      expect(dispatchKeyboardEvent({ key: ";", metaKey: true }).defaultPrevented).toBe(true);
+      expect(dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented).toBe(
         true,
       );
-      expect(
-        dispatchKeyboardEventFrom(input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented,
-      ).toBe(true);
       expect(zoomIn).not.toHaveBeenCalled();
-      expect(runAtCursor).not.toHaveBeenCalled();
+      expect(goToTurn).not.toHaveBeenCalled();
 
-      expect(
-        dispatchKeyboardEventFrom(input, SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented,
-      ).toBe(true);
+      expect(dispatchKeyboardEvent(SHIFTED_PLUS_BY_KEYMAP_PLATFORM.mac).defaultPrevented).toBe(
+        true,
+      );
       expect(zoomIn).toHaveBeenCalledTimes(1);
 
-      editor.remove();
       harness.unmount();
     });
   });
@@ -1315,10 +433,8 @@ describe("useWorkbenchKeyboardShortcuts", () => {
   ] as const)("captures %s before focused surfaces consume it", (id, eventInit) => {
     withKeymapPlatform("mac", () => {
       const run = vi.fn();
-      const registry = new CommandRegistry();
-      registry.register({ category: "Workbench", id, isEnabled: () => true, run, title: id });
-      const harness = renderHook({ commandRegistry: registry });
-      for (const surface of ["monaco-editor", "xterm", "agent-composer", "dialog"]) {
+      const harness = renderHook({ commandRegistry: registryWith(id, run) });
+      for (const surface of ["xterm", "agent-composer", "dialog"]) {
         const container = document.createElement("div");
         container.className = surface;
         if (surface === "dialog") {
@@ -1339,7 +455,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
         container.remove();
       }
       expect(dispatchKeyboardEvent(eventInit).defaultPrevented).toBe(true);
-      expect(run).toHaveBeenCalledTimes(5);
+      expect(run).toHaveBeenCalledTimes(4);
       harness.unmount();
     });
   });
@@ -1347,12 +463,8 @@ describe("useWorkbenchKeyboardShortcuts", () => {
   it("captures a custom zoom chord before the agent composer consumes both strokes", () => {
     withKeymapPlatform("mac", () => {
       const run = vi.fn();
-      const appSettings = defaultAppSettings();
       const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, "workbench.zoomIn": "Cmd+K Cmd+=" },
-        },
+        appSettings: settingsWithKeymap({ "workbench.zoomIn": "Cmd+J Cmd+=" }),
         commandRegistry: windowZoomInRegistry(run),
       });
       const input = document.createElement("textarea");
@@ -1360,7 +472,7 @@ describe("useWorkbenchKeyboardShortcuts", () => {
       const consume = vi.fn((event: KeyboardEvent) => event.stopPropagation());
       input.addEventListener("keydown", consume);
       input.focus();
-      expect(dispatchKeyboardEventFrom(input, { key: "k", metaKey: true }).defaultPrevented).toBe(
+      expect(dispatchKeyboardEventFrom(input, { key: "j", metaKey: true }).defaultPrevented).toBe(
         true,
       );
       expect(run).not.toHaveBeenCalled();
@@ -1378,21 +490,17 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     ["Cmd+=", [{ code: "Equal", key: "ž", metaKey: true }]],
     ["Cmd+I", [{ code: "KeyI", key: "i", metaKey: true }]],
     [
-      "Cmd+K Cmd+=",
+      "Cmd+J Cmd+=",
       [
-        { code: "KeyK", key: "k", metaKey: true },
+        { code: "KeyJ", key: "j", metaKey: true },
         { code: "Equal", key: "=", metaKey: true },
       ],
     ],
   ] as const)("captures %s when a modal has already prevented the event", (shortcut, strokes) => {
     withKeymapPlatform("mac", () => {
       const run = vi.fn();
-      const appSettings = defaultAppSettings();
       const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, "workbench.zoomIn": shortcut },
-        },
+        appSettings: settingsWithKeymap({ "workbench.zoomIn": shortcut }),
         commandRegistry: windowZoomInRegistry(run),
       });
       const modal = document.createElement("div");
@@ -1421,75 +529,42 @@ describe("useWorkbenchKeyboardShortcuts", () => {
     });
   });
 
-  it("preserves custom editor font zoom bindings", () => {
-    withKeymapPlatform("mac", () => {
-      const run = vi.fn();
-      const registry = new CommandRegistry();
-      registry.register({
-        category: "Editor",
-        id: "editor.fontZoomIn",
-        isEnabled: () => true,
-        run,
-        title: "Increase Editor Font Size",
-      });
-      const appSettings = defaultAppSettings();
-      const harness = renderHook({
-        appSettings: {
-          ...appSettings,
-          keymap: { ...appSettings.keymap, "editor.fontZoomIn": "Cmd+Alt+=" },
-        },
-        commandRegistry: registry,
-      });
-      expect(
-        dispatchKeyboardEvent({ altKey: true, key: "=", metaKey: true }).defaultPrevented,
-      ).toBe(true);
-      expect(run).toHaveBeenCalledOnce();
-      harness.unmount();
-    });
-  });
-
   it("handles Escape through the floating surface action", () => {
-    const actions = createActions({
-      closeFloatingSurface: vi.fn(() => true),
-    });
-    const harness = renderHook({ actions });
+    const closeFloatingSurface = vi.fn(() => true);
+    const harness = renderHook({ closeFloatingSurface });
 
     const event = dispatchKeyboardEvent({ key: "Escape" });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(actions.closeFloatingSurface).toHaveBeenCalledTimes(1);
+    expect(closeFloatingSurface).toHaveBeenCalledTimes(1);
 
     harness.unmount();
   });
 
   it("skips bare keys that cannot match a configured shortcut", () => {
-    const actions = createActions();
-    const harness = renderHook({ actions });
+    const runCommand = vi.fn(() => "executed" as const);
+    const harness = renderHook({ runCommand });
 
     const event = dispatchKeyboardEvent({ key: "a" });
 
     expect(event.defaultPrevented).toBe(false);
-    expect(actions.saveActiveDocument).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
 
     harness.unmount();
   });
 });
 
 interface RenderHookOptions {
-  actions?: KeyboardShortcutTestActions;
   appSettings?: ReturnType<typeof defaultAppSettings>;
+  closeFloatingSurface?: () => boolean;
   commandRegistry?: CommandRegistry;
-  doubleShiftDetector?: DoubleShiftDetector;
   runCommand?: CommandExecutionRunner;
 }
 
-type KeyboardShortcutTestActions = ReturnType<typeof createActionsBase>;
-
 function renderHook({
-  actions = createActions(),
   appSettings = defaultAppSettings(),
+  closeFloatingSurface = vi.fn(() => false),
   commandRegistry = new CommandRegistry(),
-  doubleShiftDetector = createDoubleShiftDetectorStub(),
   runCommand = (commandId, context = commandContext) =>
     executeCommand(commandRegistry, commandId, context),
 }: RenderHookOptions = {}) {
@@ -1499,10 +574,9 @@ function renderHook({
   act(() => {
     root.render(
       <HookHarness
-        actions={actions}
         appSettings={appSettings}
+        closeFloatingSurface={closeFloatingSurface}
         commandRegistry={commandRegistry}
-        doubleShiftDetector={doubleShiftDetector}
         runCommand={runCommand}
       />,
     );
@@ -1516,28 +590,22 @@ function renderHook({
 }
 
 function HookHarness({
-  actions,
   appSettings,
+  closeFloatingSurface,
   commandRegistry,
-  doubleShiftDetector,
-  editorSurfaceIdentity = TEST_EDITOR_SURFACE_IDENTITY,
   runCommand,
 }: {
-  actions: KeyboardShortcutTestActions;
   appSettings: ReturnType<typeof defaultAppSettings>;
+  closeFloatingSurface: () => boolean;
   commandRegistry: CommandRegistry;
-  doubleShiftDetector: DoubleShiftDetector;
-  editorSurfaceIdentity?: object;
   runCommand: CommandExecutionRunner;
 }) {
   useWorkbenchKeyboardShortcuts({
-    actions,
     appSettingsRef: ref(appSettings),
     bareKeyShortcutsRef: ref({ keymap: null, keys: new Set<string>() }),
+    closeFloatingSurface,
     commandContext,
     commandRegistry,
-    doubleShiftDetectorRef: ref(doubleShiftDetector),
-    editorSurfaceIdentity,
     keymap: appSettings.keymap,
     runCommand,
   });
@@ -1545,63 +613,21 @@ function HookHarness({
   return null;
 }
 
-function createActions(overrides: Partial<KeyboardShortcutTestActions> = {}) {
-  return {
-    ...createActionsBase(),
-    ...overrides,
-  };
+function settingsWithKeymap(
+  overrides: Partial<ReturnType<typeof defaultAppSettings>["keymap"]>,
+): ReturnType<typeof defaultAppSettings> {
+  const appSettings = defaultAppSettings();
+  return { ...appSettings, keymap: { ...appSettings.keymap, ...overrides } };
 }
 
-function createActionsBase() {
-  return {
-    closeActiveSurface: vi.fn(),
-    closeFloatingSurface: vi.fn(() => false),
-    goToDeclaration: vi.fn(),
-    goToDefinition: vi.fn(),
-    goToImplementation: vi.fn(),
-    goToSourceDefinition: vi.fn(),
-    goToSuperMethod: vi.fn(),
-    goToTestForActiveDocument: vi.fn(),
-    goToTypeDefinition: vi.fn(),
-    openFileHistory: vi.fn(),
-    openFileReferencesPanel: vi.fn(),
-    openFileStructure: vi.fn(),
-    openLocalHistory: vi.fn(),
-    openReferencesPanel: vi.fn(),
-    openSearchEverywhere: vi.fn(),
-    quitApplication: vi.fn(),
-    runTestForActiveDocument: vi.fn(),
-    saveActiveDocument: vi.fn(),
-    toggleBookmarkAtCursor: vi.fn(),
-    toggleGitBlame: vi.fn(),
-  };
-}
-
-function commandShortcutCase(
-  id: Parameters<CommandRegistry["register"]>[0]["id"],
-  category: string,
-  title: string,
-  eventInit: KeyboardEventInit & { key: string },
-) {
-  return {
-    category,
-    eventInit,
-    id,
-    run: vi.fn(),
-    title,
-  };
+function registryWith(id: string, run: () => void, enabled = true): CommandRegistry {
+  const registry = new CommandRegistry();
+  registry.register({ category: "Test", id, isEnabled: () => enabled, run, title: id });
+  return registry;
 }
 
 function windowZoomInRegistry(run: () => void, enabled = true): CommandRegistry {
-  const registry = new CommandRegistry();
-  registry.register({
-    category: "Editor",
-    id: "workbench.zoomIn",
-    isEnabled: () => enabled,
-    run,
-    title: "Zoom In",
-  });
-  return registry;
+  return registryWith("workbench.zoomIn", run, enabled);
 }
 
 function withKeymapPlatform(
@@ -1629,13 +655,6 @@ function withKeymapPlatform(
   }
 }
 
-function createDoubleShiftDetectorStub(handleKeyDownResult = false): DoubleShiftDetector {
-  return {
-    handleKeyDown: vi.fn(() => handleKeyDownResult),
-    reset: vi.fn(),
-  };
-}
-
 function dispatchKeyboardEvent(init: KeyboardEventInit & { key: string }) {
   const event = new KeyboardEvent("keydown", {
     bubbles: true,
@@ -1658,16 +677,6 @@ function dispatchKeyboardEventFrom(
   });
   target.dispatchEvent(event);
   return event;
-}
-
-function createMonacoTextInput(): { editor: HTMLDivElement; input: HTMLTextAreaElement } {
-  const editor = document.createElement("div");
-  editor.className = "monaco-editor";
-  const input = document.createElement("textarea");
-  input.className = "inputarea";
-  editor.append(input);
-  document.body.append(editor);
-  return { editor, input };
 }
 
 function ref<T>(current: T) {

@@ -125,7 +125,7 @@ const documentSource = readFileSync(resolve(REPOSITORY_ROOT, "index.html"), "utf
 const startupStyle = readFileSync(resolve(REPOSITORY_ROOT, STARTUP_SHEET), "utf8");
 const startupCss = parseCssRules(startupStyle, STARTUP_SHEET);
 const startupDocument = new DOMParser().parseFromString(documentSource, "text/html");
-const appCss = parseAllStyleSheets().rules.filter((rule) => rule.sheet === "App.css");
+const appCss = parseAllStyleSheets().rules.filter((rule) => rule.sheet === "agentApp.css");
 
 function startupRules(selector: string, context: readonly string[] = []): readonly CssRule[] {
   return startupCss.rules.filter(

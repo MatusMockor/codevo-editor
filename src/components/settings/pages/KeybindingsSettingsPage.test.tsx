@@ -21,15 +21,11 @@ const env: SettingsEnvironment = {
   appUpdater: null,
   gitDetectedRepositoryMappings: [],
   hasWorkspace: true,
-  phpTools: null,
   providerManagement: null,
   providerSignIn: null,
   systemFontGateway: { listMonospaceFontFamilies: async () => [] },
-  workspaceDescriptor: null,
   workspaceRoot: "/workspace",
   onCopyInstallCommand: () => undefined,
-  onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-  onRestartJavaScriptTypeScriptService: async () => undefined,
 };
 
 interface HarnessProps {
@@ -58,7 +54,6 @@ function Harness({ appSettings, onSave, platform }: HarnessProps) {
       setSettings(next);
       onSave({ appSettings: next, trusted: true, workspaceSettings });
     },
-    updateIgnorePatternsText: () => undefined,
     updateTrusted: () => undefined,
     updateWorkspaceSettings: () => undefined,
   };
@@ -68,7 +63,6 @@ function Harness({ appSettings, onSave, platform }: HarnessProps) {
       actions={actions}
       draft={{
         appSettings: settings,
-        ignorePatternsText: "",
         trusted: true,
         workspaceSettings,
       }}
@@ -95,7 +89,7 @@ describe("KeybindingsSettingsPage", () => {
     vi.restoreAllMocks();
   });
 
-  it("groups every command and marks reserved bindings read-only", async () => {
+  it("groups every command and keeps every binding editable", async () => {
     await render({ keymap: defaultKeymapSettings("mac") }, "mac");
 
     const categories = new Set(keymapCommands.map((command) => command.category));
@@ -105,14 +99,12 @@ describe("KeybindingsSettingsPage", () => {
     expect(
       [...host.querySelectorAll(".settings-kb__category")].map((heading) => heading.textContent),
     ).toEqual([...categories]);
-    expect(rowFor("editor.save")).toBeTruthy();
-    expect(rowFor("editor.nextRecentlyUsedEditor")).toBeTruthy();
-
-    expect(whenCell("editor.nextRecentlyUsedEditor")).toBe("Reserved");
-    expect(editButton("editor.nextRecentlyUsedEditor").disabled).toBe(true);
-    expect(editButton("editor.previousRecentlyUsedEditor").disabled).toBe(true);
-    expect(whenCell("editor.save")).toBe("Always");
-    expect(editButton("editor.save").disabled).toBe(false);
+    expect(rowFor("agent.findInThread")).toBeTruthy();
+    expect(host.querySelector('[data-command^="editor."]')).toBeNull();
+    for (const command of keymapCommands) {
+      expect(whenCell(command.id)).toBe("Always");
+      expect(editButton(command.id).disabled).toBe(false);
+    }
   });
 
   it("renders one group per category with rows instead of a table", async () => {
@@ -135,19 +127,19 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap: defaultKeymapSettings("mac") }, "mac", onSave);
 
-    expect(labelOf("editor.closeTab")?.querySelector(".settings-badge")).toBeNull();
+    expect(labelOf("workbench.closeActive")?.querySelector(".settings-badge")).toBeNull();
 
-    await click(editButton("editor.closeTab"));
+    await click(editButton("workbench.closeActive"));
 
-    expect(rowFor("editor.closeTab").dataset.editing).toBe("true");
-    expect(document.activeElement).toBe(recordingInput("editor.closeTab"));
+    expect(rowFor("workbench.closeActive").dataset.editing).toBe("true");
+    expect(document.activeElement).toBe(recordingInput("workbench.closeActive"));
 
-    await press("editor.closeTab", { key: "j", metaKey: true });
-    await click(saveButton("editor.closeTab"));
+    await press("workbench.closeActive", { key: "j", metaKey: true });
+    await click(saveButton("workbench.closeActive"));
 
     expect(onSave).toHaveBeenCalledOnce();
-    expect(rowFor("editor.closeTab").dataset.editing).toBeUndefined();
-    expect(labelOf("editor.closeTab")?.querySelector(".settings-badge")?.textContent).toBe(
+    expect(rowFor("workbench.closeActive").dataset.editing).toBeUndefined();
+    expect(labelOf("workbench.closeActive")?.querySelector(".settings-badge")?.textContent).toBe(
       "Modified",
     );
   });
@@ -171,7 +163,7 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap: defaultKeymapSettings("mac") }, "mac", onSave);
 
-    await click(editButton("editor.save"));
+    await click(editButton("agent.findInThread"));
 
     const search = filterInput();
     const typed = keyboardEvent({ key: "j", metaKey: true });
@@ -180,36 +172,16 @@ describe("KeybindingsSettingsPage", () => {
       search.dispatchEvent(typed);
       await Promise.resolve();
     });
-    await type(search, "save");
+    await type(search, "find");
 
     expect(typed.defaultPrevented).toBe(false);
-    expect(search.value).toBe("save");
-    expect(recordingInput("editor.save").value).toBe("");
+    expect(search.value).toBe("find");
+    expect(recordingInput("agent.findInThread").value).toBe("");
 
-    await press("editor.save", { key: "Escape" });
+    await press("agent.findInThread", { key: "Escape" });
 
     expect(host.querySelector(".settings-kb__recorder")).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
-  });
-
-  it("does not report palette Cmd+K as conflicting with the editor Cmd+K chords", async () => {
-    await render({ keymap: defaultKeymapSettings("mac") }, "mac");
-
-    const editorChords = [
-      "editor.splitDown",
-      "editor.focusNextGroup",
-      "editor.focusPreviousGroup",
-      "editor.moveTabToNextGroup",
-      "editor.moveTabToPreviousGroup",
-      "editor.closeGroup",
-    ];
-
-    expect(chipsFor("palette.open")).toEqual(["⌘", "K"]);
-    expect(conflictWarning("palette.open")).toBeNull();
-    for (const commandId of editorChords) {
-      expect(chipsFor(commandId).slice(0, 2)).toEqual(["⌘", "K"]);
-      expect(conflictWarning(commandId)).toBeNull();
-    }
   });
 
   it("reports the visible binding count", async () => {
@@ -221,56 +193,47 @@ describe("KeybindingsSettingsPage", () => {
   it("renders Linux key chips as modifier names", async () => {
     await render({ keymap: defaultKeymapSettings("linux") }, "linux");
 
-    expect(chipsFor("editor.save")).toEqual(["Ctrl", "S"]);
+    expect(chipsFor("agent.findInThread")).toEqual(["Ctrl", "F"]);
   });
 
   it("renders macOS key chips as modifier glyphs", async () => {
     await render({ keymap: defaultKeymapSettings("mac") }, "mac");
 
-    expect(chipsFor("editor.save")).toEqual(["⌘", "S"]);
+    expect(chipsFor("agent.findInThread")).toEqual(["⌘", "F"]);
   });
 
   it("shows a chord as two strokes joined by then", async () => {
-    await render({ keymap: { ...defaultKeymapSettings("mac"), "editor.save": "Cmd+K S" } }, "mac");
-
-    expect(chipsFor("editor.save")).toEqual(["⌘", "K", "S"]);
-    expect(keyCell("editor.save")?.textContent).toContain("then");
-  });
-
-  it("distinguishes menus for commands with duplicate visible labels", async () => {
     await render(
-      {
-        keymap: {
-          ...defaultKeymapSettings("mac"),
-          "javascript.sortImports": "Cmd+Alt+J",
-          "typescript.sortImports": "Cmd+Alt+T",
-        },
-      },
+      { keymap: { ...defaultKeymapSettings("mac"), "agent.findInThread": "Cmd+K S" } },
       "mac",
     );
 
-    expect(menuButton("typescript.sortImports")).not.toBe(menuButton("javascript.sortImports"));
+    expect(chipsFor("agent.findInThread")).toEqual(["⌘", "K", "S"]);
+    expect(keyCell("agent.findInThread")?.textContent).toContain("then");
   });
 
   it("resets one customized shortcut to its platform default", async () => {
     const onSave = vi.fn();
     const keymap = {
       ...defaultKeymapSettings("linux"),
-      "editor.closeTab": "Ctrl+Alt+W",
-      "editor.save": "F12",
+      "workbench.closeActive": "Ctrl+Alt+W",
+      "agent.findInThread": "F12",
     };
 
     await render({ keymap }, "linux", onSave);
 
-    await click(menuButton("editor.save"));
-    await click(actionButton("Reset Save File (editor.save) to default"));
+    await click(menuButton("agent.findInThread"));
+    await click(actionButton("Reset Find in Thread (agent.findInThread) to default"));
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "editor.save": "Ctrl+S" } },
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: { ...keymap, "agent.findInThread": "Ctrl+F" },
+      },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
-    expect(chipsFor("editor.save")).toEqual(["Ctrl", "S"]);
+    expect(chipsFor("agent.findInThread")).toEqual(["Ctrl", "F"]);
   });
 
   it("unbinds a shortcut from the row menu", async () => {
@@ -279,15 +242,15 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap }, "mac", onSave);
 
-    await click(menuButton("editor.save"));
-    await click(actionButton("Unbind Save File (editor.save)"));
+    await click(menuButton("agent.findInThread"));
+    await click(actionButton("Unbind Find in Thread (agent.findInThread)"));
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "editor.save": "" } },
+      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "agent.findInThread": "" } },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
-    expect(keyCell("editor.save")?.textContent).toContain("Unbound");
+    expect(keyCell("agent.findInThread")?.textContent).toContain("Unbound");
   });
 
   it("filters bindings by label, id, category and shortcut", async () => {
@@ -295,19 +258,19 @@ describe("KeybindingsSettingsPage", () => {
       {
         keymap: {
           ...defaultKeymapSettings("mac"),
-          "editor.formatDocument": "",
-          "editor.save": "Cmd+Alt+Shift+S",
+          "agent.goToTurn": "",
+          "agent.findInThread": "Cmd+Alt+Shift+S",
         },
       },
       "mac",
     );
 
-    await type(filterInput(), "Save File");
+    await type(filterInput(), "Find in Thread");
     expect(host.querySelectorAll(".settings-kb__row")).toHaveLength(1);
     expect(host.textContent).toContain("1 binding");
 
-    await type(filterInput(), "editor.save");
-    expect(host.querySelector(".settings-kb__row")?.textContent).toContain("Save File");
+    await type(filterInput(), "agent.findInThread");
+    expect(host.querySelector(".settings-kb__row")?.textContent).toContain("Find in Thread");
 
     await type(filterInput(), "git");
     const byCategory = [...host.querySelectorAll(".settings-kb__row")];
@@ -317,10 +280,10 @@ describe("KeybindingsSettingsPage", () => {
     await type(filterInput(), "alt+shift+s");
     expect(host.querySelectorAll(".settings-kb__row")).toHaveLength(1);
 
-    await type(filterInput(), "shift+alt+f");
+    await type(filterInput(), "cmd+alt+f");
     expect(
       [...host.querySelectorAll(".settings-kb__row")].some((row) =>
-        row.textContent?.includes("Format Document"),
+        row.textContent?.includes("Show Files Surface"),
       ),
     ).toBe(true);
 
@@ -343,18 +306,18 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap }, "mac", onSave);
 
-    await click(editButton("editor.closeTab"));
-    await press("editor.closeTab", { key: "w", metaKey: true, shiftKey: true });
+    await click(editButton("workbench.closeActive"));
+    await press("workbench.closeActive", { key: "w", metaKey: true, shiftKey: true });
 
-    expect(recordingInput("editor.closeTab").value).toBe("Cmd+Shift+W");
+    expect(recordingInput("workbench.closeActive").value).toBe("Cmd+Shift+W");
     expect(onSave).not.toHaveBeenCalled();
 
-    await click(saveButton("editor.closeTab"));
+    await click(saveButton("workbench.closeActive"));
 
     expect(onSave).toHaveBeenLastCalledWith({
       appSettings: {
         ...defaultAppSettings(),
-        keymap: { ...keymap, "editor.closeTab": "Cmd+Shift+W" },
+        keymap: { ...keymap, "workbench.closeActive": "Cmd+Shift+W" },
       },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
@@ -369,17 +332,20 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap }, "mac", onSave);
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "k", metaKey: true });
-    expect(recordingInput("editor.save").value).toBe("Cmd+K");
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "k", metaKey: true });
+    expect(recordingInput("agent.findInThread").value).toBe("Cmd+K");
 
-    await press("editor.save", { key: "s" });
-    expect(recordingInput("editor.save").value).toBe("Cmd+K S");
+    await press("agent.findInThread", { key: "s" });
+    expect(recordingInput("agent.findInThread").value).toBe("Cmd+K S");
 
-    await click(saveButton("editor.save"));
+    await click(saveButton("agent.findInThread"));
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "editor.save": "Cmd+K S" } },
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: { ...keymap, "agent.findInThread": "Cmd+K S" },
+      },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
@@ -393,15 +359,18 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap }, "mac", onSave);
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "+", metaKey: true, shiftKey: true });
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "+", metaKey: true, shiftKey: true });
 
-    expect(recordingInput("editor.save").value).toBe("Cmd+Shift+=");
+    expect(recordingInput("agent.findInThread").value).toBe("Cmd+Shift+=");
 
-    await click(saveButton("editor.save"));
+    await click(saveButton("agent.findInThread"));
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "editor.save": "Cmd+Shift+=" } },
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: { ...keymap, "agent.findInThread": "Cmd+Shift+=" },
+      },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
@@ -413,39 +382,47 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap: defaultKeymapSettings("mac") }, "mac");
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "+", metaKey: true });
-    expect(recordingInput("editor.save").value).toBe("Cmd+=");
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "+", metaKey: true });
+    expect(recordingInput("agent.findInThread").value).toBe("Cmd+=");
 
-    await press("editor.save", { key: "+", metaKey: true, shiftKey: true });
-    expect(recordingInput("editor.save").value).toBe("Cmd+= Cmd+Shift+=");
+    await press("agent.findInThread", { key: "+", metaKey: true, shiftKey: true });
+    expect(recordingInput("agent.findInThread").value).toBe("Cmd+= Cmd+Shift+=");
 
     expect(onWindowKeyDown).not.toHaveBeenCalled();
     window.removeEventListener("keydown", onWindowKeyDown);
   });
 
-  it("records the macOS Option-transformed fold chords as their physical punctuation keys", async () => {
+  it("records the macOS Option-transformed punctuation chords as their physical keys", async () => {
     const onSave = vi.fn();
-    const keymap = {
-      ...defaultKeymapSettings("mac"),
-      "editor.unfoldAll": "",
-      "editor.foldAll": "",
-    };
+    const keymap = defaultKeymapSettings("mac");
 
     await render({ keymap }, "mac", onSave);
 
-    await click(editButton("editor.unfoldAll"));
-    await press("editor.unfoldAll", { altKey: true, code: "Equal", key: "≠", metaKey: true });
-    expect(recordingInput("editor.unfoldAll").value).toBe("Cmd+Alt+=");
-    await click(saveButton("editor.unfoldAll"));
+    await click(editButton("agent.runPreferredScript"));
+    await press("agent.runPreferredScript", {
+      altKey: true,
+      code: "Equal",
+      key: "≠",
+      metaKey: true,
+    });
+    expect(recordingInput("agent.runPreferredScript").value).toBe("Cmd+Alt+=");
+    await click(saveButton("agent.runPreferredScript"));
 
-    await click(editButton("editor.foldAll"));
-    await press("editor.foldAll", { altKey: true, code: "Minus", key: "–", metaKey: true });
-    expect(recordingInput("editor.foldAll").value).toBe("Cmd+Alt+-");
-    await click(saveButton("editor.foldAll"));
+    await click(editButton("agent.openCommitMenu"));
+    await press("agent.openCommitMenu", { altKey: true, code: "Minus", key: "–", metaKey: true });
+    expect(recordingInput("agent.openCommitMenu").value).toBe("Cmd+Alt+-");
+    await click(saveButton("agent.openCommitMenu"));
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), keymap: defaultKeymapSettings("mac") },
+      appSettings: {
+        ...defaultAppSettings(),
+        keymap: {
+          ...defaultKeymapSettings("mac"),
+          "agent.runPreferredScript": "Cmd+Alt+=",
+          "agent.openCommitMenu": "Cmd+Alt+-",
+        },
+      },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
@@ -457,12 +434,12 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap }, "mac", onSave);
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "F8" });
-    await click(saveButton("editor.save"));
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "F8" });
+    await click(saveButton("agent.findInThread"));
 
     expect(onSave).toHaveBeenLastCalledWith({
-      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "editor.save": "F8" } },
+      appSettings: { ...defaultAppSettings(), keymap: { ...keymap, "agent.findInThread": "F8" } },
       trusted: true,
       workspaceSettings: defaultWorkspaceSettings(),
     });
@@ -475,9 +452,9 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap: defaultKeymapSettings("mac") }, "mac", onSave);
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "k", metaKey: true });
-    await press("editor.save", { key: "Escape" });
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "k", metaKey: true });
+    await press("agent.findInThread", { key: "Escape" });
 
     expect(host.querySelector(".settings-kb__recorder")).toBeNull();
     expect(onSave).not.toHaveBeenCalled();
@@ -490,10 +467,10 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap: defaultKeymapSettings("mac") }, "mac", onSave);
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "Meta", metaKey: true });
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "Meta", metaKey: true });
 
-    expect(recordingInput("editor.save").value).toBe("");
+    expect(recordingInput("agent.findInThread").value).toBe("");
     expect(onSave).not.toHaveBeenCalled();
   });
 
@@ -502,23 +479,23 @@ describe("KeybindingsSettingsPage", () => {
 
     await render({ keymap: defaultKeymapSettings("mac") }, "mac", onSave);
 
-    await click(editButton("editor.save"));
+    await click(editButton("agent.findInThread"));
 
     const shiftTab = keyboardEvent({ key: "Tab", shiftKey: true });
     await act(async () => {
-      recordingInput("editor.save").dispatchEvent(shiftTab);
+      recordingInput("agent.findInThread").dispatchEvent(shiftTab);
       await Promise.resolve();
     });
     expect(shiftTab.defaultPrevented).toBe(false);
 
     const plus = keyboardEvent({ key: "+", shiftKey: true });
     await act(async () => {
-      recordingInput("editor.save").dispatchEvent(plus);
+      recordingInput("agent.findInThread").dispatchEvent(plus);
       await Promise.resolve();
     });
     expect(plus.defaultPrevented).toBe(false);
 
-    expect(recordingInput("editor.save").value).toBe("");
+    expect(recordingInput("agent.findInThread").value).toBe("");
     expect(onSave).not.toHaveBeenCalled();
   });
 
@@ -527,21 +504,25 @@ describe("KeybindingsSettingsPage", () => {
     const keymap = defaultKeymapSettings("mac");
 
     await render({ keymap }, "mac", onSave);
-    expect(conflictWarning("editor.save")).toBeNull();
+    expect(conflictWarning("agent.findInThread")).toBeNull();
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "w", metaKey: true });
-    await click(saveButton("editor.save"));
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "w", metaKey: true });
+    await click(saveButton("agent.findInThread"));
 
-    expect(conflictWarning("editor.save")?.getAttribute("title")).toContain("Close Tab or Window");
-    expect(conflictWarning("editor.closeTab")?.getAttribute("title")).toContain("Save File");
+    expect(conflictWarning("agent.findInThread")?.getAttribute("title")).toContain(
+      "Close Active Panel",
+    );
+    expect(conflictWarning("workbench.closeActive")?.getAttribute("title")).toContain(
+      "Find in Thread",
+    );
 
-    await click(editButton("editor.save"));
-    await press("editor.save", { key: "z", altKey: true, metaKey: true, shiftKey: true });
-    await click(saveButton("editor.save"));
+    await click(editButton("agent.findInThread"));
+    await press("agent.findInThread", { key: "z", altKey: true, metaKey: true, shiftKey: true });
+    await click(saveButton("agent.findInThread"));
 
-    expect(conflictWarning("editor.save")).toBeNull();
-    expect(conflictWarning("editor.closeTab")).toBeNull();
+    expect(conflictWarning("agent.findInThread")).toBeNull();
+    expect(conflictWarning("workbench.closeActive")).toBeNull();
   });
 
   it("presents conflicts for identical two-stroke chords", async () => {
@@ -549,14 +530,16 @@ describe("KeybindingsSettingsPage", () => {
       {
         keymap: {
           ...defaultKeymapSettings("mac"),
-          "editor.closeTab": "Cmd+K Cmd+S",
-          "editor.save": "Cmd+K Cmd+S",
+          "workbench.closeActive": "Cmd+K Cmd+S",
+          "agent.findInThread": "Cmd+K Cmd+S",
         },
       },
       "mac",
     );
 
-    expect(conflictWarning("editor.save")?.getAttribute("title")).toContain("Close Tab or Window");
+    expect(conflictWarning("agent.findInThread")?.getAttribute("title")).toContain(
+      "Close Active Panel",
+    );
   });
 
   it("presents exact conflicts before first-stroke prefix conflicts", async () => {
@@ -564,18 +547,18 @@ describe("KeybindingsSettingsPage", () => {
       {
         keymap: {
           ...defaultKeymapSettings("mac"),
-          "editor.closeTab": "Cmd+K Cmd+S",
-          "editor.formatDocument": "Cmd+K Cmd+S",
-          "editor.save": "Cmd+K",
+          "workbench.closeActive": "Cmd+K Cmd+S",
+          "agent.goToTurn": "Cmd+K Cmd+S",
+          "agent.findInThread": "Cmd+K",
         },
       },
       "mac",
     );
 
-    const title = conflictWarning("editor.closeTab")?.getAttribute("title") ?? "";
+    const title = conflictWarning("workbench.closeActive")?.getAttribute("title") ?? "";
 
-    expect(title).toContain("Also used by Format Document");
-    expect(title).toContain("Shares a first key with Save File");
+    expect(title).toContain("Also used by Go to Turn");
+    expect(title).toContain("Shares a first key with Find in Thread");
     expect(title.indexOf("Also used by")).toBeLessThan(title.indexOf("Shares a first key with"));
   });
 
@@ -584,38 +567,29 @@ describe("KeybindingsSettingsPage", () => {
       {
         keymap: {
           ...defaultKeymapSettings("mac"),
-          "editor.closeTab": "Ctrl+K Ctrl+S",
-          "editor.save": "Cmd+K Cmd+S",
+          "workbench.closeActive": "Ctrl+K Ctrl+S",
+          "agent.findInThread": "Cmd+K Cmd+S",
         },
       },
       "linux",
     );
 
-    expect(conflictWarning("editor.save")?.getAttribute("title")).toContain(
-      "Also used by Close Tab or Window",
+    expect(conflictWarning("agent.findInThread")?.getAttribute("title")).toContain(
+      "Also used by Close Active Panel",
     );
-    expect(conflictWarning("editor.closeTab")?.getAttribute("title")).toContain(
-      "Also used by Save File",
-    );
-  });
-
-  it("warns about reserved shortcuts while keeping them read-only", async () => {
-    await render({ keymap: { ...defaultKeymapSettings("mac"), "editor.save": "Ctrl+Tab" } }, "mac");
-
-    expect(editButton("editor.nextRecentlyUsedEditor").disabled).toBe(true);
-    expect(conflictWarning("editor.save")?.getAttribute("title")).toContain(
-      "Also used by Open Next Recently Used Editor",
+    expect(conflictWarning("workbench.closeActive")?.getAttribute("title")).toContain(
+      "Also used by Find in Thread",
     );
   });
 
   it("marks a rebound command as modified", async () => {
     await render(
-      { keymap: { ...defaultKeymapSettings("mac"), "editor.save": "Cmd+Alt+S" } },
+      { keymap: { ...defaultKeymapSettings("mac"), "agent.findInThread": "Cmd+Alt+S" } },
       "mac",
     );
 
-    expect(labelOf("editor.save")?.textContent).toContain("Modified");
-    expect(labelOf("editor.closeTab")?.textContent).not.toContain("Modified");
+    expect(labelOf("agent.findInThread")?.textContent).toContain("Modified");
+    expect(labelOf("workbench.closeActive")?.textContent).not.toContain("Modified");
   });
 
   async function render(
@@ -774,14 +748,13 @@ describe("keybindingsPresentation", () => {
           bindings: [
             {
               category: "Editor",
-              commandId: "editor.save",
+              commandId: "agent.findInThread",
               conflictTitle: null,
               conflicts: [],
               currentShortcut: "Cmd+S",
               defaultShortcut: "Cmd+S",
-              label: "Save File",
+              label: "Find in Thread",
               modified: false,
-              rebindable: true,
               strokes: [],
             },
           ],

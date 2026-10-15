@@ -22,42 +22,6 @@ import { SURFACE_FIXTURE_ROOT } from "./agentSurfaceTestFixtures";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
 
-const monaco = vi.hoisted(() => ({
-  positions: [] as Array<{ readonly path: string; readonly lineNumber: number }>,
-}));
-
-vi.mock("../monacoRuntimeLoader", () => ({ initializeMonacoRuntime: async () => undefined }));
-
-vi.mock("@monaco-editor/react", async () => {
-  const { useEffect, useRef } = await import("react");
-  function Editor({
-    path,
-    value,
-    onMount,
-  }: {
-    readonly path: string;
-    readonly value: string;
-    readonly onMount?: (editor: unknown) => void;
-  }) {
-    const latest = useRef({ path, value, onMount });
-    latest.current = { path, value, onMount };
-    useEffect(() => {
-      const lines = () => latest.current.value.split("\n");
-      latest.current.onMount?.({
-        getModel: () => ({
-          getLineCount: () => lines().length,
-          getLineMaxColumn: (line: number) => (lines()[line - 1] ?? "").length + 1,
-        }),
-        setPosition: ({ lineNumber }: { readonly lineNumber: number }) =>
-          monaco.positions.push({ path: latest.current.path, lineNumber }),
-        revealPositionInCenter: () => undefined,
-      });
-    }, []);
-    return <textarea aria-label="Server file text" readOnly value={value} />;
-  }
-  return { default: Editor, DiffEditor: () => null };
-});
-
 const remoteThreadId = remoteAgentThreadKey("linux", "runner", "first");
 const ANSWER =
   "Handler lives in `src/app.ts:2`; compare [config](/srv/app/config.ts) and `src/gone.ts`. " +
@@ -184,7 +148,6 @@ describe("file links in server threads", () => {
   beforeEach(() => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     Element.prototype.scrollIntoView = () => undefined;
-    monaco.positions.length = 0;
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -212,14 +175,15 @@ describe("file links in server threads", () => {
       }),
     );
     await waitForReact(() =>
-      expect(monaco.positions).toContainEqual({
-        path: expect.stringContaining("src%2Fapp.ts"),
-        lineNumber: 2,
-      }),
+      expect(
+        host
+          .querySelector('[data-surface-panel="files"] .highlighted-code__line.is-current')
+          ?.getAttribute("data-line"),
+      ).toBe("2"),
     );
     const panel = host.querySelector<HTMLElement>('[data-surface-panel="files"]');
     expect(panel?.hidden).toBe(false);
-    expect(panel?.querySelector('[aria-label="Server file text"]')).not.toBeNull();
+    expect(panel?.querySelector('[aria-label="File contents"]')).not.toBeNull();
     expect(surfaces.listDirectory).toHaveBeenCalledWith(
       expect.objectContaining({ taskId: "first", path: "src", offset: 0 }),
     );
@@ -242,10 +206,11 @@ describe("file links in server threads", () => {
       }),
     );
     await waitForReact(() =>
-      expect(monaco.positions).toContainEqual({
-        path: expect.stringContaining("src%2Fapp.ts"),
-        lineNumber: 2,
-      }),
+      expect(
+        host
+          .querySelector('[data-surface-panel="files"] .highlighted-code__line.is-current')
+          ?.getAttribute("data-line"),
+      ).toBe("2"),
     );
     expect(notice()).toBeNull();
   });
@@ -289,7 +254,7 @@ describe("file links in server threads", () => {
               providerManagement: unconfiguredAgentProviderManagement(),
             }}
             chrome={chromeFixture({
-              layout: { layout, effectiveLayout: "agent", persistedBottomPanel: false, dispatch },
+              layout: { layout, persistedBottomPanel: false, dispatch },
             })}
             onOpenEnvironmentSettings={() => undefined}
             onReleaseProject={() => undefined}

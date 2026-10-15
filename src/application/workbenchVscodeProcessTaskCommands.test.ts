@@ -3,8 +3,6 @@ import type { VscodeProcessTaskDisplay } from "../domain/vscodeProcessTasks";
 import { workbenchVscodeProcessTaskCommands } from "./workbenchVscodeProcessTaskCommands";
 
 const CONTEXT = {
-  activeDocumentDirty: false,
-  hasActiveDocument: false,
   hasWorkspace: true,
 };
 

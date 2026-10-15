@@ -26,7 +26,6 @@ const SHARED_CONTROL_PREFIXES = [
   ".settings-kbd",
   ".settings-popover",
   ".settings-mappings",
-  ".settings-snippet",
 ] as const;
 const COLOR_PROPERTIES = new Set(["color", "background", "background-color", "box-shadow"]);
 const COLOR_KEYWORDS = new Set(["none", "transparent", "inherit", "currentcolor"]);

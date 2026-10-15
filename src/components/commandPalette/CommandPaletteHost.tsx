@@ -14,7 +14,7 @@ import {
   workbenchComposerPaletteModels,
   type PaletteBranchSource,
 } from "../../application/commandPalette/commandPaletteProvider";
-import { editorPaletteIntentPorts } from "../../application/commandPalette/editorPaletteIntentPorts";
+import { agentPaletteIntentPorts } from "../../application/commandPalette/agentPaletteIntentPorts";
 import { executePaletteIntent } from "../../application/commandPalette/executePaletteIntent";
 import { usePaletteBranches } from "../../application/commandPalette/usePaletteBranches";
 import { usePaletteRootFiles } from "../../application/commandPalette/usePaletteRootFiles";
@@ -39,24 +39,18 @@ import {
 import type { NodePackageScript } from "../../domain/nodePackageScripts";
 import type { FileSearchGateway, FileSearchResult } from "../../domain/workspace";
 import { CommandSurface } from "../../ui/foundation/CommandList";
-import { QuickOpen } from "../QuickOpen";
+import { agentPaletteProjects, agentPaletteScripts } from "./agentPaletteSources";
 import { buildPaletteGroups } from "./commandPalettePresenter";
 import { CommandPalettePage } from "./CommandPalettePage";
-import { editorPaletteProjects, editorPaletteScripts } from "./editorPaletteSources";
+import { PaletteFilesPage, type PaletteFilesModel } from "./PaletteFilesPage";
 import { formatShortcutLabel, paletteShortcutGroups } from "./paletteShortcuts";
 import { useCommandPaletteSession } from "./useCommandPaletteSession";
-import type { ComponentProps } from "react";
 
 const UNAVAILABLE_BRANCHES = "Branch switching for this project is not available here.";
 const LOCAL_PALETTE_PAGES: ReadonlyMap<string, PalettePageId> = new Map([
   ["palette.open", "root"],
   ["palette.shortcuts", "shortcuts"],
 ]);
-
-export type QuickOpenPageProps = Omit<
-  ComponentProps<typeof QuickOpen>,
-  "canGoBack" | "onBack" | "groupLabel" | "onLocalShortcut" | "isOpen" | "onClose"
->;
 
 export interface CommandPaletteHostProps {
   readonly paletteOpen: boolean;
@@ -78,8 +72,7 @@ export interface CommandPaletteHostProps {
   readonly branchSource: PaletteBranchSource | null;
   readonly fileSearch: FileSearchGateway;
   openSearchResult(result: FileSearchResult): Promise<void>;
-  readonly agentModeActive: boolean;
-  readonly quickOpen: QuickOpenPageProps | null;
+  readonly files: PaletteFilesModel | null;
 }
 
 export function CommandPaletteHost(props: CommandPaletteHostProps) {
@@ -119,16 +112,14 @@ function CommandPaletteBody(
 ) {
   const { session } = props;
   const platform = detectKeymapPlatform();
-  const agentPublished = useSyncExternalStore(
+  const agent = useSyncExternalStore(
     workbenchAgentPaletteProvider.subscribe,
     workbenchAgentPaletteProvider.current,
   );
-  const modelsPublished = useSyncExternalStore(
+  const models = useSyncExternalStore(
     workbenchComposerPaletteModels.subscribe,
     workbenchComposerPaletteModels.current,
   );
-  const agent = props.agentModeActive ? agentPublished : null;
-  const models = props.agentModeActive ? modelsPublished : null;
   const prefersLight = usePrefersLightTheme();
   const pending = useRef<object | null>(null);
   useEffect(() => {
@@ -202,12 +193,12 @@ function CommandPaletteBody(
         commands: props.commands,
         commandEnabled,
         agent,
-        editorProjects: editorPaletteProjects(props.workspaceTabs, props.workspaceRoot),
-        editorScripts: editorPaletteScripts(
+        workspaceProjects: agentPaletteProjects(props.workspaceTabs, props.workspaceRoot),
+        workspaceScripts: agentPaletteScripts(
           props.nodePackageScripts,
           (id) => commandState(id) === "enabled",
         ),
-        editorScriptsTruncated: props.nodePackageScriptsTruncated,
+        workspaceScriptsTruncated: props.nodePackageScriptsTruncated,
         rootFiles,
         branches,
         models,
@@ -290,7 +281,6 @@ function CommandPaletteBody(
   const execute = (item: PaletteItem): void => {
     if (item.intent.kind === "page") {
       session.push(item.intent.page);
-      if (item.intent.query !== undefined) props.quickOpen?.onChangeQuery(item.intent.query);
       return;
     }
     if (item.intent.kind === "command" && openLocalPalettePage(item.intent.commandId)) return;
@@ -304,7 +294,7 @@ function CommandPaletteBody(
       agent,
       models,
       openFile: props.openSearchResult,
-      ...editorPaletteIntentPorts({
+      ...agentPaletteIntentPorts({
         commands,
         context: props.commandContext,
         workspaceTabs: props.workspaceTabs,
@@ -340,17 +330,17 @@ function CommandPaletteBody(
     const parsed = parsePaletteRootQuery(query);
     if (session.page === "root" && parsed.kind === "files") {
       session.push("files");
-      props.quickOpen?.onChangeQuery(parsed.text);
+      props.files?.onChangeQuery(parsed.text);
       return;
     }
     session.setQuery(query);
   };
 
   if (session.page === "files") {
-    if (props.quickOpen === null) return null;
+    if (props.files === null) return null;
     return (
-      <QuickOpen
-        {...props.quickOpen}
+      <PaletteFilesPage
+        {...props.files}
         canGoBack={session.canGoBack}
         groupLabel={props.workspaceRoot === null ? "Files" : folderLabel(props.workspaceRoot)}
         isOpen

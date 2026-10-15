@@ -15,18 +15,16 @@ describe("settings registry", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("lists the redesigned sections in mockup order with PHP kept last", () => {
+  it("lists the agent app sections in nav order", () => {
     expect(SETTINGS_SECTIONS.map((section) => [section.id, section.label])).toEqual([
       ["general", "General"],
       ["agents", "Providers"],
       ["environments", "Environments"],
       ["mcp", "MCP servers"],
       ["keymap", "Keybindings"],
-      ["index", "Index & languages"],
-      ["snippets", "Snippets"],
+      ["git", "Git"],
       ["usage", "Usage"],
       ["archive", "Archive"],
-      ["php", "PHP"],
     ]);
   });
 
@@ -51,12 +49,16 @@ describe("settings registry", () => {
         "appearance.editorFontFamily",
         "appearance.editorFontSize",
         "general.appUpdates",
-        "general.statusBar",
         "general.threadAttention",
       ]),
     );
     expect(general).not.toContain("general.updateChannel");
-    expect(settingsRowDescriptor("general.statusBar").title).toBe("Editor header items");
+    expect(settingsRowDescriptor("appearance.editorFontFamily").title).toBe("Code font");
+    expect(settingsRowDescriptor("appearance.editorFontSize").title).toBe("Code font size");
+    expect(settingsRowsForSection("git").map((row) => row.id)).toEqual([
+      "git.directoryMappingsAuto",
+      "git.directoryMappings",
+    ]);
     expect(settingsRowsForSection("usage").map((row) => row.id)).toEqual([
       "usage.limits",
       "usage.localActivity",
@@ -90,12 +92,36 @@ describe("settings registry", () => {
   it("resolves the domain sections onto the redesigned nav", () => {
     expect(resolveSettingsRoute("general")).toEqual({ section: "general", row: null });
     expect(resolveSettingsRoute("keymap")).toEqual({ section: "keymap", row: null });
-    expect(resolveSettingsRoute("snippets")).toEqual({ section: "snippets", row: null });
     expect(resolveSettingsRoute("environments")).toEqual({ section: "environments", row: null });
-    expect(resolveSettingsRoute("git")).toEqual({
-      section: "index",
-      row: "index.gitDirectoryMappings",
-    });
+    expect(resolveSettingsRoute("git")).toEqual({ section: "git", row: null });
+  });
+
+  it.each(["php", "snippets", "index", "debug", "", null, undefined, 42])(
+    "falls back to General for the persisted or deep-linked unknown section %j",
+    (section) => {
+      expect(resolveSettingsRoute(section)).toEqual({ section: "general", row: null });
+      expect(() => settingsSectionDescriptor(section)).not.toThrow();
+      expect(settingsSectionDescriptor(section).id).toBe("general");
+    },
+  );
+
+  it("keeps no row of a removed IDE section", () => {
+    const removedPrefixes = ["php.", "index.", "snippets."];
+    const removedRows = [
+      "appearance.minimap",
+      "appearance.wordWrap",
+      "general.intelligenceMode",
+      "general.revealActiveFileInTree",
+      "general.statusBar",
+      "general.autoSave",
+      "general.formatOnSave",
+      "general.defaultTabSize",
+    ];
+
+    for (const row of SETTINGS_ROWS) {
+      expect(removedPrefixes.some((prefix) => row.id.startsWith(prefix))).toBe(false);
+      expect(removedRows).not.toContain(row.id);
+    }
   });
 
   it("describes the MCP servers section and its always-available row", () => {
@@ -111,9 +137,10 @@ describe("settings registry", () => {
   });
 
   it("looks descriptors up by id", () => {
-    expect(settingsRowDescriptor("general.formatOnSave").title).toBe("Format on save");
-    expect(settingsSectionDescriptor("index").label).toBe("Index & languages");
-    expect(() => settingsRowsForSection("php").length).not.toThrow();
+    expect(settingsRowDescriptor("general.terminalShellIntegration").title).toBe(
+      "Terminal shell integration",
+    );
+    expect(settingsSectionDescriptor("git").label).toBe("Git");
   });
 
   it("lists the new thread rows before the provider cards on the agents page", () => {
@@ -156,7 +183,8 @@ describe("settings registry", () => {
   });
 
   it("marks workspace-scoped rows as workspace availability", () => {
-    expect(settingsRowDescriptor("general.formatOnSave").availability).toBe("workspace");
+    expect(settingsRowDescriptor("general.trustedWorkspace").availability).toBe("workspace");
+    expect(settingsRowDescriptor("git.directoryMappings").availability).toBe("workspace");
     expect(settingsRowDescriptor("appearance.palette").availability).toBe("always");
   });
 });

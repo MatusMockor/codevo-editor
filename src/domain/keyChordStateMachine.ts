@@ -8,7 +8,6 @@ import {
 
 export type KeyChordResetReason =
   | "blur"
-  | "editor-replaced"
   | "escape"
   | "keymap-replaced"
   | "manual"

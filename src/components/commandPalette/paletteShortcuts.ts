@@ -6,15 +6,7 @@ import {
 } from "../../domain/keymap";
 import { keybindingStrokes } from "../settings/pages/keybindingsPresentation";
 
-const CATEGORY_PRIORITY: readonly string[] = [
-  "Workbench",
-  "Agent",
-  "File",
-  "Search",
-  "Git",
-  "Terminal",
-  "Editor",
-];
+const CATEGORY_PRIORITY: readonly string[] = ["Workbench", "Agent", "File", "Git", "Terminal"];
 
 export interface PaletteShortcutEntry {
   readonly commandId: string;

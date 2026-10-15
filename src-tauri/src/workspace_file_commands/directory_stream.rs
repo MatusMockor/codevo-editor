@@ -29,14 +29,6 @@ impl Drop for DirectoryStream {
 }
 
 impl DirectoryStream {
-    pub(super) fn from_raw(stream: *mut libc::DIR) -> Self {
-        Self(stream)
-    }
-
-    pub(super) fn as_ptr(&self) -> *mut libc::DIR {
-        self.0
-    }
-
     pub(super) fn open(directory: &File) -> io::Result<Self> {
         let cloned = unsafe_dup(directory.as_raw_fd())?;
         let raw_fd = cloned.into_raw_fd();

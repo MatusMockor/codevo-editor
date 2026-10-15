@@ -783,7 +783,6 @@ describe("AgentsSettingsPage", () => {
 
       const draft: SettingsDraft = {
         appSettings,
-        ignorePatternsText: "",
         trusted: false,
         workspaceSettings,
       };
@@ -797,7 +796,6 @@ describe("AgentsSettingsPage", () => {
           options.onUpdateAppSettings?.(settings);
           setAppSettings(settings);
         },
-        updateIgnorePatternsText: () => undefined,
         updateTrusted: () => undefined,
         updateWorkspaceSettings: (settings) => {
           options.onUpdateWorkspaceSettings?.(settings);
@@ -808,16 +806,12 @@ describe("AgentsSettingsPage", () => {
         appUpdater: null,
         gitDetectedRepositoryMappings: [],
         hasWorkspace: options.hasWorkspace ?? true,
-        phpTools: null,
         providerManagement:
           options.management === undefined ? providerManagement() : options.management,
         providerSignIn: options.signIn ?? null,
         systemFontGateway: { listMonospaceFontFamilies: async () => [] },
-        workspaceDescriptor: null,
         workspaceRoot: "/tmp/project",
         onCopyInstallCommand: (command) => options.onCopyInstallCommand?.(command),
-        onOpenJavaScriptTypeScriptServiceLog: async () => undefined,
-        onRestartJavaScriptTypeScriptService: async () => undefined,
       };
 
       return <AgentsSettingsPage actions={actions} draft={draft} env={env} />;

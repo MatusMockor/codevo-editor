@@ -1,30 +1,19 @@
 import {
   Archive,
   Bot,
-  Braces,
-  Code2,
   Gauge,
+  GitBranch,
   Keyboard,
-  Layers,
   Monitor,
   Plug,
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
-import type { SettingsSection } from "../../domain/settings";
+import { parseSettingsSection } from "../../domain/settings";
 import { SETTINGS_ROW_TABLE } from "./settingsRegistryRows";
 
 export type SettingsSectionId =
-  | "general"
-  | "agents"
-  | "environments"
-  | "mcp"
-  | "keymap"
-  | "index"
-  | "snippets"
-  | "usage"
-  | "archive"
-  | "php";
+  "general" | "agents" | "environments" | "mcp" | "keymap" | "git" | "usage" | "archive";
 
 export type SettingsRowAvailability = "always" | "workspace";
 
@@ -53,13 +42,15 @@ export interface SettingsRoute {
   readonly row: SettingsRowId | null;
 }
 
+const GENERAL_SECTION: SettingsSectionDescriptor = {
+  id: "general",
+  label: "General",
+  icon: SlidersHorizontal,
+  description: "Theme, text, updates, and workspace.",
+};
+
 export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDescriptor> = [
-  {
-    id: "general",
-    label: "General",
-    icon: SlidersHorizontal,
-    description: "Theme, text, updates, workspace, and editing.",
-  },
+  GENERAL_SECTION,
   {
     id: "agents",
     label: "Providers",
@@ -85,16 +76,10 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDescriptor> = [
     description: "Every command shortcut, its conflicts, and its default.",
   },
   {
-    id: "index",
-    label: "Index & languages",
-    icon: Layers,
-    description: "Indexing limits, JavaScript and TypeScript, linters, and git mappings.",
-  },
-  {
-    id: "snippets",
-    label: "Snippets",
-    icon: Braces,
-    description: "User live templates shared across every project.",
+    id: "git",
+    label: "Git",
+    icon: GitBranch,
+    description: "Repository directory mappings for nested repositories.",
   },
   {
     id: "usage",
@@ -107,12 +92,6 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSectionDescriptor> = [
     label: "Archive",
     icon: Archive,
     description: "Archived threads from every project.",
-  },
-  {
-    id: "php",
-    label: "PHP",
-    icon: Code2,
-    description: "PHP engine, language level, tool paths, and analysis.",
   },
 ];
 
@@ -137,33 +116,31 @@ export function settingsRowDescriptor(id: SettingsRowId): SettingsRowDescriptor 
   return descriptor;
 }
 
-export function settingsSectionDescriptor(id: SettingsSectionId): SettingsSectionDescriptor {
+export function settingsSectionDescriptor(id: unknown): SettingsSectionDescriptor {
   const descriptor = SETTINGS_SECTIONS.find((section) => section.id === id);
 
-  if (descriptor === undefined) {
-    throw new Error(`Unknown settings section: ${id}`);
+  if (descriptor !== undefined) {
+    return descriptor;
   }
 
-  return descriptor;
+  return GENERAL_SECTION;
 }
 
-export function resolveSettingsRoute(section: SettingsSection): SettingsRoute {
+export function resolveSettingsRoute(value: unknown): SettingsRoute {
+  const section = parseSettingsSection(value);
+
   switch (section) {
     case "general":
     case "agents":
     case "environments":
     case "mcp":
     case "keymap":
-    case "index":
-    case "php":
-    case "snippets":
+    case "git":
     case "usage":
     case "archive":
       return { section, row: null };
     case "appearance":
       return { section: "general", row: "appearance.palette" };
-    case "git":
-      return { section: "index", row: "index.gitDirectoryMappings" };
     default:
       return section satisfies never;
   }

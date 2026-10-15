@@ -28,7 +28,6 @@ interface Environment {
   origin: AgentProjectOrigin;
   policy: AgentIsolationPolicy;
   status: AgentRepositoryStatusSnapshot;
-  dirtyEditors: number;
   liveTasks: number;
   gitChanges: number;
   trust: "trusted" | "untrusted" | "unknown";
@@ -65,11 +64,10 @@ describe("useAgentIsolationPreview", () => {
   });
 
   it("forces a worktree for background projects but allows concurrent local turns", () => {
-    const background = renderPreview({ origin: "background-tab", dirtyEditors: 3 });
+    const background = renderPreview({ origin: "background-tab" });
     const preview = background.hook().isolationPreview(ROOT);
     expect(preview.inPlaceAllowed).toBe(false);
     expect(preview.recommended).toEqual({ kind: "worktree", reason: "policy" });
-    expect(background.hook().isolationContext(ROOT).dirtyEditorDocumentsInRepository).toBe(0);
     background.unmount();
 
     const busy = renderPreview({ liveTasks: 2 });
@@ -330,19 +328,6 @@ describe("useAgentIsolationPreview", () => {
       harness.unmount();
     });
 
-    it("refuses an unsafe repository unless the exact confirmation key is presented", async () => {
-      const harness = renderPreview({ dirtyEditors: 1 });
-      const authority = projectAuthority(harness.project());
-
-      const refused = await act(() => harness.hook().preflightInPlace(ROOT, authority, null));
-      expect(refused).toEqual({ kind: "unsafe", label: inPlaceGuardReasonLabel("dirty-editors") });
-
-      const key = harness.hook().isolationPreview(ROOT).confirmationKey;
-      const confirmed = await act(() => harness.hook().preflightInPlace(ROOT, authority, key));
-      expect(confirmed).toEqual({ kind: "ok" });
-      harness.unmount();
-    });
-
     it("allows other agents without confirmation, including during the status refresh", async () => {
       const harness = renderPreview({ liveTasks: 1, policy: "in-place" });
       const authority = projectAuthority(harness.project());
@@ -357,26 +342,6 @@ describe("useAgentIsolationPreview", () => {
       });
 
       expect(harness.hook().isolationPreview(ROOT).recommended).toEqual({ kind: "in-place" });
-      harness.unmount();
-    });
-
-    it("keeps dirty-editor confirmation valid when another agent starts during preflight", async () => {
-      const harness = renderPreview({ dirtyEditors: 1 });
-      const authority = projectAuthority(harness.project());
-      await act(() => harness.hook().refreshIsolationStatus(ROOT));
-      const key = harness.hook().isolationPreview(ROOT).confirmationKey;
-      expect(key).not.toBeNull();
-      const pending = createDeferred<GitStatus>();
-      harness.git.getStatus.mockImplementationOnce(() => pending.promise);
-
-      await act(async () => {
-        const preflight = harness.hook().preflightInPlace(ROOT, authority, key);
-        harness.environment.liveTasks = 1;
-        pending.resolve({ branch: "main", changes: [], isRepository: true, rootPath: ROOT });
-        expect(await preflight).toEqual({ kind: "ok" });
-      });
-
-      expect(harness.hook().isolationPreview(ROOT).confirmationKey).toBe(key);
       harness.unmount();
     });
 
@@ -513,16 +478,10 @@ describe("useAgentIsolationPreview", () => {
 
   it("labels every isolation reason and guard reason", () => {
     expect(agentIsolationReasonLabel({ kind: "in-place" })).toContain("clean");
-    for (const reason of [
-      "policy",
-      "parallel-dispatch",
-      "status-unknown",
-      "dirty-tree",
-      "dirty-editors",
-    ] as const) {
+    for (const reason of ["policy", "parallel-dispatch", "status-unknown", "dirty-tree"] as const) {
       expect(agentIsolationReasonLabel({ kind: "worktree", reason })).not.toBe("");
     }
-    for (const reason of ["dirty-tree", "dirty-editors", "status-unknown"] as const) {
+    for (const reason of ["dirty-tree", "status-unknown"] as const) {
       expect(inPlaceGuardReasonLabel(reason)).not.toBe("");
     }
   });
@@ -550,7 +509,6 @@ function renderPreview(
     origin: "active-tab",
     policy: "auto",
     status: { known: true, dirty: false },
-    dirtyEditors: 0,
     liveTasks: 0,
     gitChanges: 0,
     trust: "trusted",
@@ -585,7 +543,6 @@ function renderPreview(
     },
     gitGateway: git,
     getRepositoryStatus: () => environment.status,
-    getDirtyEditorDocumentCount: () => environment.dirtyEditors,
     liveAgentTasksInRepository: () => environment.liveTasks,
     reportError,
   };

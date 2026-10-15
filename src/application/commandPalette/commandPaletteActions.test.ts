@@ -24,7 +24,6 @@ describe("availablePaletteActions", () => {
       "Add project…",
       "Switch project",
       "Go to file",
-      "Go to line",
       "Run script",
       "Switch branch",
       "Show diff panel",
@@ -64,16 +63,10 @@ describe("availablePaletteActions", () => {
     expect(actions.some((action) => action.id === "addProject")).toBe(false);
   });
 
-  it("opens Go to line as the files page in line mode and gates it on the editor command", () => {
-    const goToLine = (state: "enabled" | "disabled" | "missing") =>
-      availablePaletteActions(
-        availability({ commandState: (id) => (id === "editor.gotoLine" ? state : "enabled") }),
-      ).find((action) => action.id === "goToLine");
+  it("offers no Go to line action now that line reveal goes through path:line", () => {
+    const actions = availablePaletteActions(availability({ commandState: () => "enabled" }));
 
-    expect(goToLine("enabled")?.intent).toEqual({ kind: "page", page: "files", query: ":" });
-    expect(goToLine("enabled")?.disabled).toBe(false);
-    expect(goToLine("disabled")?.disabled).toBe(true);
-    expect(goToLine("missing")).toBeUndefined();
-    expect(paletteActionCommandIds().has("editor.gotoLine")).toBe(true);
+    expect(actions.some((action) => action.id === "goToLine")).toBe(false);
+    expect(paletteActionCommandIds().has("editor.gotoLine")).toBe(false);
   });
 });

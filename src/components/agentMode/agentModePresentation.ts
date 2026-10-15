@@ -33,7 +33,7 @@ import {
 import type { GitChangeStatus, GitChangedFile, GitFileDiff } from "../../domain/git";
 import type { GitShipStatus } from "../../domain/gitIntegration";
 import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
-import { localHistoryRelativeTime } from "../../domain/localHistory";
+import { relativeTime } from "../../domain/relativeTime";
 import { detectLanguage } from "../../domain/workspace";
 import type {
   AgentTaskChangeSummary,
@@ -285,7 +285,7 @@ export function agentTurnDurationLabel(durationMs: number): string {
 }
 
 export function agentThreadTimeLabel(startedAtEpochMs: number, now: number): string {
-  return localHistoryRelativeTime(startedAtEpochMs, now);
+  return relativeTime(startedAtEpochMs, now);
 }
 
 export function agentIsolationBadgeLabel(isolation: AgentTaskIsolation): string {
@@ -314,8 +314,6 @@ export function inPlaceGuardReasonLabel(reason: InPlaceDispatchUnsafeReason): st
   switch (reason) {
     case "dirty-tree":
       return "the working tree has uncommitted changes";
-    case "dirty-editors":
-      return "unsaved editors belong to this repository";
     case "status-unknown":
       return "the repository status is unknown";
     default:
@@ -336,8 +334,6 @@ export function agentIsolationReasonLabel(recommended: AgentIsolationDefault): s
       return "The repository status is unknown.";
     case "dirty-tree":
       return "The working tree has uncommitted changes.";
-    case "dirty-editors":
-      return "This repository has unsaved editors.";
     default:
       return unsupportedIsolationReason(recommended.reason);
   }

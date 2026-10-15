@@ -1940,7 +1940,6 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     agentTaskGateway: agent as unknown as AgentTaskGateway,
     agentThreadStoreGateway: threadStore,
     gitWorktreeGateway: worktree as unknown as GitWorktreeGateway,
-    agentModeActive: true,
     agentProjectGateways: options.withProjectGateways
       ? {
           settingsGateway,
@@ -1976,7 +1975,6 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     externalUrlOpener: null,
     gitRepositoryMappings: options.gitRepositoryMappings ?? [{ rootRelativePath: "" }],
     gitRepositoryStatuses: options.gitRepositoryStatuses ?? [],
-    openDocuments: [],
     onActiveWorkspaceTrustChanged: activeTrustChanged,
     prompter: { confirm: () => true, prompt: () => null },
     reportError,

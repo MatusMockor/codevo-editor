@@ -51,8 +51,7 @@ describe("rightPanelCoversThread", () => {
 
       expect(rightPanelCoversThread(layout)).toBe(covered);
       expect(
-        workbenchShellPlacement({ bottomPanelVisible: false, effectiveLayout: "agent", layout })
-          .rightPanelMaximized,
+        workbenchShellPlacement({ bottomPanelVisible: false, layout }).rightPanelMaximized,
       ).toBe(covered);
     },
   );
@@ -69,7 +68,6 @@ describe("workbenchShellPlacement", () => {
     ({ expectedWidth, rightPanelOverlay, viewportWidth }) => {
       const placement = workbenchShellPlacement({
         bottomPanelVisible: false,
-        effectiveLayout: "agent",
         layout: layoutOf({
           rightPanel: "open",
           openSurfaces: ["files"],
@@ -92,17 +90,15 @@ describe("workbenchShellPlacement", () => {
     expect(
       workbenchShellPlacement({
         bottomPanelVisible: false,
-        effectiveLayout: "agent",
         layout: layoutOf({ rightPanel: "open", rightPanelWidth: 700 }),
         viewportWidth: 1_180,
       }),
     ).toMatchObject({ rightPanelWidth: 372, rightPanelOverlay: false });
   });
 
-  it("hides the editor while the panel is closed even when the files tab stays open", () => {
+  it("hides the right panel while it is closed even when the files tab stays open", () => {
     const placement = workbenchShellPlacement({
       bottomPanelVisible: false,
-      effectiveLayout: "agent",
       layout: layoutOf({
         rightPanel: "closed",
         openSurfaces: ["files"],
@@ -112,8 +108,6 @@ describe("workbenchShellPlacement", () => {
     });
 
     expect(placement).toEqual({
-      layout: "agent",
-      editorHidden: true,
       rightPanelHidden: true,
       surfacesMounted: true,
       rightPanelMaximized: false,
@@ -131,16 +125,14 @@ describe("workbenchShellPlacement", () => {
     expect(
       workbenchShellPlacement({
         bottomPanelVisible: true,
-        effectiveLayout: "agent",
         layout: layoutOf({ rail: "collapsed" }),
       }),
     ).toMatchObject({ rail: "collapsed", bottomPanelHeight: 280 });
   });
 
-  it("keeps the editor layer hidden in the agent layout, even with a maximized Files viewer", () => {
+  it("places a maximized Files viewer with the collapsed rail", () => {
     const placement = workbenchShellPlacement({
       bottomPanelVisible: true,
-      effectiveLayout: "agent",
       layout: layoutOf({
         rightPanel: "open",
         openSurfaces: ["files", "diff"],
@@ -153,8 +145,6 @@ describe("workbenchShellPlacement", () => {
     });
 
     expect(placement).toEqual({
-      layout: "agent",
-      editorHidden: true,
       rightPanelHidden: false,
       surfacesMounted: true,
       rightPanelMaximized: true,
@@ -165,44 +155,6 @@ describe("workbenchShellPlacement", () => {
       railWidth: 256,
       rightPanelWidth: 620,
       bottomPanelHeight: 200,
-    });
-  });
-
-  it("places the editor across the whole frame when the agent layout is unavailable", () => {
-    const placement = workbenchShellPlacement({
-      bottomPanelVisible: false,
-      effectiveLayout: "editor-only",
-      layout: initialAgentWorkbenchLayout,
-    });
-
-    expect(placement).toMatchObject({
-      layout: "editor-only",
-      editorHidden: false,
-      rightPanelHidden: true,
-      rightPanelMaximized: true,
-    });
-  });
-
-  it("mounts no surface in the editor-only fallback even with retained tabs", () => {
-    expect(
-      workbenchShellPlacement({
-        bottomPanelVisible: true,
-        effectiveLayout: "editor-only",
-        layout: layoutOf({ openSurfaces: ["terminal"], activeSurface: "terminal" }),
-      }),
-    ).toEqual({
-      layout: "editor-only",
-      editorHidden: false,
-      rightPanelHidden: true,
-      surfacesMounted: false,
-      rightPanelMaximized: true,
-      responsiveMaximized: false,
-      rightPanelOverlay: false,
-      responsiveRestore: "none",
-      rail: "collapsed",
-      railWidth: 256,
-      rightPanelWidth: 0,
-      bottomPanelHeight: initialAgentWorkbenchLayout.bottomPanelHeight,
     });
   });
 });

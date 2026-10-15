@@ -3,38 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SRC_ROOT, parseAllStyleSheets } from "../../components/cssContractTestSupport";
 
-const VENDOR_CLASS = /^(?:monaco-|codicon|xterm-|mtk\d)/;
-const VENDOR_CLASSES: ReadonlySet<string> = new Set([
-  "cldr",
-  "margin-view-overlays",
-  "lightBulbWidget",
-  "action-widget",
-  "context-view",
-  "suggest-details",
-  "hover-row",
-  "action-container",
-  "action-item",
-  "action-menu-item",
-  "details-label",
-  "find-part",
-  "group-header",
-  "label-description",
-  "matchesCount",
-  "peekview-title",
-  "quick-input-widget",
-  "ref-tree",
-  "replace-part",
-  "replaceToggled",
-  "synthetic-focus",
-]);
-const DYNAMIC_CLASSES: ReadonlySet<string> = new Set([
-  "xxx",
-  "fixme",
-  "hack",
-  "todo",
-  "note",
-  "bug",
-]);
+const VENDOR_CLASS = /^xterm-/;
 const STYLE_CONTRACT_FILES: ReadonlySet<string> = new Set(["cssBorderAllowlist.ts"]);
 const MAX_DEPTH = 12;
 
@@ -64,8 +33,7 @@ describe("stylesheets", () => {
     const dead = new Set<string>();
     for (const rule of parseAllStyleSheets().rules) {
       for (const [, name] of rule.selector.matchAll(/\.([A-Za-z_][\w-]*)/g)) {
-        if (name === undefined || tokens.has(name) || VENDOR_CLASSES.has(name)) continue;
-        if (VENDOR_CLASS.test(name) || DYNAMIC_CLASSES.has(name)) continue;
+        if (name === undefined || tokens.has(name) || VENDOR_CLASS.test(name)) continue;
         if (dynamicPrefixes.some((prefix) => prefix.length > 0 && name.startsWith(prefix)))
           continue;
         dead.add(`${rule.sheet} .${name}`);

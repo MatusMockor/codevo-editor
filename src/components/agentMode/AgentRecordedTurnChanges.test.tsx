@@ -13,18 +13,6 @@ import {
   type AgentTurnChangesDenialReason,
 } from "../../domain/agentTurnChanges";
 import { createAgentTurnChangesReader } from "../../application/agentTurnChangesReader";
-vi.mock("../GitDiffPreview", () => ({
-  GitDiffPreview: (props: {
-    diff: { originalContent: string; modifiedContent: string } | null;
-    isLoading: boolean;
-  }) => (
-    <div data-testid="diff">
-      {props.isLoading
-        ? "Loading"
-        : `${props.diff?.originalContent} → ${props.diff?.modifiedContent}`}
-    </div>
-  ),
-}));
 let host: HTMLDivElement;
 let root: Root;
 const summary = (turnId: string, path = "a.ts"): AgentTurnChangeSummary => ({

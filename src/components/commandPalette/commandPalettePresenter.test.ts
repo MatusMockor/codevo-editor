@@ -84,9 +84,9 @@ function input(overrides: Partial<PalettePresenterInput> = {}): PalettePresenter
     ],
     commandEnabled: () => true,
     agent,
-    editorProjects: [],
-    editorScripts: [],
-    editorScriptsTruncated: false,
+    workspaceProjects: [],
+    workspaceScripts: [],
+    workspaceScriptsTruncated: false,
     rootFiles: [],
     branches: { status: "idle" },
     models: null,
@@ -205,13 +205,13 @@ describe("buildPaletteGroups", () => {
     expect(items[2]?.intent).toEqual({ kind: "command", commandId: "project.add" });
   });
 
-  it("uses editor projects and scripts when no agent provider is published", () => {
+  it("uses workspace projects and scripts when no agent provider is published", () => {
     const groups = buildPaletteGroups(
       input({
         page: "runScript",
         agent: null,
-        editorScripts: [{ key: "k1", name: "lint", detail: "npm run lint", runnable: false }],
-        editorScriptsTruncated: true,
+        workspaceScripts: [{ key: "k1", name: "lint", detail: "npm run lint", runnable: false }],
+        workspaceScriptsTruncated: true,
       }),
     );
     expect(groups[0]?.items[0]?.disabled).toBe(true);

@@ -14,8 +14,6 @@ coverage
 *.local
 .superpowers/
 .worktrees/
-perf/fixtures/
-perf/results/
 
 # Editor directories and files
 .vscode/*

@@ -1,12 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  CLASSIC_SYNTAX_THEME_IDS,
-  PALETTE_IDS,
-  RESOLVED_COLOR_SCHEMES,
-  type ResolvedColorScheme,
-} from "./appearance";
+import { CLASSIC_SYNTAX_THEME_IDS, PALETTE_IDS, RESOLVED_COLOR_SCHEMES } from "./appearance";
 import { paletteTokens, surfaceColor } from "./appearancePalettes";
 import { classicTerminalTheme, type TerminalTheme } from "./editorColorThemes";
 import { contrastRatio } from "./themeContrast";
@@ -39,31 +34,6 @@ const terminalTextColorKeys = [
   "white",
   "yellow",
 ] as const;
-const monacoPopupTokenMap = [
-  ["--vscode-editorSuggestWidget-background", "var(--cv-popover)"],
-  ["--vscode-editorSuggestWidget-border", "transparent"],
-  ["--vscode-editorSuggestWidget-foreground", "var(--cv-fg)"],
-  ["--vscode-editorSuggestWidget-selectedBackground", "var(--cv-tint-3)"],
-  ["--vscode-editorSuggestWidget-selectedForeground", "var(--cv-fg-strong)"],
-  ["--vscode-editorSuggestWidget-highlightForeground", "var(--cv-accent)"],
-  ["--vscode-editorSuggestWidget-focusHighlightForeground", "var(--cv-accent)"],
-  ["--vscode-editorHoverWidget-background", "var(--cv-popover)"],
-  ["--vscode-editorHoverWidget-border", "transparent"],
-  ["--vscode-editorHoverWidget-foreground", "var(--cv-fg)"],
-  ["--vscode-editorWidget-background", "var(--cv-popover)"],
-  ["--vscode-editorWidget-border", "transparent"],
-  ["--vscode-editorWidget-foreground", "var(--cv-fg)"],
-  ["--vscode-menu-background", "var(--cv-popover)"],
-  ["--vscode-menu-foreground", "var(--cv-fg)"],
-  ["--vscode-menu-selectionBackground", "var(--cv-tint-3)"],
-  ["--vscode-menu-selectionForeground", "var(--cv-fg-strong)"],
-  ["--vscode-menu-separatorBackground", "var(--cv-hair)"],
-  ["--vscode-menu-border", "transparent"],
-  ["--vscode-editorActionList-background", "var(--cv-popover)"],
-  ["--vscode-editorActionList-foreground", "var(--cv-fg)"],
-  ["--vscode-editorActionList-focusBackground", "var(--cv-tint-3)"],
-  ["--vscode-editorActionList-focusForeground", "var(--cv-fg-strong)"],
-] as const;
 
 describe("contrastRatio", () => {
   it("returns WCAG contrast ratios for two hex colors", () => {
@@ -72,7 +42,7 @@ describe("contrastRatio", () => {
   });
 
   it("keeps tree active states readable in every palette and scheme", () => {
-    const appCss = readFileSync("src/App.css", "utf8");
+    const appCss = readFileSync("src/agentApp.css", "utf8");
     const active = cssBlock(appCss, ".tree-row.active");
 
     expect(cssDeclaration(active, "background")).toBe("var(--cv-accent-soft)");
@@ -138,10 +108,6 @@ describe("accent fill pairing", () => {
     [
       "src/components/toastNotification.css",
       ".toast-notification-action--primary:hover:not(:disabled)",
-    ],
-    [
-      "src/components/DirtyCloseDecisionDialogHost.css",
-      ".dirty-close-decision-content .dirty-close-decision-save:hover",
     ],
   ] as const;
 
@@ -227,138 +193,6 @@ describe("custom properties", () => {
   });
 });
 
-describe("Monaco popup chrome", () => {
-  const widgetCss = readFileSync("src/components/editorPanel/editorWidgets.css", "utf8");
-  const semanticCss = readFileSync("src/ui/tokens/semantic.css", "utf8");
-
-  it("pins popup theme tokens to palette chrome variables on every popup surface", () => {
-    const block = cssBlockContainingSelector(widgetCss, ".app-shell .monaco-editor");
-
-    for (const selector of [
-      ".app-shell .monaco-editor",
-      ".app-shell .action-widget",
-      ".app-shell .monaco-menu",
-      ".app-shell .monaco-hover",
-      ".app-shell .context-view",
-    ]) {
-      expect(block, selector).toContain(selector);
-    }
-
-    for (const [token, value] of monacoPopupTokenMap) {
-      expect(cssDeclaration(block, token), token).toBe(value);
-    }
-  });
-
-  it("keeps autocomplete, hover, rename, find and action widgets on the shared popover chrome", () => {
-    for (const selector of [
-      ".app-shell .monaco-editor .suggest-widget",
-      ".app-shell .monaco-editor .suggest-details",
-      ".app-shell .monaco-editor .monaco-hover",
-      ".app-shell .monaco-editor .find-widget",
-      ".app-shell .monaco-editor .rename-box",
-      ".app-shell .action-widget {",
-    ]) {
-      const block = cssBlockContainingSelector(widgetCss, selector);
-      expect(block, `${selector}: radius`).toContain("border-radius: var(--cv-r-card)");
-      expect(block, `${selector}: surface`).toContain("background: var(--cv-popover)");
-      expect(block, `${selector}: shadow`).toContain("box-shadow: var(--cv-shadow-pop)");
-    }
-  });
-
-  it("keeps focused popup rows on the contrast-checked tint treatment", () => {
-    for (const selector of [
-      ".app-shell .monaco-editor .suggest-widget .monaco-list .monaco-list-row.focused",
-      ".app-shell .monaco-menu .monaco-action-bar.vertical .action-item.focused .action-menu-item",
-      ".app-shell .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled)",
-    ]) {
-      const block = cssBlockContainingSelector(widgetCss, selector);
-      expect(block, `${selector}: selected background`).toContain("var(--cv-tint-3)");
-    }
-
-    const actionRow = cssBlockContainingSelector(
-      widgetCss,
-      ".app-shell .action-widget .monaco-list .monaco-list-row.action.focused:not(.option-disabled)",
-    );
-    expect(actionRow).toContain("color: var(--cv-fg-strong)");
-  });
-
-  it("styles Monaco's fallback quick input with palette chrome inside the editor", () => {
-    const host = cssBlock(widgetCss, '.app-shell .monaco-editor [widgetid$="quickInputWidget"]');
-    expect(cssDeclaration(host, "left")).toBe("0 !important");
-    expect(cssDeclaration(host, "width")).toBe("100%");
-
-    const widget = cssBlock(widgetCss, ".app-shell .monaco-editor .quick-input-widget");
-    for (const [token, value] of [
-      ["--vscode-quickInput-background", "var(--cv-popover)"],
-      ["--vscode-quickInput-foreground", "var(--cv-fg)"],
-      ["--vscode-quickInputList-focusBackground", "var(--cv-tint-3)"],
-      ["--vscode-quickInputList-focusForeground", "var(--cv-fg-strong)"],
-      ["--vscode-list-highlightForeground", "var(--cv-accent)"],
-      ["--vscode-input-background", "var(--cv-tint-1)"],
-      ["--vscode-input-border", "transparent"],
-      ["--vscode-focusBorder", "transparent"],
-      ["border-radius", "var(--cv-r-card)"],
-      ["background", "var(--cv-popover)"],
-      ["color", "var(--cv-fg)"],
-    ] as const) {
-      expect(cssDeclaration(widget, token), token).toBe(value);
-    }
-
-    expect(
-      cssDeclaration(
-        cssBlock(widgetCss, ".app-shell .monaco-editor .quick-input-widget .monaco-inputbox"),
-        "box-shadow",
-      ),
-    ).toBe("var(--cv-ring-hair)");
-    expect(
-      cssDeclaration(
-        cssBlock(
-          widgetCss,
-          ".app-shell .monaco-editor .quick-input-widget .monaco-inputbox.synthetic-focus",
-        ),
-        "box-shadow",
-      ),
-    ).toBe("var(--cv-ring-hair-strong)");
-    const focusedRow = cssBlock(
-      widgetCss,
-      ".app-shell .monaco-editor .quick-input-widget .monaco-list .monaco-list-row.focused",
-    );
-    expect(cssDeclaration(focusedRow, "background")).toBe("var(--cv-tint-3)");
-    expect(cssDeclaration(focusedRow, "color")).toBe("var(--cv-fg-strong)");
-  });
-
-  it("keeps popup labels readable on the palette popover surface in every palette and scheme", () => {
-    for (const palette of PALETTE_IDS) {
-      for (const scheme of RESOLVED_COLOR_SCHEMES) {
-        const tokens = paletteTokens(palette, scheme);
-        const focused = compositeRgba(schemeTint3(semanticCss, scheme), tokens.popBg);
-        const name = `${palette}/${scheme}`;
-
-        expect(
-          contrastRatio(tokens.fg, tokens.popBg),
-          `${name}: popup foreground on popover ${tokens.popBg}`,
-        ).toBeGreaterThanOrEqual(minimumTextContrast);
-        expect(
-          contrastRatio(tokens.fgStrong, focused),
-          `${name}: focused row foreground on tint-3 ${focused}`,
-        ).toBeGreaterThanOrEqual(minimumTextContrast);
-        expect(
-          contrastRatio(tokens.fgMuted, tokens.popBg),
-          `${name}: muted popup text on popover ${tokens.popBg}`,
-        ).toBeGreaterThanOrEqual(minimumTextContrast);
-      }
-    }
-  });
-});
-
-function schemeTint3(css: string, scheme: ResolvedColorScheme): string {
-  const start = css.indexOf(`:root[data-cv-scheme="${scheme}"] {`);
-  const block = css.slice(start, css.indexOf("}", start));
-  const match = /--cv-tint-3:\s*(rgba\([^)]*\));/.exec(block);
-  expect(match, `--cv-tint-3 in ${scheme}`).not.toBeNull();
-  return match?.[1] ?? "";
-}
-
 function compositeRgba(rgba: string, background: string): string {
   const parts = /rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)/.exec(rgba);
   expect(parts, `rgba color ${rgba}`).not.toBeNull();
@@ -442,36 +276,6 @@ function sourceFiles(directory: string): string[] {
 
     return [".css", ".ts", ".tsx"].includes(extname(entry.name)) ? [path] : [];
   });
-}
-
-function cssBlockContainingSelector(css: string, selector: string): string {
-  let searchFrom = 0;
-
-  while (searchFrom < css.length) {
-    const selectorIndex = css.indexOf(selector, searchFrom);
-
-    if (selectorIndex < 0) {
-      break;
-    }
-
-    const bodyStart = css.indexOf("{", selectorIndex);
-    const previousEnd = css.lastIndexOf("}", selectorIndex);
-    const previousStart = css.lastIndexOf("{", selectorIndex);
-
-    if (bodyStart >= 0 && previousStart <= previousEnd) {
-      const end = css.indexOf("}", bodyStart);
-
-      if (end < 0) {
-        throw new Error(`Unclosed CSS block containing ${selector}`);
-      }
-
-      return css.slice(selectorIndex, end);
-    }
-
-    searchFrom = selectorIndex + selector.length;
-  }
-
-  throw new Error(`Missing CSS block containing ${selector}`);
 }
 
 function escapeRegex(value: string): string {

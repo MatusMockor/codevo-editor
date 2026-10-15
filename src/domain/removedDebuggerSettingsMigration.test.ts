@@ -23,11 +23,11 @@ describe("removed debugger settings migration", () => {
 
   it("ignores stored overrides for removed debugger ids and keeps kept overrides", () => {
     const keymap = normalizeKeymapSettings(
-      { ...REMOVED_DEBUGGER_KEYMAP_OVERRIDES, "editor.save": "Cmd+Alt+S" },
+      { ...REMOVED_DEBUGGER_KEYMAP_OVERRIDES, "commands.show": "Cmd+Alt+S" },
       "mac",
     );
 
-    expect(keymap).toEqual({ ...defaultKeymapSettings("mac"), "editor.save": "Cmd+Alt+S" });
+    expect(keymap).toEqual({ ...defaultKeymapSettings("mac"), "commands.show": "Cmd+Alt+S" });
     for (const id of Object.keys(REMOVED_DEBUGGER_KEYMAP_OVERRIDES)) {
       expect(Object.prototype.hasOwnProperty.call(keymap, id)).toBe(false);
     }
@@ -36,17 +36,16 @@ describe("removed debugger settings migration", () => {
   it("loads an old settings blob that still carries debugger keymap overrides", () => {
     const settings = normalizeAppSettings({
       editorFontSize: 15,
-      keymap: { ...REMOVED_DEBUGGER_KEYMAP_OVERRIDES, "editor.save": "Cmd+Alt+S" },
+      keymap: { ...REMOVED_DEBUGGER_KEYMAP_OVERRIDES, "commands.show": "Cmd+Alt+S" },
     });
 
     expect(settings.editorFontSize).toBe(15);
-    expect(settings.keymap).toEqual({ ...defaultKeymapSettings(), "editor.save": "Cmd+Alt+S" });
+    expect(settings.keymap).toEqual({ ...defaultKeymapSettings(), "commands.show": "Cmd+Alt+S" });
   });
 
-  it("restores a stale debug bottom panel session view as Problems", () => {
+  it("drops a stale debug bottom panel session view", () => {
     expect(
-      normalizeWorkspaceSession({ bottomPanelView: "debug", sidebarView: "git", version: 1 })
-        .bottomPanelView,
-    ).toBe("problems");
+      normalizeWorkspaceSession({ bottomPanelView: "debug", sidebarView: "git", version: 1 }),
+    ).toEqual({ version: 1 });
   });
 });

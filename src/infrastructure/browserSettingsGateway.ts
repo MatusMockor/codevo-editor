@@ -148,13 +148,9 @@ function isQuotaExceededError(error: unknown): boolean {
 }
 
 function serializedWorkspaceSettingsCandidates(settings: WorkspaceSettings): string[] {
-  const sessionWithoutNavigation = { ...settings.session };
-  delete sessionWithoutNavigation.navigation;
-
   return [
     ...new Set([
       JSON.stringify(settings),
-      JSON.stringify({ ...settings, session: sessionWithoutNavigation }),
       JSON.stringify({ ...settings, session: defaultWorkspaceSettings().session }),
     ]),
   ];

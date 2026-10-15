@@ -4,8 +4,7 @@ use super::{
 use crate::workspace_registry::unregister::{WorkspaceAdmissionAdoption, WorkspaceOwnerScope};
 use crate::workspace_registry::{RegistrationOwner, WorkspaceId, WorkspaceRegistry};
 use crate::workspace_runtime::{
-    LanguageServerDisposer, TerminalSessionDisposer, WorkspaceIndexLifecycleDisposer,
-    WorkspaceProcessDisposer, WorkspaceRuntimeDisposal, WorkspaceWatchDisposer,
+    TerminalSessionDisposer, WorkspaceRuntimeDisposal, WorkspaceWatchDisposer,
 };
 use std::{
     fs,
@@ -24,18 +23,6 @@ impl WorkspaceWatchDisposer for CountingRuntime {
     fn stop_workspace_watch(&self, _root_path: &str) {
         self.watch_stops.fetch_add(1, Ordering::SeqCst);
     }
-}
-
-impl LanguageServerDisposer for CountingRuntime {
-    fn stop_language_server(&self, _root_path: &str) {}
-}
-
-impl WorkspaceIndexLifecycleDisposer for CountingRuntime {
-    fn cancel_workspace_index_lifecycle(&self, _root_path: &str) {}
-}
-
-impl WorkspaceProcessDisposer for CountingRuntime {
-    fn stop_workspace_processes(&self, _root_path: &Path) {}
 }
 
 impl TerminalSessionDisposer for CountingRuntime {
@@ -68,12 +55,7 @@ fn close_at(
             expected_canonical_root,
         },
         WorkspaceRuntimeDisposal {
-            index_lifecycle: runtime,
-            javascript_typescript_language_servers: runtime,
-            javascript_typescript_watch_registry: runtime,
             workspace_file_change_watch_registry: runtime,
-            php_language_servers: runtime,
-            eslint_processes: runtime,
             terminal_sessions: runtime,
         },
         |_| {
@@ -149,7 +131,7 @@ fn closing_the_editor_first_keeps_the_agent_owner_and_the_last_close_tears_down_
     );
     assert!(registry.descriptor(&id).is_err());
     assert_eq!(runtime.teardowns.load(Ordering::SeqCst), 1);
-    assert_eq!(runtime.watch_stops.load(Ordering::SeqCst), 2);
+    assert_eq!(runtime.watch_stops.load(Ordering::SeqCst), 1);
     fs::remove_dir_all(root).expect("cleanup");
 }
 

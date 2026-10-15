@@ -195,11 +195,6 @@
     padding-inline: 16px;
   }
 
-  .workbench-toolbar {
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-
   .agent-composer__launch {
     flex: 1 1 100%;
   }
