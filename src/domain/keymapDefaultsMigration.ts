@@ -1,16 +1,18 @@
 import {
   defaultShortcutForCommand,
   detectKeymapPlatform,
+  isNewThreadDefaultShortcut,
   normalizeShortcutInput,
   normalizeShortcutSequenceInput,
   rebindableKeymapCommands,
+  restoredNewThreadPickerShortcut,
   shortcutSequenceForPlatform,
   type KeymapPlatform,
   type RebindableKeymapCommandId,
 } from "./keymap";
 import { windowZoomDefaultConflictsWithShortcut } from "./windowZoomDefaultConflicts";
 
-export const KEYMAP_DEFAULTS_REVISION = 2;
+export const KEYMAP_DEFAULTS_REVISION = 3;
 
 export interface KeymapDefaultsMigration {
   readonly keymap: unknown;
@@ -51,6 +53,7 @@ export function migrateRetiredKeymapDefaults(
   }
 
   if (appliedRevision < 2) preserveCustomBindingsFromNewZoomDefaults(keymap, platform);
+  if (appliedRevision < 3) separateNewThreadPickerFromNewThread(keymap, platform);
 
   return { keymap, revision };
 }
@@ -79,6 +82,15 @@ function preserveCustomBindingsFromNewZoomDefaults(
       continue;
     keymap[id] = "";
   }
+}
+
+function separateNewThreadPickerFromNewThread(
+  keymap: Record<string, unknown>,
+  platform: KeymapPlatform,
+): void {
+  if (!isNewThreadDefaultShortcut(keymap["agent.newThread"], platform)) return;
+  if (!isNewThreadDefaultShortcut(keymap["agent.newThreadIn"], platform)) return;
+  keymap["agent.newThreadIn"] = restoredNewThreadPickerShortcut(keymap, platform);
 }
 
 function normalizeKeymapDefaultsRevision(value: unknown): number {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { detectKeymapPlatform, type KeymapCommandId } from "../domain/keymap";
+import { KEYMAP_DEFAULTS_REVISION } from "../domain/keymapDefaultsMigration";
 import { normalizeAppSettings } from "../domain/settings";
 import { CommandRegistry, executeCommand, type CommandContext } from "./commandRegistry";
 import { dispatchWorkbenchShortcutCommand } from "./workbenchShortcutCommandDispatcher";
@@ -29,7 +30,7 @@ describe("persisted keymap window zoom migration dispatch", () => {
         keymapDefaultsRevision: 1,
       });
       const settings = normalizeAppSettings(JSON.parse(JSON.stringify(loaded)));
-      expect(settings.keymapDefaultsRevision).toBe(2);
+      expect(settings.keymapDefaultsRevision).toBe(KEYMAP_DEFAULTS_REVISION);
       expect(settings.keymap[commandId]).toBe("");
       expect(settings.keymap["editor.save"]).toBe(shortcut);
       expect(settings.keymap).toEqual(loaded.keymap);

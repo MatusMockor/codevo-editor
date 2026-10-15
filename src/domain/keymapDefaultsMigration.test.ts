@@ -110,7 +110,7 @@ describe("migrateRetiredKeymapDefaults", () => {
         "editor.fontZoomReset": `${primary}+0`,
       };
       const migration = migrateRetiredKeymapDefaults(persisted, 1, platform);
-      expect(migration.revision).toBe(2);
+      expect(migration.revision).toBe(KEYMAP_DEFAULTS_REVISION);
       expect(normalizeKeymapSettings(migration.keymap, platform)).toMatchObject({
         "editor.fontZoomIn": "",
         "editor.fontZoomOut": "",
@@ -268,5 +268,56 @@ describe("migrateRetiredKeymapDefaults", () => {
     expect(
       migratedKeymap({ "editor.foldAll": 7, "editor.unfoldAll": null }, undefined, "mac"),
     ).toMatchObject({ "editor.foldAll": "Cmd+Alt+-", "editor.unfoldAll": "Cmd+Alt+=" });
+  });
+});
+
+describe("New thread picker collision repair", () => {
+  it.each([
+    ["mac", "Cmd+Shift+N", "Cmd+Shift+N", "Cmd+N"],
+    ["mac", "shift+cmd+n", "Shift+Cmd+N", "Cmd+N"],
+    ["linux", "Ctrl+Shift+N", "Ctrl+Shift+N", "Ctrl+N"],
+    ["windows", "Cmd+Shift+N", "Ctrl+Shift+N", "Ctrl+N"],
+  ] as const)(
+    "moves the %s picker off a shared %s back to its default",
+    (platform, shared, newThread, newThreadIn) => {
+      const persisted = { "agent.newThread": shared, "agent.newThreadIn": shared };
+      const migration = migrateRetiredKeymapDefaults(persisted, 2, platform);
+
+      expect(normalizeKeymapSettings(migration.keymap, platform)).toMatchObject({
+        "agent.newThread": newThread,
+        "agent.newThreadIn": newThreadIn,
+      });
+      expect(migration.revision).toBe(KEYMAP_DEFAULTS_REVISION);
+      expect(migrateRetiredKeymapDefaults(migration.keymap, migration.revision, platform)).toEqual(
+        migration,
+      );
+      expect(persisted).toEqual({ "agent.newThread": shared, "agent.newThreadIn": shared });
+    },
+  );
+
+  it("leaves the picker unbound when a custom binding already owns its default", () => {
+    const keymap = migratedKeymap(
+      {
+        "agent.newThread": "Cmd+Shift+N",
+        "agent.newThreadIn": "Cmd+Shift+N",
+        "editor.save": "Cmd+N",
+      },
+      2,
+      "mac",
+    );
+
+    expect(keymap).toMatchObject({
+      "agent.newThread": "Cmd+Shift+N",
+      "agent.newThreadIn": "",
+      "editor.save": "Cmd+N",
+    });
+  });
+
+  it.each([
+    [{ "agent.newThread": "Cmd+Shift+N", "agent.newThreadIn": "Cmd+Alt+N" }, 2],
+    [{ "agent.newThread": "Cmd+Alt+N", "agent.newThreadIn": "Cmd+Alt+N" }, 2],
+    [{ "agent.newThread": "Cmd+Shift+N", "agent.newThreadIn": "Cmd+Shift+N" }, 3],
+  ] as const)("keeps New thread bindings %j saved at revision %i", (persisted, revision) => {
+    expect(migratedKeymap(persisted, revision, "mac")).toMatchObject(persisted);
   });
 });

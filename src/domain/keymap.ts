@@ -1099,7 +1099,7 @@ export function normalizeKeymapSettings(
   }
 
   const keymap = { ...defaults };
-  const persisted = withNewThreadPickerBindingMigrated(value);
+  const persisted = withNewThreadPickerBindingMigrated(value, platform);
 
   for (const command of rebindableKeymapCommands) {
     const shortcut = persisted[command.id];
@@ -1120,11 +1120,38 @@ export function normalizeKeymapSettings(
 
 function withNewThreadPickerBindingMigrated(
   value: Record<string, unknown>,
+  platform: KeymapPlatform,
 ): Record<string, unknown> {
   if (value["agent.newThreadIn"] !== undefined) return value;
   const { "agent.newThread": pickerShortcut, ...rest } = value;
   if (pickerShortcut === undefined) return value;
-  return { ...rest, "agent.newThreadIn": pickerShortcut };
+  if (!isNewThreadDefaultShortcut(pickerShortcut, platform)) {
+    return { ...rest, "agent.newThreadIn": pickerShortcut };
+  }
+  return { ...value, "agent.newThreadIn": restoredNewThreadPickerShortcut(value, platform) };
+}
+
+export function restoredNewThreadPickerShortcut(
+  persisted: Record<string, unknown>,
+  platform: KeymapPlatform,
+): string {
+  const pickerShortcut = defaultShortcutForCommand("agent.newThreadIn", platform);
+  const pickerShortcutTaken = rebindableKeymapCommands.some(({ id }) => {
+    const value = persisted[id];
+    if (id === "agent.newThreadIn" || typeof value !== "string") return false;
+    const shortcut = normalizeShortcutSequenceInput(normalizeShortcutInput(value));
+    return shortcutSequenceForPlatform(shortcut, platform) === pickerShortcut;
+  });
+  return pickerShortcutTaken ? "" : pickerShortcut;
+}
+
+export function isNewThreadDefaultShortcut(value: unknown, platform: KeymapPlatform): boolean {
+  if (typeof value !== "string") return false;
+  const shortcut = normalizeShortcutSequenceInput(normalizeShortcutInput(value));
+  return (
+    shortcut === defaultShortcutForCommand("agent.newThread", "mac") ||
+    shortcut === defaultShortcutForCommand("agent.newThread", platform)
+  );
 }
 
 export function shortcutForCommand(

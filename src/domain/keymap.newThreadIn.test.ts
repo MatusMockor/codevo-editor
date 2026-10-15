@@ -52,6 +52,39 @@ describe("agent.newThreadIn keybinding", () => {
     });
   });
 
+  it.each([
+    ["mac", "Cmd+Shift+N", "Cmd+Shift+N", "Cmd+N"],
+    ["mac", "shift+cmd+n", "Shift+Cmd+N", "Cmd+N"],
+    ["linux", "Ctrl+Shift+N", "Ctrl+Shift+N", "Ctrl+N"],
+    ["linux", "Cmd+Shift+N", "Ctrl+Shift+N", "Ctrl+N"],
+    ["windows", "Ctrl+Shift+N", "Ctrl+Shift+N", "Ctrl+N"],
+  ] as const)(
+    "keeps a %s keymap that lost the picker binding on the current New thread default %s",
+    (platform, persisted, newThread, newThreadIn) => {
+      expect(normalizeKeymapSettings({ "agent.newThread": persisted }, platform)).toMatchObject({
+        "agent.newThread": newThread,
+        "agent.newThreadIn": newThreadIn,
+      });
+    },
+  );
+
+  it.each([
+    ["mac", "Cmd+Shift+N", "Cmd+N"],
+    ["linux", "Ctrl+Shift+N", "Ctrl+N"],
+    ["windows", "Ctrl+Shift+N", "Ctrl+N"],
+  ] as const)(
+    "leaves a missing %s picker unbound when a custom binding owns its default",
+    (platform, newThread, owned) => {
+      expect(
+        normalizeKeymapSettings({ "agent.newThread": newThread, "editor.save": owned }, platform),
+      ).toMatchObject({
+        "agent.newThread": newThread,
+        "agent.newThreadIn": "",
+        "editor.save": owned,
+      });
+    },
+  );
+
   it("keeps both bindings once the picker command has been saved", () => {
     expect(
       normalizeKeymapSettings(
