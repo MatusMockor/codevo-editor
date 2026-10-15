@@ -7,6 +7,20 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.125] - 2026-10-15
+
+### Fixed
+
+- A local project that is a plain folder (not a git repository) and the same
+  folder added on a server now show as one project. A new thread switched with
+  **Run on** to that server stays in the project instead of asking you to choose
+  a server project. Folders pair only when both are trusted and the folder name
+  is unique locally and on that server.
+- When the selected project is not on the server yet, the server project chooser
+  says so and offers to add it there (for example **Add playablemaker on this
+  server**), prefilling the path when a folder with that name already exists in
+  the server projects folder.
+
 ## [0.2.0-beta.124] - 2026-10-15
 
 ### Added
