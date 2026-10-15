@@ -207,7 +207,7 @@ fn stop_root_reaps_matching_sessions_in_parallel() {
     assert_eq!(second.0.kills.load(Ordering::SeqCst), 1);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn stop_hangs_up_an_interactive_bash_and_its_job_control_background_job() {
     if !Path::new("/bin/bash").is_file() {

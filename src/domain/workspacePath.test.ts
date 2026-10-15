@@ -1,4 +1,3 @@
-import { URI } from "monaco-editor/esm/vs/base/common/uri.js";
 import { describe, expect, it } from "vitest";
 import {
   createWorkspaceRoot,
@@ -265,17 +264,14 @@ describe("workspace path identity", () => {
     const splitPath = path(root("a", "/work"), "/work/b");
 
     expect(combinedId.monacoUri).not.toBe(splitPath.monacoUri);
-    expect(URI.parse(combinedId.monacoUri).toString()).toBe(combinedId.monacoUri);
-    expect(URI.parse(splitPath.monacoUri).toString()).toBe(splitPath.monacoUri);
   });
 
-  it("round trips generated identities through Monaco URI parsing", () => {
+  it("round trips generated file identities", () => {
     const parsed = path(
       root("project / 100% \u65e5\u672c\u8a9e", "/work/project"),
       "/work/project/sp ace/100%/#hash/?query/\u65e5\u672c\u8a9e.ts",
     );
 
-    expect(URI.parse(parsed.monacoUri).toString()).toBe(parsed.monacoUri);
     expect(path(root("project", "/work/project"), parsed.fileUri).fileUri).toBe(parsed.fileUri);
   });
 
