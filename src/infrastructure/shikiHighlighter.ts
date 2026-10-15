@@ -105,6 +105,35 @@ function optionalColor(key: string, value: string | undefined): Record<string, s
   return value === undefined ? {} : { [key]: value };
 }
 
+type ShikiTokenRule = ShikiThemeRegistration["tokenColors"][number];
+
+function tokenRule(scope: string[], foreground: string, fontStyle?: string): ShikiTokenRule {
+  return { scope, settings: fontStyle === undefined ? { foreground } : { foreground, fontStyle } };
+}
+
+function buildMarkupAndKeyRules(p: ThemePalette): ShikiTokenRule[] {
+  return [
+    tokenRule(["entity.name.tag"], p.keyword),
+    tokenRule(["punctuation.definition.tag"], p.operator),
+    tokenRule(["entity.other.attribute-name"], p.func),
+    tokenRule(["support.type.property-name"], p.type),
+    tokenRule(["variable.other.key", "variable.key.dotenv"], p.keyword),
+    tokenRule(["property.value.dotenv"], p.string),
+    tokenRule(["entity.name.section"], p.type),
+    tokenRule(["markup.heading", "entity.name.section.markdown"], p.keyword, "bold"),
+    tokenRule(["markup.bold"], p.fg, "bold"),
+    tokenRule(["markup.italic"], p.fg, "italic"),
+    tokenRule(["markup.inline.raw", "markup.fenced_code.block"], p.string),
+    tokenRule(["markup.underline.link"], p.func),
+    tokenRule(["markup.quote"], p.comment, "italic"),
+    tokenRule(["punctuation.definition.list.begin.markdown"], p.operator),
+    tokenRule(["markup.inserted"], p.overviewAdded ?? p.string),
+    tokenRule(["markup.deleted"], p.overviewDeleted ?? p.keyword),
+    tokenRule(["meta.diff.header"], p.keyword),
+    tokenRule(["meta.diff.range"], p.func),
+  ];
+}
+
 export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
   const tok = (scope: string[], foreground: string, italic = false) => ({
     scope,
@@ -266,6 +295,7 @@ export function buildShikiTheme(p: ThemePalette): ShikiThemeRegistration {
         p.decorator,
       ),
       tok(["keyword.operator"], p.operator),
+      ...buildMarkupAndKeyRules(p),
       // Semantic token rules: Monaco resolves LSP semantic tokens through this
       // same array, so they must be appended for semantic highlighting to color.
       ...semanticTokenRules,
@@ -307,6 +337,7 @@ function materialDeepOceanTheme(): ShikiThemeRegistration {
       tok(["variable.other.property", "variable.other.object.property", "meta.property"], "#eeffff"),
       tok(["entity.name.namespace", "support.other.namespace"], "#c3d3de"),
       tok(["keyword.operator", "punctuation"], "#89ddff"),
+      ...buildMarkupAndKeyRules(materialDeepOcean),
       // Semantic token rules let JS/TS LSP semantic highlighting color
       // functions/parameters/types in this theme too (PHP keeps the bespoke
       // TextMate rules above).

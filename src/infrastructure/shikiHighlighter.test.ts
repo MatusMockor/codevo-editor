@@ -1,9 +1,13 @@
 import { EncodedTokenMetadata, INITIAL, type IToken } from "shiki/textmate";
 import { describe, expect, it } from "vitest";
 import { APP_SHIKI_THEMES, SHIKI_LANGS, buildShikiTheme, createAppHighlighter } from "./shikiHighlighter";
-import { calmDark } from "../components/themePalettes";
+import { calmDark, customPalettes } from "../components/themePalettes";
 import { contrastRatio } from "../domain/themeContrast";
 import { PALETTE_SYNTAX_THEMES } from "./paletteSyntaxThemes";
+import { highlightWithShiki } from "./codeHighlight/shikiCodeTokens";
+import type { CodeLanguageId } from "../domain/codeHighlight/codeLanguage";
+import type { CodeToken } from "../domain/codeHighlight/highlightedCode";
+import type { MonacoAppTheme } from "../domain/editorColorThemes";
 
 describe("buildShikiTheme", () => {
   it("maps palette to a TextMate theme", () => {
@@ -378,5 +382,146 @@ describe("Latte / NEON grammar fixes (real TextMate scopes)", () => {
 
     const classScopes = scopesAtWord(result.tokens, line, "App\\X");
     expect(classScopes.some((scope) => scope.includes("entity.name.class.neon"))).toBe(true);
+  });
+});
+
+describe("markup, tag and key scope coverage", () => {
+  const DEFAULT_THEME = "cv-graphite-teal-dark";
+
+  interface Contrast {
+    readonly language: CodeLanguageId;
+    readonly text: string;
+    readonly distinct: ReadonlyArray<readonly [string, string]>;
+  }
+
+  const CASES: readonly Contrast[] = [
+    {
+      language: "yaml",
+      text: "services:\n  web:\n    image: nginx\n",
+      distinct: [
+        ["services", "nginx"],
+        ["image", "nginx"],
+      ],
+    },
+    {
+      language: "json",
+      text: '{\n  "name": "codevo"\n}\n',
+      distinct: [["name", "codevo"]],
+    },
+    {
+      language: "html",
+      text: '<div class="box">Hello</div>\n',
+      distinct: [
+        ["div", "Hello"],
+        ["class", "box"],
+        ["class", "Hello"],
+      ],
+    },
+    {
+      language: "css",
+      text: '.box {\n  content: "x";\n}\n',
+      distinct: [["content", "x"]],
+    },
+    {
+      language: "toml",
+      text: '[package]\nname = "codevo"\n',
+      distinct: [
+        ["name", "codevo"],
+        ["package", "codevo"],
+      ],
+    },
+  ];
+
+  async function tokensOf(theme: string, language: CodeLanguageId, text: string) {
+    const outcome = await highlightWithShiki(await createAppHighlighter(), {
+      language,
+      text,
+      theme: theme as MonacoAppTheme,
+    });
+    expect(outcome.kind, `${theme} ${language}`).toBe("highlighted");
+    return outcome.kind === "highlighted" ? outcome.lines.flat() : [];
+  }
+
+  function colorOf(tokens: readonly CodeToken[], needle: string, label: string) {
+    const token =
+      tokens.find((candidate) => candidate.text.trim().replace(/^"|"$/g, "") === needle) ??
+      tokens.find((candidate) => candidate.text.includes(needle));
+    expect(token, `${label}: no token "${needle}" in ${JSON.stringify(tokens)}`).toBeDefined();
+    return token?.color ?? null;
+  }
+
+  it("colors keys, tags and attributes apart from values and text in the default palette theme", async () => {
+    for (const { language, text, distinct } of CASES) {
+      const tokens = await tokensOf(DEFAULT_THEME, language, text);
+      for (const [key, value] of distinct) {
+        const label = `${DEFAULT_THEME} ${language} ${key}/${value}`;
+        const keyColor = colorOf(tokens, key, label);
+        expect(keyColor, label).not.toBeNull();
+        expect(keyColor, label).not.toBe(colorOf(tokens, value, label));
+      }
+    }
+  });
+
+  it("keeps keys, tags and attributes distinct in every app theme", async () => {
+    for (const theme of APP_SHIKI_THEMES) {
+      for (const { language, text, distinct } of CASES) {
+        const tokens = await tokensOf(theme, language, text);
+        for (const [key, value] of distinct) {
+          const label = `${theme} ${language} ${key}/${value}`;
+          expect(colorOf(tokens, key, label), label).not.toBe(colorOf(tokens, value, label));
+        }
+      }
+    }
+  });
+
+  it("defines the markup, tag and key scopes in every generated app theme", async () => {
+    const highlighter = await createAppHighlighter();
+    const generated = [
+      "material-deep-ocean",
+      ...customPalettes.map((palette) => palette.name),
+      ...PALETTE_SYNTAX_THEMES.map((palette) => palette.name),
+    ];
+    for (const theme of generated) {
+      const rules = highlighter.getTheme(theme).settings;
+      for (const scope of [
+        "entity.name.tag",
+        "punctuation.definition.tag",
+        "entity.other.attribute-name",
+        "support.type.property-name",
+        "variable.other.key",
+        "variable.key.dotenv",
+        "entity.name.section",
+        "markup.heading",
+        "markup.inline.raw",
+        "markup.inserted",
+        "markup.deleted",
+      ]) {
+        const covered = rules.some((rule) =>
+          Array.isArray(rule.scope) ? rule.scope.includes(scope) : rule.scope === scope,
+        );
+        expect(covered, `${theme} ${scope}`).toBe(true);
+      }
+    }
+  });
+
+  it("paints markup, tag and key tokens readably in every Match palette theme", async () => {
+    const samples: ReadonlyArray<readonly [CodeLanguageId, string]> = [
+      ["yaml", "services:\n  image: nginx\n"],
+      ["html", '<div class="box">Hello</div>\n'],
+      ["toml", '[package]\nname = "codevo"\n'],
+      ["dotenv", "API_KEY=secret\n"],
+      ["markdown", "# Title\n\nUse `code` and [docs](http://x).\n"],
+      ["diff", "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n"],
+    ];
+    for (const palette of PALETTE_SYNTAX_THEMES) {
+      for (const [language, text] of samples) {
+        for (const token of await tokensOf(palette.name, language, text)) {
+          if (token.text.trim() === "") continue;
+          const label = `${palette.name} ${language} ${JSON.stringify(token.text)} ${token.color}`;
+          expect(token.color, label).not.toBeNull();
+          expect(contrastRatio(token.color ?? "", palette.bg), label).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
   });
 });
