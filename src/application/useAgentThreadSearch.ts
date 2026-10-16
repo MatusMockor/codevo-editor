@@ -15,6 +15,7 @@ import {
 } from "../domain/agentTurnContentLoss";
 import type { AgentTurnLogFactsSource } from "./agentTurnLogStatusStore";
 import { useRemoteThreadSearchResults } from "./useRemoteThreadSearchResults";
+import { useLiveAgentThreadViews } from "./agentThreads/useLiveAgentThread";
 import type {
   AgentHistorySearchPort,
   AgentThreadSearchSurface,
@@ -55,7 +56,7 @@ export const EMPTY_AGENT_THREAD_SEARCH_INDEX: AgentThreadSearchIndex = {
 const NO_EVIDENCE_REVISIONS: ReadonlyMap<string, number> = new Map();
 
 export function useAgentThreadSearch(
-  views: ReadonlyArray<AgentThreadView>,
+  shownViews: ReadonlyArray<AgentThreadView>,
   options: AgentThreadSearchOptions = {},
 ): AgentThreadSearchSurface {
   const debounceMs = options.debounceMs ?? AGENT_THREAD_SEARCH_DEBOUNCE_MS;
@@ -68,6 +69,7 @@ export function useAgentThreadSearch(
   const [pending, setPending] = useState(false);
   const [evidenceRevisions, setEvidenceRevisions] =
     useState<ReadonlyMap<string, number>>(NO_EVIDENCE_REVISIONS);
+  const views = useLiveAgentThreadViews(shownViews, normalizeThreadSearchQuery(query) !== null);
 
   const evidenceRevisionOf = useCallback<AgentThreadEvidenceRevisionLookup>(
     (threadId) => evidenceRevisions.get(threadId) ?? turnLog?.evidenceRevisionOf(threadId) ?? 0,

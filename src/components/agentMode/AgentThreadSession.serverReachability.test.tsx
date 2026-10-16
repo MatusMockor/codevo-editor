@@ -300,7 +300,7 @@ describe("live progress indicators while the server is not reachable", () => {
         externalOrigin: null,
       },
       ship: { kind: "idle", status: null, loadingStatus: false },
-      editorAvailability: { kind: "available" },
+      fileNavigationAvailability: { kind: "available" },
       attention: "running",
       unread: false,
       lifecycle: "running",

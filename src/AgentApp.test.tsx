@@ -74,6 +74,31 @@ function pressShortcut(key: string, options: KeyboardEventInit = {}): void {
 }
 
 describe("AgentApp", () => {
+  it("hands the workbench screen the adapter ports of its composition", async () => {
+    const load = vi.fn(() => []);
+    const threadNotificationPorts = vi.fn(() => ({
+      focus: { isFocused: () => true, subscribe: () => () => undefined },
+      system: {
+        notify: async () => "unavailable" as const,
+        setBadgeCount: async () => undefined,
+        recheckPermission: () => undefined,
+      },
+    }));
+    await renderOpenedApp({
+      agentWorkbenchPorts: {
+        sessionRestore: {
+          projectSelections: { load, save: vi.fn() },
+          composerDrafts: null,
+          transcriptPositions: null,
+        },
+        threadNotificationPorts,
+      },
+    });
+
+    expect(load).toHaveBeenCalled();
+    expect(threadNotificationPorts).toHaveBeenCalled();
+  });
+
   it("mounts the agent screen in StrictMode with the agent window title", async () => {
     const app = await renderOpenedApp();
 

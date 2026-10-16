@@ -7,7 +7,7 @@ import type {
 } from "../../application/codeHighlight/codeHighlighter";
 import { isCodeLanguageId, type CodeLanguageId } from "../../domain/codeHighlight/codeLanguage";
 import { MAX_HIGHLIGHT_BATCH_TEXTS } from "../../domain/codeHighlight/highlightedCode";
-import type { MonacoAppTheme } from "../../domain/settings";
+import type { CodeTheme } from "../../domain/settings";
 
 export type CodeHighlightWorkerRequest =
   | {
@@ -65,10 +65,10 @@ function parseBatchRequest(requestId: number, request: unknown): CodeHighlightWo
 
 function parseTarget(
   request: Record<string, unknown>,
-): { readonly language: CodeLanguageId; readonly theme: MonacoAppTheme } | null {
+): { readonly language: CodeLanguageId; readonly theme: CodeTheme } | null {
   if (typeof request.language !== "string" || !isCodeLanguageId(request.language)) return null;
   if (typeof request.theme !== "string" || request.theme.length === 0) return null;
-  return { language: request.language, theme: request.theme as MonacoAppTheme };
+  return { language: request.language, theme: request.theme as CodeTheme };
 }
 
 export function parseWorkerResponse(value: unknown): CodeHighlightWorkerResponse | null {

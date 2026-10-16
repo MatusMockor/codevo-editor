@@ -270,7 +270,7 @@ export class TauriWorkspaceIdentityGateway
       this.assertActive(admission);
       const result = parseWorkspaceOwnerReleaseResult(await this.invokeReservedCleanup(owner));
       this.assertActive(admission);
-      if (releasesEditorOwnership(result)) {
+      if (releasesWorkspaceOwnership(result)) {
         this.forgetAdmission(owner.workspaceId, admissionToken);
       }
       return result;
@@ -667,7 +667,7 @@ function isWorkspaceOwnerReleaseStatus(
   return WORKSPACE_OWNER_RELEASE_STATUSES.has(status as WorkspaceOwnerReleaseResult["status"]);
 }
 
-function releasesEditorOwnership(result: WorkspaceOwnerReleaseResult): boolean {
+function releasesWorkspaceOwnership(result: WorkspaceOwnerReleaseResult): boolean {
   switch (result.status) {
     case "released":
     case "retainedByOtherOwners":

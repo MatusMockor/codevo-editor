@@ -19,7 +19,6 @@ import type { AgentCliKind } from "../../../domain/agentTask";
 import { agentProviderLabel } from "../../agentMode/agentSidebarPresentation";
 import { elapsedLabel } from "../../usage/usagePresentation";
 
-export const MCP_PROVIDERS: ReadonlyArray<AgentCliKind> = ["claudeCode", "codex"];
 export const MCP_NO_PROJECT_NOTICE = "Open a project to see its MCP servers.";
 export const MCP_UNAVAILABLE_NOTICE = "MCP server status is not available in this window.";
 export const MCP_TRUNCATED_NOTICE = "Some servers are not shown.";

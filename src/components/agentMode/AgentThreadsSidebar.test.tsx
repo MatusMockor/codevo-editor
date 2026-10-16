@@ -2440,7 +2440,7 @@ function threadView(threadId: string, title: string, options: ThreadViewOptions)
             status: null,
             receipt: { branch, remote: "origin", compareUrl: null },
           },
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
     thread,

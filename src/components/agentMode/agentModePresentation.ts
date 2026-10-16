@@ -11,7 +11,6 @@ import type {
 } from "../../domain/agentTask";
 import {
   UNTITLED_AGENT_THREAD_TITLE,
-  runningTurn,
   type AgentThread,
   type AgentThreadAttention,
   type AgentThreadLifecycle,
@@ -30,13 +29,11 @@ import {
   agentQuestionOutputMayCarryImages,
   isAgentQuestionTool,
 } from "../../domain/agentQuestionTranscript";
-import type { GitChangeStatus, GitChangedFile, GitFileDiff } from "../../domain/git";
+import type { GitChangeStatus, GitChangedFile } from "../../domain/git";
 import type { GitShipStatus } from "../../domain/gitIntegration";
 import { gitRepositoryDisplayName } from "../../domain/gitRepositoryMapping";
 import { relativeTime } from "../../domain/relativeTime";
-import { detectLanguage } from "../../domain/workspace";
 import type {
-  AgentTaskChangeSummary,
   AgentTaskFileDiff,
   AgentThreadView,
   OrphanedWorktreeView,
@@ -170,10 +167,6 @@ export function lastAgentTurn(thread: AgentThread): AgentTurn | null {
   return thread.turns[thread.turns.length - 1] ?? null;
 }
 
-export function lastAgentTurnStatus(thread: AgentThread): AgentTurnStatus | null {
-  return lastAgentTurn(thread)?.status ?? null;
-}
-
 export function agentThreadDisplayTitle(thread: AgentThread): string {
   const title = thread.title.trim();
   if (title === "") return UNTITLED_AGENT_THREAD_TITLE;
@@ -195,10 +188,6 @@ export function agentTurnCarriesAttachments(turn: AgentTurn): boolean {
       agentQuestionOutputMayCarryImages(event.outputSummary)
     );
   });
-}
-
-export function agentRunningTurnCount(thread: AgentThread): number {
-  return runningTurn(thread) === null ? 0 : 1;
 }
 
 export interface AgentFollowUpContext {
@@ -656,8 +645,6 @@ export const AGENT_SHIP_BLOCKED_IN_PLACE_WORKTREE =
   "Threads in the local checkout have no worktree to remove.";
 export const AGENT_SHIP_BLOCKED_DELETE_BRANCH = "Integrate the branch before deleting it.";
 export const AGENT_SHIP_BLOCKED_NOTHING_TO_INTEGRATE = "The branch has no commits to integrate.";
-export const AGENT_SHIP_BLOCKED_EMPTY_MESSAGE = "Write a commit message first.";
-export const AGENT_SHIP_BLOCKED_LONG_MESSAGE = "The commit message is too long.";
 export const AGENT_SHIP_AUTHORITY_LOST =
   "The project changed while the step was running, so nothing was published.";
 
@@ -851,14 +838,6 @@ export function agentShipDefaultIntegrationMode(
   return status.relation.fastForwardable ? "fastForward" : "merge";
 }
 
-export function agentShipCommitMessageAvailability(message: string): AgentShipAvailability {
-  if (message.trim() === "") return blocked(AGENT_SHIP_BLOCKED_EMPTY_MESSAGE);
-  if (agentPromptByteLength(message) > MAX_AGENT_SHIP_COMMIT_MESSAGE_BYTES) {
-    return blocked(AGENT_SHIP_BLOCKED_LONG_MESSAGE);
-  }
-  return AVAILABLE;
-}
-
 export function agentShipAvailability(view: AgentThreadView): AgentShipAvailabilityMap {
   const gate = agentShipGate(view);
   const worktree = view.thread.target.isolation === "worktree";
@@ -887,7 +866,7 @@ export function agentChangeOpenAvailability(
   change: GitChangedFile,
 ): AgentShipAvailability {
   if (change.status === "deleted") return blocked("This file was deleted in the worktree.");
-  return view.editorAvailability;
+  return view.fileNavigationAvailability;
 }
 
 function agentShipGate(view: AgentThreadView): AgentShipAvailability | null {
@@ -1059,28 +1038,6 @@ export function agentSurfaceTargetPath(view: AgentThreadView): string {
 
 export function agentSurfaceTargetGone(view: AgentThreadView): boolean {
   return view.worktreeMissing || view.worktreeRemoved || view.ship.kind === "worktreeRemoved";
-}
-
-export function agentChangedFilesCueLabel(summary: AgentTaskChangeSummary): string | null {
-  if (summary.loading || summary.error !== null) return null;
-  const count = summary.files.length;
-  if (count === 0) return null;
-  const suffix = summary.truncated ? "+" : "";
-  if (count === 1 && !summary.truncated) return "1 file changed";
-  return `${count}${suffix} files changed`;
-}
-
-export function agentFileDiffToGitFileDiff(
-  diff: AgentTaskFileDiff,
-  change: GitChangedFile,
-): GitFileDiff {
-  return {
-    change,
-    language: detectLanguage(change.path),
-    originalContent: diff.original.text,
-    modifiedContent: diff.modified.text,
-    previewUnavailableReason: diff.unavailableReason,
-  };
 }
 
 export function agentFileDiffTruncated(diff: AgentTaskFileDiff): boolean {

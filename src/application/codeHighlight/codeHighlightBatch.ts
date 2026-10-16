@@ -4,7 +4,7 @@ import {
   exceedsHighlightBatchBudget,
   type HighlightedLines,
 } from "../../domain/codeHighlight/highlightedCode";
-import type { MonacoAppTheme } from "../../domain/settings";
+import type { CodeTheme } from "../../domain/settings";
 import {
   CodeHighlighterContext,
   CodeHighlightThemeContext,
@@ -125,7 +125,7 @@ function batchMatches(
   highlighter: CodeHighlighter,
   texts: readonly string[],
   language: CodeLanguageId,
-  theme: MonacoAppTheme,
+  theme: CodeTheme,
 ): boolean {
   const request = published.request;
   if (published.highlighter !== highlighter) return false;

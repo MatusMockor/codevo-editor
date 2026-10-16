@@ -81,7 +81,7 @@ function samePresentationView(left: AgentThreadView, right: AgentThreadView): bo
     left.changeSummary === right.changeSummary &&
     left.sessionBackground === right.sessionBackground &&
     left.ship === right.ship &&
-    left.editorAvailability === right.editorAvailability &&
+    left.fileNavigationAvailability === right.fileNavigationAvailability &&
     left.attention === right.attention &&
     left.unread === right.unread &&
     leftThread.threadId === rightThread.threadId &&
@@ -114,7 +114,7 @@ function sameSurfaceView(left: AgentThreadView, right: AgentThreadView): boolean
     left.worktreeRemoved === right.worktreeRemoved &&
     left.worktreeMissing === right.worktreeMissing &&
     left.changeSummary === right.changeSummary &&
-    left.editorAvailability === right.editorAvailability
+    left.fileNavigationAvailability === right.fileNavigationAvailability
   );
 }
 

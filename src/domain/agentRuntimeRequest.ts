@@ -79,8 +79,6 @@ export interface AgentRuntimeApprovalBody {
   readonly decisions: readonly AgentApprovalDecision[];
 }
 
-export type AgentRuntimeRequestBody = AgentRuntimeQuestionBody | AgentRuntimeApprovalBody;
-
 export interface AgentRuntimeAnswersResolution {
   readonly kind: "answers";
   readonly answers: readonly AgentQuestionAnswer[];
@@ -90,9 +88,6 @@ export interface AgentRuntimeDecisionResolution {
   readonly kind: "decision";
   readonly decision: AgentApprovalDecision;
 }
-
-export type AgentRuntimeRequestResolution =
-  AgentRuntimeAnswersResolution | AgentRuntimeDecisionResolution;
 
 interface LiveCapability {
   readonly kind: "live";
@@ -104,8 +99,6 @@ interface NotResumableCapability<
   readonly kind: "notResumable";
   readonly reason: Reason;
 }
-
-export type AgentRuntimeRequestResponseCapability = LiveCapability | NotResumableCapability;
 
 type RequestLifecycle<Resolution> =
   | {

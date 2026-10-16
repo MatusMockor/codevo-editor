@@ -66,10 +66,6 @@ export function rebaseOwnedSelection(
   return ownedListSelection(owner);
 }
 
-export function isSelected(selection: ListSelection, id: string): boolean {
-  return selection.ids.has(id);
-}
-
 export function selectionCount(selection: ListSelection): number {
   return selection.ids.size;
 }

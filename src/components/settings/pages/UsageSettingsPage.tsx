@@ -35,6 +35,7 @@ import type {
   SettingsUsageProvider,
 } from "../settingsPageProps";
 import { useSettingsRowTarget } from "../settingsTargetContext";
+import { useLiveAgentThreads } from "../../../application/agentThreads/useLiveAgentThread";
 
 const PROVIDERS: ReadonlyArray<SettingsUsageProvider> = ["claudeCode", "codex"];
 const PERIOD_OPTIONS: ReadonlyArray<{ readonly value: AgentUsagePeriod; readonly label: string }> =
@@ -237,8 +238,12 @@ function LocalActivity({
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
 }) {
   const [period, setPeriod] = useState<AgentUsagePeriod>("7days");
-  const threads = useMemo(() => activity.threads.map((view) => view.thread), [activity.threads]);
-  const threadIds = useMemo(() => threads.map((thread) => thread.threadId), [threads]);
+  const shownThreads = useMemo(
+    () => activity.threads.map((view) => view.thread),
+    [activity.threads],
+  );
+  const threads = useLiveAgentThreads(shownThreads, true);
+  const threadIds = useMemo(() => shownThreads.map((thread) => thread.threadId), [shownThreads]);
   const evidence = useAgentTurnLogThreadEvidence(activity.turnLog, threadIds);
   const usage = useMemo(
     () => aggregateAgentUsage(threads, period, nowEpochMs, evidence),

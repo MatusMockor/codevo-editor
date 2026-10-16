@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_TERMINAL_TABS } from "../domain/terminalTabSet";
 import type { TerminalGateway, TerminalRuntimeStatus } from "../domain/terminal";
-import { classicTerminalTheme } from "../domain/editorColorThemes";
+import { classicTerminalTheme } from "../domain/appColorThemes";
 import type { AgentProviderSignInSurface } from "../application/useAgentProviderSignIn";
 import { waitForReact } from "../test/reactTestLifecycle";
 

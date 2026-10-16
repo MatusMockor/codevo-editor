@@ -3,7 +3,7 @@ import { act, type JSX } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CodeLanguageId } from "../../domain/codeHighlight/codeLanguage";
-import type { MonacoAppTheme } from "../../domain/settings";
+import type { CodeTheme } from "../../domain/settings";
 import { CodeHighlighterProvider } from "../../infrastructure/codeHighlight/CodeHighlighterProvider";
 import { createInlineCodeHighlighter } from "../../infrastructure/codeHighlight/inlineCodeHighlighter";
 import {
@@ -68,7 +68,7 @@ function tree(
   highlighter: CodeHighlighter,
   text: string,
   options?: UseHighlightedCodeOptions,
-  theme: MonacoAppTheme = "dark-plus",
+  theme: CodeTheme = "dark-plus",
 ): JSX.Element {
   return (
     <CodeHighlighterProvider theme={theme} highlighter={highlighter}>

@@ -69,7 +69,7 @@ describe("AgentThreadChanges", () => {
     render({
       summary: summary({ files: [changedFile("src/parser.ts")] }),
       thread: threadView({
-        editorAvailability: {
+        fileNavigationAvailability: {
           kind: "blocked",
           reason: "Switch to this project's tab to open files.",
         },
@@ -157,7 +157,7 @@ function changedFile(relativePath: string, status: GitChangeStatus = "modified")
 }
 
 function threadView(overrides: {
-  readonly editorAvailability?: AgentShipAvailability;
+  readonly fileNavigationAvailability?: AgentShipAvailability;
 }): AgentThreadView {
   const thread: AgentThread = {
     threadId: "agt-1",
@@ -178,7 +178,7 @@ function threadView(overrides: {
 
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: overrides.editorAvailability ?? { kind: "available" },
+    fileNavigationAvailability: overrides.fileNavigationAvailability ?? { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
     thread,

@@ -4,9 +4,9 @@ import {
   type AppSettings,
   type WorkspaceSettings,
 } from "../../domain/settings";
-import { boundedPendingWorkspaceSettingsLoadsFor } from "../workbenchController/boundedPendingWorkspaceSettingsLoads";
-import { initialAppSettingsFrom } from "../workbenchController/initialAppSettings";
-import { useWorkbenchSettingsPersistence } from "../workbenchController/useWorkbenchSettingsPersistence";
+import { boundedPendingWorkspaceSettingsLoadsFor } from "../appController/boundedPendingWorkspaceSettingsLoads";
+import { initialAppSettingsFrom } from "../appController/initialAppSettings";
+import { useAppSettingsPersistence } from "../appController/useAppSettingsPersistence";
 import { createWorkspaceSettingsByRootSnapshot } from "../workspaceSettingsForRoot";
 import { createWorkspaceSettingsSaveCoordinator } from "../workspaceSettingsSaveCoordinator";
 import type { AgentAppControllerPorts } from "./agentAppPorts";
@@ -54,7 +54,7 @@ export function useAgentWorkspaceSession(ports: AgentAppControllerPorts) {
   });
   reportErrorRef.current = notices.reportError;
 
-  const persistence = useWorkbenchSettingsPersistence({
+  const persistence = useAppSettingsPersistence({
     appSettingsRef,
     currentWorkspaceRootRef: authority.currentWorkspaceRootRef,
     reportError: notices.reportError,

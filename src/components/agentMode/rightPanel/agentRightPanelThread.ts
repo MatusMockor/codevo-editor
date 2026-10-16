@@ -15,7 +15,7 @@ export function agentRightPanelThreadKey(view: AgentThreadView | null): string {
     view.worktreeRemoved,
     view.worktreeMissing,
     view.ship,
-    view.editorAvailability,
+    view.fileNavigationAvailability,
   ]);
 }
 

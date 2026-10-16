@@ -11,11 +11,11 @@ import {
   type HighlightedLine,
   type HighlightedLines,
 } from "../../domain/codeHighlight/highlightedCode";
-import type { MonacoAppTheme } from "../../domain/settings";
+import type { CodeTheme } from "../../domain/settings";
 
 interface RetainedHighlight {
   readonly language: CodeLanguageId;
-  readonly theme: MonacoAppTheme | null;
+  readonly theme: CodeTheme | null;
   readonly lines: HighlightedLines;
 }
 

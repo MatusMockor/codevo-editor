@@ -79,7 +79,7 @@ function threadView(
     worktreeMissing: false,
     changeSummary: null,
     ship,
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
     ...overrides,

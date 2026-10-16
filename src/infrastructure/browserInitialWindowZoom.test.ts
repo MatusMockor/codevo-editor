@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialAppSettings } from "../application/workbenchController/initialAppSettings";
+import { initialAppSettings } from "../application/appController/initialAppSettings";
 import { DEFAULT_APPEARANCE } from "../domain/appearance";
 import { defaultAppSettings } from "../domain/settings";
 import { MAX_STARTUP_SETTINGS_LENGTH } from "../domain/startupTheme";

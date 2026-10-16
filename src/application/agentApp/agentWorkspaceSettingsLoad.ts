@@ -14,7 +14,7 @@ import {
   PendingWorkspaceSettingsLoadCapacityError,
   type BoundedPendingWorkspaceSettingsLoads,
   type PendingWorkspaceSettingsLoad,
-} from "../workbenchController/boundedPendingWorkspaceSettingsLoads";
+} from "../appController/boundedPendingWorkspaceSettingsLoads";
 
 export interface AgentWorkspaceSettingsLoadPorts {
   readonly reportError: (source: string, error: unknown) => void;

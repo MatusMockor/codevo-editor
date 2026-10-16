@@ -16,7 +16,8 @@ import {
   RemoteRunnerContext,
   type RemoteRunnerContextValue,
 } from "../remoteRunner/remoteRunnerContext";
-import { SHARED_REMOTE_REPOSITORY_IDENTITY } from "../remoteRunner/sharedRemoteRepositoryIdentity";
+import { createAgentWorkbenchPorts } from "../../agentWorkbenchPortsComposition";
+import { AgentWorkbenchPortsContext } from "../agentWorkbenchPortsContext";
 import { AgentModeView } from "./AgentModeView";
 import { projectFixture, threadsSurfaceFixture } from "./agentThreadsSurfaceTestFixtures";
 import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
@@ -149,7 +150,8 @@ async function flush() {
 
 it("sends every remote identity lookup of the view, ship and settings through one coordinator", async () => {
   const bridge = identityBridge();
-  const asked = vi.spyOn(SHARED_REMOTE_REPOSITORY_IDENTITY, "discover");
+  const ports = createAgentWorkbenchPorts();
+  const asked = vi.spyOn(ports.remoteRepositoryIdentity, "discover");
   const gateway = runnerGateway();
   const context: RemoteRunnerContextValue = {
     gateway,
@@ -169,28 +171,30 @@ it("sends every remote identity lookup of the view, ship and settings through on
   const local = projectFixture();
   await act(async () => {
     root.render(
-      <RemoteRunnerContext.Provider value={context}>
-        <AgentModeView
-          agents={{
-            ...threadsSurfaceFixture(),
-            providerManagement: unconfiguredAgentProviderManagement(),
-          }}
-          projects={[local]}
-          workspaceRoot={local.rootKey}
-          overflowRootPaths={[]}
-          providerEnabled={{ claudeCode: true, codex: true }}
-          chrome={chromeFixture()}
-          navigationSession={session}
-          onTrustProject={() => undefined}
-          onReleaseProject={() => undefined}
-        />
-        <RemoteProjectLinksSettings
-          gateway={gateway}
-          serverId={server.id}
-          connected
-          projects={[local]}
-        />
-      </RemoteRunnerContext.Provider>,
+      <AgentWorkbenchPortsContext.Provider value={ports}>
+        <RemoteRunnerContext.Provider value={context}>
+          <AgentModeView
+            agents={{
+              ...threadsSurfaceFixture(),
+              providerManagement: unconfiguredAgentProviderManagement(),
+            }}
+            projects={[local]}
+            workspaceRoot={local.rootKey}
+            overflowRootPaths={[]}
+            providerEnabled={{ claudeCode: true, codex: true }}
+            chrome={chromeFixture()}
+            navigationSession={session}
+            onTrustProject={() => undefined}
+            onReleaseProject={() => undefined}
+          />
+          <RemoteProjectLinksSettings
+            gateway={gateway}
+            serverId={server.id}
+            connected
+            projects={[local]}
+          />
+        </RemoteRunnerContext.Provider>
+      </AgentWorkbenchPortsContext.Provider>,
     );
   });
   await act(async () => {

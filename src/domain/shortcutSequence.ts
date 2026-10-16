@@ -135,10 +135,6 @@ export function parseShortcutStroke(value: string): ShortcutStroke | null {
   });
 }
 
-export function normalizeShortcutStrokeInput(value: string): string {
-  return parseShortcutStroke(value)?.value ?? "";
-}
-
 /**
  * Parse the persisted keybinding representation: one or two strokes separated
  * by whitespace. The canonical representation uses exactly one ASCII space.

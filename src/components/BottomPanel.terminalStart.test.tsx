@@ -4,7 +4,7 @@ import { Terminal } from "@xterm/xterm";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { classicTerminalTheme } from "../domain/editorColorThemes";
+import { classicTerminalTheme } from "../domain/appColorThemes";
 import type { TerminalProfile } from "../domain/terminal";
 import {
   fakeTerminalGateway,

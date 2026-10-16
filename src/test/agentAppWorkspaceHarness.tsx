@@ -38,8 +38,8 @@ import type {
   WorkspaceIdentityGateway,
   WorkspaceOwnerReleaseResult,
 } from "../application/workspaceIdentityGatewayPort";
-import { boundedPendingWorkspaceSettingsLoadsFor } from "../application/workbenchController/boundedPendingWorkspaceSettingsLoads";
-import { useWorkbenchSettingsPersistence } from "../application/workbenchController/useWorkbenchSettingsPersistence";
+import { boundedPendingWorkspaceSettingsLoadsFor } from "../application/appController/boundedPendingWorkspaceSettingsLoads";
+import { useAppSettingsPersistence } from "../application/appController/useAppSettingsPersistence";
 import { createWorkspaceSettingsByRootSnapshot } from "../application/workspaceSettingsForRoot";
 import { createWorkspaceSettingsSaveCoordinator } from "../application/workspaceSettingsSaveCoordinator";
 
@@ -268,7 +268,7 @@ export function renderAgentWorkspaceHarness(options: AgentWorkspaceHarnessOption
       releaseRetryDelay: options.releaseRetryDelay,
       reportError,
     });
-    const persistence = useWorkbenchSettingsPersistence({
+    const persistence = useAppSettingsPersistence({
       appSettingsRef,
       currentWorkspaceRootRef: authority.currentWorkspaceRootRef,
       reportError,

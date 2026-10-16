@@ -554,7 +554,7 @@ function renderThreads(overrides: Partial<Environment> = {}) {
       gitGateway: git,
       gitIntegrationGateway: gitIntegration,
       externalUrlOpener: null,
-      editorBridge: environment.withEditor ? editor : null,
+      fileNavigationPort: environment.withEditor ? editor : null,
       prompter: { confirm: () => true, prompt: () => null },
       projects: [project()],
       getAgentCliKind: () => environment.cliKind,
@@ -2057,7 +2057,7 @@ describe("useAgentThreads ship and editor wiring", () => {
       status: null,
       loadingStatus: false,
     });
-    expect(harness.hook().threads[0]?.editorAvailability).toEqual({ kind: "available" });
+    expect(harness.hook().threads[0]?.fileNavigationAvailability).toEqual({ kind: "available" });
 
     await act(() => harness.hook().refreshShipStatus(stored.threadId));
     expect(harness.hook().threads[0]?.ship).toMatchObject({ kind: "idle", status: shipStatus() });

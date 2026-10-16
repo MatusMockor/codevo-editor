@@ -6,8 +6,8 @@ import {
   type ResolvedColorScheme,
 } from "../../domain/appearance";
 import { paletteTokens, surfaceColor, type SurfaceRole } from "../../domain/appearancePalettes";
-import { compositeOver } from "../../domain/appearanceShellStates";
-import { contrastRatio } from "../../domain/themeContrast";
+import { compositeOver } from "../../test/appearanceShellStates";
+import { contrastRatio } from "../../test/themeContrast";
 import {
   COLOR_LITERAL,
   buildTokenTable,

@@ -48,7 +48,6 @@ export type AgentApprovalRequest = AgentApprovalRequestBase &
       }
   );
 
-export const MAX_AGENT_APPROVALS = 32;
 export const MAX_AGENT_APPROVAL_TITLE_BYTES = 256;
 export const MAX_AGENT_APPROVAL_DETAIL_BYTES = 16 * 1024;
 export const MAX_AGENT_APPROVAL_FACTS = 8;

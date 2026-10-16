@@ -183,7 +183,7 @@ describe("failed turn of a remote run that ended with a runner code", () => {
         externalOrigin: null,
       },
       ship: { kind: "idle", status: null, loadingStatus: false },
-      editorAvailability: { kind: "available" },
+      fileNavigationAvailability: { kind: "available" },
       attention: "settled",
       unread: false,
       lifecycle: "settled",

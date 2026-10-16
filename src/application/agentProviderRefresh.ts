@@ -1,6 +1,6 @@
 import type { AgentCliKind } from "../domain/agentTask";
 import type { AgentCliDiscoveryPublication } from "./useAgentCliDiscovery";
-import type { AgentProviderRefreshOutcome } from "./useAgentProviderManagement";
+import type { AgentProviderRefreshOutcome } from "./agentProviders/agentProviderManagementContract";
 
 interface AgentProviderRefreshDependencies {
   readonly providers: ReadonlyArray<AgentCliKind>;

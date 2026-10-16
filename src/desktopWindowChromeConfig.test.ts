@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MAC_TRAFFIC_LIGHTS } from "./domain/appearanceShellStates";
+import { MAC_TRAFFIC_LIGHTS } from "./test/appearanceShellStates";
 
 describe("desktop window chrome config", () => {
   it("uses app-rendered chrome on Linux and Windows", () => {

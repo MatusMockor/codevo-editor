@@ -13,8 +13,12 @@ import {
   type AgentTurn,
 } from "../domain/agentThread";
 import type { ResolvedGitRepository } from "../domain/gitRepositoryMapping";
-import { TauriAgentThreadStoreGateway } from "../infrastructure/tauriAgentThreadStoreGateway";
-import type { InvokeAgentThreadStoreCommand } from "../infrastructure/tauriAgentThreadStoreIpcContract";
+import {
+  invokeDeleteAgentThreadIpc,
+  invokeLoadAgentThreadsIpc,
+  invokeSaveAgentThreadIpc,
+  type InvokeAgentThreadStoreCommand,
+} from "../infrastructure/tauriAgentThreadStoreIpcContract";
 import { waitForReact } from "../test/reactTestLifecycle";
 import type {
   AgentThreadStoreGateway,
@@ -600,10 +604,11 @@ describe("useAgentThreadStore persistence", () => {
       }),
     );
 
-    expect(harness.hook().state).toBe(harness.hook().currentState());
-    expect(harness.hook().state.threads.get(created.threadId)?.turns[0]?.events).toEqual([
-      { kind: "assistantText", text: "frame" },
-    ]);
+    const live = harness.hook().currentState().threads.get(created.threadId);
+    expect(live?.turns[0]?.events).toEqual([{ kind: "assistantText", text: "frame" }]);
+    const shown = harness.hook().state.threads.get(created.threadId);
+    expect(shown).toBeDefined();
+    expect(harness.hook().liveThreads?.liveThreadOf(shown!)).toBe(live);
     harness.unmount();
   });
 
@@ -903,7 +908,11 @@ describe("useAgentThreadStore thread viewed", () => {
       }
       return { threads: [...files.values()], unreadable: [], evicted: 0 };
     };
-    const gateway = new TauriAgentThreadStoreGateway(invokeCommand, () => true);
+    const gateway: AgentThreadStoreGateway = {
+      loadAgentThreads: (request) => invokeLoadAgentThreadsIpc(invokeCommand, request),
+      saveAgentThread: (request) => invokeSaveAgentThreadIpc(invokeCommand, request),
+      deleteAgentThread: (request) => invokeDeleteAgentThreadIpc(invokeCommand, request),
+    };
     const launch = {
       provider: "claudeCode",
       model: "sonnet",

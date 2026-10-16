@@ -47,7 +47,7 @@ import {
   normalizeRecentWorkspaceOpenedAt,
 } from "./projectOnboardingSettings";
 
-export type { MonacoAppTheme, TerminalTheme } from "./editorColorThemes";
+export type { CodeTheme, TerminalTheme } from "./appColorThemes";
 
 export type BackgroundRuntimePolicy = "keepAlive" | "singleActive" | "suspendOnBackground";
 export type SettingsSection =

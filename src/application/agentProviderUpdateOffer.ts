@@ -1,7 +1,7 @@
 import { compareAgentCliVersions } from "../domain/agentCliVersion";
 import type { AgentProviderUpdateAvailability } from "../domain/agentProviderHealth";
 import type { AgentCliKind } from "../domain/agentTask";
-import type { AgentProviderManagementToast } from "./useAgentProviderManagement";
+import type { AgentProviderManagementToast } from "./agentProviders/agentProviderManagementContract";
 
 const PROVIDER_ORDER: readonly AgentCliKind[] = ["claudeCode", "codex"];
 

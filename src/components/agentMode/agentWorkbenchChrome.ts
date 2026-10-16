@@ -17,7 +17,7 @@ import type { AgentWorkbenchLayoutState } from "../../application/useAgentWorkbe
 import type { AgentProjectDescriptor } from "../../domain/agentProject";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import type { GitChangeStatus } from "../../domain/git";
-import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
+import type { CodeTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
 import type { FileEntry } from "../../domain/workspace";
 import type { RecentFolderEntry } from "../../domain/recentFolders";
@@ -75,7 +75,7 @@ export interface AgentScriptsChrome {
 }
 
 export interface AgentWorkbenchDiffChrome {
-  readonly monacoTheme: MonacoAppTheme;
+  readonly codeTheme: CodeTheme;
   readonly editorFontFamily?: string;
   readonly editorFontLigatures?: boolean;
   readonly editorFontSize?: number;

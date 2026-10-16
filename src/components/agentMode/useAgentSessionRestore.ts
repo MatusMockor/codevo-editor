@@ -7,9 +7,6 @@ import {
 } from "../../application/agentTranscriptPositionMemory";
 import { useAgentComposerDraftPersistence } from "../../application/useAgentComposerDraftPersistence";
 import { useSessionRestoreFlushTriggers } from "../../application/useDebouncedSessionWriter";
-import { BrowserAgentComposerDraftPreference } from "../../infrastructure/browserAgentComposerDraftPreference";
-import { BrowserAgentProjectSelectionPreference } from "../../infrastructure/browserAgentProjectSelectionPreference";
-import { BrowserAgentTranscriptPositionPreference } from "../../infrastructure/browserAgentTranscriptPositionPreference";
 import type { AgentNavigationSession } from "./useAgentThreadNavigation";
 import { useRestoredAgentNavigationSession } from "./useRestoredAgentNavigationSession";
 
@@ -29,14 +26,6 @@ export const DISABLED_AGENT_SESSION_RESTORE: AgentSessionRestorePorts = Object.f
   composerDrafts: null,
   transcriptPositions: null,
 });
-
-export function browserAgentSessionRestorePorts(): AgentSessionRestorePorts {
-  return {
-    projectSelections: new BrowserAgentProjectSelectionPreference(),
-    composerDrafts: new BrowserAgentComposerDraftPreference(),
-    transcriptPositions: new BrowserAgentTranscriptPositionPreference(),
-  };
-}
 
 export function useAgentSessionRestore(ports: AgentSessionRestorePorts): AgentSessionRestore {
   useSessionRestoreFlushTriggers();

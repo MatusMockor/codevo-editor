@@ -357,7 +357,7 @@ function projectConversation(
     worktreeMissing: false,
     changeSummary: null,
     ship: { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: { kind: "blocked", reason: "This working copy is on the server." },
+    fileNavigationAvailability: { kind: "blocked", reason: "This working copy is on the server." },
     execution: {
       kind: "remote",
       pendingMessages: input.pendingMessagesSupported === true,

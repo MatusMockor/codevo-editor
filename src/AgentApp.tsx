@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
 import { useAgentAppController } from "./application/agentApp/useAgentAppController";
+import { AgentLiveThreadContext } from "./application/agentThreads/useLiveAgentThread";
 import { useAgentPanelResizeCommit } from "./application/useAgentPanelResizeCommit";
 import { usePrefersLightTheme } from "./application/usePrefersLightTheme";
 import { useWorkbenchResizeHandles } from "./application/useWorkbenchResizeHandles";
@@ -11,12 +12,13 @@ import { AgentTerminalPanelHost } from "./components/agentApp/AgentTerminalPanel
 import { focusAgentFileSearch } from "./components/agentApp/agentFileSearchFocus";
 import { AgentFrameFallback } from "./components/AgentFrameFallback";
 import { AgentThreadRequestFeedContext } from "./components/agentMode/agentThreadRequestFeedContext";
+import { AgentWorkbenchPortsContext } from "./components/agentWorkbenchPortsContext";
 import { AppShellRoot } from "./components/AppShellRoot";
 import { AppUpdaterContext } from "./components/appUpdaterContext";
 import { WorkspaceTrustDialogHost } from "./components/projects/WorkspaceTrustDialogHost";
 import { QuickInputDialogHost } from "./components/QuickInputDialogHost";
 import { retryableLazy } from "./components/retryableLazy";
-import { useAppWorkbenchThemes } from "./components/useAppWorkbenchThemes";
+import { useAppColorThemes } from "./components/useAppColorThemes";
 import { useTerminalSurfacesIdlePreload } from "./components/useTerminalSurfacesIdlePreload";
 import { WindowChrome } from "./components/WindowChrome";
 import { WorkbenchShellFrame } from "./components/WorkbenchShellFrame";
@@ -45,7 +47,7 @@ export function AgentAppShell({ composition }: AgentAppShellProps) {
   const workbench = useAgentAppController(composition, { focusFileSearch: focusAgentFileSearch });
   const prefersLightTheme = usePrefersLightTheme();
   useTerminalSurfacesIdlePreload();
-  const { colorScheme, monacoTheme, terminalTheme } = useAppWorkbenchThemes(
+  const { colorScheme, codeTheme, terminalTheme } = useAppColorThemes(
     workbench.appSettings.appearance,
     prefersLightTheme,
     composition.nativeWindow,
@@ -78,98 +80,102 @@ export function AgentAppShell({ composition }: AgentAppShellProps) {
 
   return (
     <AppShellRoot colorScheme={colorScheme} shellStyle={shellStyle} workbench={workbench}>
-      <WindowChrome
-        appTitle={workbench.windowTitle}
-        commandContext={workbench.commandContext}
-        commands={workbench.commands}
-        onCommandError={workbench.reportCommandError}
-        onQuitApplication={workbench.quitApplication}
-      />
-      <WorkbenchShellFrame
-        agent={
-          <AppUpdaterContext.Provider value={workbench.appUpdater}>
-            <AgentThreadRequestFeedContext.Provider
-              value={composition.agentGateways.agentThreadRequestFeed ?? null}
-            >
-              <LazyAgentWorkbenchScreen
-                activeFileRevealSignal={0}
-                fileChanges={surfaceGateways.fileChanges}
-                fileSearch={surfaceGateways.fileSearch}
-                fileStatusesByPath={workbench.fileStatusesByPath}
-                files={composition.workspace.files}
-                gitBranchGateway={surfaceGateways.gitBranchGateway}
-                gitHistoryGateway={surfaceGateways.gitHistoryGateway}
-                monacoTheme={monacoTheme}
-                onResizeRightPanelStart={startAgentRightPanelResize}
-                onTrustWorkspace={trustWorkspace}
-                questionGateway={surfaceGateways.questionGateway}
-                terminalGateway={composition.terminalGateway}
-                terminalTheme={terminalTheme}
-                workbench={workbench}
-              />
-            </AgentThreadRequestFeedContext.Provider>
-          </AppUpdaterContext.Provider>
-        }
-        bottom={
-          workbench.bottomPanelVisible ? (
-            <AgentTerminalPanelHost
-              onHide={workbench.hideBottomPanel}
-              onResizeStart={startAgentBottomPanelResize}
-              onRevealFile={workbench.revealFile}
-              onTerminalSessionReady={workbench.registerActiveTerminalSession}
-              onTrustWorkspace={trustWorkspace}
-              providerSignIn={workbench.agents.providerSignIn}
-              terminalGateway={composition.terminalGateway}
-              terminalOwnerKey={workbench.workspaceIdentityDescriptor?.workspaceId ?? null}
-              terminalShellIntegrationEnabled={appSettings.terminalShellIntegrationEnabled}
-              terminalTheme={terminalTheme}
-              workspaceRoot={workbench.workspaceRoot}
-              workspaceTrusted={workspaceTrust?.trusted === true}
-            />
-          ) : null
-        }
-        placement={shellPlacement}
-        settingsRef={setSettingsContainer}
-        surface={workbench.settingsOpen ? "settings" : "workbench"}
-      />
-      <QuickInputDialogHost
-        coordinator={composition.quickInputCoordinator}
-        workspaceScope={workspaceScope}
-      />
-      <WorkspaceTrustDialogHost
-        prompt={composition.workspaceTrustPrompt}
-        workspaceScope={workspaceScope}
-      />
-      <AgentCommandPaletteHost
-        activateWorkspaceTab={workbench.activateWorkspaceTab}
-        appearance={appSettings.appearance}
-        branchSource={workbench.paletteBranchSource}
-        commandContext={workbench.commandContext}
-        commands={workbench.commands}
-        files={workbench.paletteFiles}
-        fileSearch={composition.workspace.fileSearch}
-        keymap={appSettings.keymap}
-        nodePackageScripts={workbench.nodePackageScripts.scripts}
-        nodePackageScriptsTruncated={workbench.nodePackageScripts.truncated === true}
-        onRevealFile={workbench.revealFile}
-        open={workbench.paletteOpen}
-        quickOpenOpen={workbench.quickOpenOpen}
-        reportCommandError={workbench.reportCommandError}
-        saveAppearance={saveAppearance}
-        setOpen={workbench.setPaletteOpen}
-        setQuickOpenOpen={workbench.setQuickOpenOpen}
-        workspaceRoot={workbench.workspaceRoot}
-        workspaceTabs={appSettings.workspaceTabs}
-      />
-      <AgentOverlayDialogsHost
-        appUpdater={workbench.appUpdater}
-        notices={workbench.notices}
-        onOpenAgentSettings={workbench.agents.configureAgentCli}
-        providerManagement={workbench.agents.providerManagement}
-        settings={settingsModel}
-        settingsContainer={settingsContainer}
-        systemFontGateway={composition.systemFontGateway}
-      />
+      <AgentWorkbenchPortsContext.Provider value={composition.agentWorkbenchPorts}>
+        <AgentLiveThreadContext.Provider value={workbench.agents.liveThreads ?? null}>
+          <WindowChrome
+            appTitle={workbench.windowTitle}
+            commandContext={workbench.commandContext}
+            commands={workbench.commands}
+            onCommandError={workbench.reportCommandError}
+            onQuitApplication={workbench.quitApplication}
+          />
+          <WorkbenchShellFrame
+            agent={
+              <AppUpdaterContext.Provider value={workbench.appUpdater}>
+                <AgentThreadRequestFeedContext.Provider
+                  value={composition.agentGateways.agentThreadRequestFeed ?? null}
+                >
+                  <LazyAgentWorkbenchScreen
+                    activeFileRevealSignal={0}
+                    fileChanges={surfaceGateways.fileChanges}
+                    fileSearch={surfaceGateways.fileSearch}
+                    fileStatusesByPath={workbench.fileStatusesByPath}
+                    files={composition.workspace.files}
+                    gitBranchGateway={surfaceGateways.gitBranchGateway}
+                    gitHistoryGateway={surfaceGateways.gitHistoryGateway}
+                    codeTheme={codeTheme}
+                    onResizeRightPanelStart={startAgentRightPanelResize}
+                    onTrustWorkspace={trustWorkspace}
+                    questionGateway={surfaceGateways.questionGateway}
+                    terminalGateway={composition.terminalGateway}
+                    terminalTheme={terminalTheme}
+                    workbench={workbench}
+                  />
+                </AgentThreadRequestFeedContext.Provider>
+              </AppUpdaterContext.Provider>
+            }
+            bottom={
+              workbench.bottomPanelVisible ? (
+                <AgentTerminalPanelHost
+                  onHide={workbench.hideBottomPanel}
+                  onResizeStart={startAgentBottomPanelResize}
+                  onRevealFile={workbench.revealFile}
+                  onTerminalSessionReady={workbench.registerActiveTerminalSession}
+                  onTrustWorkspace={trustWorkspace}
+                  providerSignIn={workbench.agents.providerSignIn}
+                  terminalGateway={composition.terminalGateway}
+                  terminalOwnerKey={workbench.workspaceIdentityDescriptor?.workspaceId ?? null}
+                  terminalShellIntegrationEnabled={appSettings.terminalShellIntegrationEnabled}
+                  terminalTheme={terminalTheme}
+                  workspaceRoot={workbench.workspaceRoot}
+                  workspaceTrusted={workspaceTrust?.trusted === true}
+                />
+              ) : null
+            }
+            placement={shellPlacement}
+            settingsRef={setSettingsContainer}
+            surface={workbench.settingsOpen ? "settings" : "workbench"}
+          />
+          <QuickInputDialogHost
+            coordinator={composition.quickInputCoordinator}
+            workspaceScope={workspaceScope}
+          />
+          <WorkspaceTrustDialogHost
+            prompt={composition.workspaceTrustPrompt}
+            workspaceScope={workspaceScope}
+          />
+          <AgentCommandPaletteHost
+            activateWorkspaceTab={workbench.activateWorkspaceTab}
+            appearance={appSettings.appearance}
+            branchSource={workbench.paletteBranchSource}
+            commandContext={workbench.commandContext}
+            commands={workbench.commands}
+            files={workbench.paletteFiles}
+            fileSearch={composition.workspace.fileSearch}
+            keymap={appSettings.keymap}
+            nodePackageScripts={workbench.nodePackageScripts.scripts}
+            nodePackageScriptsTruncated={workbench.nodePackageScripts.truncated === true}
+            onRevealFile={workbench.revealFile}
+            open={workbench.paletteOpen}
+            quickOpenOpen={workbench.quickOpenOpen}
+            reportCommandError={workbench.reportCommandError}
+            saveAppearance={saveAppearance}
+            setOpen={workbench.setPaletteOpen}
+            setQuickOpenOpen={workbench.setQuickOpenOpen}
+            workspaceRoot={workbench.workspaceRoot}
+            workspaceTabs={appSettings.workspaceTabs}
+          />
+          <AgentOverlayDialogsHost
+            appUpdater={workbench.appUpdater}
+            notices={workbench.notices}
+            onOpenAgentSettings={workbench.agents.configureAgentCli}
+            providerManagement={workbench.agents.providerManagement}
+            settings={settingsModel}
+            settingsContainer={settingsContainer}
+            systemFontGateway={composition.systemFontGateway}
+          />
+        </AgentLiveThreadContext.Provider>
+      </AgentWorkbenchPortsContext.Provider>
     </AppShellRoot>
   );
 }

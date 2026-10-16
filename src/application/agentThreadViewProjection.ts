@@ -27,7 +27,7 @@ export function agentThreadViews(
   removedWorktrees: ReadonlySet<string>,
   missingWorktrees: ReadonlySet<string>,
   shipStates: ReadonlyMap<string, AgentShipState>,
-  editor: AgentFileNavigationSurface,
+  fileNavigation: AgentFileNavigationSurface,
   projects: ReadonlyArray<AgentProjectDescriptor>,
   sessionBackgrounds: AgentSessionBackgrounds = NO_AGENT_SESSION_BACKGROUNDS,
 ): ReadonlyArray<AgentThreadView> {
@@ -56,7 +56,7 @@ export function agentThreadViews(
       worktreeMissing: missingWorktrees.has(thread.threadId),
       changeSummary: summaries.get(thread.threadId) ?? null,
       ship: shipStates.get(thread.threadId) ?? fallbackShipState(thread),
-      editorAvailability: editor.canOpenFiles(thread.threadId),
+      fileNavigationAvailability: fileNavigation.canOpenFiles(thread.threadId),
       attention: agentThreadAttention(thread),
       unread: agentThreadUnread(thread),
       ...(sessionBackground === undefined ? {} : { sessionBackground }),
@@ -86,7 +86,7 @@ function sameThreadView(cached: AgentThreadView, next: AgentThreadView): boolean
   if (cached.worktreeMissing !== next.worktreeMissing) return false;
   if (cached.projectOrigin !== next.projectOrigin) return false;
   if (cached.repositoryLabel !== next.repositoryLabel) return false;
-  return sameAvailability(cached.editorAvailability, next.editorAvailability);
+  return sameAvailability(cached.fileNavigationAvailability, next.fileNavigationAvailability);
 }
 
 function sameAvailability(left: AgentShipAvailability, right: AgentShipAvailability): boolean {

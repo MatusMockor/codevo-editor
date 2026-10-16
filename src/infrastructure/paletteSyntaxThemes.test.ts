@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { PALETTE_IDS, RESOLVED_COLOR_SCHEMES } from "../domain/appearance";
 import { paletteTokens, surfaceColor } from "../domain/appearancePalettes";
-import { EDITOR_EXTRA_COLORS } from "../domain/appearanceEditorColors";
+import { CODE_EXTRA_COLORS } from "../domain/appearanceCodeColors";
 import { cssColorToHex } from "../domain/cssColor";
-import { paletteMonacoTheme } from "../domain/editorColorThemes";
-import { contrastRatio } from "../domain/themeContrast";
+import { paletteCodeTheme } from "../domain/appColorThemes";
+import { contrastRatio } from "../test/themeContrast";
 import type { ThemePalette } from "../components/themePalettes";
 import { PALETTE_SYNTAX_THEMES, paletteSyntaxTheme } from "./paletteSyntaxThemes";
 import { buildShikiTheme } from "./shikiHighlighter";
@@ -31,7 +31,7 @@ describe("palette syntax themes", () => {
   it("registers one theme per palette and scheme", () => {
     expect(PALETTE_SYNTAX_THEMES.map((theme) => theme.name)).toEqual(
       PALETTE_IDS.flatMap((palette) =>
-        RESOLVED_COLOR_SCHEMES.map((scheme) => paletteMonacoTheme(palette, scheme)),
+        RESOLVED_COLOR_SCHEMES.map((scheme) => paletteCodeTheme(palette, scheme)),
       ),
     );
   });
@@ -70,8 +70,8 @@ describe("palette syntax themes", () => {
       for (const scheme of RESOLVED_COLOR_SCHEMES) {
         const theme = paletteSyntaxTheme(palette, scheme);
 
-        expect(theme.findMatch).toBe(cssColorToHex(EDITOR_EXTRA_COLORS[scheme].matchCurrent));
-        expect(theme.findMatchHighlight).toBe(cssColorToHex(EDITOR_EXTRA_COLORS[scheme].match));
+        expect(theme.findMatch).toBe(cssColorToHex(CODE_EXTRA_COLORS[scheme].matchCurrent));
+        expect(theme.findMatchHighlight).toBe(cssColorToHex(CODE_EXTRA_COLORS[scheme].match));
         expect(theme.peekBackground).toBe(surfaceColor(palette, scheme, "raised"));
         expect(theme.peekBorder).toBe(cssColorToHex(paletteTokens(palette, scheme).hairStrong));
       }
@@ -88,7 +88,7 @@ describe("palette syntax themes", () => {
           cssColorToHex(tokens.ok),
         );
         expect(colors["editorOverviewRuler.modifiedForeground"], `${palette} ${scheme}`).toBe(
-          cssColorToHex(EDITOR_EXTRA_COLORS[scheme].gitModified),
+          cssColorToHex(CODE_EXTRA_COLORS[scheme].gitModified),
         );
         expect(colors["editorOverviewRuler.deletedForeground"], `${palette} ${scheme}`).toBe(
           cssColorToHex(tokens.danger),

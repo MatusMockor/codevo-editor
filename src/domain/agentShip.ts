@@ -98,8 +98,6 @@ export type AgentShipState =
       readonly resumeFrom: AgentShipResumeKind;
     };
 
-export type AgentShipStateKind = AgentShipState["kind"];
-
 export type AgentShipStepResult =
   | { readonly kind: "succeeded" }
   | { readonly kind: "failed"; readonly failure: AgentShipFailure }

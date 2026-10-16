@@ -177,7 +177,7 @@ describe("one thought row per thinking phase", () => {
         externalOrigin: null,
       },
       ship: { kind: "idle", status: null, loadingStatus: false },
-      editorAvailability: { kind: "available" },
+      fileNavigationAvailability: { kind: "available" },
       attention: status.kind === "running" ? "running" : "settled",
       unread: false,
       lifecycle: status.kind === "running" ? "running" : "settled",

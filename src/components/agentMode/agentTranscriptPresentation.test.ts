@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentTurn, AgentTurnEvent, AgentTurnStatus } from "../../domain/agentThread";
 import { agentTurnEndMarker } from "./agentTurnErrorPresentation";
-import { sameAgentTurnItem } from "./agentTurnItemEquality";
 import { agentSubagentTokensLabel, agentTurnLaunchLabel } from "./agentTurnMetaPresentation";
 import {
   MAX_RENDERED_EVENTS_PER_TURN,
@@ -251,17 +250,6 @@ describe("turn meta presentation", () => {
       /\S/,
     );
     expect(agentTurnLaunchLabel(null)).toBeNull();
-  });
-});
-
-describe("turn item equality", () => {
-  it("compares structurally without serializing", () => {
-    const left = agentTurnProjection([{ kind: "assistantText", text: "a\n\nb" }]).items;
-    const right = agentTurnProjection([{ kind: "assistantText", text: "a\n\nb" }]).items;
-    const other = agentTurnProjection([{ kind: "assistantText", text: "a\n\nc" }]).items;
-    expect(left[0] !== right[0]).toBe(true);
-    expect(sameAgentTurnItem(left[0]!, right[0]!)).toBe(true);
-    expect(sameAgentTurnItem(left[0]!, other[0]!)).toBe(false);
   });
 });
 

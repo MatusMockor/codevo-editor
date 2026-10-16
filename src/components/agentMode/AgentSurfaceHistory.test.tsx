@@ -39,7 +39,7 @@ async function render(
         repositories={repositories}
         scope={currentScope}
         gateway={gateway}
-        monacoTheme="calm-dark"
+        codeTheme="calm-dark"
       />,
     ),
   );

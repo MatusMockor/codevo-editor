@@ -217,7 +217,7 @@ function hostProps(): AgentSurfaceHostProps {
       onPreviewFile: async () => true,
       revealEditor: () => undefined,
     },
-    diff: { monacoTheme: "calm-dark" },
+    diff: { codeTheme: "calm-dark" },
     terminal: {
       terminalGateway: fakeTerminalGateway(),
       terminalTheme: new Proxy({} as TerminalTheme, { get: () => "#000000" }),

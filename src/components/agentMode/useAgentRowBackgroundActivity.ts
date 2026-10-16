@@ -6,7 +6,8 @@ import {
   type AgentBackgroundActivity,
   type AgentBackgroundState,
 } from "../../domain/agentBackgroundActivity";
-import { runningTurn } from "../../domain/agentThread";
+import { runningTurn, type AgentThread, type AgentTurn } from "../../domain/agentThread";
+import { useLiveAgentThread } from "../../application/agentThreads/useLiveAgentThread";
 import {
   agentTurnContentLost,
   type AgentTurnLogEvidenceLookup,
@@ -23,15 +24,18 @@ export function useAgentRowBackgroundActivity(
   view: AgentThreadView,
   evidenceOf: AgentTurnLogEvidenceLookup,
 ): AgentBackgroundActivity | null {
-  const thread = view.thread;
-  const running = thread.provider.kind === "claudeCode" ? runningTurn(thread) : null;
+  const shownRunning = rowRunningTurn(view.thread);
+  const shownState = useMemo(
+    () => backgroundStateOf(shownRunning, evidenceOf),
+    [evidenceOf, shownRunning],
+  );
+  const live = useLiveAgentThread(shownState.tasks.length > 0 ? view.thread : null);
+  const thread = live ?? view.thread;
+  const running = rowRunningTurn(thread);
   const active = running !== null;
-  const events = running?.events ?? null;
-  const lost =
-    running !== null && agentTurnContentLost(running.eventsTruncated, evidenceOf(running.turnId));
   const state = useMemo(
-    () => (events === null ? IDLE_STATE : projectAgentBackgroundState(events, true, lost)),
-    [events, lost],
+    () => (running === shownRunning ? shownState : backgroundStateOf(running, evidenceOf)),
+    [evidenceOf, running, shownRunning, shownState],
   );
   const owner = JSON.stringify([thread.owner.rootKey, thread.threadId, running?.turnId ?? null]);
   const inferredIdle = useAgentForegroundQuiescence(owner, state);
@@ -39,4 +43,17 @@ export function useAgentRowBackgroundActivity(
     () => (active ? resolveAgentBackgroundActivity(state, inferredIdle) : null),
     [active, state, inferredIdle],
   );
+}
+
+function rowRunningTurn(thread: AgentThread): AgentTurn | null {
+  return thread.provider.kind === "claudeCode" ? runningTurn(thread) : null;
+}
+
+function backgroundStateOf(
+  running: AgentTurn | null,
+  evidenceOf: AgentTurnLogEvidenceLookup,
+): AgentBackgroundState {
+  if (running === null) return IDLE_STATE;
+  const lost = agentTurnContentLost(running.eventsTruncated, evidenceOf(running.turnId));
+  return projectAgentBackgroundState(running.events, true, lost);
 }

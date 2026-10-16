@@ -4,11 +4,11 @@ import {
   CodeHighlightThemeContext,
   type CodeHighlighter,
 } from "../../application/codeHighlight/codeHighlighter";
-import type { MonacoAppTheme } from "../../domain/settings";
+import type { CodeTheme } from "../../domain/settings";
 import { createWorkerCodeHighlighter } from "./workerCodeHighlighter";
 
 export interface CodeHighlighterProviderProps {
-  readonly theme: MonacoAppTheme;
+  readonly theme: CodeTheme;
   readonly highlighter?: CodeHighlighter;
   readonly children: ReactNode;
 }

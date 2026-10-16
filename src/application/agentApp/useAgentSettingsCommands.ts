@@ -8,7 +8,7 @@ import type {
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../../domain/trust";
 import type { WorkspaceRuntimeOwner } from "../../domain/workspaceRuntimeOwner";
 import { normalizedWorkspaceRootKey, workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
-import { backgroundRuntimeOwnersForPolicy } from "../workbenchController/workspaceRuntimePolicy";
+import { backgroundRuntimeOwnersForPolicy } from "../appController/workspaceRuntimePolicy";
 import { confirmWorkspaceTrustGrant } from "../workspaceTrustGrantConfirmation";
 import { openedProjectRevocation } from "../workspaceTrustIntentCoordinator";
 import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPort";

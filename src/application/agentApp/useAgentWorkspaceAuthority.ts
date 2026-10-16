@@ -9,8 +9,8 @@ import type {
 import type { WorkspaceReleaseRetryDelay } from "../workspaceReleaseRetry";
 import { WorkspaceRuntimeOwnerClaimRegistry } from "../workspaceRuntimeOwnerClaimRegistry";
 import { WorkspaceTrustIntentCoordinator } from "../workspaceTrustIntentCoordinator";
-import { useManagedWorkspaceIdentityOwnership } from "../workbenchController/useManagedWorkspaceIdentityOwnership";
-import { useWorkspaceIdentityAuthority } from "../workbenchController/useWorkspaceIdentityAuthority";
+import { useManagedWorkspaceIdentityOwnership } from "../appController/useManagedWorkspaceIdentityOwnership";
+import { useWorkspaceIdentityAuthority } from "../appController/useWorkspaceIdentityAuthority";
 
 export interface AgentWorkspaceAuthorityOptions {
   readonly fileChangeGateway?: Pick<WorkspaceFileChangeGateway, "dispose">;

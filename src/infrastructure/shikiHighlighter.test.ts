@@ -2,12 +2,12 @@ import { EncodedTokenMetadata, INITIAL, type IToken } from "shiki/textmate";
 import { describe, expect, it } from "vitest";
 import { APP_SHIKI_THEMES, SHIKI_LANGS, buildShikiTheme, createAppHighlighter } from "./shikiHighlighter";
 import { calmDark, customPalettes } from "../components/themePalettes";
-import { contrastRatio } from "../domain/themeContrast";
+import { contrastRatio } from "../test/themeContrast";
 import { PALETTE_SYNTAX_THEMES } from "./paletteSyntaxThemes";
 import { highlightWithShiki } from "./codeHighlight/shikiCodeTokens";
 import type { CodeLanguageId } from "../domain/codeHighlight/codeLanguage";
 import type { CodeToken } from "../domain/codeHighlight/highlightedCode";
-import type { MonacoAppTheme } from "../domain/editorColorThemes";
+import type { CodeTheme } from "../domain/appColorThemes";
 
 describe("buildShikiTheme", () => {
   it("maps palette to a TextMate theme", () => {
@@ -436,7 +436,7 @@ describe("markup, tag and key scope coverage", () => {
     const outcome = await highlightWithShiki(await createAppHighlighter(), {
       language,
       text,
-      theme: theme as MonacoAppTheme,
+      theme: theme as CodeTheme,
     });
     expect(outcome.kind, `${theme} ${language}`).toBe("highlighted");
     return outcome.kind === "highlighted" ? outcome.lines.flat() : [];

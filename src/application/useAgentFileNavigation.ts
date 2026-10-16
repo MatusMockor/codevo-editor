@@ -9,7 +9,6 @@ import { projectByOwnerId } from "./agentProjectAuthority";
 export const FILE_NAVIGATION_UNAVAILABLE_REASON = "Files can't be opened here.";
 export const PROJECT_CLOSED_REASON = "This project is no longer open.";
 export const SWITCH_TAB_REASON = "Switch to this project's tab to open files.";
-export const OUTSIDE_TARGET_REASON = "This file is outside the thread's checkout.";
 export const DELETED_FILE_REASON = "Deleted files can only be opened as a diff.";
 
 export interface AgentFileNavigationPort {

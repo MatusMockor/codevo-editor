@@ -74,7 +74,7 @@ function AgentChangedFileRow({
 }) {
   const threadId = thread.thread.threadId;
   const openAvailability = agentChangeOpenAvailability(thread, file);
-  const diffAvailability = thread.editorAvailability;
+  const diffAvailability = thread.fileNavigationAvailability;
   const openBlocked = openAvailability.kind === "blocked";
   const diffBlocked = diffAvailability.kind === "blocked";
   const blockedReason = rowBlockedReason(openAvailability, diffAvailability);

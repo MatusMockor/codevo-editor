@@ -17,7 +17,7 @@ import {
   removeRemoteProjectLink,
   saveRemoteProjectLink,
 } from "../../application/remoteProjectLinks";
-import { SHARED_REMOTE_REPOSITORY_IDENTITY } from "./sharedRemoteRepositoryIdentity";
+import { useAgentWorkbenchPorts } from "../agentWorkbenchPortsContext";
 
 const NO_IDENTITY_TARGETS: readonly RepositoryIdentityTarget[] = [];
 const IDENTITY_AUTHORITY = "project-connections";
@@ -61,7 +61,7 @@ export function RemoteProjectLinksSettings({
   serverId,
   connected,
   projects,
-  identity = SHARED_REMOTE_REPOSITORY_IDENTITY,
+  identity: injectedIdentity,
   identityTimers,
 }: {
   readonly gateway: Pick<RemoteRunnerGateway, "getRunner" | "listProjects">;
@@ -71,6 +71,8 @@ export function RemoteProjectLinksSettings({
   readonly identity?: RemoteRepositoryIdentityGateway | null;
   readonly identityTimers?: RepositoryIdentityTimers;
 }) {
+  const sharedIdentity = useAgentWorkbenchPorts().remoteRepositoryIdentity;
+  const identity = injectedIdentity === undefined ? sharedIdentity : injectedIdentity;
   const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inventory = useRemoteInstructionSettings(gateway, serverId, connected && expanded);

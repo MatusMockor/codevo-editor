@@ -50,10 +50,6 @@ export function terminalDirectoryForEntry(
   return path.slice(0, separatorIndex) || "/";
 }
 
-export function quoteShellArgument(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
-
 function normalizePathSeparators(path: string): string {
   return path.replace(/\\/g, "/");
 }

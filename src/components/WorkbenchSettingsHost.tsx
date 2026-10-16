@@ -4,7 +4,7 @@ import { workbenchAgentThreadOpener } from "../application/agentThreadOpener";
 import type { AgentProviderManagementSurface } from "../application/useAgentProviderManagement";
 import type { AppUpdaterSurface } from "../application/useAppUpdater";
 import type { SystemFontGateway } from "../domain/systemFonts";
-import { SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE } from "./agentMode/sharedAgentRailWorkingSectionPreference";
+import { useAgentWorkbenchPorts } from "./agentWorkbenchPortsContext";
 import { useAgentMcpServersSurface } from "./agentMode/useAgentMcpServersSurface";
 import { settingsEnvironment } from "./settings/settingsEnvironment";
 import type { SettingsSaveInput } from "./settings/settingsPageProps";
@@ -29,18 +29,28 @@ export function WorkbenchSettingsHost({
   workbench,
 }: WorkbenchSettingsHostProps) {
   const agentMcpServers = useAgentMcpServersSurface();
+  const { codexRateLimitResets, workingSectionPreference } = useAgentWorkbenchPorts();
   const env = useMemo(
     () =>
       settingsEnvironment({
+        codexRateLimitResetGateway: codexRateLimitResets,
         agentMcpServers,
-        agentRailWorkingSectionPreference: SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE,
+        agentRailWorkingSectionPreference: workingSectionPreference,
         agentThreadOpener: workbenchAgentThreadOpener,
         appUpdater,
         providerManagement,
         systemFontGateway,
         workbench,
       }),
-    [agentMcpServers, appUpdater, providerManagement, systemFontGateway, workbench],
+    [
+      agentMcpServers,
+      appUpdater,
+      codexRateLimitResets,
+      providerManagement,
+      systemFontGateway,
+      workbench,
+      workingSectionPreference,
+    ],
   );
   const { saveWorkbenchSettings, setSettingsOpen } = workbench;
   const save = useCallback(

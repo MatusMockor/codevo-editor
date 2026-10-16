@@ -290,7 +290,6 @@ export const keymapCommands = [
   },
 ] as const;
 
-export type KeymapCommand = (typeof keymapCommands)[number];
 export type KeymapCommandId = (typeof keymapCommands)[number]["id"];
 export type KeymapPlatform = "linux" | "mac" | "other" | "windows";
 export type KeymapSettings = Record<KeymapCommandId, string>;

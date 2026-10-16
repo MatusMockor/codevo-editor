@@ -37,7 +37,7 @@ import type { AgentMarkdownRenderer } from "../../domain/agentMarkdown/agentMark
 import { agentExternalOriginNote, type AgentThreadRevealRequest } from "./agentSidebarPresentation";
 import { AgentRecordedTurnChanges } from "./AgentRecordedTurnChanges";
 import type { AgentThreadsSurface } from "../../application/agentThreadPorts";
-import type { MonacoAppTheme } from "../../domain/settings";
+import type { CodeTheme } from "../../domain/settings";
 import { NO_AGENT_SESSION_REPLY } from "../../domain/agentSessionBackground";
 import { isTerminalAgentTurnStatus } from "../../domain/agentThread";
 import type { AgentTurnHaltSource } from "../../domain/agentTurnHaltRecord";
@@ -103,6 +103,7 @@ import { useAgentActivitySources } from "./conversation/useAgentActivitySources"
 import "./conversation/conversation.css";
 import "./conversation/agentWorkRows.css";
 import "./conversation/agentProse.css";
+import { useLiveAgentThreadView } from "../../application/agentThreads/useLiveAgentThread";
 
 const NO_FIND_HITS: ReadonlyArray<AgentThreadFindHit> = [];
 const NO_DEFERRED_FOLLOW_UPS: ReadonlyArray<DeferredFollowUp> = [];
@@ -164,11 +165,11 @@ export interface AgentThreadSessionProps {
   readonly activeDiffTurnId?: string | null;
   readonly awaiting?: AgentThreadAwaiting | null;
   readonly getTurnChanges?: AgentThreadsSurface["getTurnChanges"];
-  readonly monacoTheme?: MonacoAppTheme;
+  readonly codeTheme?: CodeTheme;
 }
 
 export function AgentThreadSession(props: AgentThreadSessionProps) {
-  const thread = props.thread;
+  const thread = useLiveAgentThreadView(props.thread);
   const pendingSend = props.pendingSend ?? null;
   const pendingOnServer =
     pendingSend?.target.kind === "new" && pendingSend.target.projectRootKey.startsWith("remote:");

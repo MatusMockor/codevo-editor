@@ -6,7 +6,6 @@ import { settleAgentThreadMutation } from "../../application/agentThreadMutation
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
 import type { AppUpdaterSurface } from "../../application/useAppUpdater";
 import type { SystemFontGateway } from "../../domain/systemFonts";
-import { TauriCodexRateLimitResetGateway } from "../../infrastructure/tauriCodexRateLimitResetGateway";
 import { writeClipboardText } from "../clipboardText";
 import type { SettingsAgentActivity, SettingsEnvironment } from "./settingsPageProps";
 import type { WorkbenchSettingsModel } from "./workbenchSettingsModel";
@@ -22,10 +21,8 @@ export interface SettingsEnvironmentInput {
   readonly workbench: WorkbenchSettingsModel;
 }
 
-const LOCAL_CODEX_RESETS = new TauriCodexRateLimitResetGateway();
-
 export function settingsEnvironment({
-  codexRateLimitResetGateway = LOCAL_CODEX_RESETS,
+  codexRateLimitResetGateway = null,
   agentMcpServers = null,
   agentRailWorkingSectionPreference = null,
   agentThreadOpener = null,

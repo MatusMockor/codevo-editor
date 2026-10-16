@@ -11,8 +11,6 @@ export const MAX_AGENT_PROVIDER_UPDATE_PROGRESS_DATA_BYTES = 4 * 1024;
 export const MAX_AGENT_PROVIDER_UPDATE_PROGRESS_EVENTS = 4_096;
 export const MAX_AGENT_PROVIDER_UPDATE_OBSERVED_BYTES = 1024 * 1024;
 
-export type ClaudeAuthStatusCapability = "json" | "text" | "unavailable";
-
 export type AgentProviderAuthState =
   | { readonly kind: "signedIn"; readonly label: string | null }
   | { readonly kind: "signedOut" }

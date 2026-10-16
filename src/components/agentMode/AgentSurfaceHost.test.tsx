@@ -979,7 +979,7 @@ function chrome(
     workspaceId: "ws-1",
     workspaceTrusted: true,
     fileTree: null,
-    diff: { monacoTheme: "calm-dark" },
+    diff: { codeTheme: "calm-dark" },
     terminal: {
       terminalGateway,
       terminalTheme: new Proxy({} as TerminalTheme, { get: () => "#000000" }),

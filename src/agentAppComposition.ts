@@ -10,7 +10,9 @@ import { createRemoteAgentThreadRequestFeed } from "./application/remoteAgentThr
 import { flushSessionRestore } from "./application/sessionRestorePersistence";
 import { createUnifiedAgentThreadRequestFeed } from "./application/unifiedAgentThreadRequestFeed";
 import { WorkspaceTrustPromptCoordinator } from "./application/workspaceTrustPrompt";
+import { createAgentWorkbenchPorts } from "./agentWorkbenchPortsComposition";
 import type { AgentWorkbenchScreenProps } from "./components/agentMode/AgentWorkbenchScreen";
+import type { AgentWorkbenchPorts } from "./components/agentWorkbenchPortsContext";
 import { purgeRemovedDebuggerStorage } from "./domain/removedDebuggerStorage";
 import { purgeRemovedEditorStorage } from "./domain/removedEditorStorage";
 import type { SystemFontGateway } from "./domain/systemFonts";
@@ -57,6 +59,7 @@ export type AgentAppSurfaceGateways = Pick<
 
 export interface AgentAppComposition extends AgentAppControllerPorts {
   readonly agentSurfaceGateways: AgentAppSurfaceGateways;
+  readonly agentWorkbenchPorts: AgentWorkbenchPorts;
   readonly nativeWindow: NativeWindowPort | null;
   readonly quickInputCoordinator: QuickInputCoordinator;
   readonly systemFontGateway: SystemFontGateway;
@@ -125,6 +128,7 @@ export function createAgentAppComposition(): AgentAppComposition {
       gitHistoryGateway,
       questionGateway: new TauriAgentQuestionGateway(),
     },
+    agentWorkbenchPorts: createAgentWorkbenchPorts(),
     appUpdater: {
       appUpdaterGateway,
       appUpdaterPreferencesGateway: new SettingsAppUpdaterPreferencesGateway(settingsGateway),

@@ -215,10 +215,6 @@ export function agentEffectivePromptWithinCap(
   return agentEffectivePromptByteLength(text, attachments, entryOf) <= MAX_AGENT_TASK_PROMPT_BYTES;
 }
 
-export function agentAttachmentPromptLineIsPresent(prompt: string, line: string): boolean {
-  return prompt.split("\n").includes(line);
-}
-
 export function agentAttachmentIntakeFailureSummary(
   messages: ReadonlyArray<string>,
 ): string | null {

@@ -203,7 +203,6 @@ export type RemoteRunnerAttachment = Readonly<{
     | Readonly<{ kind?: never; mediaType: "text/plain"; width?: never; height?: never }>
     | Readonly<{ kind: "file"; mediaType: string; width?: never; height?: never }>
   );
-export type RemoteRunnerFileAttachment = Extract<RemoteRunnerAttachment, { kind: "file" }>;
 export type RemoteRunnerCreateTaskRequest = RemoteRunnerServerRequest &
   Readonly<{
     idempotencyKey: string;

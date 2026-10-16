@@ -8,7 +8,7 @@ import {
 import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../../domain/trust";
 import type { WorkspaceHomeReference } from "../../domain/workspaceRootEligibility";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
-import { loadWorkspaceTrustForOwner } from "../useWorkbenchControllerAgents";
+import { loadWorkspaceTrustForOwner } from "../useAppControllerAgents";
 import { removeWorkspaceIdentityMappings } from "../workspace/workspaceIdentityPolicy";
 import type {
   WorkspaceIdentityDescriptor,
@@ -16,13 +16,13 @@ import type {
 } from "../workspaceIdentityGatewayPort";
 import type { WorkspaceSettingsByRootSnapshot } from "../workspaceSettingsForRoot";
 import type { WorkspaceSettingsSaveCoordinator } from "../workspaceSettingsSaveCoordinator";
-import type { BoundedPendingWorkspaceSettingsLoads } from "../workbenchController/boundedPendingWorkspaceSettingsLoads";
-import { useInitialAppSettingsHydration } from "../workbenchController/useInitialAppSettingsHydration";
-import { useWorkspaceOpenRequestLifecycle } from "../workbenchController/useWorkspaceOpenRequestLifecycle";
+import type { BoundedPendingWorkspaceSettingsLoads } from "../appController/boundedPendingWorkspaceSettingsLoads";
+import { useInitialAppSettingsHydration } from "../appController/useInitialAppSettingsHydration";
+import { useWorkspaceOpenRequestLifecycle } from "../appController/useWorkspaceOpenRequestLifecycle";
 import {
   backgroundRuntimeOwnersForPolicy,
   workspaceRuntimeOwnerFor,
-} from "../workbenchController/workspaceRuntimePolicy";
+} from "../appController/workspaceRuntimePolicy";
 import {
   detectAgentScriptsWorkspace,
   stopAgentWorkspaceRuntimes,

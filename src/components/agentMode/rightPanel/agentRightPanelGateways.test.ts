@@ -1,15 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { FileSearchGateway } from "../../../domain/workspace";
-import {
-  UNAVAILABLE_AGENT_FILE_SEARCH,
-  createDefaultAgentRightPanelGateways,
-} from "./agentRightPanelGateways";
+import { createAgentWorkbenchPorts } from "../../../agentWorkbenchPortsComposition";
+import { UNAVAILABLE_AGENT_FILE_SEARCH } from "./agentRightPanelGateways";
 
-describe("createDefaultAgentRightPanelGateways", () => {
+describe("composed agent right panel gateways", () => {
   it("searches files only through the injected gateway", () => {
     const fileSearch: FileSearchGateway = { searchFiles: vi.fn(async () => []) };
 
-    expect(createDefaultAgentRightPanelGateways(fileSearch).fileSearch).toBe(fileSearch);
+    expect(createAgentWorkbenchPorts().rightPanelGateways(fileSearch).fileSearch).toBe(fileSearch);
   });
 
   it("rejects file search when no gateway was injected", async () => {

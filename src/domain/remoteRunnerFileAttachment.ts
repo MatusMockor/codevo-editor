@@ -1,5 +1,4 @@
 export const MAX_REMOTE_FILE_ATTACHMENT_BYTES = 52_428_800;
-export const MAX_REMOTE_PASTED_TEXT_BYTES = 5 * 1024 * 1024;
 
 export const REMOTE_FILE_ATTACHMENTS_UNSUPPORTED_REFUSAL = "Update this server to attach files.";
 export const REMOTE_PASTED_FILE_REFUSAL =
@@ -10,13 +9,9 @@ export const REMOTE_FILE_SOURCE_SPECIAL_ERROR =
   "Choose a regular file, not a symbolic link or special file.";
 export const REMOTE_FILE_SOURCE_EMPTY_ERROR = "File is empty.";
 export const REMOTE_FILE_SOURCE_UNREADABLE_ERROR = "The file could not be read.";
-export const REMOTE_FILE_UPLOAD_UNSTAGED_ERROR =
-  "The attached file is no longer staged. Attach it again.";
 export const REMOTE_FILE_UPLOAD_CHANGED_ERROR = "The attached file changed. Attach it again.";
 export const REMOTE_FILE_UPLOAD_STORAGE_FULL_ERROR =
   "The server's attachment storage is full. Try again later.";
-export const REMOTE_FILE_UPLOAD_REJECTED_ERROR = "The server does not accept this file.";
-export const REMOTE_FILE_UPLOAD_CANCELLED_ERROR = "Attachment upload was cancelled.";
 export const REMOTE_FILE_UPLOAD_MISMATCH_ERROR =
   "The server stored a different file than was sent.";
 export const REMOTE_FILE_DOWNLOAD_NOT_STORED_ERROR = "The server no longer stores this attachment.";

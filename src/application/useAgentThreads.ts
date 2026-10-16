@@ -1,32 +1,15 @@
 import { useLocalAgentTurnChanges } from "./useLocalAgentTurnChanges";
 import type { AgentTurnChangesGateway } from "../domain/agentTurnChanges";
-import type {
-  AgentThreadOrganizationPatch,
-  AgentThreadDropSection,
-  AgentThreadPlacement,
-} from "../domain/agentThreadOrganization";
-import { agentProjectOwnsOwner, agentRootOwnerId } from "../domain/agentProject";
 import type { ExternalSessionImportGateway } from "../domain/externalSessionImport";
-import { importSavedSessionHistory } from "./importSavedSessionHistory";
 import { useAgentThreadHistory } from "./useAgentThreadHistory";
 import { useAgentHistoryCatalog } from "./useAgentHistoryCatalog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { AgentProjectDescriptor } from "../domain/agentProject";
 import type { AgentAccountUsageObservation } from "../domain/agentAccountUsage";
-import type { AgentCliKind, AgentTaskGateway, AgentTaskStatusEvent } from "../domain/agentTask";
+import type { AgentCliKind, AgentTaskGateway } from "../domain/agentTask";
 import type { AgentThreadSessionGateway } from "../domain/agentThreadSession";
 import type { AgentLaunchOptions } from "../domain/agentLaunch";
-import { agentThreadAutoTitle } from "../domain/agentThreadAutoTitle";
-import {
-  agentThreadUnread,
-  lastUsedAgentLaunch,
-  normalizeAgentThreadTitle,
-  runningTurn,
-  type AgentThread,
-  type AgentThreadsState,
-} from "../domain/agentThread";
-import { isExternalAgentSessionId } from "../domain/externalAgentSession";
-import { agentShipStatus, type AgentShipState } from "../domain/agentShip";
+import { lastUsedAgentLaunch } from "../domain/agentThread";
 import { normalizeAgentCliKind, normalizeMaxConcurrentAgentTasks } from "../domain/agentSettings";
 import type { GitGateway } from "../domain/git";
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
@@ -34,29 +17,17 @@ import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type {
   AgentRepositoryStatusSnapshot,
   AgentTasksNotice,
-  AgentThreadCopyDetail,
   AgentThreadStoreGateway,
   AgentThreadStoreSurface,
-  AgentThreadView,
   AgentThreadsSurface,
   ExternalSessionGateway,
-  ExternalSessionImportRequest,
-  ExternalSessionImportResult,
   ExternalSessionsSurface,
 } from "./agentThreadPorts";
-import {
-  AGENT_TASKS_SOURCE,
-  attempt,
-  info,
-  projectByRootKey,
-  warning,
-} from "./agentProjectAuthority";
+import { AGENT_TASKS_SOURCE } from "./agentProjectAuthority";
 import { refuseLocalAttachmentDownload } from "./remoteAttachmentDownload";
 import {
   countRunningTurns,
   countRunningTurnsInRepository,
-  mintUnusedId,
-  usedTurnIds,
   type AgentTurnAdmissionDependencies,
 } from "./agentTurnAdmission";
 import type { AgentAttachmentGateway } from "./agentAttachmentPorts";
@@ -64,13 +35,6 @@ import type { AgentInlineImageGateway } from "./agentInlineImagePorts";
 import type { AgentThreadRequestFeed } from "./agentThreadRequestPorts";
 import { agentThreadHasPendingInput } from "./agentThreadPendingInput";
 import type { AgentImageSurfacePort } from "../domain/agentImageShrink";
-import {
-  useAgentComposerAttachments,
-  type AgentAttachmentOwner,
-} from "./useAgentComposerAttachments";
-import { createAgentQuestionAttachmentsPort } from "./agentQuestionAttachments";
-import { useAgentAttachmentImages } from "./useAgentAttachmentImages";
-import { useAgentInlineImages } from "./useAgentInlineImages";
 import { useExternalSessions } from "./useExternalSessions";
 import { useImportedThreadHistory } from "./useImportedThreadHistory";
 import { useAgentChangeSummary } from "./useAgentChangeSummary";
@@ -91,12 +55,21 @@ import {
   type AgentThreadSessionDispatchPorts,
 } from "./useAgentThreadSessions";
 import { useAgentSessionBackgrounds } from "./useAgentSessionBackgrounds";
-import {
-  agentThreadViews,
-  fallbackShipState,
-  flattenProjectRepositories,
-} from "./agentThreadViewProjection";
+import { flattenProjectRepositories } from "./agentThreadViewProjection";
 import { useAgentWorktreeLifecycle } from "./useAgentWorktreeLifecycle";
+import { useAgentExternalSessionImport } from "./agentThreads/useAgentExternalSessionImport";
+import { useAgentThreadViews } from "./agentThreads/useAgentThreadViews";
+import { useAgentThreadAttachments } from "./agentThreads/useAgentThreadAttachments";
+import { useAgentThreadCommands } from "./agentThreads/useAgentThreadCommands";
+import { useAgentTurnTerminalReconcile } from "./agentThreads/useAgentTurnTerminalReconcile";
+export {
+  IMPORT_CLI_NOT_CONFIGURED_NOTICE,
+  IMPORT_DUPLICATE_NOTICE,
+  IMPORT_INVALID_SESSION_NOTICE,
+  IMPORT_PROJECT_UNAVAILABLE_NOTICE,
+  IMPORT_PROVIDER_MISMATCH_NOTICE,
+  IMPORT_STORE_NOT_READY_NOTICE,
+} from "./agentThreads/useAgentExternalSessionImport";
 import { createAgentWorktreeUseRegistry } from "./agentWorktreeUseRegistry";
 import type { WorkbenchPrompter } from "./workbenchPrompter";
 import type { AgentProviderAdmissionAuthorityReader } from "./agentProviderAdmissionAuthority";
@@ -122,7 +95,7 @@ export interface AgentThreadsDependencies {
   readonly gitGateway: AgentThreadsGitGateway;
   readonly gitIntegrationGateway: GitIntegrationGateway;
   readonly externalUrlOpener: ExternalUrlOpenerPort | null;
-  readonly editorBridge: AgentFileNavigationPort | null;
+  readonly fileNavigationPort: AgentFileNavigationPort | null;
   readonly prompter: WorkbenchPrompter;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
   readonly getAgentCliKind: () => AgentCliKind;
@@ -142,21 +115,6 @@ export interface AgentThreadsDependencies {
   readonly createEntropyHex4?: () => string;
 }
 
-const NO_PENDING_SHIP_RECONCILE: ReadonlySet<string> = Object.freeze(new Set<string>());
-
-export const IMPORT_INVALID_SESSION_NOTICE =
-  "This terminal session id is not valid, so it cannot be imported.";
-export const IMPORT_PROVIDER_MISMATCH_NOTICE =
-  "This session was recorded by a different agent CLI, so it cannot be imported here.";
-export const IMPORT_CLI_NOT_CONFIGURED_NOTICE =
-  "Configure the agent CLI before importing a terminal session.";
-export const IMPORT_PROJECT_UNAVAILABLE_NOTICE =
-  "This project is not available, so the session cannot be imported.";
-export const IMPORT_DUPLICATE_NOTICE = "This session is already imported.";
-export const IMPORT_STORE_NOT_READY_NOTICE =
-  "Saved threads are still loading for this project, so the session was not imported. Try again.";
-const IMPORT_ID_MINT_FAILED_NOTICE = "A thread id could not be minted. Try again.";
-
 const UNWIRED_EXTERNAL_SESSION_GATEWAY: ExternalSessionGateway = {
   listExternalSessions: () =>
     Promise.reject(new Error("The external session gateway is not wired.")),
@@ -174,9 +132,6 @@ export interface AgentThreadsHookSurface extends AgentThreadsSurface {
 
 export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentThreadsHookSurface {
   const [notice, setNotice] = useState<AgentTasksNotice | null>(null);
-  const [pendingShipReconcile, setPendingShipReconcile] = useState<ReadonlySet<string>>(
-    () => NO_PENDING_SHIP_RECONCILE,
-  );
   const { projects, reportError, gitGateway, onAccountUsageObserved, onProviderTurnCompleted } =
     dependencies;
 
@@ -204,15 +159,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const importGateway =
     dependencies.externalSessionImportGateway ??
     (durableHistory ? defaultSessionImportGateway : undefined);
-  const importAuthorityRef = useRef({ projects, store });
-  importAuthorityRef.current = { projects, store };
-  const importMounted = useRef(true);
-  useEffect(() => {
-    importMounted.current = true;
-    return () => {
-      importMounted.current = false;
-    };
-  }, []);
   const history = useAgentThreadHistory({
     projects,
     threads,
@@ -270,7 +216,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
 
   const { refreshOrphanedWorktrees, missingWorktreeThreadIds, markWorktreeRemoved } = worktrees;
   const { refreshVisibleChanges } = changes;
-  const { dispatchAction, remove: removeFromStore } = store;
+  const { dispatchAction } = store;
 
   const ship = useAgentShipFlow({
     gitGateway,
@@ -294,7 +240,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   const editor = useAgentFileNavigation({
     projects,
     threads,
-    navigation: dependencies.editorBridge,
+    navigation: dependencies.fileNavigationPort,
     reportError,
   });
 
@@ -305,110 +251,29 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
 
   const { states: shipStates, refreshShipStatus, clear: clearShip } = ship;
 
-  const onTurnTerminal = useCallback(
-    (event: AgentTaskStatusEvent): void => {
-      const threadId = threadIdForTurn(threads, event.taskId);
-      const provider = threads.get(threadId)?.provider.kind;
-      if (event.status.kind === "exited" && event.status.exitCode === 0 && provider !== undefined) {
-        onProviderTurnCompleted?.(provider);
-      }
-      if (event.isolation !== "worktree") return;
-      void refreshOrphanedWorktrees();
-      void refreshVisibleChanges(threadId);
-      setPendingShipReconcile((current) => {
-        if (current.has(threadId)) return current;
-        return new Set(current).add(threadId);
-      });
-    },
-    [onProviderTurnCompleted, refreshOrphanedWorktrees, refreshVisibleChanges, threads],
-  );
-
-  useEffect(() => {
-    if (pendingShipReconcile.size === 0) return;
-    for (const threadId of pendingShipReconcile) {
-      void refreshShipStatus(threadId);
-    }
-    setPendingShipReconcile(NO_PENDING_SHIP_RECONCILE);
-  }, [pendingShipReconcile, refreshShipStatus]);
-
-  const onWorktreeDispatchFailed = useCallback((): void => {
-    void refreshOrphanedWorktrees();
-  }, [refreshOrphanedWorktrees]);
+  const { onTurnTerminal, onWorktreeDispatchFailed } = useAgentTurnTerminalReconcile({
+    threads,
+    onProviderTurnCompleted,
+    refreshOrphanedWorktrees,
+    refreshVisibleChanges,
+    refreshShipStatus,
+  });
 
   const agentCliKind = normalizeAgentCliKind(dependencies.getAgentCliKind());
   const agentCliVersion = dependencies.currentCliVersion(agentCliKind);
   const agentCliConfigured =
     dependencies.getAgentProviderAdmissionAuthority(agentCliKind).disposition.kind === "ready";
 
-  const attachmentGateway = dependencies.agentAttachmentGateway ?? null;
-  const resolveLaunchIdentity = dependencies.launchIdentityForProject;
-  const resolveAttachmentOwner = useCallback(
-    (projectRootKey: string): AgentAttachmentOwner | null => {
-      const project = projectByRootKey(projects, projectRootKey);
-      if (project === undefined || project.origin === "closed-tab-live-tasks") return null;
-      const identity = resolveLaunchIdentity(projectRootKey);
-      if (identity === null) return null;
-      return {
-        projectRootKey,
-        ownerId: project.ownerId,
-        generation: project.generation,
-        workspaceId: identity.workspaceId,
-      };
-    },
-    [projects, resolveLaunchIdentity],
-  );
-
-  const attachments = useAgentComposerAttachments({
-    gateway: attachmentGateway,
-    imageSurface: dependencies.agentImageSurface ?? null,
-    resolveOwner: resolveAttachmentOwner,
-    reportError,
-  });
-
-  const attachmentImages = useAgentAttachmentImages({
-    gateway: attachmentGateway,
-    reportError,
-  });
-
-  const inlineImages = useAgentInlineImages({
-    gateway: dependencies.agentInlineImageGateway ?? null,
-  });
-
-  const attachmentDrafts = attachments.forDraft;
-  const attachmentRevision = attachments.revision;
-  const questionAttachments = useMemo(
-    () =>
-      attachmentGateway === null || attachmentRevision === undefined
-        ? undefined
-        : createAgentQuestionAttachmentsPort({
-            gateway: attachmentGateway,
-            forDraft: attachmentDrafts,
-            resolveThreadRootKey: (threadId) => {
-              const thread = store.currentState().threads.get(threadId);
-              if (thread === undefined || !ownsThread(projects, thread)) return null;
-              return thread.owner.rootKey;
-            },
-          }),
-    [attachmentGateway, attachmentDrafts, attachmentRevision, projects, store],
-  );
-
-  const revealAttachment = useCallback(
-    async (threadId: string, attachmentId: string): Promise<void> => {
-      const thread = store.currentState().threads.get(threadId);
-      if (thread === undefined || attachmentGateway === null) return;
-      if (!ownsThread(projects, thread)) return;
-      const revealed = await attempt(() =>
-        attachmentGateway.revealAgentAttachment({
-          workspaceId: thread.owner.ownerId,
-          threadId,
-          attachmentId,
-        }),
-      );
-      if (revealed.ok) return;
-      reportError(AGENT_TASKS_SOURCE, revealed.error);
-    },
-    [attachmentGateway, projects, reportError, store],
-  );
+  const { attachments, attachmentImages, inlineImages, questionAttachments, revealAttachment } =
+    useAgentThreadAttachments({
+      store,
+      projects,
+      attachmentGateway: dependencies.agentAttachmentGateway ?? null,
+      imageSurface: dependencies.agentImageSurface ?? null,
+      inlineImageGateway: dependencies.agentInlineImageGateway ?? null,
+      launchIdentityForProject: dependencies.launchIdentityForProject,
+      reportError,
+    });
 
   const sessionDispatchRef = useRef<AgentThreadSessionDispatchPorts | null>(null);
   const {
@@ -470,153 +335,35 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
 
   sessionDispatchRef.current = dispatch;
 
-  const { clear: clearSummary } = changes;
-
-  const remove = useCallback(
-    (threadId: string): boolean => {
-      const thread = store.currentState().threads.get(threadId);
-      if (thread === undefined) return false;
-      if (!ownsThread(projects, thread)) return false;
-      if (runningTurn(thread) !== null) {
-        setNotice({
-          kind: "warning",
-          message: "Stop the agent before removing its thread.",
-          action: null,
-        });
-        return false;
-      }
-      removeFromStore(threadId);
-      if (store.currentState().threads.has(threadId)) return false;
-      endThreadSession(thread);
-      clearSummary(threadId);
-      clearShip(threadId);
-      void refreshOrphanedWorktrees();
-      return true;
-    },
-    [
-      clearShip,
-      clearSummary,
-      endThreadSession,
-      projects,
-      refreshOrphanedWorktrees,
-      removeFromStore,
-      store,
-    ],
-  );
-
-  const { togglePin: togglePinInStore, archive: archiveInStore } = store;
-  const togglePin = useCallback(
-    (threadId: string): void => {
-      const thread = store.currentState().threads.get(threadId);
-      if (thread === undefined || !ownsThread(projects, thread)) return;
-      togglePinInStore(threadId);
-    },
-    [projects, store, togglePinInStore],
-  );
-
-  const archive = useCallback(
-    (threadId: string): boolean => {
-      const thread = store.currentState().threads.get(threadId);
-      if (thread === undefined || !ownsThread(projects, thread)) return false;
-      archiveInStore(threadId);
-      const archived = store.currentState().threads.get(threadId)?.archived === true;
-      if (archived && !thread.archived) endThreadSession(thread);
-      return archived;
-    },
-    [archiveInStore, endThreadSession, projects, store],
-  );
-
-  const unarchive = useCallback(
-    (threadId: string): boolean => {
-      const thread = store.currentState().threads.get(threadId);
-      if (thread === undefined || !ownsThread(projects, thread)) return false;
-      dispatchAction({ kind: "unarchived", threadId });
-      return store.currentState().threads.get(threadId)?.archived === false;
-    },
-    [dispatchAction, projects, store],
-  );
-
-  const releaseProjectTasks = useCallback(
-    (ownerId: string): void => {
-      dispatch.clearDeferredForOwner(ownerId);
-      dispatchAction({ kind: "ownerReleased", ownerId });
-      void refreshOrphanedWorktrees();
-    },
-    [dispatch, dispatchAction, refreshOrphanedWorktrees],
-  );
-
-  const { hasLiveTasksForOwner: ownerHasRunningTurn } = dispatch;
-  const hasLiveTasksForOwner = useCallback(
-    (ownerId: string): boolean =>
-      ownerHasRunningTurn(ownerId) || ownerHasLiveSession(currentThreads().values(), ownerId),
-    [currentThreads, ownerHasLiveSession, ownerHasRunningTurn],
-  );
-
-  const now = dependencies.now ?? Date.now;
-  const { currentState, hydrateThread } = store;
-  const markThreadViewed = useCallback(
-    (threadId: string): void => {
-      void ensureExternalHistory(threadId);
-      hydrateThread?.(threadId);
-      const thread = currentState().threads.get(threadId);
-      if (thread === undefined) return;
-      if (!agentThreadUnread(thread)) return;
-      if (!ownsThread(projects, thread)) return;
-      dispatchAction({ kind: "threadViewed", threadId, atEpochMs: now() });
-    },
-    [currentState, dispatchAction, ensureExternalHistory, hydrateThread, now, projects],
-  );
-
-  const { markUnread: markUnreadInStore, rename: renameInStore } = store;
-  const markThreadUnread = useCallback(
-    (threadId: string): void => {
-      const thread = currentState().threads.get(threadId);
-      if (thread === undefined) return;
-      if (!ownsThread(projects, thread)) return;
-      markUnreadInStore(threadId);
-    },
-    [currentState, markUnreadInStore, projects],
-  );
-
-  const updateThreadOrganization = useCallback(
-    (threadId: string, patch: AgentThreadOrganizationPatch): void => {
-      const thread = currentState().threads.get(threadId);
-      if (thread === undefined || !ownsThread(projects, thread)) return;
-      dispatchAction({ kind: "threadOrganizationUpdated", threadId, owner: thread.owner, patch });
-    },
-    [currentState, projects, dispatchAction],
-  );
-  const reorderThread = useCallback(
-    (
-      threadId: string,
-      targetThreadId: string,
-      placement: AgentThreadPlacement,
-      destination?: AgentThreadDropSection,
-    ): void => {
-      const thread = currentState().threads.get(threadId);
-      if (thread === undefined || !ownsThread(projects, thread)) return;
-      dispatchAction({
-        kind: "threadReordered",
-        threadId,
-        owner: thread.owner,
-        targetThreadId,
-        placement,
-        destination,
-        now: now(),
-      });
-    },
-    [currentState, projects, dispatchAction, now],
-  );
-
-  const renameThread = useCallback(
-    (threadId: string, title: string): void => {
-      const thread = currentState().threads.get(threadId);
-      if (thread === undefined) return;
-      if (!ownsThread(projects, thread)) return;
-      renameInStore(threadId, title);
-    },
-    [currentState, projects, renameInStore],
-  );
+  const {
+    remove,
+    togglePin,
+    archive,
+    unarchive,
+    releaseProjectTasks,
+    hasLiveTasksForOwner,
+    markThreadViewed,
+    markThreadUnread,
+    updateThreadOrganization,
+    reorderThread,
+    renameThread,
+    threadCopyDetail,
+  } = useAgentThreadCommands({
+    store,
+    projects,
+    now: dependencies.now ?? Date.now,
+    setNotice,
+    endThreadSession,
+    clearSummary: changes.clear,
+    clearShip,
+    shipStates,
+    refreshOrphanedWorktrees,
+    ensureExternalHistory,
+    clearDeferredForOwner: dispatch.clearDeferredForOwner,
+    ownerHasRunningTurn: dispatch.hasLiveTasksForOwner,
+    ownerHasLiveSession,
+    currentThreads,
+  });
 
   const catalog = useAgentHistoryCatalog({
     projects,
@@ -639,216 +386,19 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     reportError,
   });
 
-  const {
-    getAgentCliKind,
-    getAgentProviderAdmissionAuthority,
-    launchIdentityForProject,
-    now: clock,
-    createEntropyHex4,
-  } = dependencies;
-  const { loadedRootKeys } = store;
-  const importExternalSession = useCallback(
-    async (request: ExternalSessionImportRequest): Promise<ExternalSessionImportResult | null> => {
-      if (!isExternalAgentSessionId(request.sessionId)) {
-        setNotice(warning(IMPORT_INVALID_SESSION_NOTICE));
-        return null;
-      }
-      const project = projectByRootKey(projects, request.projectRootKey);
-      if (
-        project === undefined ||
-        project.origin === "closed-tab-live-tasks" ||
-        (project.rootPath !== request.repositoryRoot &&
-          !project.repositories.some(
-            (repository) => repository.repositoryRoot === request.repositoryRoot,
-          ))
-      ) {
-        setNotice(warning(IMPORT_PROJECT_UNAVAILABLE_NOTICE));
-        return null;
-      }
-      const identity = launchIdentityForProject(project.rootKey);
-      if (identity === null) {
-        setNotice(warning(IMPORT_PROJECT_UNAVAILABLE_NOTICE));
-        return null;
-      }
-      if (!loadedRootKeys.has(project.rootKey)) {
-        setNotice(warning(IMPORT_STORE_NOT_READY_NOTICE));
-        return null;
-      }
-      const owned = () => {
-        const current = importAuthorityRef.current.projects.find(
-          (entry) => entry.rootKey === project.rootKey,
-        );
-        return (
-          importMounted.current &&
-          current?.generation === project.generation &&
-          current?.ownerId === project.ownerId
-        );
-      };
-      const finishImport = async (
-        threadId: string,
-        alreadyImported: boolean,
-      ): Promise<ExternalSessionImportResult | null> => {
-        if (importGateway === undefined) {
-          setNotice(alreadyImported ? info(IMPORT_DUPLICATE_NOTICE) : null);
-          return { threadId, alreadyImported };
-        }
-        const current = () =>
-          owned() && importAuthorityRef.current.store.currentState().threads.has(threadId);
-        const existing = importAuthorityRef.current.store.currentState().threads.get(threadId);
-        // A running imported turn already passed the durable save barrier before launch.
-        const saved =
-          alreadyImported && existing !== undefined && runningTurn(existing) !== null
-            ? true
-            : await store.flushThread?.(threadId);
-        if (!current()) return null;
-        if (saved !== true) {
-          setNotice(
-            warning("The imported conversation could not be saved. Retry the import to continue."),
-          );
-          return null;
-        }
-        const imported = await attempt(() =>
-          importSavedSessionHistory(
-            importGateway,
-            {
-              rootKey: project.rootKey,
-              ownerId: agentRootOwnerId(project.rootKey),
-              threadId,
-            },
-            current,
-          ),
-        );
-        if (!current()) return null;
-        if (!imported.ok) {
-          reportError("Session import", imported.error);
-          setNotice(
-            warning(
-              "The session history could not be fully imported. Retry to continue from the saved progress.",
-            ),
-          );
-          return null;
-        }
-        setNotice(
-          imported.value.truncated
-            ? warning(
-                "The session was imported, but some source records were incomplete or exceeded the supported record size.",
-              )
-            : null,
-        );
-        return { threadId, alreadyImported };
-      };
-      const state = currentState();
-      const existing = importedThreadFor(state, request);
-      if (existing !== null) {
-        return finishImport(existing.threadId, true);
-      }
-      const findImport = dependencies.agentThreadStoreGateway.findAgentHistoryImport;
-      if (findImport !== undefined) {
-        const found = await attempt(() =>
-          findImport.call(dependencies.agentThreadStoreGateway, {
-            rootKey: project.rootKey,
-            ownerId: agentRootOwnerId(project.rootKey),
-            provider: request.provider,
-            sessionId: request.sessionId,
-            repositoryRoot: request.repositoryRoot,
-          }),
-        );
-        if (!owned()) return null;
-        if (!found.ok) {
-          reportError("Session import", found.error);
-          setNotice(warning("Saved sessions could not be checked. Retry the import."));
-          return null;
-        }
-        if (found.value !== null) {
-          const restored = await store.restoreThread?.({
-            ...found.value,
-            owner: { ...found.value.owner, ownerId: identity.workspaceId },
-          });
-          if (!owned() || restored !== true) return null;
-          return finishImport(found.value.threadId, true);
-        }
-      }
-      if (request.provider !== normalizeAgentCliKind(getAgentCliKind())) {
-        setNotice({
-          kind: "warning",
-          message: IMPORT_PROVIDER_MISMATCH_NOTICE,
-          action: "configure-agent-cli",
-        });
-        return null;
-      }
-      if (getAgentProviderAdmissionAuthority(request.provider).disposition.kind !== "ready") {
-        setNotice({
-          kind: "warning",
-          message: IMPORT_CLI_NOT_CONFIGURED_NOTICE,
-          action: "configure-agent-cli",
-        });
-        return null;
-      }
-      const usedIds = new Set([...currentState().threads.keys(), ...usedTurnIds(currentState())]);
-      const threadId = mintUnusedId({ now: clock, createEntropyHex4 }, usedIds);
-      if (threadId === null) {
-        setNotice(warning(IMPORT_ID_MINT_FAILED_NOTICE));
-        return null;
-      }
-      const createdAt = (clock ?? Date.now)();
-      const thread: AgentThread = {
-        threadId,
-        owner: {
-          rootKey: project.rootKey,
-          ownerId: identity.workspaceId,
-          repositoryRoot: request.repositoryRoot,
-        },
-        target: { isolation: "in-place", worktreePath: null },
-        provider: { kind: request.provider, sessionId: request.sessionId },
-        title:
-          normalizeAgentThreadTitle(request.title) ?? agentThreadAutoTitle(request.firstPrompt),
-        pinned: false,
-        archived: false,
-        createdAtEpochMs: createdAt,
-        updatedAtEpochMs: createdAt,
-        turns: [],
-        turnsTruncated: false,
-        integration: null,
-        viewedAtEpochMs: createdAt,
-        externalOrigin: {
-          provider: request.provider,
-          sessionId: request.sessionId,
-          importedAtEpochMs: createdAt,
-        },
-      };
-      const reserve = store.reserveThreadSlot;
-      const release =
-        reserve === undefined ? () => undefined : await reserve(threadId, thread.owner);
-      if (release === null) {
-        if (owned())
-          setNotice(warning("Save an existing conversation before importing another session."));
-        return null;
-      }
-      try {
-        if (!owned()) return null;
-        dispatchAction({ kind: "threadCreated", thread });
-        if (!currentState().threads.has(threadId)) return null;
-        return await finishImport(threadId, false);
-      } finally {
-        release();
-      }
-    },
-    [
-      clock,
-      createEntropyHex4,
-      currentState,
-      dispatchAction,
-      getAgentCliKind,
-      getAgentProviderAdmissionAuthority,
-      launchIdentityForProject,
-      importGateway,
-      dependencies.agentThreadStoreGateway,
-      store,
-      reportError,
-      loadedRootKeys,
-      projects,
-    ],
-  );
+  const importExternalSession = useAgentExternalSessionImport({
+    store,
+    projects,
+    importGateway,
+    agentThreadStoreGateway: dependencies.agentThreadStoreGateway,
+    launchIdentityForProject: dependencies.launchIdentityForProject,
+    getAgentCliKind: dependencies.getAgentCliKind,
+    getAgentProviderAdmissionAuthority: dependencies.getAgentProviderAdmissionAuthority,
+    reportError,
+    setNotice,
+    now: dependencies.now,
+    createEntropyHex4: dependencies.createEntropyHex4,
+  });
 
   const externalSessions = useExternalSessions({
     externalSessionGateway: dependencies.externalSessionGateway ?? UNWIRED_EXTERNAL_SESSION_GATEWAY,
@@ -857,16 +407,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     reportError,
     setNotice,
   });
-
-  const threadCopyDetail = useCallback(
-    (threadId: string, detail: AgentThreadCopyDetail): string | null => {
-      const thread = currentState().threads.get(threadId);
-      if (thread === undefined) return null;
-      if (!ownsThread(projects, thread)) return null;
-      return copyDetailOf(thread, shipStates.get(threadId) ?? fallbackShipState(thread), detail);
-    },
-    [currentState, projects, shipStates],
-  );
 
   const lastUsedLaunch = useCallback(
     (projectRootKey: string): AgentLaunchOptions | null =>
@@ -887,31 +427,16 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     [saveRunningThreadsNow, turnLog],
   );
 
-  const viewCacheRef = useRef<ReadonlyMap<string, AgentThreadView>>(new Map());
-  const threadViews = useMemo(() => {
-    const views = agentThreadViews(
-      viewCacheRef.current,
-      threads,
-      changes.summaries,
-      worktrees.removedWorktreeThreadIds,
-      missingWorktreeThreadIds,
-      shipStates,
-      editor,
-      projects,
-      sessionBackgrounds,
-    );
-    viewCacheRef.current = new Map(views.map((view) => [view.thread.threadId, view]));
-    return views;
-  }, [
-    changes.summaries,
-    editor,
+  const threadViews = useAgentThreadViews({
+    threads,
+    summaries: changes.summaries,
+    removedWorktreeThreadIds: worktrees.removedWorktreeThreadIds,
     missingWorktreeThreadIds,
+    shipStates,
+    editor,
     projects,
     sessionBackgrounds,
-    shipStates,
-    threads,
-    worktrees.removedWorktreeThreadIds,
-  ]);
+  });
 
   const repositories = useMemo(() => flattenProjectRepositories(projects), [projects]);
   const maxConcurrentAgentTasks = normalizeMaxConcurrentAgentTasks(
@@ -969,6 +494,7 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
     history: durableHistory ? history : undefined,
     catalog: durableHistory ? catalog : undefined,
     turnLog: turnLog.facts,
+    liveThreads: store.liveThreads,
     stop: dispatch.stop,
     interrupt: sessions.interrupt,
     endSession: sessions.endSession,
@@ -1004,34 +530,6 @@ export function useAgentThreads(dependencies: AgentThreadsDependencies): AgentTh
   };
 }
 
-function importedThreadFor(
-  state: AgentThreadsState,
-  request: ExternalSessionImportRequest,
-): AgentThread | null {
-  for (const thread of state.threads.values()) {
-    if (thread.owner.repositoryRoot !== request.repositoryRoot) continue;
-    if (
-      thread.provider.kind === request.provider &&
-      thread.provider.sessionId === request.sessionId
-    ) {
-      return thread;
-    }
-    const origin = thread.externalOrigin;
-    if (origin === null) continue;
-    if (origin.provider === request.provider && origin.sessionId === request.sessionId) {
-      return thread;
-    }
-  }
-  return null;
-}
-
-function threadIdForTurn(threads: ReadonlyMap<string, AgentThread>, turnId: string): string {
-  for (const thread of threads.values()) {
-    if (thread.turns.some((turn) => turn.turnId === turnId)) return thread.threadId;
-  }
-  return turnId;
-}
-
 function loggedThreadRootKey(
   store: AgentThreadStoreSurface | null,
   threadId: string,
@@ -1040,36 +538,4 @@ function loggedThreadRootKey(
   if (thread === undefined) return null;
   if (!isLoggedAgentThread(thread)) return null;
   return thread.owner.rootKey;
-}
-
-function ownsThread(projects: ReadonlyArray<AgentProjectDescriptor>, thread: AgentThread): boolean {
-  return projects.some((project) => agentProjectOwnsOwner(project, thread.owner));
-}
-
-function copyDetailOf(
-  thread: AgentThread,
-  ship: AgentShipState,
-  detail: AgentThreadCopyDetail,
-): string | null {
-  switch (detail) {
-    case "threadId":
-      return thread.threadId;
-    case "path":
-      return thread.target.worktreePath ?? thread.owner.repositoryRoot;
-    case "branch":
-      return threadBranch(thread, ship);
-    default:
-      return unsupportedCopyDetail(detail);
-  }
-}
-
-function threadBranch(thread: AgentThread, ship: AgentShipState): string | null {
-  const status = agentShipStatus(ship);
-  if (status !== null) return status.worktree.branch;
-  if (ship.kind === "pushed") return ship.receipt.branch;
-  return thread.integration?.pushed?.branch ?? null;
-}
-
-function unsupportedCopyDetail(detail: never): never {
-  throw new TypeError(`Unsupported agent thread copy detail: ${JSON.stringify(detail)}.`);
 }

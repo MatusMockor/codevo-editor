@@ -3,8 +3,8 @@
 import { act, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initialAppSettings } from "./application/workbenchController/initialAppSettings";
-import { useAppWorkbenchThemes } from "./components/useAppWorkbenchThemes";
+import { initialAppSettings } from "./application/appController/initialAppSettings";
+import { useAppColorThemes } from "./components/useAppColorThemes";
 import { COLOR_SCHEME_ATTRIBUTE, DEFAULT_APPEARANCE, PALETTE_ATTRIBUTE } from "./domain/appearance";
 import type { AppSettings } from "./domain/settings";
 import { MAX_STARTUP_SETTINGS_LENGTH } from "./domain/startupTheme";
@@ -86,7 +86,7 @@ function Shell({
   readonly prefersLight: boolean;
 }) {
   const [settings, setSettings] = useState<AppSettings>(() => initialAppSettings(gateway));
-  const { colorScheme } = useAppWorkbenchThemes(settings.appearance, prefersLight);
+  const { colorScheme } = useAppColorThemes(settings.appearance, prefersLight);
   applySettings = setSettings;
   return <main className="app-shell" data-theme={colorScheme} />;
 }

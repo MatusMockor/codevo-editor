@@ -1,12 +1,8 @@
 import type { RemoteAddProjectSession } from "../../application/useRemoteAddProject";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
 import { rightPanelCoversThread } from "../workbenchShellPlacement";
-import { BrowserAgentThreadBranchMemory } from "../../infrastructure/browserAgentThreadBranchMemory";
-import { BrowserAgentRailProjectCollapsePreference } from "../../infrastructure/browserAgentRailProjectCollapsePreference";
 import type { AgentRailProjectCollapsePreferencePort } from "../../application/agentRailProjectCollapsePreferencePort";
-import { BrowserAgentRailProjectFocusPreference } from "../../infrastructure/browserAgentRailProjectFocusPreference";
 import type { AgentRailProjectFocusPreferencePort } from "../../application/agentRailProjectFocusPreferencePort";
-import { SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE } from "./sharedAgentRailWorkingSectionPreference";
 import type { AgentRailWorkingSectionPreferencePort } from "../../application/agentRailWorkingSectionPreferencePort";
 import {
   commandPaletteNewThreadPicker,
@@ -17,11 +13,6 @@ import { agentLiveCheckoutBranches } from "./agentLiveCheckoutBranch";
 import type { AgentProjectCreationSession } from "./agentProjectCreationSession";
 import type { LocalProjectCloneSession } from "../../application/useLocalProjectClone";
 import type { LocalProjectCloneGateway } from "../../application/ports/localProjectCloneGateway";
-import { TauriLocalProjectCloneGateway } from "../../infrastructure/tauriLocalProjectCloneGateway";
-import { TauriAgentArtifactGateway } from "../../infrastructure/tauriAgentArtifactGateway";
-import { TauriAgentArtifactPreviewGateway } from "../../infrastructure/tauriAgentArtifactPreviewGateway";
-import { TauriAgentArtifactFileGateway } from "../../infrastructure/tauriAgentArtifactFileGateway";
-import { TauriRemotePortPreviewGateway } from "../../infrastructure/tauriRemotePortPreviewGateway";
 import { agentRemotePortOwner } from "./useAgentServerPorts";
 import { reportAgentArtifactFailure } from "../../infrastructure/agentArtifactFailureReporter";
 import {
@@ -36,20 +27,14 @@ import {
 } from "./useAgentWorkbenchProjectOpening";
 import { useAgentCloneDestinationPreference } from "./useAgentCloneDestinationPreference";
 import { useAgentDictationInput } from "./dictation/useAgentDictationInput";
-import { resolveTauriWorkspaceHome } from "../../infrastructure/tauriHomeDirectory";
 import { recentFolderEntries } from "../../domain/recentFolders";
 import {
   UNAVAILABLE_AGENT_FILE_SEARCH,
-  createDefaultAgentRightPanelGateways,
   type AgentRightPanelGateways,
 } from "./rightPanel/agentRightPanelGateways";
 import { useAgentRightPanelChrome } from "./rightPanel/useAgentRightPanelChrome";
 import { AgentTranscriptPositionProvider } from "./AgentTranscriptPositionContext";
-import {
-  browserAgentSessionRestorePorts,
-  useAgentSessionRestore,
-  type AgentSessionRestorePorts,
-} from "./useAgentSessionRestore";
+import { useAgentSessionRestore, type AgentSessionRestorePorts } from "./useAgentSessionRestore";
 import {
   useAgentProjectWorkspaceSync,
   type AgentProjectWorkspaceTarget,
@@ -68,10 +53,7 @@ import {
   type PointerEvent,
 } from "react";
 import { workbenchAgentViewCommandBridge } from "../../application/agentViewCommandBridge";
-import type { AgentThreadNotificationCenterPorts } from "../../application/agentThreadNotificationCenter";
 import { useAgentThreadNotificationCenter } from "../../application/useAgentThreadNotificationCenter";
-import { createDocumentAppFocusPort } from "../../infrastructure/documentAppFocusPort";
-import { TauriAgentAttentionGateway } from "../../infrastructure/tauriAgentAttentionGateway";
 import type { AgentModelFavoritesPersistence } from "../../application/useAgentModelFavorites";
 import type { AgentSurfaceFileTreeDependencies } from "../../application/useAgentSurfaceFileTree";
 import {
@@ -82,7 +64,7 @@ import type {
   AgentProviderManagementSurface,
   SelectedAgentProviderAuthority,
 } from "../../application/useAgentProviderManagement";
-import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
+import type { AppAgentsSurface } from "../../application/useAppAgents";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import { normalizeAgentModelFavoriteKeys } from "../../domain/agentSettings";
 import {
@@ -92,17 +74,12 @@ import {
 import type { AgentCliKind } from "../../domain/agentTask";
 import type { GitChangeStatus } from "../../domain/git";
 import { shortcutForCommand, type KeymapSettings } from "../../domain/keymap";
-import type { MonacoAppTheme, TerminalTheme } from "../../domain/settings";
+import type { CodeTheme, TerminalTheme } from "../../domain/settings";
 import type { TerminalGateway } from "../../domain/terminal";
 import type { TextClipboardGateway } from "../../domain/textClipboard";
 import type { FileSearchGateway } from "../../domain/workspace";
-import { WebviewAgentImageSurface } from "../../infrastructure/webviewAgentImageSurface";
-import { BrowserTextClipboardGateway } from "../../infrastructure/browserTextClipboardGateway";
-import { TauriDirectoryListingGateway } from "../../infrastructure/tauriDirectoryListingGateway";
-import {
-  TauriRevealPathGateway,
-  type RevealPathGateway,
-} from "../../infrastructure/tauriRevealPathGateway";
+import type { RevealPathGateway } from "../../infrastructure/tauriRevealPathGateway";
+import { useAgentWorkbenchPorts } from "../agentWorkbenchPortsContext";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 import { AgentNewThreadDefaultsProvider } from "./AgentNewThreadDefaultsProvider";
 import { configuredProviderVersion } from "./agentModelProviderState";
@@ -119,13 +96,11 @@ import {
   type AgentWorkbenchThreadActivityChrome,
 } from "./agentWorkbenchChrome";
 import type { AgentOutsideTextFilePort } from "../../application/agentOutsideLinkedFile";
-import { TauriAgentLinkedFileGateway } from "../../infrastructure/tauriAgentLinkedFileGateway";
 import { useAgentLinkedFileOpener } from "./useAgentLinkedFileOpener";
 import type { CodeHighlighter } from "../../application/codeHighlight/codeHighlighter";
 import type { FilePreviewReader } from "../../application/filePreview/filePreviewReader";
 import { AgentFileViewerProvider } from "./rightPanel/fileViewer/AgentFileViewerProvider";
 import { CodeHighlighterProvider } from "../../infrastructure/codeHighlight/CodeHighlighterProvider";
-import { createTauriFilePreviewReader } from "../../infrastructure/tauriFilePreviewReader";
 import type { AgentAppSurface } from "./agentAppSurface";
 import {
   useAgentFileViewerLayout,
@@ -144,7 +119,7 @@ export interface AgentWorkbenchScreenProps {
   readonly terminalGateway: TerminalGateway;
   readonly gitHistoryGateway?: AgentGitHistoryGateway | null;
   readonly gitBranchGateway?: ComposerBranchGateway | null;
-  readonly monacoTheme: MonacoAppTheme;
+  readonly codeTheme: CodeTheme;
   readonly terminalTheme: TerminalTheme;
   readonly textClipboard?: TextClipboardGateway | null;
   readonly projectCollapsePreference?: AgentRailProjectCollapsePreferencePort | null;
@@ -166,26 +141,6 @@ export interface AgentWorkbenchScreenProps {
 
 export { ADD_PROJECT_REFUSED_REASON } from "./useAgentWorkbenchProjectOpening";
 export const SEARCH_FILES_COMMAND = "file.quickOpen";
-const DEFAULT_REVEAL_PATH_GATEWAY: RevealPathGateway = new TauriRevealPathGateway();
-const DEFAULT_OUTSIDE_LINKED_FILES: AgentOutsideTextFilePort = new TauriAgentLinkedFileGateway();
-const DEFAULT_FILE_PREVIEW_READER: FilePreviewReader = createTauriFilePreviewReader();
-const DEFAULT_DIRECTORY_LISTING_GATEWAY: DirectoryListingGateway =
-  new TauriDirectoryListingGateway();
-const DEFAULT_LOCAL_CLONE_GATEWAY = new TauriLocalProjectCloneGateway();
-const DEFAULT_TEXT_CLIPBOARD = new BrowserTextClipboardGateway();
-const DEFAULT_ARTIFACT_LOADER = new TauriAgentArtifactGateway();
-const DEFAULT_ARTIFACT_PREVIEW = new TauriAgentArtifactPreviewGateway();
-const DEFAULT_ARTIFACT_FILE_LOCATOR = new TauriAgentArtifactFileGateway();
-const DEFAULT_IMAGE_SURFACE = new WebviewAgentImageSurface();
-const DEFAULT_REMOTE_PORT_PREVIEW = new TauriRemotePortPreviewGateway();
-const DEFAULT_THREAD_BRANCH_MEMORY = new BrowserAgentThreadBranchMemory();
-const DEFAULT_PROJECT_COLLAPSE_PREFERENCE = new BrowserAgentRailProjectCollapsePreference();
-const DEFAULT_PROJECT_FOCUS_PREFERENCE = new BrowserAgentRailProjectFocusPreference();
-const DEFAULT_SESSION_RESTORE = browserAgentSessionRestorePorts();
-const defaultThreadNotificationPorts = (): AgentThreadNotificationCenterPorts => ({
-  focus: createDocumentAppFocusPort(),
-  system: new TauriAgentAttentionGateway(),
-});
 const SHOW_COMMAND_PALETTE = "commands.show";
 interface PersistedProviderProjection {
   readonly authorities: Readonly<
@@ -199,33 +154,52 @@ interface PersistedProviderProjection {
 export function AgentWorkbenchScreen({
   questionGateway = null,
   activeFileRevealSignal,
-  directoryListingGateway = DEFAULT_DIRECTORY_LISTING_GATEWAY,
-  localCloneGateway = DEFAULT_LOCAL_CLONE_GATEWAY,
+  directoryListingGateway: injectedDirectoryListingGateway,
+  localCloneGateway: injectedLocalCloneGateway,
   fileChanges,
   fileStatusesByPath,
   files,
   gitHistoryGateway = null,
   gitBranchGateway = null,
-  monacoTheme,
+  codeTheme,
   onResizeRightPanelStart,
   onTrustWorkspace,
-  revealPathGateway = DEFAULT_REVEAL_PATH_GATEWAY,
-  outsideLinkedFiles = DEFAULT_OUTSIDE_LINKED_FILES,
+  revealPathGateway: injectedRevealPathGateway,
+  outsideLinkedFiles: injectedOutsideLinkedFiles,
   rightPanelGateways: injectedRightPanelGateways,
   fileSearch = UNAVAILABLE_AGENT_FILE_SEARCH,
-  filePreviewReader = DEFAULT_FILE_PREVIEW_READER,
+  filePreviewReader: injectedFilePreviewReader,
   codeHighlighter,
   terminalGateway,
   terminalTheme,
-  textClipboard = DEFAULT_TEXT_CLIPBOARD,
-  projectCollapsePreference = DEFAULT_PROJECT_COLLAPSE_PREFERENCE,
-  projectFocusPreference = DEFAULT_PROJECT_FOCUS_PREFERENCE,
-  workingSectionPreference = SHARED_AGENT_RAIL_WORKING_SECTION_PREFERENCE,
-  sessionRestore = DEFAULT_SESSION_RESTORE,
+  textClipboard: injectedTextClipboard,
+  projectCollapsePreference: injectedProjectCollapsePreference,
+  projectFocusPreference: injectedProjectFocusPreference,
+  workingSectionPreference: injectedWorkingSectionPreference,
+  sessionRestore: injectedSessionRestore,
   newThreadPicker: injectedNewThreadPicker,
   workbench,
 }: AgentWorkbenchScreenProps) {
-  const restoredSession = useAgentSessionRestore(sessionRestore);
+  const ports = useAgentWorkbenchPorts();
+  const directoryListingGateway = injectedDirectoryListingGateway ?? ports.directoryListing;
+  const localCloneGateway = orPort(injectedLocalCloneGateway, ports.localClone);
+  const revealPathGateway = injectedRevealPathGateway ?? ports.revealPath;
+  const outsideLinkedFiles = injectedOutsideLinkedFiles ?? ports.outsideLinkedFiles;
+  const filePreviewReader = injectedFilePreviewReader ?? ports.filePreviewReader;
+  const textClipboard = orPort(injectedTextClipboard, ports.textClipboard);
+  const projectCollapsePreference = orPort(
+    injectedProjectCollapsePreference,
+    ports.projectCollapsePreference,
+  );
+  const projectFocusPreference = orPort(
+    injectedProjectFocusPreference,
+    ports.projectFocusPreference,
+  );
+  const workingSectionPreference = orPort(
+    injectedWorkingSectionPreference,
+    ports.workingSectionPreference,
+  );
+  const restoredSession = useAgentSessionRestore(injectedSessionRestore ?? ports.sessionRestore);
   const threadViewVisible = workbench.settingsOpen !== true;
   const threadNotifications = useAgentThreadNotificationCenter(
     {
@@ -233,7 +207,7 @@ export function AgentWorkbenchScreen({
       toastsVisible: workbench.settingsOpen !== true,
       threadViewVisible,
     },
-    defaultThreadNotificationPorts,
+    ports.threadNotificationPorts,
   );
   const { navigationSession } = restoredSession;
   const addProjectPending = useRef<AgentPendingProjectOpen | null>(null);
@@ -256,7 +230,7 @@ export function AgentWorkbenchScreen({
     appSettings.agentCliKind,
   );
   const providerEnabled = persistedProviderProjection.enabled;
-  const agents = useMemo<WorkbenchAgentsSurface>(
+  const agents = useMemo<AppAgentsSurface>(
     () => ({
       ...workbench.agents,
       agentCliKind: persistedProviderProjection.selectedProvider,
@@ -336,10 +310,10 @@ export function AgentWorkbenchScreen({
   const admissionToken = workbench.workspaceIdentityDescriptor?.admissionToken ?? null;
   const remotePortPreview = useMemo(
     () => ({
-      port: DEFAULT_REMOTE_PORT_PREVIEW,
+      port: ports.remotePortPreview,
       owner: agentRemotePortOwner(workspaceId, admissionToken),
     }),
-    [admissionToken, workspaceId],
+    [admissionToken, ports.remotePortPreview, workspaceId],
   );
   const appSettingsRef = useRef(appSettings);
   const workspaceSettingsRef = useRef(workbench.workspaceSettings);
@@ -450,10 +424,11 @@ export function AgentWorkbenchScreen({
   );
 
   const revealFileInViewer = fileViewer.revealFileInViewer;
+  const artifactFileLocator = ports.artifactFileLocator;
   const artifactSupport = useMemo<AgentArtifactSupport>(
     () => ({
       files: createAgentArtifactFilePort(
-        DEFAULT_ARTIFACT_FILE_LOCATOR,
+        artifactFileLocator,
         {
           openFile: async (location, shouldCommit) => {
             if (!shouldCommit()) throw new Error(AGENT_ARTIFACT_OPEN_FAILED);
@@ -466,7 +441,7 @@ export function AgentWorkbenchScreen({
       ),
       reportError: reportAgentArtifactFailure,
     }),
-    [revealFileInViewer],
+    [artifactFileLocator, revealFileInViewer],
   );
 
   const openTerminalLink = useCallback(
@@ -505,7 +480,7 @@ export function AgentWorkbenchScreen({
   const cloneDestination = useAgentCloneDestinationPreference({
     lastParentPath: appSettings.lastCloneParentPath ?? null,
     save: saveCloneParent,
-    resolveHome: resolveTauriWorkspaceHome,
+    resolveHome: ports.resolveWorkspaceHome,
   });
   const recentFolders = useMemo(
     () =>
@@ -566,15 +541,16 @@ export function AgentWorkbenchScreen({
     () => agentLiveCheckoutBranches(workbench.gitRepositoryStatuses ?? []),
     [workbench.gitRepositoryStatuses],
   );
+  const createRightPanelGateways = ports.rightPanelGateways;
   const rightPanelGateways = useMemo(
-    () => injectedRightPanelGateways ?? createDefaultAgentRightPanelGateways(fileSearch),
-    [fileSearch, injectedRightPanelGateways],
+    () => injectedRightPanelGateways ?? createRightPanelGateways(fileSearch),
+    [createRightPanelGateways, fileSearch, injectedRightPanelGateways],
   );
   const rightPanel = useAgentRightPanelChrome({
     gateways: rightPanelGateways,
     workspaceRoot: workbench.workspaceRoot,
     repositoryStatuses: workbench.gitRepositoryStatuses,
-    clipboard: textClipboard ?? DEFAULT_TEXT_CLIPBOARD,
+    clipboard: textClipboard ?? ports.textClipboard,
   });
   const setStatusBarItemVisibility = workbench.setStatusBarItemVisibility;
   const attentionVisible = workbench.workspaceSettings.statusBar.agentAttention;
@@ -588,6 +564,7 @@ export function AgentWorkbenchScreen({
     }),
     [attentionVisible, setStatusBarItemVisibility],
   );
+  const threadBranchMemory = ports.threadBranchMemory;
   const chrome = useMemo<AgentWorkbenchChrome>(
     () => ({
       workspaceActivation,
@@ -602,7 +579,7 @@ export function AgentWorkbenchScreen({
       gitHistoryGateway,
       branchCheckout,
       liveCheckoutBranches,
-      threadBranchMemory: DEFAULT_THREAD_BRANCH_MEMORY,
+      threadBranchMemory,
       fileTree: {
         files,
         fileChanges,
@@ -615,7 +592,7 @@ export function AgentWorkbenchScreen({
         revealEditor: fileViewer.revealEditor,
       },
       diff: {
-        monacoTheme,
+        codeTheme,
         editorFontFamily: appSettings.editorFontFamily,
         editorFontLigatures: appSettings.editorFontLigatures,
         editorFontSize: appSettings.editorFontSize,
@@ -641,6 +618,7 @@ export function AgentWorkbenchScreen({
       workspaceActivation,
       rightPanel,
       addProject,
+      threadBranchMemory,
       viewerLayout,
       appSettings.editorFontFamily,
       appSettings.editorFontLigatures,
@@ -652,7 +630,7 @@ export function AgentWorkbenchScreen({
       gitHistoryGateway,
       branchCheckout,
       liveCheckoutBranches,
-      monacoTheme,
+      codeTheme,
       onResizeRightPanelStart,
       onToggleBottomPanel,
       onTrustWorkspace,
@@ -677,7 +655,7 @@ export function AgentWorkbenchScreen({
   );
 
   return (
-    <CodeHighlighterProvider highlighter={codeHighlighter} theme={monacoTheme}>
+    <CodeHighlighterProvider highlighter={codeHighlighter} theme={codeTheme}>
       <AgentFileViewerProvider
         fontFamily={appSettings.editorFontFamily}
         fontSize={appSettings.editorFontSize}
@@ -700,9 +678,9 @@ export function AgentWorkbenchScreen({
                   threadViewVisible && !rightPanelCoversThread(agentWorkbench.layout)
                 }
                 questionGateway={questionGateway}
-                artifactLoader={DEFAULT_ARTIFACT_LOADER}
-                artifactPreview={DEFAULT_ARTIFACT_PREVIEW}
-                imageSurface={DEFAULT_IMAGE_SURFACE}
+                artifactLoader={ports.artifactLoader}
+                artifactPreview={ports.artifactPreview}
+                imageSurface={ports.imageSurface}
                 agents={agents}
                 chrome={chrome}
                 navigationKey={navigationBoundary.key}
@@ -879,4 +857,8 @@ function layoutShortcuts(keymap: KeymapSettings): AgentPanelLayoutShortcuts {
     newThread: shortcutForCommand(keymap, "agent.newThread") ?? "",
     newThreadIn: shortcutForCommand(keymap, "agent.newThreadIn") ?? "",
   };
+}
+
+function orPort<T>(injected: T | null | undefined, fallback: T): T | null {
+  return injected === undefined ? fallback : injected;
 }

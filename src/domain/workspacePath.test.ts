@@ -143,7 +143,7 @@ describe("workspace path identity", () => {
     expect(path(descriptor, backslash.fileUri)).toEqual(backslash);
     expect(path(descriptor, "file:///work/a%5cb")).toEqual(backslash);
     expect(backslash.key).not.toBe(separator.key);
-    expect(backslash.monacoUri).not.toBe(separator.monacoUri);
+    expect(backslash.resourceUri).not.toBe(separator.resourceUri);
   });
 
   it.each([
@@ -207,7 +207,7 @@ describe("workspace path identity", () => {
     const second = path(descriptor, "/WORK/PROJECT/src/STRASSE/\u03c2.ts");
 
     expect(first.key).toBe(second.key);
-    expect(first.monacoUri).toBe(second.monacoUri);
+    expect(first.resourceUri).toBe(second.resourceUri);
     expect(first.nativePath).not.toBe(second.nativePath);
     expect(first.relativePath).toBe("SRC/Stra\u00dfe/\u03c3.ts");
   });
@@ -241,7 +241,7 @@ describe("workspace path identity", () => {
 
     expect(Object.prototype.hasOwnProperty.call(descriptor.policy, "foldCase")).toBe(true);
     expect(first.key).toBe(second.key);
-    expect(first.monacoUri).toBe(second.monacoUri);
+    expect(first.resourceUri).toBe(second.resourceUri);
   });
 
   it("applies Unicode normalization before the injected fold", () => {
@@ -263,7 +263,7 @@ describe("workspace path identity", () => {
     const combinedId = path(root("a/b", "/work"), "/work");
     const splitPath = path(root("a", "/work"), "/work/b");
 
-    expect(combinedId.monacoUri).not.toBe(splitPath.monacoUri);
+    expect(combinedId.resourceUri).not.toBe(splitPath.resourceUri);
   });
 
   it("round trips generated file identities", () => {

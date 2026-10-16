@@ -1,8 +1,8 @@
 import type { CommandExecutionRunner } from "../../application/commandRegistry";
 import type { NodePackageTaskState } from "../../application/nodePackageTaskLifecycle";
 import type { AgentWorkbenchLayoutState } from "../../application/useAgentWorkbenchLayout";
-import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
-import type { WorkspaceOpenOutcome } from "../../application/workbenchController/useWorkspaceOpenRequestLifecycle";
+import type { AppAgentsSurface } from "../../application/useAppAgents";
+import type { WorkspaceOpenOutcome } from "../../application/appController/useWorkspaceOpenRequestLifecycle";
 import type { WorkspaceIdentityDescriptor } from "../../application/workspaceIdentityGatewayPort";
 import type { GitRepositoryStatus } from "../../domain/gitRepositoryMapping";
 import type {
@@ -52,7 +52,7 @@ export interface AgentAppSurface {
   readonly workspaceRoot: string | null;
   readonly workspaceSettings: WorkspaceSettings;
   readonly workspaceTrust: WorkspaceTrustState | null;
-  readonly agents: WorkbenchAgentsSurface;
+  readonly agents: AppAgentsSurface;
   readonly gitRepositoryStatuses?: GitRepositoryStatus[];
   readonly vscodeProcessTasks?: VscodeProcessTasksPanelProps;
   readonly closeWorkspaceTab: (path: string) => Promise<void>;

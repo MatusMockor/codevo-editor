@@ -116,7 +116,7 @@ describe("raw output of Claude stream frame notices", () => {
         externalOrigin: null,
       },
       ship: { kind: "idle", status: null, loadingStatus: false },
-      editorAvailability: { kind: "available" },
+      fileNavigationAvailability: { kind: "available" },
       attention: "settled",
       unread: false,
       lifecycle: "settled",

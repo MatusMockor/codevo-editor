@@ -4,17 +4,17 @@ import {
   type PaletteId,
   type ResolvedColorScheme,
 } from "../domain/appearance";
-import { EDITOR_EXTRA_COLORS } from "../domain/appearanceEditorColors";
+import { CODE_EXTRA_COLORS } from "../domain/appearanceCodeColors";
 import { paletteTokens, surfaceColor } from "../domain/appearancePalettes";
 import { cssColorToHex } from "../domain/cssColor";
-import { paletteMonacoTheme } from "../domain/editorColorThemes";
+import { paletteCodeTheme } from "../domain/appColorThemes";
 import type { ThemePalette } from "../components/themePalettes";
 
 export function paletteSyntaxTheme(palette: PaletteId, scheme: ResolvedColorScheme): ThemePalette {
   const tokens = paletteTokens(palette, scheme);
   const side = surfaceColor(palette, scheme, "side");
   return {
-    name: paletteMonacoTheme(palette, scheme),
+    name: paletteCodeTheme(palette, scheme),
     base: scheme === "dark" ? "vs-dark" : "vs",
     bg: surfaceColor(palette, scheme, "canvas"),
     fg: tokens.fg,
@@ -47,12 +47,12 @@ export function paletteSyntaxTheme(palette: PaletteId, scheme: ResolvedColorSche
     namespace: tokens.fgMuted,
     regexp: tokens.synStr,
     decorator: tokens.synKw,
-    findMatch: cssColorToHex(EDITOR_EXTRA_COLORS[scheme].matchCurrent),
-    findMatchHighlight: cssColorToHex(EDITOR_EXTRA_COLORS[scheme].match),
+    findMatch: cssColorToHex(CODE_EXTRA_COLORS[scheme].matchCurrent),
+    findMatchHighlight: cssColorToHex(CODE_EXTRA_COLORS[scheme].match),
     peekBackground: surfaceColor(palette, scheme, "raised"),
     peekBorder: cssColorToHex(tokens.hairStrong),
     overviewAdded: cssColorToHex(tokens.ok),
-    overviewModified: cssColorToHex(EDITOR_EXTRA_COLORS[scheme].gitModified),
+    overviewModified: cssColorToHex(CODE_EXTRA_COLORS[scheme].gitModified),
     overviewDeleted: cssColorToHex(tokens.danger),
   };
 }

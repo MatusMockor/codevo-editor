@@ -239,7 +239,7 @@ function threadView(turns: ReadonlyArray<AgentTurn>): AgentThreadView {
   };
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: agentThreadAttention(record),
     unread: agentThreadUnread(record),
     thread: record,

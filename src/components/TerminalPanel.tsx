@@ -1,13 +1,12 @@
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { TerminalTheme } from "../domain/settings";
 import { terminalProfileKey, type TerminalGateway } from "../domain/terminal";
 import type { TerminalRuntimeStatus, TerminalSize } from "../domain/terminal";
-import { createTerminalSession, type TerminalSession } from "./terminalSession";
-import "@xterm/xterm/css/xterm.css";
+import { createTerminalSession } from "./terminalSession";
+import { useXtermHost, type XtermBackend } from "./terminal/useXtermHost";
+import { xtermTerminalPort } from "./terminal/xtermTerminalPort";
 
-export const TERMINAL_SCROLLBACK_LINES = 2_000;
+export { TERMINAL_SCROLLBACK_LINES } from "./terminal/useXtermHost";
 
 interface TerminalPanelProps {
   labelledBy?: string;
@@ -52,11 +51,6 @@ export function TerminalPanel({
   terminalTheme,
   semanticSession,
 }: TerminalPanelProps) {
-  const terminalHostRef = useRef<HTMLDivElement | null>(null);
-  const sessionRef = useRef<TerminalSession | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const terminalThemeRef = useRef(terminalTheme);
-  terminalThemeRef.current = terminalTheme;
   // Keep the latest callback in a ref so the session effect (which must only
   // re-run on profile/root/gateway changes) always invokes the current handler
   // without listing it as a dependency and remounting the terminal.
@@ -75,169 +69,103 @@ export function TerminalPanel({
   profileIdRef.current = profileId;
   const sessionProfileKey = terminalProfileKey(profileId);
 
-  useEffect(() => {
-    const host = terminalHostRef.current;
-
-    if (!host) {
-      return;
-    }
-
-    const terminal = new Terminal({
-      cursorBlink: true,
-      disableStdin: false,
-      fontFamily: "JetBrains Mono, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-      fontSize: 13,
-      lineHeight: 1.25,
-      scrollback: TERMINAL_SCROLLBACK_LINES,
-      theme: terminalThemeRef.current,
-    });
-    terminalRef.current = terminal;
-    const fitAddon = new FitAddon();
-    const sessionRootPath = rootPath;
-    const mountedSemanticSession =
-      semanticSessionRef.current?.key === semanticSessionKey
-        ? semanticSessionRef.current
-        : undefined;
-    let semanticSessionId: number | null = null;
-    let generationActive = true;
-    const session = createTerminalSession({
-      cancelFrame: (frameId) => cancelAnimationFrame(frameId),
-      createResizeObserver: (callback) => new ResizeObserver(callback),
-      fitAddon,
-      gateway: terminalGateway,
-      host,
-      onCwdChange: (cwd) => {
-        if (generationActive) onCwdChangeRef.current?.(cwd);
-      },
-      onOpenLink: (path, line, column) => {
-        if (!generationActive || !sessionRootPath) {
-          return;
-        }
-
-        if (rootPathRef.current !== sessionRootPath) {
-          return;
-        }
-
-        const resolvedPath = resolveTerminalLinkPath(sessionRootPath, path);
-
-        if (!resolvedPath) {
-          return;
-        }
-
-        onOpenLinkRef.current?.(resolvedPath, line, column);
-      },
-      onSessionReady: (sessionId) => {
-        if (generationActive && mountedSemanticSession) semanticSessionId = sessionId;
-        if (generationActive && rootPathRef.current === sessionRootPath) {
-          onSessionReadyRef.current?.(sessionId);
-        }
-      },
-      onSessionSettled: (sessionId, exitCode) => {
-        semanticSessionId = null;
-        void mountedSemanticSession?.settle(sessionId, exitCode);
-      },
-      onSessionStartFailed: () => mountedSemanticSession?.cancelStart(),
-      profileId: profileIdRef.current,
-      rootPath,
-      shellIntegrationEnabled,
-      startSession: mountedSemanticSession
-        ? (size) => mountedSemanticSession.start(size)
-        : undefined,
-      stopSessionOnDispose: mountedSemanticSession === undefined,
-      scheduleFrame: (callback) => requestAnimationFrame(callback),
-      terminal: {
-        get cols() {
-          return terminal.cols;
+  const backend = useCallback<XtermBackend>(
+    (screen) => {
+      const sessionRootPath = rootPath;
+      const mountedSemanticSession =
+        semanticSessionRef.current?.key === semanticSessionKey
+          ? semanticSessionRef.current
+          : undefined;
+      let semanticSessionId: number | null = null;
+      let generationActive = true;
+      const session = createTerminalSession({
+        cancelFrame: (frameId) => cancelAnimationFrame(frameId),
+        createResizeObserver: (callback) => new ResizeObserver(callback),
+        fitAddon: screen.fitAddon,
+        gateway: terminalGateway,
+        host: screen.host,
+        onCwdChange: (cwd) => {
+          if (generationActive) onCwdChangeRef.current?.(cwd);
         },
-        get rows() {
-          return terminal.rows;
-        },
-        attachCustomKeyEventHandler: (handler) => terminal.attachCustomKeyEventHandler(handler),
-        dispose: () => terminal.dispose(),
-        loadAddon: (addon) => terminal.loadAddon(addon as FitAddon),
-        onData: (listener) => terminal.onData(listener),
-        onResize: (listener) => terminal.onResize(listener),
-        open: (container) => terminal.open(container),
-        get buffer() {
-          return terminal.buffer;
-        },
-        registerLinkProvider: (provider) => terminal.registerLinkProvider(provider),
-        registerMarker: (cursorYOffset) => terminal.registerMarker(cursorYOffset),
-        registerDecoration: (options) => {
-          const decoration = terminal.registerDecoration({
-            marker: options.marker as ReturnType<Terminal["registerMarker"]>,
-          });
-
-          if (!decoration) {
-            return undefined;
+        onOpenLink: (path, line, column) => {
+          if (!generationActive || !sessionRootPath) {
+            return;
           }
 
-          decoration.onRender((element) => {
-            element.classList.add("terminal-command-decoration");
-            element.style.backgroundColor = options.backgroundColor;
-            element.title = options.tooltip;
+          if (rootPathRef.current !== sessionRootPath) {
+            return;
+          }
 
-            if (!options.foregroundColor) {
-              return;
-            }
+          const resolvedPath = resolveTerminalLinkPath(sessionRootPath, path);
 
-            element.style.color = options.foregroundColor;
-          });
+          if (!resolvedPath) {
+            return;
+          }
 
-          return decoration;
+          onOpenLinkRef.current?.(resolvedPath, line, column);
         },
-        scrollToLine: (line) => terminal.scrollToLine(line),
-        write: (data, callback) => terminal.write(data, callback),
-      },
-    });
-    sessionRef.current = session;
+        onSessionReady: (sessionId) => {
+          if (generationActive && mountedSemanticSession) semanticSessionId = sessionId;
+          if (generationActive && rootPathRef.current === sessionRootPath) {
+            onSessionReadyRef.current?.(sessionId);
+          }
+        },
+        onSessionSettled: (sessionId, exitCode) => {
+          semanticSessionId = null;
+          void mountedSemanticSession?.settle(sessionId, exitCode);
+        },
+        onSessionStartFailed: () => mountedSemanticSession?.cancelStart(),
+        profileId: profileIdRef.current,
+        rootPath,
+        shellIntegrationEnabled,
+        startSession: mountedSemanticSession
+          ? (size) => mountedSemanticSession.start(size)
+          : undefined,
+        stopSessionOnDispose: mountedSemanticSession === undefined,
+        scheduleFrame: (callback) => requestAnimationFrame(callback),
+        terminal: xtermTerminalPort(screen),
+      });
 
-    return () => {
-      generationActive = false;
-      terminalRef.current = null;
-      sessionRef.current = null;
-      session.dispose();
-      if (semanticSessionId !== null) {
-        const sessionId = semanticSessionId;
-        semanticSessionId = null;
-        void terminalGateway
-          .stop(sessionId)
-          .then(() => mountedSemanticSession?.settle(sessionId, null))
-          .catch(() => undefined);
-      }
-      onSessionReadyRef.current?.(null);
-      onCwdChangeRef.current?.(null);
-    };
-  }, [rootPath, semanticSessionKey, sessionProfileKey, shellIntegrationEnabled, terminalGateway]);
-
-  useEffect(() => {
-    const terminal = terminalRef.current;
-
-    if (!terminal) {
-      return;
-    }
-
-    terminal.options.theme = terminalTheme;
-  }, [terminalTheme]);
+      return {
+        fit: () => session.fit(),
+        dispose: () => {
+          generationActive = false;
+          session.dispose();
+          if (semanticSessionId !== null) {
+            const sessionId = semanticSessionId;
+            semanticSessionId = null;
+            void terminalGateway
+              .stop(sessionId)
+              .then(() => mountedSemanticSession?.settle(sessionId, null))
+              .catch(() => undefined);
+          }
+          onSessionReadyRef.current?.(null);
+          onCwdChangeRef.current?.(null);
+        },
+      };
+    },
+    [rootPath, semanticSessionKey, shellIntegrationEnabled, terminalGateway],
+  );
+  const xterm = useXtermHost({
+    backend,
+    initialInput: "enabled",
+    restartKey: sessionProfileKey,
+    theme: terminalTheme,
+  });
+  const { fit, focus } = xterm;
 
   useEffect(() => {
     if (!isVisible) {
       return;
     }
 
-    const session = sessionRef.current;
-
-    if (!session) {
-      return;
-    }
-
-    session.fit();
-  }, [isVisible, layoutRevision]);
+    fit();
+  }, [fit, isVisible, layoutRevision]);
 
   useEffect(() => {
     if (!isActive || semanticSessionKey === null) return;
-    terminalRef.current?.focus();
-  }, [isActive, semanticSessionKey]);
+    focus();
+  }, [focus, isActive, semanticSessionKey]);
 
   return (
     <div
@@ -249,7 +177,7 @@ export function TerminalPanel({
       id={panelId}
       role="tabpanel"
     >
-      <div className="terminal-viewport" ref={terminalHostRef} />
+      <div className="terminal-viewport" ref={xterm.hostRef} />
     </div>
   );
 }

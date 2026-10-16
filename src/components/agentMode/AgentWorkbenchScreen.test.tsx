@@ -33,9 +33,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentThreadsSurface, AgentThreadView } from "../../application/agentThreadPorts";
 import { useAgentWorkbenchLayout } from "../../application/useAgentWorkbenchLayout";
-import type { WorkbenchAgentsSurface } from "../../application/useWorkbenchAgents";
+import type { AppAgentsSurface } from "../../application/useAppAgents";
 import type { AgentProviderManagementSurface } from "../../application/useAgentProviderManagement";
-import { agentWorkbenchHydration } from "../../application/useWorkbenchControllerAgents";
+import { agentWorkbenchHydration } from "../../application/useAppControllerAgents";
 import { agentRootOwnerId, type AgentProjectDescriptor } from "../../domain/agentProject";
 import type { DirectoryListingGateway } from "../../domain/directoryListing";
 import {
@@ -60,7 +60,7 @@ import {
   normalizeWorkspaceSettings,
   WORKSPACE_SESSION_VERSION,
 } from "../../domain/settings";
-import { classicTerminalTheme } from "../../domain/editorColorThemes";
+import { classicTerminalTheme } from "../../domain/appColorThemes";
 import type {
   RevealPathGateway,
   RevealPathRequest,
@@ -87,19 +87,40 @@ import {
   type AgentWorkbenchScreenProps,
   type AgentWorkbenchScreenWorkbench,
 } from "./AgentWorkbenchScreen";
+import { createAgentWorkbenchPorts } from "../../agentWorkbenchPortsComposition";
+import type { AgentImageSurfacePort } from "../../domain/agentImageShrink";
+import {
+  AgentWorkbenchPortsContext,
+  type AgentWorkbenchPorts,
+} from "../agentWorkbenchPortsContext";
 
-const resolveTauriWorkspaceHome = vi.hoisted(() =>
-  vi.fn(async () => ({ path: "/Users/dev", pathCase: "insensitive" as const })),
-);
-vi.mock("../../infrastructure/tauriHomeDirectory", () => ({ resolveTauriWorkspaceHome }));
-vi.mock("../../infrastructure/webviewAgentImageSurface", () => ({
-  WebviewAgentImageSurface: class {
-    decode = async () => ({ width: 64, height: 64 });
-    encodeMime = async () => "image/jpeg" as const;
-    encode = async () => new ArrayBuffer(16);
-    release = () => undefined;
-  },
+const resolveTauriWorkspaceHome = vi.fn(async () => ({
+  path: "/Users/dev",
+  pathCase: "insensitive" as const,
 }));
+const testImageSurface: AgentImageSurfacePort = {
+  decode: async () => ({ width: 64, height: 64 }),
+  encodeMime: async () => "image/jpeg",
+  encode: async () => new ArrayBuffer(16),
+  release: () => undefined,
+};
+const testWorkbenchPorts: AgentWorkbenchPorts = {
+  ...createAgentWorkbenchPorts(),
+  imageSurface: testImageSurface,
+  resolveWorkspaceHome: resolveTauriWorkspaceHome,
+};
+
+function rootWithTestPorts(root: Root): Root {
+  return {
+    render: (children) =>
+      root.render(
+        <AgentWorkbenchPortsContext.Provider value={testWorkbenchPorts}>
+          {children}
+        </AgentWorkbenchPortsContext.Provider>,
+      ),
+    unmount: () => root.unmount(),
+  };
+}
 
 const ROOT_A = "/workspace/app";
 const OUTSIDE_FILE = "/Users/dev/handoffs/oktober/02-cms-slideshow.md";
@@ -121,7 +142,7 @@ describe("AgentWorkbenchScreen", () => {
     }
     host = document.createElement("div");
     document.body.append(host);
-    root = createRoot(host);
+    root = rootWithTestPorts(createRoot(host));
     reveals = [];
     revealPathGateway = {
       revealPath: async (request) => {
@@ -1861,7 +1882,7 @@ function baseProps(workbench: AgentWorkbenchScreenWorkbench): AgentWorkbenchScre
     fileChanges: null,
     fileStatusesByPath: {},
     files: { readDirectory: async () => [] },
-    monacoTheme: "calm-dark",
+    codeTheme: "calm-dark",
     onResizeRightPanelStart: () => undefined,
     onTrustWorkspace: () => undefined,
     terminalGateway: {
@@ -1966,10 +1987,7 @@ function createWorkbench(
   } as MockedWorkbench;
 }
 
-function surface(
-  workspaceRoot: string,
-  worktreePath: string | null = null,
-): WorkbenchAgentsSurface {
+function surface(workspaceRoot: string, worktreePath: string | null = null): AppAgentsSurface {
   return {
     ...threadsSurface(workspaceRoot, worktreePath),
     accountUsage: { claudeCode: { kind: "idle" }, codex: { kind: "idle" } },
@@ -2078,7 +2096,7 @@ function project(root: string): AgentProjectDescriptor {
   };
 }
 
-function withRunningTurn(agents: WorkbenchAgentsSurface): WorkbenchAgentsSurface {
+function withRunningTurn(agents: AppAgentsSurface): AppAgentsSurface {
   return {
     ...agents,
     threads: agents.threads.map((view) => ({
@@ -2193,7 +2211,7 @@ function threadView(root: string, worktreePath: string | null): AgentThreadView 
   };
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
     thread,

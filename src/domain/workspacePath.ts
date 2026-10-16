@@ -10,7 +10,7 @@ export type WorkspacePathKey = BrandedString<"WorkspacePathKey">;
 export type CanonicalNativePath = BrandedString<"CanonicalNativePath">;
 export type CanonicalFileUri = BrandedString<"CanonicalFileUri">;
 export type WorkspaceRelativePath = BrandedString<"WorkspaceRelativePath">;
-export type WorkspaceMonacoUri = BrandedString<"WorkspaceMonacoUri">;
+export type WorkspaceResourceUri = BrandedString<"WorkspaceResourceUri">;
 
 export type WorkspacePathUnicodeNormalization = "none" | "NFC" | "NFD";
 export type WorkspacePathCaseFold = (normalizedValue: string) => string;
@@ -38,13 +38,6 @@ export const DEFAULT_WORKSPACE_PATH_POLICY: CaseSensitiveWorkspacePathPolicy = O
   unicodeNormalization: "none",
 });
 
-const CONSERVATIVE_WINDOWS_WORKSPACE_PATH_POLICY: CaseInsensitiveWorkspacePathPolicy =
-  Object.freeze({
-    caseSensitive: false,
-    foldCase: (value: string) => value.toLocaleLowerCase("en-US"),
-    unicodeNormalization: "none",
-  });
-
 export interface WorkspaceRootDescriptor {
   readonly anchor: string;
   readonly flavor: WorkspacePathFlavor;
@@ -61,7 +54,7 @@ export interface WorkspacePath {
   readonly nativePath: CanonicalNativePath;
   readonly fileUri: CanonicalFileUri;
   readonly relativePath: WorkspaceRelativePath;
-  readonly monacoUri: WorkspaceMonacoUri;
+  readonly resourceUri: WorkspaceResourceUri;
 }
 
 export type WorkspacePathErrorCode =
@@ -145,26 +138,6 @@ export function createWorkspaceRootFromPath(
   );
 }
 
-/**
- * Creates a path-derived root using portable platform defaults when no filesystem-authoritative
- * policy is available. POSIX remains case-sensitive; Windows drive and UNC paths use their
- * conservative case-insensitive identity while retaining exact drive/UNC anchor containment.
- */
-export function createConservativeWorkspaceRootFromPath(
-  pathOrFileUri: string,
-): WorkspacePathResult<WorkspaceRootDescriptor> {
-  const detected = createWorkspaceRootFromPath(pathOrFileUri);
-
-  if (!detected.ok || detected.value.flavor === "posix") {
-    return detected;
-  }
-
-  return createWorkspaceRootFromPath(
-    pathOrFileUri,
-    CONSERVATIVE_WINDOWS_WORKSPACE_PATH_POLICY,
-  );
-}
-
 /** Parses an absolute local path and scopes its identity to the supplied root. */
 export function parseWorkspacePath(
   root: WorkspaceRootDescriptor,
@@ -228,7 +201,7 @@ export function parseWorkspacePath(
       nativePath,
       fileUri: fileUriFromCanonicalPath(candidate),
       relativePath,
-      monacoUri: monacoUri(root.workspaceId, [
+      resourceUri: resourceUri(root.workspaceId, [
         root.flavor,
         rootAnchorIdentity.value[0]!,
         ...relativeIdentity,
@@ -425,10 +398,10 @@ function nativePathForParts(
   return `/${segments.join("/")}` as CanonicalNativePath;
 }
 
-function monacoUri(workspaceId: string, relativeIdentity: string[]): WorkspaceMonacoUri {
+function resourceUri(workspaceId: string, relativeIdentity: string[]): WorkspaceResourceUri {
   const encodedIdentity = [workspaceId, ...relativeIdentity].map(base64UrlEncode).join("/");
 
-  return `workspace-file:/${encodedIdentity}` as WorkspaceMonacoUri;
+  return `workspace-file:/${encodedIdentity}` as WorkspaceResourceUri;
 }
 
 function base64UrlEncode(value: string): string {

@@ -1,15 +1,4 @@
-import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { agentShipStatus, type AgentShipAvailability } from "../../domain/agentShip";
 import { defaultShortcutForCommand } from "../../domain/keymap";
-import { agentShipAvailability, agentShipDefaultIntegrationMode } from "./agentModePresentation";
-
-export type AgentShipQuickActionKind = "commit" | "push" | "integrate" | "none";
-
-export interface AgentShipQuickAction {
-  readonly kind: AgentShipQuickActionKind;
-  readonly label: string;
-  readonly availability: AgentShipAvailability;
-}
 
 export interface AgentPanelLayoutShortcuts {
   readonly bottomPanel: string;
@@ -25,8 +14,6 @@ export interface AgentOpenTarget {
   readonly blockedReason?: string | null;
 }
 
-export const AGENT_SHIP_NOTHING_LABEL = "Nothing to commit";
-export const AGENT_SHIP_NOTHING_REASON = "There are no changes to commit, push or integrate.";
 export const AGENT_OPEN_REMOTE_REASON =
   "Opening server files and terminals here is not available yet";
 export const AGENT_OPEN_MISSING_REASON = "The worktree no longer exists";
@@ -49,35 +36,6 @@ const GLYPHS: ReadonlyMap<string, string> = new Map([
   ["escape", "⎋"],
 ]);
 const GLYPH_ORDER: ReadonlyArray<string> = ["⌃", "⌥", "⇧", "⌘"];
-
-export function agentShipQuickAction(view: AgentThreadView): AgentShipQuickAction {
-  const availability = agentShipAvailability(view);
-  const status = agentShipStatus(view.ship);
-  if (status === null)
-    return { kind: "commit", label: "Commit", availability: availability.commit };
-  const changes = status.worktree.changeCount;
-  if (changes > 0) {
-    const label = changes === 1 ? "Commit 1 file" : `Commit ${changes} files`;
-    return { kind: "commit", label, availability: availability.commit };
-  }
-  const unpushed = status.remote?.upstream === null || (status.remote?.upstream?.ahead ?? 0) > 0;
-  if (unpushed && availability.push.kind === "available") {
-    return { kind: "push", label: "Push branch", availability: availability.push };
-  }
-  const worktree = view.thread.target.isolation === "worktree";
-  const integrate =
-    agentShipDefaultIntegrationMode(status) === "fastForward"
-      ? availability.fastForward
-      : availability.merge;
-  if (worktree && integrate.kind === "available") {
-    return { kind: "integrate", label: "Integrate", availability: integrate };
-  }
-  return {
-    kind: "none",
-    label: AGENT_SHIP_NOTHING_LABEL,
-    availability: { kind: "blocked", reason: AGENT_SHIP_NOTHING_REASON },
-  };
-}
 
 export function agentOpenBlockedReason(target: AgentOpenTarget | null): string | null {
   if (target === null) return AGENT_OPEN_NO_TARGET_REASON;

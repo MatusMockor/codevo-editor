@@ -3,7 +3,7 @@ import { runningTurn } from "../../domain/agentThread";
 import type { GitGateway } from "../../domain/git";
 import type { FileSearchGateway } from "../../domain/workspace";
 import { agentBranchCheckoutGuardReason } from "../agentBranchCheckoutGuard";
-import type { WorkbenchAgentsSurface } from "../useWorkbenchAgents";
+import type { AppAgentsSurface } from "../useAppAgents";
 import {
   useAgentPaletteBranchSource,
   type AgentPaletteBranchOwner,
@@ -11,7 +11,7 @@ import {
 import { useAgentPaletteFiles } from "./useAgentPaletteFiles";
 
 export interface AgentPaletteSourcesOptions {
-  readonly agents: Pick<WorkbenchAgentsSurface, "agentProjects" | "dispatching" | "threads">;
+  readonly agents: Pick<AppAgentsSurface, "agentProjects" | "dispatching" | "threads">;
   readonly currentWorkspaceRootRef: MutableRefObject<string | null>;
   readonly fileSearch: FileSearchGateway;
   readonly gitGateway: GitGateway;

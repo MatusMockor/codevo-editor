@@ -32,11 +32,6 @@ export interface AgentTurnToolCall {
   readonly name?: string;
 }
 
-export interface AgentToolRequestRows {
-  readonly history: readonly ClosedAgentRuntimeRequest[];
-  readonly ownsQuestion: boolean;
-}
-
 export interface AgentTurnRequestRows {
   readonly byAnchor: ReadonlyMap<string, readonly ClosedAgentRuntimeRequest[]>;
   readonly questionToolIds: ReadonlySet<string>;
@@ -59,11 +54,6 @@ export const AGENT_REQUEST_WORK_SLOT: AgentTurnRequestSlot = { kind: "work" };
 export const AGENT_REQUEST_UNANCHORED_SLOT: AgentTurnRequestSlot = { kind: "unanchored" };
 
 export const NO_AGENT_TURN_REQUEST_HOLDS: AgentTurnRequestHolds = new Map();
-
-export const NO_AGENT_TOOL_REQUEST_ROWS: AgentToolRequestRows = {
-  history: NO_AGENT_REQUEST_HISTORY,
-  ownsQuestion: false,
-};
 
 export const NO_AGENT_TURN_REQUEST_ROWS: AgentTurnRequestRows = {
   byAnchor: new Map(),

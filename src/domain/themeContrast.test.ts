@@ -3,9 +3,9 @@ import { extname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CLASSIC_SYNTAX_THEME_IDS, PALETTE_IDS, RESOLVED_COLOR_SCHEMES } from "./appearance";
 import { paletteTokens, surfaceColor } from "./appearancePalettes";
-import { SCHEME_SHELL_STATES, compositeOver } from "./appearanceShellStates";
-import { classicTerminalTheme, type TerminalTheme } from "./editorColorThemes";
-import { contrastRatio } from "./themeContrast";
+import { SCHEME_SHELL_STATES, compositeOver } from "../test/appearanceShellStates";
+import { classicTerminalTheme, type TerminalTheme } from "./appColorThemes";
+import { contrastRatio } from "../test/themeContrast";
 
 const minimumTextContrast = 4.5;
 const runtimeStyleTokens = new Set([

@@ -118,7 +118,7 @@ function threadView({
     worktreeMissing: false,
     changeSummary: null,
     ship: { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention,
     unread: false,
   };

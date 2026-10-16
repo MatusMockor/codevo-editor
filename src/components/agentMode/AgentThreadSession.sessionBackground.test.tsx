@@ -133,7 +133,7 @@ describe("thread session with live session background work", () => {
         externalOrigin: null,
       },
       ship: { kind: "idle", status: null, loadingStatus: false },
-      editorAvailability: { kind: "available" },
+      fileNavigationAvailability: { kind: "available" },
       attention: "settled",
       unread: false,
       lifecycle: "settled",

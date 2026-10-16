@@ -2,6 +2,7 @@ import { act, StrictMode, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { vi } from "vitest";
 import type { AgentAppComposition } from "../agentAppComposition";
+import { createAgentWorkbenchPorts } from "../agentWorkbenchPortsComposition";
 import { AgentAppShell } from "../AgentApp";
 import type {
   AgentAppAgentGateways,
@@ -36,6 +37,7 @@ import {
   fakeNativeShutdown,
 } from "./agentAppWorkspaceHarness";
 import { createStoppedTerminalGateway } from "./stoppedTerminalGateway";
+import type { AgentWorkbenchPorts } from "../components/agentWorkbenchPortsContext";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -61,6 +63,7 @@ export function agentAppFileChangeGateway() {
 
 export interface AgentAppTestOptions {
   readonly agentGateways?: Partial<AgentAppAgentGateways>;
+  readonly agentWorkbenchPorts?: Partial<AgentWorkbenchPorts>;
   readonly appSettings?: AppSettings;
   readonly directoryEntries?: Readonly<Record<string, readonly FileEntry[]>>;
   readonly fileChanges?: WorkspaceFileChangeGateway;
@@ -198,6 +201,7 @@ export function createAgentAppTestComposition(options: AgentAppTestOptions = {})
       gitHistoryGateway: null,
       questionGateway: null,
     },
+    agentWorkbenchPorts: { ...createAgentWorkbenchPorts(), ...options.agentWorkbenchPorts },
     appUpdater: {
       appUpdaterGateway: idleAppUpdaterGateway(),
       appUpdaterPreferencesGateway: { loadSkippedVersion: vi.fn(async () => null) },

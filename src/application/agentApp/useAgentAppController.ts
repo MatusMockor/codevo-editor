@@ -6,7 +6,7 @@ import { executeCommandAndReport, type CommandContext } from "../commandRegistry
 import type { AgentProjectsSurface } from "../useAgentProjects";
 import { useAppWindowTitle } from "../useAppBootEffects";
 import { useAppUpdater } from "../useAppUpdater";
-import { useWorkbenchControllerAgents } from "../useWorkbenchControllerAgents";
+import { useAppControllerAgents } from "../useAppControllerAgents";
 import { useWorkbenchKeyboardShortcuts } from "../useWorkbenchKeyboardShortcuts";
 import { useWorkbenchNativeMenuCommands } from "../useWorkbenchNativeMenuCommands";
 import { useWorkbenchWindowZoom } from "../useWorkbenchWindowZoom";
@@ -75,12 +75,12 @@ export function useAgentAppController(
     reportErrorForActiveWorkspaceRoot,
     workspaceRoot,
   });
-  const agents = useWorkbenchControllerAgents({
+  const agents = useAppControllerAgents({
     activateWorkspaceRoot: transition.activateWorkspaceTab,
     appSettingsRef,
     applyAppSettings: persistence.applyAppSettings,
     bottomPanelVisible: terminal.bottomPanelVisible,
-    editorSessionOwnerKey: workspaceOwnerKey,
+    workspaceSessionOwnerKey: workspaceOwnerKey,
     gitGateway: ports.gitGateway,
     gitRepositoryMappings: git.gitRepositoryMappings,
     gitRepositoryStatuses: git.gitRepositoryStatuses,

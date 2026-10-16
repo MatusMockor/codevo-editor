@@ -7,6 +7,7 @@ import {
   type AgentThreadFindHit,
 } from "../../domain/agentThreadSearch";
 import type { AgentThreadRevealRequest } from "./agentSidebarPresentation";
+import { useLiveAgentThread } from "../../application/agentThreads/useLiveAgentThread";
 
 export const AGENT_THREAD_FIND_DEBOUNCE_MS = 80;
 
@@ -33,8 +34,10 @@ interface PublishedHits {
 const NO_HITS: ReadonlyArray<AgentThreadFindHit> = [];
 const NOTHING_PUBLISHED: PublishedHits = { query: "", thread: null, hits: NO_HITS };
 
-export function useAgentThreadFind(thread: AgentThread | null): AgentThreadFindState {
+export function useAgentThreadFind(shown: AgentThread | null): AgentThreadFindState {
   const [open, setOpen] = useState(false);
+  const live = useLiveAgentThread(open ? shown : null);
+  const thread = open ? live : shown;
   const [query, setQueryState] = useState("");
   const [index, setIndex] = useState(0);
   const [searchTarget, setSearchTarget] = useState<AgentThreadRevealRequest | null>(null);

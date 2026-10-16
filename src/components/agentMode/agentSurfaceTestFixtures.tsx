@@ -60,7 +60,7 @@ export function surfaceThreadView(overrides: Partial<AgentThreadView> = {}): Age
   };
   return {
     ship: { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
     lifecycle: "settled",

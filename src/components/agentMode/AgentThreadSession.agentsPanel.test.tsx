@@ -63,7 +63,7 @@ function view(threadId: string, events: ReadonlyArray<AgentTurnEvent>): AgentThr
       externalOrigin: null,
     },
     ship: { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: "running",
     unread: false,
     lifecycle: "running",

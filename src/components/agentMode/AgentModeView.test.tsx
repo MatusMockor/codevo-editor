@@ -4527,7 +4527,7 @@ function threadView({
 
   return {
     ship,
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
     thread,

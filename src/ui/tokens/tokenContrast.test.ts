@@ -6,7 +6,7 @@ import {
   type ResolvedColorScheme,
 } from "../../domain/appearance";
 import { paletteTokens, type PaletteTokenName } from "../../domain/appearancePalettes";
-import { contrastRatio } from "../../domain/themeContrast";
+import { contrastRatio } from "../../test/themeContrast";
 
 const AA_TEXT = 4.5;
 const TEXT_TOKENS: readonly PaletteTokenName[] = [

@@ -4,7 +4,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalTheme } from "../domain/settings";
-import { classicTerminalTheme } from "../domain/editorColorThemes";
+import { classicTerminalTheme } from "../domain/appColorThemes";
 import type { TerminalGateway } from "../domain/terminal";
 import { TERMINAL_SCROLLBACK_LINES, TerminalPanel } from "./TerminalPanel";
 

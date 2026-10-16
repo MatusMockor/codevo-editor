@@ -302,7 +302,7 @@ describe("AgentSurfacePanel", () => {
         target: { rootPath: SURFACE_FIXTURE_WORKTREE, ownerKey: "history-owner" },
       },
       gateway,
-      monacoTheme: "calm-dark",
+      codeTheme: "calm-dark",
     };
     render({ layout: open(["files", "history"], "files"), history });
     await act(async () => Promise.resolve());

@@ -17,6 +17,8 @@ import { SettingsAppUpdaterPreferencesGateway } from "./infrastructure/settingsA
 import { TauriGitWorktreeGateway } from "./infrastructure/tauriGitWorktreeGateway";
 import { tauriWindowZoomGateway } from "./infrastructure/tauriWindowZoomGateway";
 import { AGENT_APP_VERSION, createAgentAppComposition } from "./agentAppComposition";
+import { standaloneAgentWorkbenchPorts } from "./agentWorkbenchPortsComposition";
+import { RemoteRepositoryIdentityCoordinator } from "./application/remoteRepositoryIdentityCoordinator";
 
 const updaterBridge = vi.hoisted(() => {
   const construct = vi.fn();
@@ -40,6 +42,7 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: updaterBridge.relaunch 
 const AGENT_APP_COMPOSITION_KEYS = [
   "agentGateways",
   "agentSurfaceGateways",
+  "agentWorkbenchPorts",
   "appUpdater",
   "gitGateway",
   "isBenignError",
@@ -101,6 +104,43 @@ describe("agent app composition", () => {
     expect(keys).not.toMatch(
       /languageServer|javaScriptTypeScript|jsTest|php|eslint|prettier|pint|index|smartMode|localHistory|liveDocument|cursorStore|dirtyClose|artisan|nette|symfony|runtimeObservability|packageOperations/i,
     );
+  });
+
+  it("composes the workbench adapter ports once per composition", () => {
+    const first = createAgentAppComposition().agentWorkbenchPorts;
+    const second = createAgentAppComposition().agentWorkbenchPorts;
+
+    expect(Object.keys(first).sort()).toEqual([
+      "artifactFileLocator",
+      "artifactLoader",
+      "artifactPreview",
+      "codexRateLimitResets",
+      "directoryListing",
+      "filePreviewReader",
+      "imageSurface",
+      "localClone",
+      "outsideLinkedFiles",
+      "projectCollapsePreference",
+      "projectFocusPreference",
+      "projectIdentity",
+      "remoteAttachmentEncoder",
+      "remoteCompareUrlOpener",
+      "remoteGitSync",
+      "remotePortPreview",
+      "remoteRepositoryIdentity",
+      "resolveWorkspaceHome",
+      "revealPath",
+      "rightPanelGateways",
+      "sessionRestore",
+      "textClipboard",
+      "threadBranchMemory",
+      "threadNotificationPorts",
+      "workingSectionPreference",
+    ]);
+    expect(first.remoteRepositoryIdentity).toBeInstanceOf(RemoteRepositoryIdentityCoordinator);
+    expect(second.remoteRepositoryIdentity).not.toBe(first.remoteRepositoryIdentity);
+    expect(standaloneAgentWorkbenchPorts()).toBe(standaloneAgentWorkbenchPorts());
+    expect(standaloneAgentWorkbenchPorts()).not.toBe(first);
   });
 
   it("hands the agent controller its gateways and shares the identity-aware file search", () => {

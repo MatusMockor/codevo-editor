@@ -190,10 +190,6 @@ function rememberedProjectLaunch(
   return remembered;
 }
 
-export function agentLaunchKey(launch: AgentLaunchOptions): string {
-  return `${launch.provider}:${launch.model}:${launch.mode}`;
-}
-
 export function terminalTurnKey(thread: AgentThread | null): string | null {
   if (thread === null) return null;
   const turn = lastAgentTurn(thread);

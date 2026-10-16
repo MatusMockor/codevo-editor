@@ -13,14 +13,14 @@ import type { WorkspaceFileChangeGateway } from "../../domain/workspaceFileChang
 import type { WorkspaceHomeReference } from "../../domain/workspaceRootEligibility";
 import type { WorkspaceRuntimeLifecycleGateway } from "../../domain/workspaceRuntimeLifecycle";
 import type { NodePackageScriptsWorkbenchGateway } from "../useNodePackageScriptWorkbench";
-import type { WorkbenchControllerAgentsOptions } from "../useWorkbenchControllerAgents";
+import type { AppControllerAgentsOptions } from "../useAppControllerAgents";
 import type { WindowZoomGateway } from "../windowZoomGateway";
 import type { WorkbenchPrompter } from "../workbenchPrompter";
 import type { WorkspaceIdentityGateway } from "../workspaceIdentityGatewayPort";
 import type { AgentScriptsWorkspaceReader } from "./agentWorkspaceRuntimes";
 import type { AgentNativeShutdownPort } from "./useAgentApplicationShutdown";
 
-export type AgentAppAgentGateways = WorkbenchControllerAgentsOptions["options"] & {
+export type AgentAppAgentGateways = AppControllerAgentsOptions["options"] & {
   readonly resolveWorkspaceHome?: () => Promise<WorkspaceHomeReference>;
   readonly windowZoomGateway?: WindowZoomGateway;
 };

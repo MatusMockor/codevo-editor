@@ -1,0 +1,339 @@
+import {
+  useCallback,
+  useMemo,
+  useState,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
+import type { AgentRootLeaseGateway } from "../domain/agentProject";
+import type { GitGateway } from "../domain/git";
+import type { GitRepositoryMapping, GitRepositoryStatus } from "../domain/gitRepositoryMapping";
+import type {
+  AppSettings,
+  SettingsGateway,
+  SettingsSection,
+  WorkspaceSettings,
+} from "../domain/settings";
+import type { WorkspaceTrustGateway, WorkspaceTrustState } from "../domain/trust";
+import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
+import type { AgentThreadStoreGateway } from "./agentThreadPorts";
+import type { AgentFileNavigationPort } from "./useAgentFileNavigation";
+import {
+  useAgentWorkbenchLayout,
+  type AgentSidebarRailPreferencePort,
+  type AgentWorkbenchLayoutHydration,
+  type AgentWorkbenchLayoutPersistencePort,
+  type AgentWorkbenchLayoutState,
+  type AgentWorkbenchLayoutSurface,
+} from "./useAgentWorkbenchLayout";
+import {
+  useAppAgents,
+  type AppAgentGateways,
+  type AppAgentProjectGateways,
+  type AppAgentsOptions,
+  type AppAgentsSurface,
+} from "./useAppAgents";
+import type { WorkbenchPrompter } from "./workbenchPrompter";
+import type { WorkspaceTrustIntentCoordinator } from "./workspaceTrustIntentCoordinator";
+import type { WorkspaceIdentityDescriptor } from "./workspaceIdentityGatewayPort";
+import { createWorkspaceRuntimeOwner } from "../domain/workspaceRuntimeOwner";
+
+export function useAgentProjectGateways(
+  agentRootLeaseGateway: AgentRootLeaseGateway | undefined,
+  identityByRootRef: { readonly current: Readonly<Record<string, WorkspaceIdentityDescriptor>> },
+  gitGateway: Pick<GitGateway, "detectRepositories">,
+  settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings">,
+  trustGateway: WorkspaceTrustGateway,
+  activateWorkspaceRoot?: (rootPath: string) => Promise<void>,
+): AppAgentProjectGateways | undefined {
+  const descriptorForRoot = useCallback(
+    (rootPath: string): WorkspaceIdentityDescriptor | null =>
+      identityByRootRef.current[rootPath] ?? null,
+    [identityByRootRef],
+  );
+
+  return useMemo(
+    () =>
+      agentRootLeaseGateway === undefined
+        ? undefined
+        : {
+            settingsGateway,
+            trustGateway,
+            repositoryDiscoveryGateway: {
+              detectRepositories: (rootPath: string, maxDepth?: number) =>
+                gitGateway.detectRepositories?.(rootPath, maxDepth) ?? Promise.resolve(null),
+            },
+            agentRootLeaseGateway,
+            descriptorForRoot,
+            activateWorkspaceRoot,
+          },
+    [
+      activateWorkspaceRoot,
+      agentRootLeaseGateway,
+      descriptorForRoot,
+      gitGateway,
+      settingsGateway,
+      trustGateway,
+    ],
+  );
+}
+
+export type AppControllerPersistWorkspaceSettings = (
+  rootPath: string,
+  nextSettings: WorkspaceSettings,
+) => Promise<void>;
+
+export interface AppControllerAgentGateways extends Pick<
+  AppAgentGateways,
+  | "agentCliDiscoveryGateway"
+  | "agentInlineImageGateway"
+  | "agentProviderGateway"
+  | "agentProviderSignInGateway"
+  | "agentTaskGateway"
+  | "agentThreadRequestFeed"
+  | "agentThreadSessionGateway"
+  | "gitWorktreeGateway"
+  | "turnChangesGateway"
+> {
+  readonly agentRootLeaseGateway?: AgentRootLeaseGateway;
+  readonly agentSidebarRailPreference?: AgentSidebarRailPreferencePort;
+}
+
+export interface AppControllerAgentsOptions {
+  readonly activateWorkspaceRoot?: (rootPath: string) => Promise<void>;
+  readonly agentThreadStoreGateway?: AgentThreadStoreGateway;
+  readonly appSettingsRef: { readonly current: AppSettings };
+  readonly applyAppSettings: (settings: AppSettings) => void;
+  readonly bottomPanelVisible: boolean;
+  readonly setBottomPanelVisible: Dispatch<SetStateAction<boolean>>;
+  readonly workspaceSessionOwnerKey: string | null;
+  readonly options: AppControllerAgentGateways;
+  readonly gitGateway: Pick<
+    GitGateway,
+    "getStatus" | "getDiff" | "detectRepositories" | "stageFiles" | "commit" | "deleteBranch"
+  >;
+  readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
+  readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
+  readonly persistedAgentWorkbenchLayout?: AgentWorkbenchLayoutHydration | null;
+  readonly persistWorkspaceSettings?: AppControllerPersistWorkspaceSettings;
+  readonly prompter: WorkbenchPrompter;
+  readonly reportError: (source: string, error: unknown) => void;
+  readonly setSettingsInitialSection: (section: SettingsSection) => void;
+  readonly setSettingsOpen: (open: boolean) => void;
+  readonly setWorkspaceTrust: Dispatch<SetStateAction<WorkspaceTrustState | null>>;
+  readonly settingsGateway: Pick<SettingsGateway, "loadWorkspaceSettings" | "saveAppSettings">;
+  readonly workspaceIdentityByRootRef: {
+    readonly current: Readonly<Record<string, WorkspaceIdentityDescriptor>>;
+  };
+  readonly workspaceIdentityDescriptor: { readonly workspaceId: string } | null;
+  readonly workspaceRoot: string | null;
+  readonly workspaceSettingsRef: { readonly current: WorkspaceSettings };
+  readonly workspaceTrust: WorkspaceTrustState | null;
+  readonly workspaceTrustGateway: WorkspaceTrustGateway;
+  readonly terminalGateway: AppAgentsOptions["terminalGateway"];
+  readonly workspaceTrustIntentCoordinatorRef: {
+    readonly current: WorkspaceTrustIntentCoordinator;
+  };
+  readonly workspaceTrustRevisionByOwnerRef: MutableRefObject<Record<string, number>>;
+}
+
+export interface AppControllerAgentsSurface extends AppAgentsSurface, AgentWorkbenchLayoutSurface {
+  readonly appSettingsHydrated: boolean;
+  markAppSettingsHydrated(hydrated: true): void;
+}
+
+export function useAppControllerAgents(
+  options: AppControllerAgentsOptions,
+): AppControllerAgentsSurface {
+  const [appSettingsHydrated, setAppSettingsHydrated] = useState(false);
+  const layoutPersistence = useAgentWorkbenchLayoutPersistence(
+    options.workspaceRoot,
+    options.persistWorkspaceSettings,
+    options.workspaceSettingsRef,
+  );
+
+  const agentLayout = useAgentWorkbenchLayout({
+    workspaceOwnerKey: options.workspaceSessionOwnerKey,
+    hasWorkspace: options.workspaceRoot !== null,
+    bottomPanelVisible: options.bottomPanelVisible,
+    hydration:
+      options.persistedAgentWorkbenchLayout ??
+      agentWorkbenchHydration(
+        options.workspaceSessionOwnerKey,
+        options.workspaceSettingsRef.current,
+      ),
+    persistence: layoutPersistence,
+    sidebarPreference: options.options.agentSidebarRailPreference ?? null,
+    reportError: options.reportError,
+  });
+  const { agentWorkbench } = agentLayout;
+
+  const agentProjectGateways = useAgentProjectGateways(
+    options.options.agentRootLeaseGateway,
+    options.workspaceIdentityByRootRef,
+    options.gitGateway,
+    options.settingsGateway,
+    options.workspaceTrustGateway,
+    options.activateWorkspaceRoot,
+  );
+
+  const fileNavigationPort = useAgentFileNavigationPort(agentWorkbench.dispatch);
+  const activeWorkspaceRoot = options.workspaceRoot;
+  const activeWorkspaceId = options.workspaceIdentityDescriptor?.workspaceId ?? null;
+  const setWorkspaceTrust = options.setWorkspaceTrust;
+  const setSettingsOpen = options.setSettingsOpen;
+  const setBottomPanelVisible = options.setBottomPanelVisible;
+  const workspaceTrustIntentCoordinatorRef = options.workspaceTrustIntentCoordinatorRef;
+  const workspaceTrustRevisionByOwnerRef = options.workspaceTrustRevisionByOwnerRef;
+  const revealTerminal = useCallback((): void => {
+    setSettingsOpen(false);
+    setBottomPanelVisible(true);
+  }, [setBottomPanelVisible, setSettingsOpen]);
+
+  const trustRevisionForOwner = useCallback(
+    (ownerId: string): number => workspaceTrustRevisionByOwnerRef.current[ownerId] ?? 0,
+    [workspaceTrustRevisionByOwnerRef],
+  );
+
+  const handleActiveWorkspaceTrustChanged = useCallback(
+    (rootPath: string, ownerId: string, trusted: boolean): void => {
+      if (activeWorkspaceRoot === null) return;
+      if (!workspaceRootKeysEqual(activeWorkspaceRoot, rootPath)) return;
+      if (activeWorkspaceId !== ownerId) return;
+      const trustIntent = workspaceTrustIntentCoordinatorRef.current.request(
+        createWorkspaceRuntimeOwner(ownerId, rootPath),
+        rootPath,
+        trusted,
+      );
+      workspaceTrustRevisionByOwnerRef.current[ownerId] = trustIntent.revision;
+      setWorkspaceTrust((current) => {
+        if (
+          current !== null &&
+          current.trusted === trusted &&
+          workspaceRootKeysEqual(current.rootPath, rootPath)
+        ) {
+          return current;
+        }
+        return { rootPath, trusted };
+      });
+    },
+    [
+      activeWorkspaceId,
+      activeWorkspaceRoot,
+      setWorkspaceTrust,
+      workspaceTrustIntentCoordinatorRef,
+      workspaceTrustRevisionByOwnerRef,
+    ],
+  );
+
+  const agents = useAppAgents({
+    gateways: options.options,
+    agentThreadStoreGateway: options.agentThreadStoreGateway,
+    fileNavigationPort,
+    agentProjectGateways,
+    appSettingsRef: options.appSettingsRef,
+    applyAppSettings: options.applyAppSettings,
+    settingsHydrated: appSettingsHydrated,
+    settingsPersistenceGateway: options.settingsGateway,
+    workspaceSettingsRef: options.workspaceSettingsRef,
+    gitGateway: options.gitGateway,
+    gitRepositoryMappings: options.gitRepositoryMappings,
+    gitRepositoryStatuses: options.gitRepositoryStatuses,
+    onActiveWorkspaceTrustChanged: handleActiveWorkspaceTrustChanged,
+    trustRevisionForOwner,
+    prompter: options.prompter,
+    reportError: options.reportError,
+    revealTerminal,
+    setSettingsInitialSection: options.setSettingsInitialSection,
+    setSettingsOpen: options.setSettingsOpen,
+    workspaceId: options.workspaceIdentityDescriptor?.workspaceId ?? null,
+    workspaceRoot: options.workspaceRoot,
+    workspaceTrust: options.workspaceTrust,
+    terminalGateway: options.terminalGateway,
+  });
+
+  return useMemo(
+    () => ({
+      ...agents,
+      agentWorkbench,
+      appSettingsHydrated,
+      markAppSettingsHydrated: setAppSettingsHydrated,
+    }),
+    [agentWorkbench, agents, appSettingsHydrated, setAppSettingsHydrated],
+  );
+}
+
+interface WorkspaceTrustOwnerLoadOptions {
+  readonly gateway: WorkspaceTrustGateway;
+  readonly isCurrent: () => boolean;
+  readonly ownerId: string;
+  readonly publish: (trust: WorkspaceTrustState) => void;
+  readonly reportError: (error: unknown) => void;
+  readonly revisionByOwnerRef: { readonly current: Readonly<Record<string, number>> };
+  readonly rootPath: string;
+}
+
+export async function loadWorkspaceTrustForOwner(
+  options: WorkspaceTrustOwnerLoadOptions,
+): Promise<void> {
+  const revision = options.revisionByOwnerRef.current[options.ownerId] ?? 0;
+  try {
+    const trust = await options.gateway.getTrust(options.rootPath);
+    if (!workspaceTrustOwnerLoadIsCurrent(options, revision)) return;
+    options.publish(trust);
+  } catch (error) {
+    if (!workspaceTrustOwnerLoadIsCurrent(options, revision)) return;
+    options.reportError(error);
+  }
+}
+
+function workspaceTrustOwnerLoadIsCurrent(
+  options: WorkspaceTrustOwnerLoadOptions,
+  revision: number,
+): boolean {
+  if (!options.isCurrent()) return false;
+  return (options.revisionByOwnerRef.current[options.ownerId] ?? 0) === revision;
+}
+
+function useAgentWorkbenchLayoutPersistence(
+  workspaceRoot: string | null,
+  persistWorkspaceSettings: AppControllerPersistWorkspaceSettings | undefined,
+  workspaceSettingsRef: { readonly current: WorkspaceSettings },
+): AgentWorkbenchLayoutPersistencePort | null {
+  return useMemo(() => {
+    if (workspaceRoot === null || persistWorkspaceSettings === undefined) {
+      return null;
+    }
+
+    return {
+      write: async (_ownerKey, agentWorkbench) => {
+        const settings = workspaceSettingsRef.current;
+        await persistWorkspaceSettings(workspaceRoot, {
+          ...settings,
+          session: { ...settings.session, agentWorkbench },
+        });
+      },
+    };
+  }, [persistWorkspaceSettings, workspaceRoot, workspaceSettingsRef]);
+}
+
+function useAgentFileNavigationPort(
+  dispatchAgentLayout: AgentWorkbenchLayoutState["dispatch"],
+): AgentFileNavigationPort {
+  return useMemo(
+    () => ({
+      revealFile: (path) => dispatchAgentLayout({ kind: "revealFile", path }),
+      openSurface: (surface) => dispatchAgentLayout({ kind: "openSurface", surface }),
+    }),
+    [dispatchAgentLayout],
+  );
+}
+
+export function agentWorkbenchHydration(
+  ownerKey: string | null,
+  settings: WorkspaceSettings,
+): AgentWorkbenchLayoutHydration | null {
+  if (ownerKey === null) return null;
+  return { ownerKey, layout: settings.session.agentWorkbench };
+}

@@ -36,7 +36,7 @@ export function chromeFixture(overrides: Partial<AgentWorkbenchChrome> = {}): Ag
     workspaceId: "workspace-app",
     workspaceTrusted: true,
     fileTree: null,
-    diff: { monacoTheme: "calm-dark" },
+    diff: { codeTheme: "calm-dark" },
     terminal: null,
     addProject: null,
     onToggleBottomPanel: () => undefined,

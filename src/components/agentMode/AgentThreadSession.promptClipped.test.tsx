@@ -69,7 +69,7 @@ describe("a clipped turn prompt in the thread session", () => {
         externalOrigin: null,
       },
       ship: { kind: "idle", status: null, loadingStatus: false },
-      editorAvailability: { kind: "available" },
+      fileNavigationAvailability: { kind: "available" },
       attention: "settled",
       unread: false,
       lifecycle: "settled",

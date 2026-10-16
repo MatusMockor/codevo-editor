@@ -16,7 +16,7 @@ import type {
   WorkspaceCloseOwnership,
   WorkspaceTabDisposalResult,
 } from "../useWorkbenchWorkspaceTabCloseCoordinator";
-import type { BackendClosedWorkspaceIdentitySettlement } from "../workbenchController/useManagedWorkspaceIdentityOwnership";
+import type { BackendClosedWorkspaceIdentitySettlement } from "../appController/useManagedWorkspaceIdentityOwnership";
 import type { WorkspaceIdentityDescriptor } from "../workspaceIdentityGatewayPort";
 
 export type WorkspaceIdentityReleaseOutcome = "deferred" | "released" | "retained" | "stale";

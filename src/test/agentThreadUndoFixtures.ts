@@ -167,7 +167,7 @@ export function undoThreadDependencies(gateways: UndoThreadGateways): AgentThrea
     gitGateway: gateways.gitGateway,
     gitIntegrationGateway: gateways.gitIntegrationGateway,
     externalUrlOpener: null,
-    editorBridge: null,
+    fileNavigationPort: null,
     prompter: { confirm: () => true, prompt: () => null },
     projects: UNDO_FIXTURE_PROJECTS,
     getAgentCliKind: () => "claudeCode",

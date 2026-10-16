@@ -49,6 +49,7 @@ import type {
 } from "../domain/agentThread";
 import type { AgentThreadSearchResult } from "../domain/agentThreadSearch";
 import type { AgentTurnLogFactsSource } from "./agentTurnLogStatusStore";
+import type { AgentLiveThreadSource } from "./agentThreads/agentThreadStateStore";
 import type {
   ExternalAgentSessionHistory,
   ExternalSessionHistoryRequest,
@@ -200,6 +201,7 @@ export class AgentThreadCleanupIncompleteError extends Error {
 
 export interface AgentThreadStoreSurface {
   readonly state: AgentThreadsState;
+  readonly liveThreads?: AgentLiveThreadSource;
   readonly loadedRootKeys: ReadonlySet<string>;
   currentState(): AgentThreadsState;
   /** Await terminal persistence and immutable output snapshots before continuing. */
@@ -304,7 +306,7 @@ export interface AgentThreadView {
   readonly worktreeMissing: boolean;
   readonly changeSummary: AgentTaskChangeSummary | null;
   readonly ship: AgentShipState;
-  readonly editorAvailability: AgentShipAvailability;
+  readonly fileNavigationAvailability: AgentShipAvailability;
   readonly attention: AgentThreadAttention;
   readonly unread: boolean;
   readonly sessionBackground?: AgentSessionBackground;
@@ -428,6 +430,7 @@ export interface AgentThreadsSurface {
   readonly catalog?: AgentHistoryCatalogSurface;
   readonly historySearch?: AgentHistorySearchPort;
   readonly turnLog?: AgentTurnLogFactsSource;
+  readonly liveThreads?: AgentLiveThreadSource;
   readonly attachments: AgentComposerAttachmentsSurface;
   readonly questionAttachments?: AgentQuestionAttachmentsPort;
   readonly attachmentImages: AgentAttachmentImagesSurface;

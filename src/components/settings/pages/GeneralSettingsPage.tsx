@@ -1,7 +1,7 @@
 import type { SettingsPageProps } from "../settingsPageProps";
 import { GeneralAppUpdateRows } from "./GeneralAppUpdateRows";
 import { GeneralStatusBarRows } from "./GeneralStatusBarRows";
-import { GeneralTextEditorRows } from "./GeneralTextEditorRows";
+import { GeneralTextAndCodeRows } from "./GeneralTextAndCodeRows";
 import { GeneralThemeSection } from "./GeneralThemeSection";
 import { GeneralWorkspaceRows } from "./GeneralWorkspaceRows";
 
@@ -9,7 +9,7 @@ export function GeneralSettingsPage(props: SettingsPageProps) {
   return (
     <>
       <GeneralThemeSection {...props} />
-      <GeneralTextEditorRows {...props} />
+      <GeneralTextAndCodeRows {...props} />
       <GeneralAppUpdateRows updater={props.env.appUpdater} />
       <GeneralWorkspaceRows {...props} />
       <GeneralStatusBarRows {...props} />

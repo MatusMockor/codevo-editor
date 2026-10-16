@@ -7,7 +7,7 @@ import {
 } from "../../application/useRepositoryHostStatus";
 import type { RecentFolderEntry } from "../../domain/recentFolders";
 import type { RemoteRunnerServer } from "../../domain/remoteRunner";
-import { resolveTauriWorkspaceHome } from "../../infrastructure/tauriHomeDirectory";
+import { useAgentWorkbenchPorts } from "../agentWorkbenchPortsContext";
 import { CommandSurface } from "../../ui/foundation/CommandList";
 import { AgentAddProjectDialog } from "../agentMode/AgentAddProjectDialog";
 import { MAX_PENDING_PROJECT_CLONES } from "../agentMode/agentProjectCreationSession";
@@ -61,10 +61,12 @@ export function ProjectOnboardingLayer({
   chrome,
   creation,
   lookupGateway,
-  resolveHome = resolveTauriWorkspaceHome,
+  resolveHome: injectedResolveHome,
   selectedServerId,
   servers,
 }: ProjectOnboardingLayerProps) {
+  const portsResolveHome = useAgentWorkbenchPorts().resolveWorkspaceHome;
+  const resolveHome = injectedResolveHome ?? portsResolveHome;
   const [serverChoice, setServerChoice] = useState<Readonly<{ id: string | null }> | null>(null);
   const [cloneSeed, setCloneSeed] = useState("");
   const [picker, setPicker] = useState<RepositoryPickerProvider | null>(null);

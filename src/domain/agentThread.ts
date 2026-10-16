@@ -82,7 +82,6 @@ export const MAX_AGENT_THREADS_PER_ROOT = 64;
 export const MAX_AGENT_TURNS_PER_THREAD = 64;
 export const MAX_AGENT_STEER_BYTES_PER_TURN = 512 * 1_024;
 export const MAX_AGENT_THREAD_TITLE_CHARS = 200;
-export const AGENT_THREAD_SCHEMA_VERSION = 1;
 export const UNTITLED_AGENT_THREAD_TITLE = "Untitled thread";
 export const AGENT_THREAD_STORE_FULL_ERROR =
   "The agent thread store is full and no saved thread can be evicted.";

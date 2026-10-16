@@ -1,7 +1,7 @@
 import {
-  createEditorSessionOwnerKey,
-  createLegacyEditorSessionOwnerKey,
-} from "../../domain/editorSessionOwnerKey";
+  createWorkspaceSessionOwnerKey,
+  createLegacyWorkspaceSessionOwnerKey,
+} from "../../domain/workspaceSessionOwnerKey";
 import { pushRecentWorkspacePath, type AppSettings } from "../../domain/settings";
 import { recordRecentWorkspaceOpenedAt } from "../../domain/projectOnboardingSettings";
 import { workspaceRootKeysEqual } from "../../domain/workspaceRootKey";
@@ -11,8 +11,8 @@ export function workspaceOwnerKeyFor(
   rootPath: string,
   identity: WorkspaceIdentityDescriptor | null,
 ): string {
-  if (identity) return createEditorSessionOwnerKey(identity.workspaceId, identity.canonicalRoot);
-  return createLegacyEditorSessionOwnerKey(rootPath);
+  if (identity) return createWorkspaceSessionOwnerKey(identity.workspaceId, identity.canonicalRoot);
+  return createLegacyWorkspaceSessionOwnerKey(rootPath);
 }
 
 export function workspaceIdentityAliasPaths(

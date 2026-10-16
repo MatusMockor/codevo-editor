@@ -2068,7 +2068,7 @@ function threadView(overrides: ThreadViewOptions): AgentThreadView {
       overrides.branchDeleted === true
         ? { kind: "worktreeRemoved", branchDeleted: true }
         : { kind: "idle", status: null, loadingStatus: false },
-    editorAvailability: { kind: "available" },
+    fileNavigationAvailability: { kind: "available" },
     attention: agentThreadAttention(thread),
     unread: agentThreadUnread(thread),
     thread,

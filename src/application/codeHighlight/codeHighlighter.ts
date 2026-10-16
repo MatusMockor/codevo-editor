@@ -1,12 +1,12 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { CodeLanguageId } from "../../domain/codeHighlight/codeLanguage";
 import type { HighlightedLines } from "../../domain/codeHighlight/highlightedCode";
-import type { MonacoAppTheme } from "../../domain/settings";
+import type { CodeTheme } from "../../domain/settings";
 
 export interface CodeHighlightRequest {
   readonly text: string;
   readonly language: CodeLanguageId;
-  readonly theme: MonacoAppTheme;
+  readonly theme: CodeTheme;
 }
 
 export type CodePlainReason = "unsupported-language" | "too-large" | "unavailable";
@@ -18,7 +18,7 @@ export type CodeHighlightOutcome =
 export interface CodeHighlightBatchRequest {
   readonly texts: readonly string[];
   readonly language: CodeLanguageId;
-  readonly theme: MonacoAppTheme;
+  readonly theme: CodeTheme;
 }
 
 export type CodeHighlightBatchOutcome =
@@ -34,7 +34,7 @@ export interface CodeHighlighter {
 }
 
 export const CodeHighlighterContext = createContext<CodeHighlighter | null>(null);
-export const CodeHighlightThemeContext = createContext<MonacoAppTheme | null>(null);
+export const CodeHighlightThemeContext = createContext<CodeTheme | null>(null);
 
 export type CodeHighlightState = { readonly kind: "pending" } | CodeHighlightOutcome;
 
@@ -102,7 +102,7 @@ function publishedMatches(
   highlighter: CodeHighlighter,
   text: string,
   language: CodeLanguageId,
-  theme: MonacoAppTheme,
+  theme: CodeTheme,
 ): boolean {
   return (
     published.highlighter === highlighter &&

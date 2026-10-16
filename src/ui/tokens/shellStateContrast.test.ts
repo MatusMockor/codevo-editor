@@ -17,8 +17,8 @@ import {
   SHELL_TINT_NAMES,
   compositeOver,
   macTrafficLightInset,
-} from "../../domain/appearanceShellStates";
-import { contrastRatio } from "../../domain/themeContrast";
+} from "../../test/appearanceShellStates";
+import { contrastRatio } from "../../test/themeContrast";
 import {
   buildTokenTable,
   lastOf,

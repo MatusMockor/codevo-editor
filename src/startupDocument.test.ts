@@ -21,7 +21,7 @@ import {
   type ResolvedColorScheme,
 } from "./domain/appearance";
 import { paletteTokens, surfaceColor } from "./domain/appearancePalettes";
-import { MAC_TRAFFIC_LIGHTS } from "./domain/appearanceShellStates";
+import { MAC_TRAFFIC_LIGHTS } from "./test/appearanceShellStates";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
 const STARTUP_SHEET = "public/startup.css";
