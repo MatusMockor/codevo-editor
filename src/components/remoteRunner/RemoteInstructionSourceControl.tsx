@@ -49,7 +49,7 @@ function SourceSelection({
         <small>
           {readError ??
             (root
-              ? `Global and project rules use local source: ${root}.`
+              ? `Rules and MCP servers use local source: ${root}.`
               : "Only global rules sync.")}{" "}
           Manage the local instruction source in Settings → Environments.
         </small>
@@ -100,10 +100,10 @@ function SourceSelection({
       </label>
       <small>
         {root
-          ? "Global and project rules refresh from disk before each message. Keep this local project open and trusted."
+          ? "Rules refresh from disk before each message; MCP servers sync when a new thread starts. Keep this local project open and trusted."
           : sources.length === 0
-            ? "Only global rules sync. Open a trusted local project in the agent view to choose its project rules."
-            : "Only global rules sync. Select a trusted local project to include its project rules."}
+            ? "Only global rules sync. Open a trusted local project in the agent view to choose its rules and MCP servers."
+            : "Only global rules sync. Select a trusted local project to include its rules and MCP servers."}
       </small>
       {(readError ?? saveError) && <p role="alert">{readError ?? saveError}</p>}
     </div>

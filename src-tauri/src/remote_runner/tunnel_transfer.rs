@@ -1,5 +1,5 @@
 use super::tunnel_dispatch::{Authority, TIMED_OUT};
-use super::tunnel_http::{self, CLIENT_CAPABILITIES, CONNECTION_FAILED};
+use super::tunnel_http::{self, CLIENT_CAPABILITIES, CLIENT_CAPABILITIES_2, CONNECTION_FAILED};
 use super::Session;
 use bytes::Bytes;
 use std::future::Future;
@@ -97,6 +97,10 @@ impl Access {
             .header(
                 "x-codevo-client-capabilities",
                 reqwest::header::HeaderValue::from_static(CLIENT_CAPABILITIES),
+            )
+            .header(
+                "x-codevo-client-capabilities-2",
+                reqwest::header::HeaderValue::from_static(CLIENT_CAPABILITIES_2),
             );
         let Some(id) = &self.expected else {
             return request;

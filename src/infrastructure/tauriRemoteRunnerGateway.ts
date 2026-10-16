@@ -6,6 +6,7 @@ import {
   parseAgentMcpServerLoginStatus,
 } from "../domain/agentMcpServerManagement";
 import { parseAgentMcpServers } from "../domain/agentMcpServers";
+import { parseRemoteRunnerMcpDeviceSyncReport } from "../domain/remoteRunnerMcpDeviceSync";
 import type * as R from "../domain/remoteRunner";
 import { RemoteRunnerRequestRejectedError } from "../domain/remoteRunnerErrors";
 import { agentCliKindOfRemoteRunnerProvider } from "../domain/remoteRunnerProvider";
@@ -37,6 +38,7 @@ export const REMOTE_RUNNER_COMMANDS = {
   getMcpServerLogin: "remote_runner_get_mcp_server_login",
   submitMcpServerLoginCallback: "remote_runner_submit_mcp_server_login_callback",
   cancelMcpServerLogin: "remote_runner_cancel_mcp_server_login",
+  syncDeviceMcpServers: "remote_runner_sync_device_mcp_servers",
   transcribeSpeech: "remote_runner_transcribe_speech",
   listProjects: "remote_runner_list_projects",
   listRepositoryHosts: "remote_runner_repository_hosts",
@@ -180,6 +182,11 @@ export class TauriRemoteRunnerGateway implements R.RemoteRunnerGateway {
   }
   async cancelMcpServerLogin(request: R.RemoteRunnerMcpServerLoginRequest) {
     parseAgentMcpServerChangeReceipt(await this.exchange("cancelMcpServerLogin", request));
+  }
+  async syncDeviceMcpServers(request: R.RemoteRunnerMcpDeviceSyncRequest) {
+    return parseRemoteRunnerMcpDeviceSyncReport(
+      await this.exchange("syncDeviceMcpServers", request),
+    );
   }
   transcribeSpeech(request: R.RemoteRunnerTranscribeSpeechRequest) {
     return this.call("transcribeSpeech", request);

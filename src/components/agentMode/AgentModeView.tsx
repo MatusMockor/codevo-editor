@@ -1,6 +1,10 @@
 import { useRef, useState } from "react";
 import { AgentLiveThreadContext } from "../../application/agentThreads/useLiveAgentThread";
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
+import {
+  createRemoteDeviceMcpSources,
+  usePublishRemoteDeviceMcpProjects,
+} from "../../application/remoteDeviceMcpSource";
 import { useAgentWorkbenchPorts } from "../agentWorkbenchPortsContext";
 import { useRemoteRunnerContext } from "../remoteRunner/remoteRunnerContext";
 import { useSurfaceEnterClass } from "../workbenchFrameBootContext";
@@ -72,6 +76,7 @@ export function AgentModeView(props: AgentModeViewProps) {
   const selection = useAgentModeSelection(navigationKey, props.navigationSession, remote);
   const ports = useAgentWorkbenchPorts();
   const claudeCatalog = useAgentClaudeModelCatalog();
+  const [deviceMcpSources] = useState(createRemoteDeviceMcpSources);
   const unified = useUnifiedAgentThreads({
     local: props.agents,
     gateway: remote?.gateway ?? null,
@@ -88,6 +93,7 @@ export function AgentModeView(props: AgentModeViewProps) {
     gitSync: ports.remoteGitSync,
     repositoryIdentity: ports.remoteRepositoryIdentity,
     externalUrlOpener: ports.remoteCompareUrlOpener,
+    deviceMcpSource: deviceMcpSources.resolve,
   });
   const view = (
     <LocalAgentModeView
@@ -104,6 +110,7 @@ export function AgentModeView(props: AgentModeViewProps) {
       selectedServerId={remote?.selectedServerId ?? null}
       authoritativeRemoteProjectKeys={unified.authoritativeRemoteProjectKeys}
       cloneAttachments={unified.cloneAttachments}
+      deviceMcpSources={deviceMcpSources}
     />
   );
   return (
@@ -158,6 +165,7 @@ function LocalAgentModeView({
   selectedServerId,
   authoritativeRemoteProjectKeys,
   cloneAttachments,
+  deviceMcpSources,
 }: LocalAgentModeViewProps) {
   const surfaceEnterClass = useSurfaceEnterClass();
   const remoteContext = useRemoteRunnerContext();
@@ -172,6 +180,7 @@ function LocalAgentModeView({
     workingSectionPreference,
   });
   const { groups, displayProjects, presentationThreads, projectDisclosure } = projectsState;
+  usePublishRemoteDeviceMcpProjects(deviceMcpSources, projects, projectsState.repositoryIdentities);
   const navigation = useAgentThreadNavigation({
     agents,
     evidenceOf: projectsState.turnEvidenceOf,

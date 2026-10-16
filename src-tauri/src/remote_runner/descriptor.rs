@@ -72,6 +72,8 @@ struct Capabilities {
     #[serde(default, deserialize_with = "optional_bool")]
     mcp_server_management: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
+    mcp_device_sync: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
     runtime_requests: Option<bool>,
     #[serde(default, deserialize_with = "optional_bool")]
     interactive_approvals: Option<bool>,
@@ -138,6 +140,7 @@ pub(super) fn validate(value: Value) -> Result<String, String> {
         caps.command_catalog,
         caps.mcp_servers,
         caps.mcp_server_management,
+        caps.mcp_device_sync,
         caps.runtime_requests,
         caps.interactive_approvals,
     );
@@ -157,6 +160,7 @@ mod tests {
             "commandCatalog",
             "mcpServers",
             "mcpServerManagement",
+            "mcpDeviceSync",
             "speechTranscription",
         ] {
             let mut value = serde_json::json!({"protocolVersion":1,"runnerId":"test","name":"Test","capabilities":{"taskExecution":true,"eventReplay":true}});

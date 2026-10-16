@@ -73,7 +73,7 @@ it("updates another mounted control and read-only summary when a mapping changes
     selects[0].dispatchEvent(new Event("change", { bubbles: true }));
   });
   expect(selects[1].value).toBe("/local");
-  expect(host.textContent).toContain("Global and project rules use local source: /local.");
+  expect(host.textContent).toContain("Rules and MCP servers use local source: /local.");
   expect(host.textContent).not.toContain("reopen local project");
   act(() => {
     selects[1].value = "";

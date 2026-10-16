@@ -31,6 +31,7 @@ import {
 import { useRemoteAgentSteer } from "./useRemoteAgentSteer";
 import { useRemotePendingMessages } from "./useRemotePendingMessages";
 import { useRemoteAgentMutations } from "./useRemoteAgentMutations";
+import type { RemoteDeviceMcpSourceResolver } from "./remoteDeviceMcpSource";
 import { remoteProjectIsolationPreview } from "./remoteFolderProjectLaunch";
 import { agentDraftDispatchKey, agentThreadDispatchKey } from "./agentDispatchKeys";
 import { refuseUnknownAttachmentDownload } from "./remoteAttachmentDownload";
@@ -79,6 +80,7 @@ export interface UnifiedAgentThreadsOptions {
   readonly gitSync: RemoteGitSyncPort | null;
   readonly repositoryIdentity: RemoteRepositoryIdentityGateway | null;
   readonly externalUrlOpener: ExternalUrlOpenerPort | null;
+  readonly deviceMcpSource?: RemoteDeviceMcpSourceResolver;
 }
 
 /** Keeps one original editor surface; connection identities choose execution adapters only. */
@@ -375,6 +377,7 @@ export function useUnifiedAgentThreads(options: UnifiedAgentThreadsOptions) {
       );
       return current === undefined ? null : remoteProjectKindOf({ kind: current.projectKind });
     },
+    deviceMcpSource: options.deviceMcpSource,
     resolveAttachments: remoteAttachments.resolve,
   });
   const pendingMessages = useRemotePendingMessages({

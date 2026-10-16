@@ -1,3 +1,4 @@
+import type { RemoteDeviceMcpSources } from "../../../application/remoteDeviceMcpSource";
 import type { AgentQuestionApprovalGateway } from "../../../application/agentApprovalPorts";
 import type {
   AgentArtifactLoader,
@@ -86,6 +87,7 @@ export type LocalAgentModeViewProps = AgentModeViewProps & {
   selectedServerId: string | null;
   authoritativeRemoteProjectKeys: ReadonlySet<string>;
   cloneAttachments: AgentModeCloneAttachments;
+  deviceMcpSources?: RemoteDeviceMcpSources;
 };
 
 export const NO_REMOTE_SERVERS: readonly RemoteRunnerServer[] = [];

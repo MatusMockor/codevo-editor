@@ -191,7 +191,7 @@ impl McpServerLoginCallbackRequest {
     }
 }
 
-fn contract_error(failure: &str) -> &'static str {
+pub(super) fn contract_error(failure: &str) -> &'static str {
     if let Some(refusal) = RunnerRefusal::from_message(failure) {
         return refusal.contract_error();
     }

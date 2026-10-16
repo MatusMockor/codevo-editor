@@ -1,5 +1,6 @@
 use super::{is_mcp_servers_route, MAX_INPUT, MCP_SERVERS_TIMEOUT};
 use crate::remote_runner::git_sync_wire;
+use crate::remote_runner::mcp_device_sync_wire;
 use crate::remote_runner::mcp_server_manage_wire;
 use crate::remote_runner::mcp_servers;
 use base64::Engine;
@@ -12,6 +13,7 @@ const PROBE_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(
 
 pub(super) const CLIENT_CAPABILITIES: &str =
     "subagentLifecycleRetention,projectManagement,threadManagement,turnChanges,gitSync,portPreview,accountUsage,commandCatalog,speechTranscription,mcpServers,mcpServerManagement,eventBackwardPaging,runtimeRequests,interactiveApprovals,fileAttachments,folderProjects";
+pub(super) const CLIENT_CAPABILITIES_2: &str = "mcpDeviceSync";
 
 pub(super) struct Prepared {
     method: reqwest::Method,
@@ -140,6 +142,9 @@ fn request_timeout(method: &str, path: &str) -> Option<std::time::Duration> {
     if is_mcp_servers_route(method, path) {
         return Some(MCP_SERVERS_TIMEOUT);
     }
+    if mcp_device_sync_wire::is_route(method, path) {
+        return Some(mcp_device_sync_wire::SYNC_TIMEOUT);
+    }
     mcp_server_manage_wire::Route::of(method, path)?.timeout()
 }
 async fn execute(
@@ -153,7 +158,8 @@ async fn execute(
     let speech = crate::remote_runner::speech::is_route(prepared.method.as_str(), &prepared.path);
     let mcp_status = is_mcp_servers_route(prepared.method.as_str(), &prepared.path);
     let mcp_management =
-        mcp_server_manage_wire::Route::of(prepared.method.as_str(), &prepared.path).is_some();
+        mcp_server_manage_wire::Route::of(prepared.method.as_str(), &prepared.path).is_some()
+            || mcp_device_sync_wire::is_route(prepared.method.as_str(), &prepared.path);
     let git_read = prepared.method == reqwest::Method::GET
         && git_sync_wire::repository_read_route(&prepared.path);
     let timeout = request_timeout(prepared.method.as_str(), &prepared.path);
@@ -167,6 +173,10 @@ async fn execute(
         .header(
             "x-codevo-client-capabilities",
             reqwest::header::HeaderValue::from_static(CLIENT_CAPABILITIES),
+        )
+        .header(
+            "x-codevo-client-capabilities-2",
+            reqwest::header::HeaderValue::from_static(CLIENT_CAPABILITIES_2),
         )
         .body(prepared.body);
     if let Some(timeout) = timeout {

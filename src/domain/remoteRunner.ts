@@ -18,6 +18,10 @@ import type {
   AgentMcpServerLoginStep,
 } from "./agentMcpServerManagement";
 import type { AgentMcpServers } from "./agentMcpServers";
+import type {
+  RemoteMcpDeviceSyncProjectKind,
+  RemoteRunnerMcpDeviceSyncReport,
+} from "./remoteRunnerMcpDeviceSync";
 import type { AgentTurnChangeSummary, AgentTurnFileDiff } from "./agentTurnChanges";
 import type {
   RepositoryHostsSnapshot,
@@ -67,6 +71,7 @@ export type RemoteRunnerDescriptor = Readonly<{
     commandCatalog?: boolean;
     mcpServers?: boolean;
     mcpServerManagement?: boolean;
+    mcpDeviceSync?: boolean;
     taskExecution: boolean;
     eventReplay: boolean;
     taskDrafts?: boolean;
@@ -286,6 +291,13 @@ export type RemoteRunnerMcpServerLoginRequest = RemoteRunnerMcpServersRequest &
   Readonly<{ loginId: string }>;
 export type RemoteRunnerMcpServerLoginCallbackRequest = RemoteRunnerMcpServerLoginRequest &
   Readonly<{ callbackUrl: string }>;
+export type RemoteRunnerMcpDeviceSyncRequest = RemoteRunnerServerRequest &
+  Readonly<{
+    runnerId: string;
+    projectId: string;
+    rootPath: string;
+    projectKind: RemoteMcpDeviceSyncProjectKind;
+  }>;
 export type RemoteRunnerTranscribeSpeechRequest = RemoteRunnerServerRequest &
   Readonly<{ language: SpeechLanguage; base64: string }>;
 export type RemoteRunnerSpeechTranscript = Readonly<{ text: string }>;
@@ -301,6 +313,9 @@ export interface RemoteRunnerGateway {
   getMcpServerLogin?(request: RemoteRunnerMcpServerLoginRequest): Promise<AgentMcpServerLoginState>;
   submitMcpServerLoginCallback?(request: RemoteRunnerMcpServerLoginCallbackRequest): Promise<void>;
   cancelMcpServerLogin?(request: RemoteRunnerMcpServerLoginRequest): Promise<void>;
+  syncDeviceMcpServers?(
+    request: RemoteRunnerMcpDeviceSyncRequest,
+  ): Promise<RemoteRunnerMcpDeviceSyncReport>;
   transcribeSpeech?(
     request: RemoteRunnerTranscribeSpeechRequest,
   ): Promise<RemoteRunnerSpeechTranscript>;

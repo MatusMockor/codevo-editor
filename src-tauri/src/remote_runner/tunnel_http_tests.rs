@@ -132,6 +132,30 @@ fn mcp_server_management_http_timeouts_are_scoped_to_exact_routes() {
 }
 
 #[test]
+fn mcp_device_sync_http_timeout_is_scoped_to_the_exact_put_route() {
+    let route = "/v1/projects/codevo-editor/mcp-servers/claude/device-sync";
+    assert_eq!(
+        request_timeout("PUT", route),
+        Some(std::time::Duration::from_secs(45))
+    );
+    for (method, path) in [
+        ("POST", route),
+        ("GET", route),
+        (
+            "PUT",
+            "/v1/projects/codevo-editor/mcp-servers/codex/device-sync",
+        ),
+        (
+            "PUT",
+            "/v1/projects/codevo-editor/mcp-servers/claude/device-sync?x=1",
+        ),
+        ("PUT", "/v1/projects/a/b/mcp-servers/claude/device-sync"),
+    ] {
+        assert_eq!(request_timeout(method, path), None, "{method} {path}");
+    }
+}
+
+#[test]
 fn speech_errors_are_closed_strict_and_bounded() {
     for code in [
         "not_found",
@@ -214,6 +238,26 @@ fn announced_capabilities_stay_inside_the_runner_header_grammar() {
     assert!(tokens.contains(&"folderProjects"));
     for token in tokens {
         assert_eq!(token, token.trim());
+        assert!(!token.is_empty() && token.len() <= 64);
+        assert!(token.as_bytes()[0].is_ascii_alphabetic());
+        assert!(token.bytes().all(|b| b.is_ascii_alphanumeric()));
+    }
+}
+
+#[test]
+fn the_second_announcement_header_is_bounded_and_disjoint_from_the_first() {
+    assert_eq!(CLIENT_CAPABILITIES_2, "mcpDeviceSync");
+    assert!(CLIENT_CAPABILITIES_2.len() <= 512);
+    assert!(CLIENT_CAPABILITIES_2
+        .bytes()
+        .all(|b| (32..=126).contains(&b)));
+    let first: std::collections::HashSet<&str> = CLIENT_CAPABILITIES.split(',').collect();
+    let second: Vec<&str> = CLIENT_CAPABILITIES_2.split(',').collect();
+    let unique: std::collections::HashSet<&str> = second.iter().copied().collect();
+    assert!(!second.is_empty() && second.len() <= 16);
+    assert_eq!(unique.len(), second.len());
+    for token in second {
+        assert!(!first.contains(token), "{token}");
         assert!(!token.is_empty() && token.len() <= 64);
         assert!(token.as_bytes()[0].is_ascii_alphabetic());
         assert!(token.bytes().all(|b| b.is_ascii_alphanumeric()));
@@ -343,7 +387,8 @@ fn pinned_identity_checked_before_mutation_and_redirect_is_not_followed() {
             .iter()
             .all(|r| r.contains("authorization: Bearer private-token")
                 && r.contains("x-codevo-runner-id: expected")
-                && r.contains("x-codevo-client-capabilities: subagentLifecycleRetention")));
+                && r.contains("x-codevo-client-capabilities: subagentLifecycleRetention")
+                && r.contains("x-codevo-client-capabilities-2: mcpDeviceSync\r\n")));
         if expected_calls == 2 {
             assert!(requests[1].starts_with("POST /v1/tasks "));
         }

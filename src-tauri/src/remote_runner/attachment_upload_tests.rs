@@ -75,6 +75,10 @@ fn a_file_is_streamed_with_the_contract_headers_and_its_stored_copy_is_verified(
         assert!(header(head, "transfer-encoding").is_empty());
         let capabilities = header(head, "x-codevo-client-capabilities");
         assert_eq!(capabilities.len(), 1);
+        assert_eq!(
+            header(head, "x-codevo-client-capabilities-2"),
+            ["mcpDeviceSync"]
+        );
         assert!(capabilities[0]
             .split(',')
             .any(|token| token == "fileAttachments"));

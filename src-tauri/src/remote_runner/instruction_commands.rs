@@ -2,17 +2,29 @@ use super::{
     commands::{blocking, OperationClass},
     instruction_collection,
     instruction_wire::InstructionSnapshot,
+    workspace_authority::{AuthorityMessages, WorkspaceAuthority},
 };
 use crate::{trust::WorkspaceTrustService, workspace_registry::WorkspaceRegistry};
 use serde::Deserialize;
-use std::{
-    path::Path,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex,
-    },
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
 };
 use tauri::Manager;
+
+const INSTRUCTION_AUTHORITY: AuthorityMessages = AuthorityMessages {
+    invalid_root: "Invalid instruction workspace root",
+    not_registered: "Instruction workspace is not registered",
+    invalid_path: "Invalid instruction workspace path",
+    trust_unavailable: "Workspace trust unavailable",
+    untrusted: "Trust this workspace before synchronizing its instructions",
+    identity_changed: "Instruction workspace identity changed",
+    no_longer_registered: "Instruction workspace is no longer registered",
+    changed: "Instruction workspace changed during collection",
+    unavailable: "Instruction workspace unavailable",
+    path_changed: "Instruction workspace path changed",
+    trust_changed: "Workspace trust changed during instruction collection",
+};
 
 static ACTIVE_COLLECTIONS: AtomicUsize = AtomicUsize::new(0);
 
@@ -80,60 +92,10 @@ fn collect_using(
         snapshot.validate()?;
         return Ok(snapshot);
     };
-    if root_path.is_empty() || root_path.len() > 4096 || root_path.contains('\0') {
-        return Err("Invalid instruction workspace root".into());
-    }
-    let path = Path::new(&root_path);
-    let descriptor = registry
-        .descriptor_for_registered_path(path)
-        .map_err(|_| "Instruction workspace is not registered")?;
-    let canonical = descriptor
-        .canonical_root_path
-        .to_str()
-        .ok_or("Invalid instruction workspace path")?;
-    let expected_trust = trust
-        .lock()
-        .map_err(|_| "Workspace trust unavailable")?
-        .snapshot(canonical);
-    if !expected_trust.trusted {
-        return Err("Trust this workspace before synchronizing its instructions".into());
-    }
-    let root = registry
-        .clone_root_for_path(path)
-        .map_err(|_| "Instruction workspace identity changed")?;
-    let snapshot = read(Some(&root))?;
-    let current = registry
-        .descriptor_for_registered_path(path)
-        .map_err(|_| "Instruction workspace is no longer registered")?;
-    if current != descriptor {
-        return Err("Instruction workspace changed during collection".into());
-    }
-    let current_root = registry
-        .clone_root_for_path(path)
-        .map_err(|_| "Instruction workspace identity changed")?;
-    use std::os::unix::fs::MetadataExt;
-    let original = root
-        .metadata()
-        .map_err(|_| "Instruction workspace unavailable")?;
-    let current = current_root
-        .metadata()
-        .map_err(|_| "Instruction workspace unavailable")?;
-    let visible = std::fs::metadata(&descriptor.canonical_root_path)
-        .map_err(|_| "Instruction workspace path changed")?;
-    if [current, visible]
-        .iter()
-        .any(|metadata| metadata.dev() != original.dev() || metadata.ino() != original.ino())
-    {
-        return Err("Instruction workspace identity changed".into());
-    }
-    if trust
-        .lock()
-        .map_err(|_| "Workspace trust unavailable")?
-        .snapshot(canonical)
-        != expected_trust
-    {
-        return Err("Workspace trust changed during instruction collection".into());
-    }
+    let authority =
+        WorkspaceAuthority::capture(registry, trust, &root_path, &INSTRUCTION_AUTHORITY)?;
+    let snapshot = read(Some(authority.root()))?;
+    authority.confirm()?;
     snapshot.validate()?;
     Ok(snapshot)
 }

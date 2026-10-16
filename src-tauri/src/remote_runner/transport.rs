@@ -58,6 +58,9 @@ fn response_limit(method: &str, path: &str) -> usize {
     if super::mcp_server_manage_wire::Route::of(method, path).is_some() {
         return super::mcp_server_manage_wire::MAX_OUTPUT;
     }
+    if super::mcp_device_sync_wire::is_route(method, path) {
+        return super::mcp_device_sync_wire::MAX_OUTPUT;
+    }
     if super::speech::is_route(method, path) {
         return 32 * 1024;
     }
@@ -83,6 +86,9 @@ fn request_timeout(method: &str, path: &str) -> Duration {
     }
     if is_mcp_servers_route(method, path) {
         return MCP_SERVERS_TIMEOUT;
+    }
+    if super::mcp_device_sync_wire::is_route(method, path) {
+        return super::mcp_device_sync_wire::SYNC_TIMEOUT;
     }
     super::mcp_server_manage_wire::Route::of(method, path)
         .and_then(super::mcp_server_manage_wire::Route::timeout)
@@ -406,6 +412,26 @@ mod tests {
                 "/v1/projects/codevo-editor/mcp-servers/codex/logins/login-0123456789?x=1",
             ),
             ("POST", "/v1/tasks"),
+        ] {
+            assert_eq!(request_timeout(method, path), TIMEOUT, "{method} {path}");
+            assert_eq!(response_limit(method, path), MAX_OUTPUT, "{method} {path}");
+        }
+    }
+
+    #[test]
+    fn mcp_device_sync_receives_its_own_budget_on_the_exact_route_only() {
+        use crate::remote_runner::mcp_device_sync_wire::{MAX_OUTPUT as SYNC_OUTPUT, SYNC_TIMEOUT};
+        let route = "/v1/projects/codevo-editor/mcp-servers/claude/device-sync";
+        assert_eq!(request_timeout("PUT", route), SYNC_TIMEOUT);
+        assert_eq!(response_limit("PUT", route), SYNC_OUTPUT);
+        for (method, path) in [
+            ("POST", route),
+            ("GET", route),
+            (
+                "PUT",
+                "/v1/projects/codevo-editor/mcp-servers/codex/device-sync",
+            ),
+            ("PUT", "/v1/projects/a/b/mcp-servers/claude/device-sync"),
         ] {
             assert_eq!(request_timeout(method, path), TIMEOUT, "{method} {path}");
             assert_eq!(response_limit(method, path), MAX_OUTPUT, "{method} {path}");

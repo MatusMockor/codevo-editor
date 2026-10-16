@@ -7,6 +7,7 @@ import type {
   AgentTurnAttachmentRequest,
 } from "./agentThreadPorts";
 import type {
+  RemoteRunnerDescriptor,
   RemoteRunnerGateway,
   RemoteRunnerIsolation,
   RemoteRunnerPart,
@@ -22,6 +23,9 @@ import { isRemoteStartBase, type RemoteStartBase } from "../domain/remoteGitSync
 import { remoteProjectKindOf, type RemoteProjectKind } from "../domain/remoteProjectKind";
 import { remoteRunnerEchoesLaunch } from "../domain/remoteRunnerLaunchEcho";
 import { notifyAgentThreadIdentified } from "./agentThreadIdentification";
+import type { RemoteDeviceMcpSourceResolver } from "./remoteDeviceMcpSource";
+import { createRemoteDeviceMcpNoticeMemory } from "./remoteDeviceMcpNoticeMemory";
+import { syncRemoteDeviceMcpServers } from "./syncRemoteDeviceMcpServers";
 import { remoteAgentThreadKey } from "./remoteAgentProjection";
 import {
   remoteProjectLaunchRefusal,
@@ -45,6 +49,7 @@ interface Options {
   publish(serverId: string, task: RemoteRunnerTask): void;
   report(message: string): void;
   projectKind?(target: RemoteAgentMutationTarget): RemoteProjectKind | null;
+  deviceMcpSource?: RemoteDeviceMcpSourceResolver;
   resolveAttachments?(
     request: AgentTurnAttachmentRequest,
     serverId: string,
@@ -132,6 +137,7 @@ export function useRemoteAgentMutations(options: Options) {
   const latest = useRef(options);
   latest.current = options;
   const pending = useRef(new Map<string, Pending>());
+  const [deviceMcpNotices] = useState(createRemoteDeviceMcpNoticeMemory);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -215,6 +221,7 @@ export function useRemoteAgentMutations(options: Options) {
       remoteProjectKindOf({ kind: target.projectKind }),
     ]);
     let command = pending.current.get(targetKey);
+    let syncDescriptor: RemoteRunnerDescriptor | null = null;
     let dispatched = false;
     const listing = (): RemoteProjectListing => {
       if (latest.current.projectKind === undefined) return "unread";
@@ -280,6 +287,7 @@ export function useRemoteAgentMutations(options: Options) {
             if (isolation !== "worktree") throw new Error(REMOTE_ORIGIN_BASE_NEEDS_WORKTREE);
           }
           base = gitSync ? requestedBase : undefined;
+          syncDescriptor = descriptor;
         }
         if (continuation) {
           if (!target.latestTaskId || !target.conversationId)
@@ -340,6 +348,25 @@ export function useRemoteAgentMutations(options: Options) {
       if (!valid()) return null;
       if (!continuation) refuseLaunch(command.isolation, command.base);
       pending.current.set(targetKey, command);
+      if (syncDescriptor !== null) {
+        const mcpNotice = await syncRemoteDeviceMcpServers({
+          gateway,
+          descriptor: syncDescriptor,
+          target,
+          provider,
+          resolveSource: latest.current.deviceMcpSource,
+          valid,
+          memory: deviceMcpNotices,
+        });
+        if (!valid()) return null;
+        if (mcpNotice !== null) options.report(mcpNotice);
+        const refusal = launchRefusal(command.isolation, command.base);
+        if (refusal !== null) {
+          pending.current.delete(targetKey);
+          options.report(remoteProjectLaunchRefusalMessage(refusal));
+          return null;
+        }
+      }
       dispatched = true;
       let task: RemoteRunnerTask;
       if (continuation) {

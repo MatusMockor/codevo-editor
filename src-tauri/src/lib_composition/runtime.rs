@@ -284,6 +284,7 @@ pub fn run() {
             crate::remote_runner::remote_runner_get_mcp_server_login,
             crate::remote_runner::remote_runner_submit_mcp_server_login_callback,
             crate::remote_runner::remote_runner_cancel_mcp_server_login,
+            crate::remote_runner::remote_runner_sync_device_mcp_servers,
             crate::remote_runner::remote_runner_transcribe_speech,
             crate::remote_runner::remote_runner_list_projects,
             crate::remote_runner::remote_runner_clone_project,

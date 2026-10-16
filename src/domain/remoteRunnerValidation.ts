@@ -11,6 +11,11 @@ import {
 } from "./agentMcpServerManagement";
 import { isAgentMcpServerName, parseAgentMcpServers } from "./agentMcpServers";
 import {
+  isRemoteMcpDeviceSyncProjectKind,
+  isRemoteMcpDeviceSyncRootPath,
+  parseRemoteRunnerMcpDeviceSyncReport,
+} from "./remoteRunnerMcpDeviceSync";
+import {
   parseAgentTurnChangeSummary,
   parseAgentTurnFileDiff,
   isAgentTurnChangePath,
@@ -405,6 +410,16 @@ export const remoteRunnerChecks = {
     response: mcpServerReceipt,
   },
   cancelMcpServerLogin: { request: object(mcpServerLogin), response: mcpServerReceipt },
+  syncDeviceMcpServers: {
+    request: object({
+      ...serverRequest,
+      runnerId: runnerIdentity,
+      projectId: identifier,
+      rootPath: isRemoteMcpDeviceSyncRootPath,
+      projectKind: isRemoteMcpDeviceSyncProjectKind,
+    }),
+    response: accepts(parseRemoteRunnerMcpDeviceSyncReport),
+  },
   transcribeSpeech: {
     request: object({
       ...serverRequest,
@@ -433,6 +448,7 @@ export const remoteRunnerChecks = {
         commandCatalog: optional(boolean),
         mcpServers: optional(boolean),
         mcpServerManagement: optional(boolean),
+        mcpDeviceSync: optional(boolean),
         taskExecution: boolean,
         eventReplay: boolean,
         taskDrafts: optional(boolean),
