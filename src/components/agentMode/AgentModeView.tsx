@@ -15,8 +15,25 @@ import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
 import { usePreloadAgentMarkdownRenderer } from "./useAgentMarkdown";
 import { useAgentThreadNavigation } from "./useAgentThreadNavigation";
 import { useAgentThreadUndoShortcut } from "./useAgentThreadUndoShortcut";
+import { useAgentLatestCallback } from "./useAgentThreadPresentationViews";
 import { useSidebarFocusHandoff } from "./useSidebarFocusHandoff";
-import { AgentModeConversation } from "./modeView/AgentModeConversation";
+import { ProjectOnboardingLayer } from "../projects/ProjectOnboardingLayer";
+import {
+  AgentModeConversation,
+  type AgentModeConversationKind,
+} from "./modeView/AgentModeConversation";
+import {
+  agentModeConversationProps,
+  agentModeHeaderProps,
+  agentModeRailProps,
+  agentModeSurfaceProps,
+  type AgentModeRegionInputs,
+} from "./modeView/agentModeRegionProps";
+import { useAgentModeFooterProps } from "./modeView/useAgentModeFooterProps";
+import { useAgentModeOverlayProps } from "./modeView/useAgentModeOverlayProps";
+import { useAgentModeSessionProps } from "./modeView/useAgentModeSessionProps";
+import { AgentRegionBoundary } from "./AgentRegionBoundary";
+import { AgentThreadErrorBanner } from "./AgentThreadErrorBanner";
 import { AgentModeHeader } from "./modeView/AgentModeHeader";
 import { AgentModeOverlays } from "./modeView/AgentModeOverlays";
 import { AgentModeRail } from "./modeView/AgentModeRail";
@@ -313,10 +330,11 @@ function LocalAgentModeView({
     openAddProjectRef,
     activeProjectRootKeyRef,
     setLocalNotice,
+    setProjectSelectionIntent,
     refreshRemoteProjects,
     onSelectProjectEnvironment,
   });
-  const { headerProject } = creationState;
+  const { headerProject, creation } = creationState;
   const headerChrome = useAgentModeHeaderChrome({
     agents,
     chrome,
@@ -330,6 +348,71 @@ function LocalAgentModeView({
     selectedThread,
     refreshRemoteProjects,
   });
+  const selectThread = useAgentLatestCallback(navigation.selectThread);
+  const regions: AgentModeRegionInputs = {
+    agents,
+    chrome,
+    navigation,
+    projectsState,
+    selected,
+    scope,
+    composerState,
+    surfaceState,
+    threadMenu,
+    railProjects,
+    activity,
+    creationState,
+    headerChrome,
+    projects,
+    projectsLoaded,
+    providerEnabled,
+    overflowRootPaths,
+    cloneAttachments,
+    modelFavoritesPersistence,
+    selectedServerId,
+    textClipboard,
+    workspaceRoot,
+    selectThread,
+    onOpenSourceControl,
+    onOpenUsageSettings,
+    onOpenEnvironmentSettings,
+  };
+  const sessionProps = useAgentModeSessionProps({
+    agents,
+    navigation,
+    selected,
+    composerState,
+    surfaceState,
+    threadMenu,
+    activity,
+    sessionThread,
+    artifactLoader,
+    artifactPreview,
+    goToTurnSignal: commands.goToTurnSignal,
+    composerRepositoryLabel: headerProject?.label ?? composer.composerLabel,
+    textClipboard,
+  });
+  const footerProps = useAgentModeFooterProps({
+    regions,
+    sessionThread,
+    notice: commands.notice,
+    followUpBehavior,
+    questionGateway,
+    dismissNotice: commands.dismissNotice,
+    onOpenMcpSettings,
+  });
+  const overlayProps = useAgentModeOverlayProps({ navigation, terminalSessions });
+  const conversationKind: AgentModeConversationKind =
+    projects.length === 0 &&
+    creation.pendingClones.length === 0 &&
+    selectedServerId === null &&
+    selectedThreadId === null
+      ? "noProjects"
+      : creation.visible && creation.pending !== null && creation.pendingClone !== null
+        ? "clone"
+        : selectedThreadId === null && selectedServerId !== null && composer.target === null
+          ? "remoteChooser"
+          : "session";
   return (
     <AgentLiveThreadContext.Provider value={agents.liveThreads ?? null}>
       <AgentAgentsPanelProvider
@@ -345,139 +428,49 @@ function LocalAgentModeView({
         >
           <AgentClockProvider nowTickMs={nowTickMs}>
             <div className="agent-mode__grid">
-              <AgentModeRail
-                agents={agents}
-                chrome={chrome}
-                navigation={navigation}
-                projectsState={projectsState}
-                surfaceState={surfaceState}
-                railProjects={railProjects}
-                threadMenu={threadMenu}
-                creationState={creationState}
-                activity={activity}
-                headerChrome={headerChrome}
-                startingThreads={composerState.startingThreads}
-                pendingInteractions={selected.pendingInteractions}
-                selectedThread={selectedThread}
-                selectedThreadId={selectedThreadId}
-                selectedServerId={selectedServerId}
-                providerEnabled={effectiveProviderEnabled}
-                overflowRootPaths={overflowRootPaths}
-                textClipboard={textClipboard}
-                onOpenSourceControl={onOpenSourceControl}
-                onOpenUsageSettings={onOpenUsageSettings}
-              />
+              <AgentModeRail {...agentModeRailProps(regions)} />
               <AgentThreadRequestsScope thread={sessionThread}>
                 <AgentAttachmentDropColumn
                   columnRef={navigation.centerRef}
                   inert={layout.rightPanelMaximized}
                 >
-                  <AgentModeHeader
+                  <AgentModeHeader {...agentModeHeaderProps(regions)} />
+                  <AgentThreadErrorBanner
                     agents={agents}
-                    chrome={chrome}
-                    surfaceState={surfaceState}
-                    threadMenu={threadMenu}
-                    activity={activity}
-                    headerChrome={headerChrome}
-                    headerProject={headerProject}
-                    composerState={composerState}
-                    selectedThread={selectedThread}
-                    sessionThread={sessionThread}
+                    recovery={composer.composerProps.recovery ?? null}
+                    view={sessionThread}
                   />
-                  <AgentModeConversation
-                    agents={agents}
-                    navigation={navigation}
-                    projectsState={projectsState}
-                    scope={scope}
-                    composerState={composerState}
-                    creationState={creationState}
-                    threadMenu={threadMenu}
-                    projects={projects}
-                    projectsLoaded={projectsLoaded}
-                    cloneAttachments={cloneAttachments}
-                    providerEnabled={providerEnabled}
-                    modelFavoritesPersistence={modelFavoritesPersistence}
-                    selectedThreadId={selectedThreadId}
-                    selectedServerId={selectedServerId}
-                    textClipboard={textClipboard}
-                    setProjectSelectionIntent={setProjectSelectionIntent}
-                    onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-                    trustProject={trustProject}
-                    session={
-                      <AgentModeThreadSession
-                        agents={agents}
-                        navigation={navigation}
-                        composerState={composerState}
-                        surfaceState={surfaceState}
-                        threadMenu={threadMenu}
-                        activity={activity}
-                        sessionThread={sessionThread}
-                        awaiting={
-                          sessionThread === null
-                            ? null
-                            : (selected.pendingInteractions.get(sessionThread.thread.threadId) ??
-                              null)
-                        }
-                        artifactLoader={artifactLoader}
-                        artifactPreview={artifactPreview}
-                        goToTurnSignal={commands.goToTurnSignal}
-                        composerRepositoryLabel={headerProject?.label ?? composer.composerLabel}
-                        textClipboard={textClipboard}
+                  <AgentRegionBoundary
+                    clipboard={textClipboard}
+                    region="conversation"
+                    resetKeys={[selectedThreadId, selectedServerId, creation.visible]}
+                  >
+                    {conversationKind === "session" ? (
+                      <AgentModeThreadSession {...sessionProps} />
+                    ) : (
+                      <AgentModeConversation
+                        kind={conversationKind}
+                        {...agentModeConversationProps(regions)}
                       />
-                    }
-                  />
-                  <AgentModeThreadFooter
-                    agents={agents}
-                    selected={selected}
-                    composerState={composerState}
-                    creationState={creationState}
-                    threadMenu={threadMenu}
-                    headerChrome={headerChrome}
-                    sessionThread={sessionThread}
-                    notice={commands.notice}
-                    followUpBehavior={followUpBehavior}
-                    modelFavoritesPersistence={modelFavoritesPersistence}
-                    questionGateway={questionGateway}
-                    selectedThreadId={selectedThreadId}
-                    selectedServerId={selectedServerId}
-                    textClipboard={textClipboard}
-                    providerEnabled={effectiveProviderEnabled}
-                    dismissNotice={commands.dismissNotice}
-                    onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-                    onOpenMcpSettings={onOpenMcpSettings}
-                  />
+                    )}
+                  </AgentRegionBoundary>
+                  <AgentModeThreadFooter {...footerProps} />
                 </AgentAttachmentDropColumn>
               </AgentThreadRequestsScope>
             </div>
           </AgentClockProvider>
-          <AgentModeOverlays
-            addProjectChrome={chrome.addProject}
-            creation={creationState.creation}
+          <ProjectOnboardingLayer
+            chrome={chrome.addProject}
+            creation={creation}
             lookupGateway={remoteContext?.repositoryLookup ?? null}
             selectedServerId={selectedServerId}
             servers={remoteContext?.servers ?? NO_REMOTE_SERVERS}
-            palette={navigation.palette}
-            search={navigation.search}
-            terminalSessions={terminalSessions}
           />
+          <AgentModeOverlays {...overlayProps} />
         </section>
-        <AgentModeSurfaceRegion
-          chrome={chrome}
-          selected={selected}
-          scope={scope}
-          composerState={composerState}
-          surfaceState={surfaceState}
-          threadMenu={threadMenu}
-          activity={activity}
-          creationState={creationState}
-          headerChrome={headerChrome}
-          displayProjects={displayProjects}
-          selectedThreadId={selectedThreadId}
-          selectedServerId={selectedServerId}
-          textClipboard={textClipboard}
-          workspaceRoot={workspaceRoot}
-          trustProject={trustProject}
-        />
+        {surface.surfaceHost.mounted && (
+          <AgentModeSurfaceRegion {...agentModeSurfaceProps(regions)} />
+        )}
         <AgentProjectRenameDialog
           onCancel={projectsState.projectRename.cancel}
           onSubmit={projectsState.projectRename.submit}
@@ -487,7 +480,7 @@ function LocalAgentModeView({
           <AgentThreadNotifications
             baselineReady={agents.sessionBackgroundsRecovered !== false}
             center={threadNotifications}
-            onSelectThread={navigation.selectThread}
+            onSelectThread={selectThread}
             interactions={selected.pendingObservations.observed}
             projects={displayProjects}
             toastsVisible={threadNotificationsVisible}

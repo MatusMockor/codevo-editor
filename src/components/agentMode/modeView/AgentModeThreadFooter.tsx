@@ -1,8 +1,5 @@
-import type { AgentQuestionApprovalGateway } from "../../../application/agentApprovalPorts";
-import type { AgentTasksNotice, AgentThreadView } from "../../../application/agentThreadPorts";
-import type { AgentModelFavoritesPersistence } from "../../../application/useAgentModelFavorites";
-import type { AgentFollowUpBehavior } from "../../../domain/agentFollowUpBehavior";
-import type { AgentCliKind } from "../../../domain/agentTask";
+import { memo, type ComponentProps } from "react";
+import type { AgentTasksNotice } from "../../../application/agentThreadPorts";
 import type { TextClipboardGateway } from "../../../domain/textClipboard";
 import { AgentComposerController } from "../AgentComposerController";
 import { AgentEndSessionStandaloneBanner } from "../AgentEndSessionConfirmationBanner";
@@ -11,128 +8,86 @@ import { AgentRegionBoundary } from "../AgentRegionBoundary";
 import { AgentThreadUndoNotice } from "../AgentThreadUndoNotice";
 import { AgentUnconfirmedMessageNotice } from "../AgentUnconfirmedMessageNotice";
 import { AgentQuestionAttachmentsContext } from "../composer/agentQuestionAttachmentsContext";
-import type { AgentModeAgents } from "./agentModeViewProps";
-import type { AgentModeComposer } from "./useAgentModeComposer";
-import type { AgentModeCreation } from "./useAgentModeCreation";
-import type { AgentModeHeaderChrome } from "./useAgentModeHeaderChrome";
-import type { AgentModeSelectedThread } from "./useAgentModeSelectedThread";
-import type { AgentModeThreadMenu } from "./useAgentModeThreadMenu";
 
-export interface AgentModeThreadFooterProps {
-  readonly agents: AgentModeAgents;
-  readonly selected: AgentModeSelectedThread;
-  readonly composerState: AgentModeComposer;
-  readonly creationState: AgentModeCreation;
-  readonly threadMenu: AgentModeThreadMenu;
-  readonly headerChrome: AgentModeHeaderChrome;
-  readonly sessionThread: AgentThreadView | null;
+type ComposerControllerProps = ComponentProps<typeof AgentComposerController>;
+type UndoNoticeProps = ComponentProps<typeof AgentThreadUndoNotice>;
+type NoticeBarProps = ComponentProps<typeof AgentNoticeBar>;
+
+export type AgentModeThreadFooterProps = ComposerControllerProps & {
+  readonly composerVisible: boolean;
+  readonly endSessionBannerVisible: boolean;
+  readonly unconfirmedMessage: boolean;
+  readonly undoNotification: UndoNoticeProps["notification"];
   readonly notice: AgentTasksNotice | null;
-  readonly followUpBehavior: AgentFollowUpBehavior;
-  readonly modelFavoritesPersistence: AgentModelFavoritesPersistence | null;
-  readonly questionGateway: AgentQuestionApprovalGateway | null;
+  readonly questionAttachments: ComponentProps<
+    typeof AgentQuestionAttachmentsContext.Provider
+  >["value"];
   readonly selectedThreadId: string | null;
   readonly selectedServerId: string | null;
   readonly textClipboard: TextClipboardGateway | null;
-  readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
-  dismissNotice(): void;
-  onOpenEnvironmentSettings?(): void;
-  onOpenMcpSettings?(): void;
-}
+  onDismissUnconfirmedMessage(): void;
+  onDismissUndo: UndoNoticeProps["onDismiss"];
+  onUndoPausedChange: UndoNoticeProps["onPausedChange"];
+  onUndo: UndoNoticeProps["onUndo"];
+  onConfigureNotice: NoticeBarProps["onConfigure"];
+  onDismissNotice(): void;
+  onRestartFollowUp: NoticeBarProps["onRestartFollowUp"];
+};
 
-export function AgentModeThreadFooter({
-  agents,
-  selected,
-  composerState,
-  creationState,
-  threadMenu,
-  headerChrome,
-  sessionThread,
+export const AgentModeThreadFooter = memo(function AgentModeThreadFooter({
+  composerVisible,
+  endSessionBannerVisible,
+  unconfirmedMessage,
+  undoNotification,
   notice,
-  followUpBehavior,
-  modelFavoritesPersistence,
-  questionGateway,
+  questionAttachments,
   selectedThreadId,
   selectedServerId,
   textClipboard,
-  providerEnabled,
-  dismissNotice,
-  onOpenEnvironmentSettings,
-  onOpenMcpSettings,
+  onDismissUnconfirmedMessage,
+  onDismissUndo,
+  onUndoPausedChange,
+  onUndo,
+  onConfigureNotice,
+  onDismissNotice,
+  onRestartFollowUp,
+  ...composer
 }: AgentModeThreadFooterProps) {
-  const { creation, cloneComposerVisible } = creationState;
-  const { composer, composerProps, submitComposer } = composerState;
-  const { threadUndo, menu } = threadMenu;
-  const { composerExtras } = headerChrome;
-  const { selectedThread, pendingRemoteIdentity, resolvingRemoteThread, compactionOffer } =
-    selected;
   return (
     <>
-      {sessionThread !== null && agents.hasUnconfirmedMessage?.(sessionThread.thread.threadId) && (
-        <AgentUnconfirmedMessageNotice
-          onDismiss={() => agents.discardUnconfirmedMessage?.(sessionThread.thread.threadId)}
-        />
+      {unconfirmedMessage && (
+        <AgentUnconfirmedMessageNotice onDismiss={onDismissUnconfirmedMessage} />
       )}
-      {creation.visible && !cloneComposerVisible && (
-        <AgentEndSessionStandaloneBanner confirmation={menu.endSessionConfirmation} />
+      {endSessionBannerVisible && (
+        <AgentEndSessionStandaloneBanner confirmation={composer.endSessionConfirmation ?? null} />
       )}
       <AgentThreadUndoNotice
-        notification={threadUndo.notification}
-        onDismiss={threadUndo.dismiss}
-        onPausedChange={threadUndo.setPaused}
-        onUndo={threadUndo.undo}
+        notification={undoNotification}
+        onDismiss={onDismissUndo}
+        onPausedChange={onUndoPausedChange}
+        onUndo={onUndo}
       />
       {notice && (
         <div className="agent-thread-notice">
           <AgentNoticeBar
             notice={notice}
-            onConfigure={() => agents.configureAgentCli()}
-            onDismiss={dismissNotice}
-            onRestartFollowUp={(action) => {
-              dismissNotice();
-              void agents.restartDeferredFollowUp?.(action.threadId, action.entryId);
-            }}
+            onConfigure={onConfigureNotice}
+            onDismiss={onDismissNotice}
+            onRestartFollowUp={onRestartFollowUp}
           />
         </div>
       )}
-      {!creation.visible && (
+      {composerVisible && (
         <AgentRegionBoundary
           clipboard={textClipboard}
           region="composer"
-          resetKeys={[selectedThreadId, selectedServerId, composerProps.draftKey]}
+          resetKeys={[selectedThreadId, selectedServerId, composer.composerProps.draftKey]}
         >
-          <AgentQuestionAttachmentsContext.Provider value={agents.questionAttachments ?? null}>
-            <AgentComposerController
-              followUpBehavior={followUpBehavior}
-              executionServerId={
-                selectedThread?.execution?.serverId ??
-                pendingRemoteIdentity?.serverId ??
-                (resolvingRemoteThread
-                  ? "unavailable"
-                  : selectedThread === null
-                    ? selectedServerId
-                    : null)
-              }
-              compactionOffer={
-                selectedThread?.execution?.kind === "remote" ? null : compactionOffer
-              }
-              composerProps={composerProps}
-              modelFavoritesPersistence={modelFavoritesPersistence}
-              onOpenEnvironmentSettings={onOpenEnvironmentSettings}
-              onOpenProviderSettings={agents.configureAgentCli}
-              providerManagement={agents.providerManagement}
-              providerEnabled={providerEnabled}
-              submissionBlocked={resolvingRemoteThread || composer.submissionBlocked}
-              submit={submitComposer}
-              interactions={{ gateway: questionGateway, thread: sessionThread }}
-              banners={composerExtras.banners}
-              endSessionConfirmation={menu.endSessionConfirmation}
-              onShowUsageLimits={composerExtras.onShowUsageLimits}
-              onOpenMcpServers={onOpenMcpSettings}
-              renderDrawerEnd={composerExtras.renderDrawerEnd}
-            />
+          <AgentQuestionAttachmentsContext.Provider value={questionAttachments}>
+            <AgentComposerController {...composer} />
           </AgentQuestionAttachmentsContext.Provider>
         </AgentRegionBoundary>
       )}
     </>
   );
-}
+});

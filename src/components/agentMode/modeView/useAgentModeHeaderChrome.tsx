@@ -4,18 +4,24 @@ import { useAgentThreadBranchRecorder } from "../../../application/useAgentThrea
 import type { GitChangedFile } from "../../../domain/git";
 import { AgentPanelWindowControls } from "../AgentPanelLayoutControls";
 import { AgentSidebarReveal } from "../AgentSidebarReveal";
+import { AgentAgentsPanelSurface } from "../agents/AgentAgentsPanelSurface";
+import { AgentAgentsToggleButton } from "../agents/AgentAgentsToggleButton";
 import { agentNewThreadTooltip } from "../agentNewThreadRequest";
 import { agentProjectTerminalSessionsTarget } from "../agentSidebarPresentation";
 import { defaultAgentPanelLayoutShortcuts } from "../agentThreadHeaderPresentation";
 import type { AgentWorkbenchChrome } from "../agentWorkbenchChrome";
 import { useAgentComposerDrawerExtras } from "../useAgentComposerDrawerExtras";
 import type { AgentThreadNavigation } from "../useAgentThreadNavigation";
+import { useAgentLatestCallback } from "../useAgentThreadPresentationViews";
 import type { AgentModeAgents } from "./agentModeViewProps";
 import type { AgentModeCreation } from "./useAgentModeCreation";
 import type { AgentModeProjects } from "./useAgentModeProjects";
 import type { AgentModeRailProjects } from "./useAgentModeRailProjects";
 import type { AgentModeSurface } from "./useAgentModeSurface";
 import type { AgentModeTerminalSessions } from "./useAgentModeTerminalSessions";
+
+const AGENTS_TOGGLE_BUTTON = <AgentAgentsToggleButton />;
+const AGENTS_PANEL_SURFACE = <AgentAgentsPanelSurface />;
 
 export interface AgentModeHeaderChromeOptions {
   readonly agents: AgentModeAgents;
@@ -84,11 +90,18 @@ export function useAgentModeHeaderChrome({
     if (headerProject === null) return railTerminalSessionsTarget;
     return agentProjectTerminalSessionsTarget(headerProject, scopeEntries);
   }, [headerProject, railTerminalSessionsTarget, scopeEntries]);
+  const terminalProjectRootKey = headerTerminalSessionsTarget?.projectRootKey ?? null;
+  const terminalRepositoryRoot = headerTerminalSessionsTarget?.repositoryRoot ?? null;
+  const openTerminalSessionsCommand = useAgentLatestCallback(openTerminalSessions);
   const openHeaderTerminalSessions = useMemo(() => {
-    const target = headerTerminalSessionsTarget;
-    if (target === null || target.projectRootKey.startsWith("remote:")) return null;
-    return () => openTerminalSessions(target.projectRootKey, target.repositoryRoot);
-  }, [headerTerminalSessionsTarget, openTerminalSessions]);
+    if (
+      terminalProjectRootKey === null ||
+      terminalRepositoryRoot === null ||
+      terminalProjectRootKey.startsWith("remote:")
+    )
+      return null;
+    return () => openTerminalSessionsCommand(terminalProjectRootKey, terminalRepositoryRoot);
+  }, [openTerminalSessionsCommand, terminalProjectRootKey, terminalRepositoryRoot]);
   const layoutControls = useMemo(
     () => (
       <AgentPanelWindowControls
@@ -136,6 +149,8 @@ export function useAgentModeHeaderChrome({
     retryServer: refreshRemoteProjects,
   });
   return {
+    agentsToggleButton: AGENTS_TOGGLE_BUTTON,
+    agentsPanelSurface: AGENTS_PANEL_SURFACE,
     newThreadTitle,
     sidebarReveal,
     openHeaderTerminalSessions,

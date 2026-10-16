@@ -119,16 +119,22 @@ export function useAgentModeSurface({
   const trustProject = useAgentLatestCallback(onTrustProject);
   const releaseProject = useAgentLatestCallback(onReleaseProject);
   const reviewWorkingTree = diffScopes.reviewWorkingTree;
-  const reviewInDiff = useCallback(
-    (threadId: string) => {
-      void showChanges(threadId);
-      reviewWorkingTree(threadId);
-    },
-    [reviewWorkingTree, showChanges],
-  );
+  const reviewInDiff = useAgentLatestCallback((threadId: string) => {
+    void showChanges(threadId);
+    reviewWorkingTree(threadId);
+  });
+  const openTurnDiff = useAgentLatestCallback(diffScopes.openTurnDiff);
+  const resetRailWidth = useAgentLatestCallback(surface.resetRailWidth);
+  const resizeRail = useAgentLatestCallback(surface.resizeRail);
+  const resizeRightPanel = useAgentLatestCallback(surface.resizeRightPanel);
+  const toggleRailCommand = useAgentLatestCallback(toggleRail);
   return {
     shipActions,
     surface,
+    resetRailWidth,
+    resizeRail,
+    resizeRightPanel,
+    toggleRail: toggleRailCommand,
     responsivePanelRestore,
     toggleResponsivePanel,
     serverPorts,
@@ -139,6 +145,7 @@ export function useAgentModeSurface({
     trustProject,
     releaseProject,
     reviewInDiff,
+    openTurnDiff,
   };
 }
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, memo, type ComponentType, type NamedExoticComponent } from "react";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   AgentTaskGateway,
@@ -17,39 +17,62 @@ import {
   unmountAgentAppHarnesses,
 } from "../../test/agentAppTestHarness";
 import { waitForReact } from "../../test/reactTestLifecycle";
+import { WORKBENCH_SURFACE_ENTER_CLASS } from "../../components/workbenchFrameBootContext";
 
 const renders = vi.hoisted(() => ({
   app: 0,
   screen: 0,
   modeView: 0,
+  localView: 0,
+  railRegion: 0,
+  headerRegion: 0,
+  conversationRegion: 0,
+  sessionRegion: 0,
+  footerRegion: 0,
+  overlaysRegion: 0,
+  surfaceRegion: 0,
   rail: 0,
   composer: 0,
   transcript: 0,
 }));
 
 type RenderKey = keyof typeof renders;
+type RenderCounts = Record<RenderKey, number>;
 
-function countedComponent<P extends object>(
-  key: RenderKey,
-  component: ComponentType<P> | NamedExoticComponent<P>,
-): ComponentType<P> | NamedExoticComponent<P> {
-  const exotic = component as unknown as {
-    readonly type?: (props: P) => React.ReactNode;
-    readonly compare?: ((previous: P, next: P) => boolean) | null;
-  };
-  if (typeof exotic.type === "function") {
-    const inner = exotic.type;
-    const Counted = (props: P) => {
-      renders[key] += 1;
-      return inner(props);
-    };
-    return memo(Counted, exotic.compare ?? undefined);
+const MAX_SETTLE_PASSES = 40;
+
+function renderDelta(before: RenderCounts): RenderCounts {
+  const delta = { ...renders };
+  for (const key of Object.keys(delta) as RenderKey[]) delta[key] -= before[key];
+  return delta;
+}
+
+function zeroCounts(): RenderCounts {
+  const zero = { ...renders };
+  for (const key of Object.keys(zero) as RenderKey[]) zero[key] = 0;
+  return zero;
+}
+
+function totalOf(deltas: ReadonlyArray<RenderCounts>): RenderCounts {
+  const total = zeroCounts();
+  for (const delta of deltas) {
+    for (const key of Object.keys(total) as RenderKey[]) total[key] += delta[key];
   }
-  const render = component as (props: P) => React.ReactNode;
-  return function Counted(props: P) {
-    renders[key] += 1;
-    return render(props);
-  };
+  return total;
+}
+
+async function settleUntilQuiet(): Promise<void> {
+  let quietPasses = 0;
+  for (let pass = 0; pass < MAX_SETTLE_PASSES && quietPasses < 2; pass += 1) {
+    const before = { ...renders };
+    await act(async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      for (let turn = 0; turn < 24; turn += 1) await Promise.resolve();
+    });
+    const delta = renderDelta(before);
+    quietPasses = Object.values(delta).every((count) => count === 0) ? quietPasses + 1 : 0;
+  }
+  expect(quietPasses).toBe(2);
 }
 
 vi.mock("../agentApp/useAgentAppController", async (importOriginal) => {
@@ -64,43 +87,165 @@ vi.mock("../agentApp/useAgentAppController", async (importOriginal) => {
 });
 
 vi.mock("../../components/agentMode/AgentWorkbenchScreen", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
   const actual =
     await importOriginal<typeof import("../../components/agentMode/AgentWorkbenchScreen")>();
   return {
     ...actual,
-    AgentWorkbenchScreen: countedComponent("screen", actual.AgentWorkbenchScreen),
+    AgentWorkbenchScreen: support.countedComponent(renders, "screen", actual.AgentWorkbenchScreen),
   };
 });
 
 vi.mock("../../components/agentMode/AgentModeView", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
   const actual = await importOriginal<typeof import("../../components/agentMode/AgentModeView")>();
-  return { ...actual, AgentModeView: countedComponent("modeView", actual.AgentModeView) };
+  return {
+    ...actual,
+    AgentModeView: support.countedComponent(renders, "modeView", actual.AgentModeView),
+  };
 });
 
 vi.mock("../../components/agentMode/AgentThreadsSidebar", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
   const actual =
     await importOriginal<typeof import("../../components/agentMode/AgentThreadsSidebar")>();
   return {
     ...actual,
-    AgentThreadsSidebar: countedComponent("rail", actual.AgentThreadsSidebar),
+    AgentThreadsSidebar: support.countedComponent(renders, "rail", actual.AgentThreadsSidebar),
   };
 });
 
 vi.mock("../../components/agentMode/AgentComposerController", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
   const actual =
     await importOriginal<typeof import("../../components/agentMode/AgentComposerController")>();
   return {
     ...actual,
-    AgentComposerController: countedComponent("composer", actual.AgentComposerController),
+    AgentComposerController: support.countedComponent(
+      renders,
+      "composer",
+      actual.AgentComposerController,
+    ),
   };
 });
 
 vi.mock("../../components/agentMode/AgentThreadSession", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
   const actual =
     await importOriginal<typeof import("../../components/agentMode/AgentThreadSession")>();
   return {
     ...actual,
-    AgentThreadSession: countedComponent("transcript", actual.AgentThreadSession),
+    AgentThreadSession: support.countedComponent(renders, "transcript", actual.AgentThreadSession),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/AgentModeRail", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<typeof import("../../components/agentMode/modeView/AgentModeRail")>();
+  return {
+    ...actual,
+    AgentModeRail: support.countedComponent(renders, "railRegion", actual.AgentModeRail),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/AgentModeHeader", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<typeof import("../../components/agentMode/modeView/AgentModeHeader")>();
+  return {
+    ...actual,
+    AgentModeHeader: support.countedComponent(renders, "headerRegion", actual.AgentModeHeader),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/AgentModeConversation", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<
+      typeof import("../../components/agentMode/modeView/AgentModeConversation")
+    >();
+  return {
+    ...actual,
+    AgentModeConversation: support.countedComponent(
+      renders,
+      "conversationRegion",
+      actual.AgentModeConversation,
+    ),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/AgentModeThreadSession", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<
+      typeof import("../../components/agentMode/modeView/AgentModeThreadSession")
+    >();
+  return {
+    ...actual,
+    AgentModeThreadSession: support.countedComponent(
+      renders,
+      "sessionRegion",
+      actual.AgentModeThreadSession,
+    ),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/AgentModeThreadFooter", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<
+      typeof import("../../components/agentMode/modeView/AgentModeThreadFooter")
+    >();
+  return {
+    ...actual,
+    AgentModeThreadFooter: support.countedComponent(
+      renders,
+      "footerRegion",
+      actual.AgentModeThreadFooter,
+    ),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/AgentModeOverlays", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<typeof import("../../components/agentMode/modeView/AgentModeOverlays")>();
+  return {
+    ...actual,
+    AgentModeOverlays: support.countedComponent(
+      renders,
+      "overlaysRegion",
+      actual.AgentModeOverlays,
+    ),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/AgentModeSurfaceRegion", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<
+      typeof import("../../components/agentMode/modeView/AgentModeSurfaceRegion")
+    >();
+  return {
+    ...actual,
+    AgentModeSurfaceRegion: support.countedComponent(
+      renders,
+      "surfaceRegion",
+      actual.AgentModeSurfaceRegion,
+    ),
+  };
+});
+
+vi.mock("../../components/agentMode/modeView/useAgentModeProjects", async (importOriginal) => {
+  const support = await import("../../test/renderCounterTestSupport");
+  const actual =
+    await importOriginal<
+      typeof import("../../components/agentMode/modeView/useAgentModeProjects")
+    >();
+  return {
+    ...actual,
+    useAgentModeProjects: support.countedHook(renders, "localView", actual.useAgentModeProjects),
   };
 });
 
@@ -117,6 +262,7 @@ let frames: Array<FrameRequestCallback> = [];
 
 beforeEach(() => {
   frames = [];
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   vi.stubGlobal(
     "matchMedia",
     vi.fn(() => ({
@@ -145,81 +291,91 @@ beforeEach(() => {
 
 afterEach(() => {
   unmountAgentAppHarnesses();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("agent thread streaming render isolation", () => {
-  it("re-renders only the transcript of the streaming thread for each output frame", async () => {
-    const tasks = fakeAgentTaskGateway();
-    const app = await renderAgentApp({
-      agentGateways: {
-        agentProviderGateway: {
-          ...agentAppProviderGateway(),
-          probeAgentProviderHealth: async () => ({
-            installedVersion: "1.0.0",
-            auth: { kind: "unknown" },
-            update: { kind: "checksDisabled" },
-            checkedAtEpochMs: 1,
-          }),
+  it(
+    "re-renders only the transcript of the streaming thread for each output frame",
+    {
+      timeout: 30_000,
+    },
+    async () => {
+      const tasks = fakeAgentTaskGateway();
+      const app = await renderAgentApp({
+        agentGateways: {
+          agentProviderGateway: {
+            ...agentAppProviderGateway(),
+            probeAgentProviderHealth: async () => ({
+              installedVersion: "1.0.0",
+              auth: { kind: "unknown" },
+              update: { kind: "checksDisabled" },
+              checkedAtEpochMs: 1,
+            }),
+          },
+          agentTaskGateway: tasks.gateway,
         },
-        agentTaskGateway: tasks.gateway,
-      },
-      appSettings: APP_SETTINGS,
-      gitGateway: cleanRepositoryGitGateway(),
-      strictMode: false,
-    });
-    await waitForReact(() =>
-      expect(app.host.querySelector("textarea#agent-prompt")).not.toBeNull(),
-    );
-    await settleAgentApp();
+        appSettings: APP_SETTINGS,
+        gitGateway: cleanRepositoryGitGateway(),
+        strictMode: false,
+      });
+      await waitForReact(() =>
+        expect(app.host.querySelector("textarea#agent-prompt")).not.toBeNull(),
+      );
+      await settleAgentApp();
 
-    await typePrompt(app.host, "Stream a long answer.");
-    await waitForReact(async () => {
-      await submitComposer(app.host);
-      expect(tasks.started).toHaveLength(1);
-    });
-    await settleAgentApp();
-    const turnId = tasks.started[0]?.taskId ?? "";
-    await streamFrame(tasks, turnId, 1, assistantLine("first segment ", false));
-    await waitForReact(() => expect(app.host.textContent).toContain("first segment"));
+      await typePrompt(app.host, "Stream a long answer.");
+      await waitForReact(async () => {
+        await submitComposer(app.host);
+        expect(tasks.started).toHaveLength(1);
+      });
+      await settleAgentApp();
+      const turnId = tasks.started[0]?.taskId ?? "";
+      await streamFrame(tasks, turnId, 1, assistantLine("first segment ", false));
+      await waitForReact(() => expect(app.host.textContent).toContain("first segment"));
+      await waitForReact(() =>
+        expect(app.host.querySelector(`.${WORKBENCH_SURFACE_ENTER_CLASS}`)).toBeNull(),
+      );
+      await settleUntilQuiet();
 
-    for (const key of Object.keys(renders) as RenderKey[]) renders[key] = 0;
-    for (let frame = 2; frame <= STREAMED_FRAMES + 1; frame += 1) {
-      await streamFrame(tasks, turnId, frame, assistantLine(`chunk-${frame} `, frame % 2 === 0));
-    }
-    await settleAgentApp();
+      const perFrame: RenderCounts[] = [];
+      for (let frame = 2; frame <= STREAMED_FRAMES + 1; frame += 1) {
+        const before = { ...renders };
+        await streamFrame(tasks, turnId, frame, assistantLine(`chunk-${frame} `, frame % 2 === 0));
+        perFrame.push(renderDelta(before));
+      }
 
-    expect(app.host.textContent).toContain(`chunk-${STREAMED_FRAMES + 1}`);
-    const counts = { ...renders };
-    console.info(`agent stream render counts over ${STREAMED_FRAMES} frames`, counts);
-    expect(counts).toEqual({
-      app: 0,
-      screen: 0,
-      modeView: 0,
-      rail: 0,
-      composer: 0,
-      transcript: STREAMED_FRAMES,
-    });
+      expect(app.host.textContent).toContain(`chunk-${STREAMED_FRAMES + 1}`);
+      console.info(`agent stream render counts over ${STREAMED_FRAMES} frames`, totalOf(perFrame));
+      expect(perFrame).toEqual(
+        Array.from({ length: STREAMED_FRAMES }, () => ({ ...zeroCounts(), transcript: 1 })),
+      );
+      const afterBurst = { ...renders };
+      await settleUntilQuiet();
+      expect({ ...renderDelta(afterBurst), transcript: 0 }).toEqual(zeroCounts());
 
-    for (const key of Object.keys(renders) as RenderKey[]) renders[key] = 0;
-    await streamFrame(
-      tasks,
-      turnId,
-      STREAMED_FRAMES + 2,
-      claudeLine({
-        type: "assistant",
-        message: {
-          content: [{ type: "tool_use", id: "tool-1", name: "Bash", input: { command: "ls" } }],
-        },
-      }),
-    );
-    await settleAgentApp();
+      for (const key of Object.keys(renders) as RenderKey[]) renders[key] = 0;
+      await streamFrame(
+        tasks,
+        turnId,
+        STREAMED_FRAMES + 2,
+        claudeLine({
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", id: "tool-1", name: "Bash", input: { command: "ls" } }],
+          },
+        }),
+      );
+      await settleAgentApp();
 
-    expect(renders.transcript).toBeGreaterThan(0);
-    expect(renders.app).toBeGreaterThan(0);
-    expect(renders.modeView).toBeGreaterThan(0);
-  });
+      expect(renders.transcript).toBeGreaterThan(0);
+      expect(renders.app).toBeGreaterThan(0);
+      expect(renders.modeView).toBeGreaterThan(0);
+      expect(renders.localView).toBeGreaterThan(0);
+    },
+  );
 });
 
 function assistantLine(text: string, withUsage: boolean): string {
@@ -247,6 +403,7 @@ async function streamFrame(
     tasks.emitOutput({ taskId, sequence, stream: "stdout", chunk, truncated: false });
     const pending = frames;
     frames = [];
+    expect(pending).toHaveLength(1);
     for (const callback of pending) callback(sequence * 16);
     for (let turn = 0; turn < 8; turn += 1) await Promise.resolve();
   });

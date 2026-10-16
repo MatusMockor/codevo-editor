@@ -1,6 +1,7 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, type ComponentProps } from "react";
 import type { AgentTasksNotice } from "../../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../../domain/agentProject";
+import type { AgentTerminalSessionsPalette } from "../AgentTerminalSessionsPalette";
 import type { AgentThreadNavigation } from "../useAgentThreadNavigation";
 import { useAgentSessionImport } from "../useAgentSessionImport";
 import type { AgentModeAgents, AgentModeNoticeReporter } from "./agentModeViewProps";
@@ -81,8 +82,38 @@ export function useAgentModeTerminalSessions({
         ?.label ?? null
     );
   }, [groups, terminalSessionsTarget]);
+  const paletteOpen = terminalSessionsPalette.open;
+  const { surface, importOne, importMany, importProgress, importNotice } = sessionImport;
+  const paletteProps = useMemo<ComponentProps<typeof AgentTerminalSessionsPalette> | null>(
+    () =>
+      surface === null
+        ? null
+        : {
+            isOpen: paletteOpen,
+            onClose: closeTerminalSessions,
+            onImport: importOne,
+            onImportMany: importMany,
+            importProgress,
+            importNotice,
+            onSelectImported: selectImportedThread,
+            projectLabel: terminalSessionsProjectLabel,
+            surface,
+          },
+    [
+      closeTerminalSessions,
+      importMany,
+      importNotice,
+      importOne,
+      importProgress,
+      paletteOpen,
+      selectImportedThread,
+      surface,
+      terminalSessionsProjectLabel,
+    ],
+  );
   return {
-    paletteOpen: terminalSessionsPalette.open,
+    paletteProps,
+    paletteOpen,
     selectImportedThread,
     sessionImport,
     openTerminalSessions,

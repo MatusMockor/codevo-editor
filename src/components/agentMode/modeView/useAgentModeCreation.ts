@@ -1,4 +1,10 @@
-import { useLayoutEffect, useMemo, type RefObject } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 import type { AgentThreadView } from "../../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../../domain/agentProject";
 import { agentThreadHeaderProject, type AgentWorkbenchChrome } from "../agentWorkbenchChrome";
@@ -10,6 +16,7 @@ import {
 import { useAgentProjectCreation } from "../useAgentProjectCreation";
 import type { AgentThreadNavigation } from "../useAgentThreadNavigation";
 import { useAgentLatestCallback } from "../useAgentThreadPresentationViews";
+import { useAgentStableValue } from "./useAgentStableValue";
 import type { AgentModeNoticeReporter } from "./agentModeViewProps";
 import type { AgentModeComposer } from "./useAgentModeComposer";
 import type { AgentModeProjects } from "./useAgentModeProjects";
@@ -28,6 +35,7 @@ export interface AgentModeCreationOptions {
   readonly openAddProjectRef: RefObject<() => void>;
   readonly activeProjectRootKeyRef: RefObject<string | null>;
   readonly setLocalNotice: AgentModeNoticeReporter;
+  readonly setProjectSelectionIntent: Dispatch<SetStateAction<number>>;
   refreshRemoteProjects(): Promise<void>;
   onSelectProjectEnvironment(rootKey: string): void;
 }
@@ -46,6 +54,7 @@ export function useAgentModeCreation({
   openAddProjectRef,
   activeProjectRootKeyRef,
   setLocalNotice,
+  setProjectSelectionIntent,
   refreshRemoteProjects,
   onSelectProjectEnvironment,
 }: AgentModeCreationOptions) {
@@ -87,6 +96,34 @@ export function useAgentModeCreation({
     openAddProjectRef.current = openAddProject;
   }, [openAddProject, openAddProjectRef]);
   const openPendingClone = useAgentLatestCallback(creation.showPending);
+  const switchScope = useAgentLatestCallback(creation.addProject.addProject);
+  const selectRemoteDraftProject = useAgentLatestCallback((project: AgentProjectDescriptor) => {
+    const live = projects.find(
+      (candidate) =>
+        candidate.rootKey === project.rootKey &&
+        candidate.ownerId === project.ownerId &&
+        candidate.generation === project.generation,
+    );
+    if (
+      live === undefined ||
+      live.trust !== "trusted" ||
+      selectedServerId === null ||
+      !live.rootKey.startsWith(`remote:${encodeURIComponent(selectedServerId)}:`)
+    )
+      return;
+    const group = groups.find(
+      (candidate) =>
+        candidate.projectRootKey === live.rootKey ||
+        candidate.memberProjectRootKeys?.includes(live.rootKey),
+    );
+    setProjectSelectionIntent((current) => current + 1);
+    navigation.setRailScope({
+      projectRootKey: live.rootKey,
+      repositoryRoot: live.rootPath,
+      memberProjectRootKeys: group?.memberProjectRootKeys,
+    });
+    composer.startNewThread(project.rootKey, project.rootPath);
+  });
   const remoteAddCloneRunning =
     remoteAdd.pendingClone !== null && remoteAddProjectCloneActive(remoteAdd.pendingClone.status);
 
@@ -112,7 +149,7 @@ export function useAgentModeCreation({
     composerTargetProjectRootKey,
     composerTargetRepositoryRoot,
   ]);
-  const headerProject = useMemo(() => {
+  const liveHeaderProject = useMemo(() => {
     const header = agentThreadHeaderProject(
       selectedThread,
       executionGroups,
@@ -127,6 +164,7 @@ export function useAgentModeCreation({
     );
     return group ? { ...header, label: group.label } : header;
   }, [groups, executionGroups, headerFallback, projects, selectedThread]);
+  const headerProject = useAgentStableValue(liveHeaderProject);
   const activeProjectRootKey = headerProject?.projectRootKey ?? null;
   useLayoutEffect(() => {
     activeProjectRootKeyRef.current = activeProjectRootKey;
@@ -138,6 +176,8 @@ export function useAgentModeCreation({
     dismissPendingClone,
     openAddProject,
     openPendingClone,
+    switchScope,
+    selectRemoteDraftProject,
     remoteAddCloneRunning,
     cloneComposerVisible,
     headerProject,

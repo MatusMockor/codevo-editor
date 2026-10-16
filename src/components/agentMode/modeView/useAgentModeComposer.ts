@@ -16,6 +16,7 @@ import {
 import { useAgentSessionBackgroundControls } from "../useAgentSessionBackgroundControls";
 import type { AgentThreadNavigation } from "../useAgentThreadNavigation";
 import { useAgentLatestCallback } from "../useAgentThreadPresentationViews";
+import { useAgentStableValue } from "./useAgentStableValue";
 import {
   NO_REMOTE_SERVERS,
   type AgentModeAgents,
@@ -23,6 +24,8 @@ import {
 } from "./agentModeViewProps";
 import type { AgentModeProjects } from "./useAgentModeProjects";
 import type { AgentModeScope } from "./useAgentModeScope";
+
+const COMPOSER_PROPS_DEPTH = 4;
 
 export interface AgentModeComposerOptions {
   readonly agents: AgentModeAgents;
@@ -118,7 +121,7 @@ export function useAgentModeComposer({
     setProjectSelectionIntent((current) => current + 1);
     composer.composerProps.onSelectRepository(repositoryRoot);
   });
-  const composerThreadLocation = useMemo(
+  const liveThreadLocation = useMemo(
     () =>
       agentComposerThreadLocation(
         selectedThread,
@@ -127,33 +130,57 @@ export function useAgentModeComposer({
       ),
     [chrome.liveCheckoutBranches, remoteContext?.servers, selectedThread],
   );
-  const composerProps = {
-    ...composer.composerProps,
-    immediateBlockedReason:
-      selectedThread?.execution?.kind === "remote"
-        ? selectedThread.execution.taskSteering === true
+  const composerThreadLocation = useAgentStableValue(liveThreadLocation);
+  const {
+    onIsolationChange: _isolationChange,
+    onLaunchChange: _launchChange,
+    onNewThread: _newThread,
+    onSelectRepository: _selectRepository,
+    ...liveComposerFields
+  } = composer.composerProps;
+  const baseComposerProps = useAgentStableValue(liveComposerFields, COMPOSER_PROPS_DEPTH);
+  const remoteExecution = selectedThread?.execution?.kind === "remote";
+  const remoteTaskSteering = selectedThread?.execution?.taskSteering === true;
+  const composerProps = useMemo(
+    () => ({
+      ...baseComposerProps,
+      immediateBlockedReason: remoteExecution
+        ? remoteTaskSteering
           ? null
           : "Update the server to send messages during a run. Queued messages remain available."
-        : composer.composerProps.immediateBlockedReason,
-    ...(resolvingRemoteThread
-      ? {
-          mode: {
-            kind: "followUp" as const,
-            blockedReason: "Waiting for the server conversation to load.",
-          },
-          draftKey: selectedThreadId,
-          promptOwnerKey: selectedThreadId!,
-          target: null,
-          attachments: null,
-          isolation: "worktree" as const,
-        }
-      : {}),
-    threadLocation: composerThreadLocation,
-    onIsolationChange: changeIsolation,
-    onLaunchChange: changeLaunch,
-    onNewThread: clearComposer,
-    onSelectRepository: selectComposerRepository,
-  };
+        : baseComposerProps.immediateBlockedReason,
+      ...(resolvingRemoteThread
+        ? {
+            mode: {
+              kind: "followUp" as const,
+              blockedReason: "Waiting for the server conversation to load.",
+            },
+            draftKey: selectedThreadId,
+            promptOwnerKey: selectedThreadId!,
+            target: null,
+            attachments: null,
+            isolation: "worktree" as const,
+          }
+        : {}),
+      threadLocation: composerThreadLocation,
+      onIsolationChange: changeIsolation,
+      onLaunchChange: changeLaunch,
+      onNewThread: clearComposer,
+      onSelectRepository: selectComposerRepository,
+    }),
+    [
+      baseComposerProps,
+      changeIsolation,
+      changeLaunch,
+      clearComposer,
+      composerThreadLocation,
+      remoteExecution,
+      remoteTaskSteering,
+      resolvingRemoteThread,
+      selectComposerRepository,
+      selectedThreadId,
+    ],
+  );
   return {
     queuedEdit,
     requestEndSessionRef,
