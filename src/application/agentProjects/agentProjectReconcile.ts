@@ -192,7 +192,7 @@ function reconcileExistingEntry(
   }
   if (
     candidate.rootKey === activeKey &&
-    deps.activeWorkspaceRepositories.length > 0 &&
+    deps.activeWorkspaceRepositories !== null &&
     !sameRepositories(entry.repositories, deps.activeWorkspaceRepositories)
   ) {
     entry = { ...entry, repositories: deps.activeWorkspaceRepositories };

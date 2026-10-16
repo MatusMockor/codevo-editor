@@ -424,6 +424,8 @@ function renderAgents(overrides: HarnessOverrides = {}) {
       deleteBranch: vi.fn(async () => Promise.reject(new Error("delete not stubbed"))),
     },
     gitRepositoryMappings: [],
+    gitRepositoryMappingsRoot:
+      overrides.workspaceRoot === undefined ? ROOT_A : overrides.workspaceRoot,
     gitRepositoryStatuses: [],
     persistedAgentWorkbenchLayout: overrides.persistedAgentWorkbenchLayout ?? null,
     persistWorkspaceSettings: async (rootPath, settings) => {

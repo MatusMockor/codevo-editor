@@ -30,12 +30,8 @@ import type {
   AgentProviderUpdateGateway,
 } from "../domain/agentProviderHealth";
 import type { GitIntegrationGateway } from "../domain/gitIntegration";
-import {
-  repositoryRootForMapping,
-  type GitRepositoryMapping,
-  type GitRepositoryStatus,
-  type ResolvedGitRepository,
-} from "../domain/gitRepositoryMapping";
+import type { GitRepositoryMapping, GitRepositoryStatus } from "../domain/gitRepositoryMapping";
+import { activeWorkspaceRepositories } from "./agentProjects/activeWorkspaceRepositories";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type {
   AppSettings,
@@ -127,6 +123,7 @@ export interface AppAgentsOptions {
   readonly workspaceSettingsRef: { readonly current: WorkspaceSettings };
   readonly gitGateway: AgentThreadsGitGateway;
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
+  readonly gitRepositoryMappingsRoot: string | null;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
   readonly onActiveWorkspaceTrustChanged: (
     rootPath: string,
@@ -235,6 +232,7 @@ export function useAppAgents(options: AppAgentsOptions): AppAgentsSurface {
   >(() => Promise.resolve({ kind: "unavailable" }));
   const {
     gitRepositoryMappings,
+    gitRepositoryMappingsRoot,
     gitRepositoryStatuses,
     setSettingsInitialSection,
     setSettingsOpen,
@@ -242,24 +240,16 @@ export function useAppAgents(options: AppAgentsOptions): AppAgentsSurface {
     workspaceRoot,
   } = options;
 
-  const resolvedRepositories = useMemo<ReadonlyArray<ResolvedGitRepository>>(() => {
-    if (!workspaceRoot) {
-      return [];
-    }
-
-    return gitRepositoryMappings
-      .map((mapping) => ({
-        mapping,
-        repositoryRoot: repositoryRootForMapping(mapping, workspaceRoot),
-        repositoryRelativePath: "",
-      }))
-      .filter((repository) => {
-        const status = gitRepositoryStatuses.find(
-          (candidate) => candidate.root === repository.repositoryRoot,
-        );
-        return status === undefined || status.failed || status.status.isRepository;
-      });
-  }, [gitRepositoryMappings, gitRepositoryStatuses, workspaceRoot]);
+  const resolvedRepositories = useMemo(
+    () =>
+      activeWorkspaceRepositories({
+        workspaceRoot,
+        discoveredRoot: gitRepositoryMappingsRoot,
+        mappings: gitRepositoryMappings,
+        statuses: gitRepositoryStatuses,
+      }),
+    [gitRepositoryMappings, gitRepositoryMappingsRoot, gitRepositoryStatuses, workspaceRoot],
+  );
 
   const getRepositoryStatus = useCallback(
     (repositoryRoot: string): AgentRepositoryStatusSnapshot => {

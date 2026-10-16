@@ -114,6 +114,7 @@ export interface AppControllerAgentsOptions {
     "getStatus" | "getDiff" | "detectRepositories" | "stageFiles" | "commit" | "deleteBranch"
   >;
   readonly gitRepositoryMappings: ReadonlyArray<GitRepositoryMapping>;
+  readonly gitRepositoryMappingsRoot: string | null;
   readonly gitRepositoryStatuses: ReadonlyArray<GitRepositoryStatus>;
   readonly persistedAgentWorkbenchLayout?: AgentWorkbenchLayoutHydration | null;
   readonly persistWorkspaceSettings?: AppControllerPersistWorkspaceSettings;
@@ -239,6 +240,7 @@ export function useAppControllerAgents(
     workspaceSettingsRef: options.workspaceSettingsRef,
     gitGateway: options.gitGateway,
     gitRepositoryMappings: options.gitRepositoryMappings,
+    gitRepositoryMappingsRoot: options.gitRepositoryMappingsRoot,
     gitRepositoryStatuses: options.gitRepositoryStatuses,
     onActiveWorkspaceTrustChanged: handleActiveWorkspaceTrustChanged,
     trustRevisionForOwner,

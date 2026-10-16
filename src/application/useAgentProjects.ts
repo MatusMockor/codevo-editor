@@ -106,7 +106,7 @@ function projectDescriptors(
   _revision: number,
   coordinator: AgentProjectsCoordinator,
   activeRootKey: string | null,
-  activeRepositories: ReadonlyArray<ResolvedGitRepository>,
+  activeRepositories: ReadonlyArray<ResolvedGitRepository> | null,
   activeIsolationPolicy: AgentIsolationPolicy,
 ): ReadonlyArray<AgentProjectDescriptor> {
   return coordinator.projects(activeRootKey, activeRepositories, activeIsolationPolicy);

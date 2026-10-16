@@ -64,7 +64,7 @@ function renderSurface(
   getStatus: (rootPath: string) => Promise<GitStatus>,
   selectedGitChange: GitChangedFile | null = null,
   selectedRepositoryRoot = ROOT,
-  detectedRepositories?: ReadonlyArray<string>,
+  detectedRepositories?: ReadonlyArray<string> | (() => Promise<string[]>),
   agentDiffVisible = false,
 ): Harness {
   const container = document.createElement("div");
@@ -85,7 +85,12 @@ function renderSurface(
       getStatus,
       ...(detectedRepositories === undefined
         ? {}
-        : { detectRepositories: async () => [...detectedRepositories] }),
+        : {
+            detectRepositories:
+              typeof detectedRepositories === "function"
+                ? detectedRepositories
+                : async () => [...detectedRepositories],
+          }),
     } as GitGateway,
     gitRepositoryDiscoveryRequestTokenRef: { current: 0 },
     reportError,
@@ -440,6 +445,63 @@ describe("useGitStatusSurface", () => {
     harness.unmount();
   });
 
+  it("publishes the root its mappings were discovered for and clears it on reset", async () => {
+    const harness = renderSurface(
+      async (rootPath) => ({ ...status("main", []), rootPath }),
+      null,
+      ROOT,
+      ["packages/nested"],
+    );
+    expect(harness.surface().gitRepositoryMappingsRoot).toBeNull();
+    expect(harness.surface().gitRepositoryMappings).toEqual([{ rootRelativePath: "" }]);
+
+    await act(async () => {
+      await harness.surface().runGitRepositoryDiscovery(ROOT, {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappings: [],
+        gitDirectoryMappingsAuto: true,
+      });
+    });
+    expect(harness.surface().gitRepositoryMappingsRoot).toBe(ROOT);
+
+    act(() => harness.surface().resetGitStatusSurface(ROOT));
+    expect(harness.surface().gitRepositoryMappingsRoot).toBeNull();
+
+    await act(async () => {
+      await harness.surface().runGitRepositoryDiscovery("/elsewhere", defaultWorkspaceSettings());
+    });
+    expect(harness.surface().gitRepositoryMappingsRoot).toBeNull();
+    harness.unmount();
+  });
+
+  it("drops a discovery that was pending when the surface was reset for a new owner", async () => {
+    const pendingScan = createDeferred<string[]>();
+    const harness = renderSurface(
+      async (rootPath) => ({ ...status("main", []), rootPath }),
+      null,
+      ROOT,
+      () => pendingScan.promise,
+    );
+    let staleDiscovery: Promise<void> = Promise.resolve();
+    act(() => {
+      staleDiscovery = harness.surface().runGitRepositoryDiscovery(ROOT, {
+        ...defaultWorkspaceSettings(),
+        gitDirectoryMappings: [],
+        gitDirectoryMappingsAuto: true,
+      });
+    });
+
+    act(() => harness.surface().resetGitStatusSurface(ROOT));
+    await act(async () => {
+      pendingScan.resolve(["packages/stale"]);
+      await staleDiscovery;
+    });
+
+    expect(harness.surface().gitRepositoryMappingsRoot).toBeNull();
+    expect(harness.surface().gitRepositoryMappings).toEqual([{ rootRelativePath: "" }]);
+    harness.unmount();
+  });
+
   it("retires an in-flight fallback-root refresh before publishing authoritative nested mappings", async () => {
     const nestedRoot = `${ROOT}/packages/nested`;
     const pendingRootStatus = createDeferred<GitStatus>();
@@ -554,7 +616,6 @@ describe("useGitStatusSurface", () => {
     expect(harness.surface().gitStatus).toBe(published);
     harness.unmount();
   });
-
 });
 
 describe("Git status read readiness", () => {
@@ -625,13 +686,11 @@ describe("visible Diff and real Git status integration", () => {
       await act(async () => {});
       expect(getStatus).toHaveBeenCalledWith(ROOT);
       await act(async () =>
-        harness
-          .surface()
-          .runGitRepositoryDiscovery(ROOT, {
-            ...defaultWorkspaceSettings(),
-            gitDirectoryMappingsAuto: true,
-            gitDirectoryMappings: [],
-          }),
+        harness.surface().runGitRepositoryDiscovery(ROOT, {
+          ...defaultWorkspaceSettings(),
+          gitDirectoryMappingsAuto: true,
+          gitDirectoryMappings: [],
+        }),
       );
       expect(getStatus).toHaveBeenCalledWith(nested);
       expect(harness.surface().gitStatusLoaded).toBe(true);

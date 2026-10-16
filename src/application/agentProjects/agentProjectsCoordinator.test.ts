@@ -152,6 +152,29 @@ describe("agent project entry policies", () => {
     ).toEqual(["old", "older", "owner"]);
   });
 
+  it("falls back to the project's own discovery until the active git surface has discovered", () => {
+    const nested = repository(`${ACTIVE_ROOT}/nested`);
+    const entries = new Map([[ACTIVE_ROOT, entry({ repositories: [nested] })]]);
+    const undiscovered = projectDescriptors(
+      entries,
+      ACTIVE_ROOT,
+      null,
+      DEFAULT_AGENT_ISOLATION_POLICY,
+    );
+    expect(undiscovered[0]?.repositories).toEqual([nested]);
+    expect(undiscovered[0]?.repositoryDiscovery).toBe("settled");
+
+    const discovered = projectDescriptors(
+      entries,
+      ACTIVE_ROOT,
+      [repository(ACTIVE_ROOT)],
+      DEFAULT_AGENT_ISOLATION_POLICY,
+    );
+    expect(discovered[0]?.repositories.map((project) => project.repositoryRoot)).toEqual([
+      ACTIVE_ROOT,
+    ]);
+  });
+
   it("claims each repository root for the first project only", () => {
     const entries = new Map([
       ["/a", entry({ rootKey: "/a", rootPath: "/a", repositories: [repository("/shared")] })],
@@ -225,6 +248,37 @@ describe("agent projects coordinator", () => {
       .projects(ACTIVE_ROOT, [], DEFAULT_AGENT_ISOLATION_POLICY)
       .find((project) => project.rootKey === "/ws/b");
     expect(second?.generation).toBe((first?.generation ?? 0) + 1);
+  });
+
+  it("retains an authoritative empty active discovery for a later undiscovered activation", async () => {
+    let deps = dependencies({
+      activeWorkspaceRepositories: null,
+      settingsGateway: {
+        loadWorkspaceSettings: vi.fn(async () => ({
+          ...defaultWorkspaceSettings(),
+          gitDirectoryMappings: ["removed"],
+          gitDirectoryMappingsAuto: false,
+        })),
+      },
+    });
+    const coordinator = createAgentProjectsCoordinator(deps, vi.fn());
+    coordinator.reconcile();
+    await settle();
+    const roots = () =>
+      coordinator
+        .projects(ACTIVE_ROOT, null, DEFAULT_AGENT_ISOLATION_POLICY)[0]
+        ?.repositories.map((project) => project.repositoryRoot);
+    expect(roots()).toEqual([ACTIVE_ROOT, `${ACTIVE_ROOT}/removed`]);
+
+    deps = { ...deps, activeWorkspaceRepositories: [] };
+    coordinator.setDependencies(deps);
+    coordinator.reconcile();
+    await settle();
+
+    coordinator.setDependencies({ ...deps, activeWorkspaceRepositories: null });
+    coordinator.reconcile();
+    await settle();
+    expect(roots()).toEqual([]);
   });
 
   it("bounds concurrent project loads", async () => {

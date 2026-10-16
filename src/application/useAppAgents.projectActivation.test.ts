@@ -614,6 +614,9 @@ function renderWorkbenchAgents(options: { readonly savedThreads: ReadonlyArray<A
     workspaceSettingsRef: { current: defaultWorkspaceSettings() },
     gitGateway: git,
     gitRepositoryMappings: [{ rootRelativePath: "" }],
+    get gitRepositoryMappingsRoot() {
+      return activeRoot;
+    },
     gitRepositoryStatuses: [],
     onActiveWorkspaceTrustChanged: vi.fn(),
     prompter: { confirm: () => true, prompt: () => null },

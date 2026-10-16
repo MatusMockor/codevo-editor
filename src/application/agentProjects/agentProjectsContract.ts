@@ -25,7 +25,7 @@ export interface AgentProjectsDependencies {
   readonly activeWorkspaceId: string | null;
   readonly activeWorkspaceRoot: string | null;
   readonly activeWorkspaceTrust: WorkspaceTrustState | null;
-  readonly activeWorkspaceRepositories: ReadonlyArray<ResolvedGitRepository>;
+  readonly activeWorkspaceRepositories: ReadonlyArray<ResolvedGitRepository> | null;
   readonly activeIsolationPolicy: AgentIsolationPolicy;
   readonly descriptorForRoot: (rootPath: string) => WorkspaceIdentityDescriptor | null;
   readonly activateWorkspaceRoot?: (rootPath: string) => Promise<void>;

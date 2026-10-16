@@ -115,7 +115,9 @@ export function isCurrentRepositoryOwner(
   const activeRootKey =
     deps.activeWorkspaceRoot === null ? null : normalizedWorkspaceRootKey(deps.activeWorkspaceRoot);
   const repositories =
-    entry.rootKey === activeRootKey ? deps.activeWorkspaceRepositories : entry.repositories;
+    entry.rootKey === activeRootKey && deps.activeWorkspaceRepositories !== null
+      ? deps.activeWorkspaceRepositories
+      : entry.repositories;
   return agentProjectOwnsLaunchRoot(
     { rootPath: entry.rootPath, repositories: repositories ?? [] },
     repositoryRoot,

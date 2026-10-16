@@ -13,7 +13,7 @@ import type {
   StartAgentTaskRequest,
 } from "../domain/agentTask";
 import type { GitStatus } from "../domain/git";
-import type { GitRepositoryStatus } from "../domain/gitRepositoryMapping";
+import type { GitRepositoryMapping, GitRepositoryStatus } from "../domain/gitRepositoryMapping";
 import type { GitWorktreeGateway } from "../domain/gitWorktree";
 import type { WorkspaceTrustState } from "../domain/trust";
 import { DEFAULT_WORKSPACE_PATH_POLICY } from "../domain/workspacePath";
@@ -25,6 +25,12 @@ import {
   type WorkspaceSettings,
 } from "../domain/settings";
 import { waitForReact } from "../test/reactTestLifecycle";
+import {
+  fixtureRepository,
+  projectFixture,
+} from "../components/agentMode/agentThreadsSurfaceTestFixtures";
+import { agentProjectRootIsRepository } from "../domain/agentProject";
+import { withFolderProjectIdentities } from "./folderProjectIdentities";
 import type { AgentAccountUsageSnapshot } from "../domain/agentAccountUsage";
 import type { AgentAccountUsageSourcesPort } from "../domain/agentAccountUsageSources";
 import { createAgentAccountUsageSources } from "./agentAccountUsageSources";
@@ -710,6 +716,57 @@ describe("useAppAgents composition", () => {
       kind: "head",
     });
     expect(harness.startedRequests[0]?.repositoryRoot).toBe(nestedRoot);
+    harness.unmount();
+  });
+
+  it("pairs the active non-Git folder with its server folder before git discovery runs", async () => {
+    const nestedRoots = [`${ACTIVE_ROOT}/pa-ai-be`, `${ACTIVE_ROOT}/pa-ai-fe`];
+    const harness = renderWorkbenchAgents({
+      withProjectGateways: true,
+      workspaceTrust: { rootPath: ACTIVE_ROOT, trusted: true },
+      detectedRepositories: ["pa-ai-be", "pa-ai-fe"],
+      gitRepositoryMappingsRoot: null,
+    });
+
+    await waitForReact(() =>
+      expect(harness.hook().agentProjects.projects[0]).toMatchObject({
+        repositoryDiscovery: "settled",
+        trust: "trusted",
+      }),
+    );
+    const local = harness.hook().agentProjects.projects[0]!;
+    expect(local.repositories.map((repository) => repository.repositoryRoot)).toEqual(nestedRoots);
+    expect(agentProjectRootIsRepository(local)).toBe(false);
+
+    const serverRootKey = "remote:linux:runner:active";
+    const server = projectFixture({
+      rootKey: serverRootKey,
+      rootPath: serverRootKey,
+      ownerId: serverRootKey,
+      label: "active",
+      repositories: [fixtureRepository(serverRootKey, "")],
+      remoteProjectKind: "folder",
+    });
+    const identities = withFolderProjectIdentities(
+      [local, server],
+      new Map([[local.rootKey, { kind: "none" as const }]]),
+    );
+    expect(identities.get(local.rootKey)).toBe("folder:active");
+    expect(identities.get(serverRootKey)).toBe("folder:active");
+
+    harness.setGitSurface({
+      mappings: [{ rootRelativePath: "" }, { rootRelativePath: "pa-ai-be" }],
+      mappingsRoot: ACTIVE_ROOT,
+      statuses: [],
+    });
+    harness.rerender();
+    await waitForReact(() =>
+      expect(
+        harness
+          .hook()
+          .agentProjects.projects[0]?.repositories.map((repository) => repository.repositoryRoot),
+      ).toEqual([ACTIVE_ROOT, nestedRoots[0]]),
+    );
     harness.unmount();
   });
 
@@ -1714,7 +1771,15 @@ interface HarnessOptions {
   refusedLeaseRoots?: ReadonlyArray<string>;
   workspaceTrust?: WorkspaceTrustState | null;
   gitRepositoryMappings?: ReadonlyArray<{ readonly rootRelativePath: string }>;
+  gitRepositoryMappingsRoot?: string | null;
   gitRepositoryStatuses?: ReadonlyArray<GitRepositoryStatus>;
+  detectedRepositories?: ReadonlyArray<string>;
+}
+
+interface HarnessGitSurface {
+  readonly mappings: ReadonlyArray<GitRepositoryMapping>;
+  readonly mappingsRoot: string | null;
+  readonly statuses: ReadonlyArray<GitRepositoryStatus>;
 }
 
 function renderWorkbenchAgents(options: HarnessOptions) {
@@ -1805,7 +1870,9 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   const settingsGateway = {
     loadWorkspaceSettings: vi.fn(async () => defaultWorkspaceSettings()),
   };
-  const discovery = { detectRepositories: vi.fn(async () => [""]) };
+  const discovery = {
+    detectRepositories: vi.fn(async () => [...(options.detectedRepositories ?? [""])]),
+  };
   let nextLeaseToken = 0;
   const refusedLeaseRoots = new Set<string>(options.refusedLeaseRoots ?? []);
   const lease = {
@@ -1915,6 +1982,14 @@ function renderWorkbenchAgents(options: HarnessOptions) {
   };
   let activeWorkspaceId = ACTIVE_ID;
   let activeWorkspaceTrust = options.workspaceTrust ?? null;
+  let gitSurface: HarnessGitSurface = {
+    mappings: options.gitRepositoryMappings ?? [{ rootRelativePath: "" }],
+    mappingsRoot:
+      options.gitRepositoryMappingsRoot === undefined
+        ? ACTIVE_ROOT
+        : options.gitRepositoryMappingsRoot,
+    statuses: options.gitRepositoryStatuses ?? [],
+  };
   const activeTrustChanged = vi.fn((rootPath: string, ownerId: string, trusted: boolean) => {
     if (rootPath !== ACTIVE_ROOT || ownerId !== ACTIVE_ID) return;
     activeWorkspaceTrust = { rootPath, trusted };
@@ -1975,8 +2050,15 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     settingsHydrated: true,
     workspaceSettingsRef: { current: workspaceSettings },
     gitGateway: git,
-    gitRepositoryMappings: options.gitRepositoryMappings ?? [{ rootRelativePath: "" }],
-    gitRepositoryStatuses: options.gitRepositoryStatuses ?? [],
+    get gitRepositoryMappings() {
+      return gitSurface.mappings;
+    },
+    get gitRepositoryMappingsRoot() {
+      return gitSurface.mappingsRoot;
+    },
+    get gitRepositoryStatuses() {
+      return gitSurface.statuses;
+    },
     onActiveWorkspaceTrustChanged: activeTrustChanged,
     prompter: { confirm: () => true, prompt: () => null },
     reportError,
@@ -2040,6 +2122,9 @@ function renderWorkbenchAgents(options: HarnessOptions) {
     },
     setWorkspaceId(workspaceId: string) {
       activeWorkspaceId = workspaceId;
+    },
+    setGitSurface(next: HarnessGitSurface) {
+      gitSurface = next;
     },
     unmount() {
       act(() => root.unmount());

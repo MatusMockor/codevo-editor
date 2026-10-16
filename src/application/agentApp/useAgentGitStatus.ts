@@ -121,6 +121,7 @@ export function useAgentGitStatus({
   return {
     fileStatusesByPath,
     gitRepositoryMappings: status.gitRepositoryMappings,
+    gitRepositoryMappingsRoot: status.gitRepositoryMappingsRoot,
     gitRepositoryStatuses: status.gitRepositoryStatuses,
     refreshGitStatus,
     refreshOnFileChange,

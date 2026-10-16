@@ -31,7 +31,7 @@ export interface AgentProjectsCoordinator {
   reconcile(): void;
   projects(
     activeRootKey: string | null,
-    activeRepositories: ReadonlyArray<ResolvedGitRepository>,
+    activeRepositories: ReadonlyArray<ResolvedGitRepository> | null,
     activeIsolationPolicy: AgentIsolationPolicy,
   ): ReadonlyArray<AgentProjectDescriptor>;
   overflowRootPaths(): ReadonlyArray<string>;

@@ -187,14 +187,15 @@ export function resolveProjectRepositories(
 export function projectDescriptors(
   entries: ReadonlyMap<string, AgentProjectEntry>,
   activeRootKey: string | null,
-  activeRepositories: ReadonlyArray<ResolvedGitRepository>,
+  activeRepositories: ReadonlyArray<ResolvedGitRepository> | null,
   activeIsolationPolicy: AgentIsolationPolicy,
 ): ReadonlyArray<AgentProjectDescriptor> {
   const claimedRepositoryRoots = new Set<string>();
   const descriptors: AgentProjectDescriptor[] = [];
   for (const entry of entries.values()) {
     const isActive = entry.rootKey === activeRootKey && entry.admitted && !entry.releasing;
-    const source = isActive ? activeRepositories : (entry.repositories ?? []);
+    const source =
+      isActive && activeRepositories !== null ? activeRepositories : (entry.repositories ?? []);
     const repositories = source.filter((repository) => {
       if (claimedRepositoryRoots.has(repository.repositoryRoot)) return false;
       claimedRepositoryRoots.add(repository.repositoryRoot);

@@ -83,6 +83,7 @@ export function useAgentAppController(
     workspaceSessionOwnerKey: workspaceOwnerKey,
     gitGateway: ports.gitGateway,
     gitRepositoryMappings: git.gitRepositoryMappings,
+    gitRepositoryMappingsRoot: git.gitRepositoryMappingsRoot,
     gitRepositoryStatuses: git.gitRepositoryStatuses,
     options: ports.agentGateways,
     persistWorkspaceSettings: persistence.persistWorkspaceSettings,

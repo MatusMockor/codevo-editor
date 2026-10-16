@@ -109,6 +109,7 @@ export function useGitStatusSurface({
   const [gitRepositoryMappings, setGitRepositoryMappings] = useState<GitRepositoryMapping[]>([
     WORKSPACE_ROOT_MAPPING,
   ]);
+  const [gitRepositoryMappingsRoot, setGitRepositoryMappingsRoot] = useState<string | null>(null);
   // Whole-map status view (one entry per mapping), for the multi-repo Changes
   // panel. `gitStatus` above stays the primary (workspace-root) repo.
   const [gitRepositoryStatuses, setGitRepositoryStatuses] = useState<GitRepositoryStatus[]>([]);
@@ -119,14 +120,19 @@ export function useGitStatusSurface({
     setGitStatus((current) => (gitStatusesEqual(current, next) ? current : next));
   }, []);
 
-  const resetGitStatusSurface = useCallback((rootPath?: string) => {
-    gitStatusRequestGenerationRef.current += 1;
-    setGitStatus(rootPath ? emptyGitStatus(rootPath) : emptyGitStatus());
-    setGitRepositoryStatuses([]);
-    setGitStatusLoaded(false);
-    setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
-    setGitLoading(false);
-  }, []);
+  const resetGitStatusSurface = useCallback(
+    (rootPath?: string) => {
+      gitRepositoryDiscoveryRequestTokenRef.current += 1;
+      gitStatusRequestGenerationRef.current += 1;
+      setGitStatus(rootPath ? emptyGitStatus(rootPath) : emptyGitStatus());
+      setGitRepositoryStatuses([]);
+      setGitStatusLoaded(false);
+      setGitRepositoryMappings([WORKSPACE_ROOT_MAPPING]);
+      setGitRepositoryMappingsRoot(null);
+      setGitLoading(false);
+    },
+    [gitRepositoryDiscoveryRequestTokenRef],
+  );
 
   // Discover nested git repositories (PhpStorm-style directory mappings) for
   // `rootPath` from its settings and publish the effective mappings so every git
@@ -178,6 +184,7 @@ export function useGitStatusSurface({
       setGitLoading(false);
       setGitStatusLoaded(false);
       setGitRepositoryMappings(mappings);
+      setGitRepositoryMappingsRoot(rootPath);
       setGitRepositoryStatuses((current) =>
         current.filter((status) =>
           [...allowedRepositoryRoots].some((root) => workspaceRootKeysEqual(root, status.root)),
@@ -416,6 +423,7 @@ export function useGitStatusSurface({
     gitLoading,
     gitStatusLoaded,
     gitRepositoryMappings,
+    gitRepositoryMappingsRoot,
     gitRepositoryStatuses,
     gitStatus,
     refreshGitStatus,
