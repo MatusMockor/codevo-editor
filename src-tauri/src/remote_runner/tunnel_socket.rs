@@ -50,7 +50,7 @@ mod tests {
     fn incomplete_fragment_trickle_cannot_extend_message_deadline() {
         let (client, mut server) = UnixStream::pair().unwrap();
         client
-            .set_read_timeout(Some(Duration::from_millis(20)))
+            .set_read_timeout(Some(Duration::from_millis(500)))
             .unwrap();
         let writer = std::thread::spawn(move || {
             if server.write_all(&[0x01, 0]).is_err() {

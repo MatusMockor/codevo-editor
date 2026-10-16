@@ -1751,14 +1751,21 @@ describe("useAgentThreads views and viewed marks", () => {
     for (let sequence = 1; sequence <= 100; sequence += 1) {
       await act(async () => {
         harness.emitOutput(turnId, sequence, `${assistantLine(`line ${sequence}`)}\n`);
+        if (sequence % 25 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 50));
       });
     }
-    await waitForReact(() =>
-      expect(
-        harness.hook().threads.find((view) => view.thread.threadId === running)?.thread.turns[0]
-          ?.lastOutputSequence,
-      ).toBe(100),
-    );
+    const liveRunning = () => {
+      const shown = harness.hook().threads.find((view) => view.thread.threadId === running);
+      if (shown === undefined) return undefined;
+      return harness.hook().liveThreads?.liveThreadOf(shown.thread);
+    };
+    await waitForReact(() => expect(liveRunning()?.turns[0]?.lastOutputSequence).toBe(100));
+    expect(liveRunning()?.turns[0]?.events).toEqual([
+      {
+        kind: "assistantText",
+        text: Array.from({ length: 100 }, (_, index) => `line ${index + 1}`).join(""),
+      },
+    ]);
 
     const storedAfter = harness
       .hook()
