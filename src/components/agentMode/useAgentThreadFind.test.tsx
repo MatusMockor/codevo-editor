@@ -9,8 +9,15 @@ import {
   MAX_THREAD_SEARCH_SNIPPET_CHARS,
 } from "../../domain/agentThreadSearch";
 import { MAX_RENDERED_EVENTS_PER_TURN } from "./agentModePresentation";
-import { AGENT_THREAD_FIND_DEBOUNCE_MS, useAgentThreadFind } from "./useAgentThreadFind";
-import type { AgentThreadFindState } from "./useAgentThreadFind";
+import {
+  AGENT_THREAD_FIND_DEBOUNCE_MS,
+  useAgentThreadFindControl,
+  useAgentThreadFindResults,
+  type AgentThreadFindControl,
+  type AgentThreadFindResults,
+} from "./useAgentThreadFind";
+
+type AgentThreadFindState = AgentThreadFindControl & AgentThreadFindResults;
 
 describe("useAgentThreadFind", () => {
   let host: HTMLDivElement;
@@ -246,7 +253,9 @@ describe("useAgentThreadFind", () => {
   }
 
   function Probe({ thread }: { readonly thread: AgentThread }) {
-    state = useAgentThreadFind(thread);
+    const control = useAgentThreadFindControl(thread);
+    const results = useAgentThreadFindResults(control, thread);
+    state = { ...control, ...results };
     return null;
   }
 

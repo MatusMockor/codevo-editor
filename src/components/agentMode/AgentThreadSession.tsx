@@ -1,4 +1,6 @@
 import type { AgentTurnChangeSummary } from "../../domain/agentTurnChanges";
+import type { AgentThreadFindControl } from "./useAgentThreadFind";
+import { useAgentThreadSessionFind } from "./useAgentThreadSessionFind";
 import { AgentThreadSessionEmpty } from "./AgentThreadSessionEmpty";
 import { AgentThreadTranscriptRequests } from "./AgentThreadTranscriptRequests";
 import type { AgentThreadHistorySurface } from "../../application/useAgentThreadHistory";
@@ -133,6 +135,8 @@ export interface AgentThreadSessionProps {
   readonly findHitIndex?: number;
   readonly findOpen?: boolean;
   readonly findBar?: ReactNode;
+  readonly find?: AgentThreadFindControl | null;
+  onCloseFind?(): void;
   readonly goToTurnSignal?: number;
   readonly reveal?: AgentThreadRevealRequest | null;
   readonly textClipboard?: TextClipboardGateway | null;
@@ -170,6 +174,11 @@ export interface AgentThreadSessionProps {
 
 export function AgentThreadSession(props: AgentThreadSessionProps) {
   const thread = useLiveAgentThreadView(props.thread);
+  const controlledFind = useAgentThreadSessionFind(
+    props.find ?? null,
+    props.onCloseFind,
+    props.thread?.thread ?? null,
+  );
   const pendingSend = props.pendingSend ?? null;
   const pendingOnServer =
     pendingSend?.target.kind === "new" && pendingSend.target.projectRootKey.startsWith("remote:");
@@ -192,7 +201,7 @@ export function AgentThreadSession(props: AgentThreadSessionProps) {
     return <AgentThreadSessionEmpty repositoryLabel={props.composerRepositoryLabel} />;
   }
 
-  return <AgentThreadSessionBody {...props} thread={thread} />;
+  return <AgentThreadSessionBody {...props} {...controlledFind} thread={thread} />;
 }
 
 type AgentThreadSessionBodyProps = AgentThreadSessionProps & {

@@ -46,7 +46,7 @@ import {
   type AgentRailScopeEntry,
   type AgentThreadRevealRequest,
 } from "./agentSidebarPresentation";
-import { useAgentThreadFind, type AgentThreadFindState } from "./useAgentThreadFind";
+import { useAgentThreadFindControl, type AgentThreadFindControl } from "./useAgentThreadFind";
 import {
   recalledProjectSelection,
   projectOwnsRememberedThread,
@@ -114,8 +114,7 @@ export interface AgentThreadNavigation {
   readonly composerScope: ComposerScope | null;
   readonly scopeEntries: ReadonlyArray<AgentRailScopeEntry>;
   readonly search: AgentThreadSearchSurface;
-  readonly find: AgentThreadFindState;
-  readonly findHitIndex: number | undefined;
+  readonly find: AgentThreadFindControl;
   readonly palette: AgentThreadPaletteState;
   readonly terminalSessions: AgentTerminalSessionsPaletteState;
   readonly commands: AgentNavigationCommandHandlers;
@@ -409,7 +408,7 @@ export function useAgentThreadNavigation({
     [paletteOpen, scopedViews],
   );
 
-  const find = useAgentThreadFind(selectedThread?.thread ?? null);
+  const find = useAgentThreadFindControl(selectedThread?.thread ?? null);
 
   const markThreadViewed = agents.markThreadViewed;
   const selectedTerminalKey = terminalTurnKey(selectedThread?.thread ?? null);
@@ -688,7 +687,6 @@ export function useAgentThreadNavigation({
     scopeEntries,
     search,
     find,
-    findHitIndex: find.open && find.hitIndex >= 0 ? find.hitIndex : undefined,
     palette,
     terminalSessions,
     commands,

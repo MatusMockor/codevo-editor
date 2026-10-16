@@ -139,13 +139,26 @@ vi.mock("./AgentSurfaceTerminal", async (importOriginal) => {
   };
 });
 
+vi.mock("./useAgentThreadSessionFind", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./useAgentThreadSessionFind")>();
+  return {
+    ...actual,
+    useAgentThreadSessionFind: (
+      ...args: Parameters<typeof actual.useAgentThreadSessionFind>
+    ): ReturnType<typeof actual.useAgentThreadSessionFind> => {
+      const find = actual.useAgentThreadSessionFind(...args);
+      sessionReveals.push(find.reveal ?? null);
+      return find;
+    },
+  };
+});
+
 vi.mock("./AgentThreadSession", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./AgentThreadSession")>();
   return {
     ...actual,
     AgentThreadSession: memo((props: Parameters<typeof actual.AgentThreadSession>[0]) => {
       columnRenders.session += 1;
-      sessionReveals.push(props.reveal ?? null);
       return <actual.AgentThreadSession {...props} />;
     }),
   };

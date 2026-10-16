@@ -19,7 +19,11 @@ import {
   projectFixture,
   threadsSurfaceFixture,
 } from "./agentThreadsSurfaceTestFixtures";
-import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "./useAgentThreadFind";
+import {
+  AGENT_THREAD_FIND_DEBOUNCE_MS,
+  useAgentThreadFindResults,
+  type AgentThreadFindResults,
+} from "./useAgentThreadFind";
 import {
   useAgentThreadNavigation,
   NO_SCOPE_STATE,
@@ -34,6 +38,7 @@ describe("useAgentThreadNavigation", () => {
   let host: HTMLDivElement;
   let root: Root;
   let captured: AgentThreadNavigation | null;
+  let capturedFind: AgentThreadFindResults | null;
   let projectLinks: ReadonlyMap<string, string>;
 
   beforeEach(() => {
@@ -43,6 +48,7 @@ describe("useAgentThreadNavigation", () => {
     document.body.append(host);
     root = createRoot(host);
     captured = null;
+    capturedFind = null;
     projectLinks = new Map();
   });
 
@@ -369,7 +375,7 @@ describe("useAgentThreadNavigation", () => {
         }),
       );
       expect(current().find.open).toBe(true);
-      expect(current().find.hits).toEqual([]);
+      expect(findResults().hits).toEqual([]);
       if (editQuery) act(() => current().find.setQuery("different"));
       render(
         threadsSurfaceFixture({
@@ -392,9 +398,9 @@ describe("useAgentThreadNavigation", () => {
       act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
       expect(current().find.open).toBe(true);
       expect(current().find.query).toBe(editQuery ? "different" : "needle");
-      if (editQuery) expect(current().find.hits).toEqual([]);
+      if (editQuery) expect(findResults().hits).toEqual([]);
       else
-        expect(current().find.hits[current().find.hitIndex]).toMatchObject({
+        expect(findResults().hits[findResults().hitIndex]).toMatchObject({
           turnId: "old-task",
           eventIndex: 0,
         });
@@ -412,7 +418,7 @@ describe("useAgentThreadNavigation", () => {
     act(() => current().find.setQuery("token"));
     act(() => vi.advanceTimersByTime(AGENT_THREAD_FIND_DEBOUNCE_MS));
     expect(current().find.open).toBe(true);
-    expect(current().findHitIndex).toBeUndefined();
+    expect(findResults().hitIndex).toBe(-1);
 
     act(() => current().selectThread("agt-1"));
     expect(current().find.open).toBe(true);
@@ -870,6 +876,11 @@ describe("useAgentThreadNavigation", () => {
     });
   }
 
+  function findResults(): AgentThreadFindResults {
+    expect(capturedFind).not.toBeNull();
+    return capturedFind as AgentThreadFindResults;
+  }
+
   function current(): AgentThreadNavigation {
     expect(captured).not.toBeNull();
     return captured as AgentThreadNavigation;
@@ -906,6 +917,10 @@ describe("useAgentThreadNavigation", () => {
       session,
       authoritativeRemoteProjectKeys,
     });
+    capturedFind = useAgentThreadFindResults(
+      captured.find,
+      captured.selectedThread?.thread ?? null,
+    );
     return (
       <>
         <button data-rail-target type="button" />

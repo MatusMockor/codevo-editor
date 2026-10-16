@@ -18,6 +18,8 @@ import {
 } from "../../test/agentAppTestHarness";
 import { waitForReact } from "../../test/reactTestLifecycle";
 import { WORKBENCH_SURFACE_ENTER_CLASS } from "../../components/workbenchFrameBootContext";
+import { workbenchAgentViewCommandBridge } from "../agentViewCommandBridge";
+import { AGENT_THREAD_FIND_DEBOUNCE_MS } from "../../components/agentMode/useAgentThreadFind";
 
 const renders = vi.hoisted(() => ({
   app: 0,
@@ -74,6 +76,12 @@ async function settleUntilQuiet(): Promise<void> {
   }
   expect(quietPasses).toBe(2);
 }
+
+vi.mock("../../components/workbenchFrameBootContext", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../components/workbenchFrameBootContext")>();
+  return { ...actual, useSurfaceEnterClass: () => undefined };
+});
 
 vi.mock("../agentApp/useAgentAppController", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../agentApp/useAgentAppController")>();
@@ -250,6 +258,10 @@ vi.mock("../../components/agentMode/modeView/useAgentModeProjects", async (impor
 });
 
 const STREAMED_FRAMES = 20;
+const FIND_FRAMES = 6;
+const FIND_NEEDLE = "needle";
+const FIND_INPUT_SELECTOR = 'input[aria-label="Find in thread"]';
+const FIND_WAIT_TIMEOUT_MS = 10_000;
 
 const APP_SETTINGS: AppSettings = {
   ...defaultAppSettings(),
@@ -303,42 +315,7 @@ describe("agent thread streaming render isolation", () => {
       timeout: 30_000,
     },
     async () => {
-      const tasks = fakeAgentTaskGateway();
-      const app = await renderAgentApp({
-        agentGateways: {
-          agentProviderGateway: {
-            ...agentAppProviderGateway(),
-            probeAgentProviderHealth: async () => ({
-              installedVersion: "1.0.0",
-              auth: { kind: "unknown" },
-              update: { kind: "checksDisabled" },
-              checkedAtEpochMs: 1,
-            }),
-          },
-          agentTaskGateway: tasks.gateway,
-        },
-        appSettings: APP_SETTINGS,
-        gitGateway: cleanRepositoryGitGateway(),
-        strictMode: false,
-      });
-      await waitForReact(() =>
-        expect(app.host.querySelector("textarea#agent-prompt")).not.toBeNull(),
-      );
-      await settleAgentApp();
-
-      await typePrompt(app.host, "Stream a long answer.");
-      await waitForReact(async () => {
-        await submitComposer(app.host);
-        expect(tasks.started).toHaveLength(1);
-      });
-      await settleAgentApp();
-      const turnId = tasks.started[0]?.taskId ?? "";
-      await streamFrame(tasks, turnId, 1, assistantLine("first segment ", false));
-      await waitForReact(() => expect(app.host.textContent).toContain("first segment"));
-      await waitForReact(() =>
-        expect(app.host.querySelector(`.${WORKBENCH_SURFACE_ENTER_CLASS}`)).toBeNull(),
-      );
-      await settleUntilQuiet();
+      const { app, tasks, turnId } = await startStreamingApp();
 
       const perFrame: RenderCounts[] = [];
       for (let frame = 2; frame <= STREAMED_FRAMES + 1; frame += 1) {
@@ -376,7 +353,96 @@ describe("agent thread streaming render isolation", () => {
       expect(renders.localView).toBeGreaterThan(0);
     },
   );
+
+  it(
+    "keeps the mode view and its regions still while find follows a streaming thread",
+    {
+      timeout: 30_000,
+    },
+    async () => {
+      const { app, tasks, turnId } = await startStreamingApp();
+      await act(async () => {
+        workbenchAgentViewCommandBridge.run("agent.findInThread");
+      });
+      await waitForReact(() => expect(app.host.querySelector(FIND_INPUT_SELECTOR)).not.toBeNull());
+      const findInput = app.host.querySelector<HTMLInputElement>(FIND_INPUT_SELECTOR)!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(
+          findInput,
+          FIND_NEEDLE,
+        );
+        findInput.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await waitForFindCount(app.host, "No matches");
+      await settleUntilQuiet();
+
+      const perFrame: RenderCounts[] = [];
+      for (let frame = 2; frame <= FIND_FRAMES + 1; frame += 1) {
+        const before = { ...renders };
+        await streamFrame(tasks, turnId, frame, assistantLine(`${FIND_NEEDLE}-${frame} `, false));
+        await waitForFindCount(app.host, `1 of ${frame - 1}`);
+        perFrame.push(renderDelta(before));
+      }
+
+      console.info(`agent find render counts over ${FIND_FRAMES} frames`, totalOf(perFrame));
+      for (const delta of perFrame) {
+        expect({ ...delta, transcript: 0 }).toEqual(zeroCounts());
+        expect(delta.transcript).toBeGreaterThanOrEqual(1);
+      }
+      expect(app.host.querySelectorAll(".agent-find__hit")).toHaveLength(FIND_FRAMES);
+    },
+  );
 });
+
+async function waitForFindCount(host: HTMLElement, text: string): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      await act(async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, AGENT_THREAD_FIND_DEBOUNCE_MS));
+      });
+      expect(host.querySelector(".agent-find__count")?.textContent).toBe(text);
+    },
+    { timeout: FIND_WAIT_TIMEOUT_MS, interval: 0 },
+  );
+}
+
+async function startStreamingApp() {
+  const tasks = fakeAgentTaskGateway();
+  const app = await renderAgentApp({
+    agentGateways: {
+      agentProviderGateway: {
+        ...agentAppProviderGateway(),
+        probeAgentProviderHealth: async () => ({
+          installedVersion: "1.0.0",
+          auth: { kind: "unknown" },
+          update: { kind: "checksDisabled" },
+          checkedAtEpochMs: 1,
+        }),
+      },
+      agentTaskGateway: tasks.gateway,
+    },
+    appSettings: APP_SETTINGS,
+    gitGateway: cleanRepositoryGitGateway(),
+    strictMode: false,
+  });
+  await waitForReact(() => expect(app.host.querySelector("textarea#agent-prompt")).not.toBeNull());
+  await settleAgentApp();
+
+  await typePrompt(app.host, "Stream a long answer.");
+  await waitForReact(async () => {
+    await submitComposer(app.host);
+    expect(tasks.started).toHaveLength(1);
+  });
+  await settleAgentApp();
+  const turnId = tasks.started[0]?.taskId ?? "";
+  await streamFrame(tasks, turnId, 1, assistantLine("first segment ", false));
+  await waitForReact(() => expect(app.host.textContent).toContain("first segment"));
+  await waitForReact(() =>
+    expect(app.host.querySelector(`.${WORKBENCH_SURFACE_ENTER_CLASS}`)).toBeNull(),
+  );
+  await settleUntilQuiet();
+  return { app, tasks, turnId };
+}
 
 function assistantLine(text: string, withUsage: boolean): string {
   return claudeLine({

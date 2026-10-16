@@ -7,7 +7,6 @@ import { deferredFollowUpsForThread } from "../../../application/agentDeferredFo
 import type { AgentThreadView } from "../../../application/agentThreadPorts";
 import { agentThreadIsSteerable } from "../../../application/agentTurnAdmission";
 import type { TextClipboardGateway } from "../../../domain/textClipboard";
-import { AgentThreadFindBar } from "../AgentThreadFindBar";
 import type { AgentThreadSessionProps } from "../AgentThreadSession";
 import type { AgentThreadNavigation } from "../useAgentThreadNavigation";
 import type { AgentModeAgents } from "./agentModeViewProps";
@@ -48,7 +47,6 @@ export function useAgentModeSessionProps({
   composerRepositoryLabel,
   textClipboard,
 }: AgentModeSessionPropsInput): AgentThreadSessionProps {
-  const { find } = navigation;
   const { composer, queuedEdit, sessionBackground } = composerState;
   const { diffScopes, serverPorts, reviewInDiff } = surfaceState;
   const threadId = sessionThread?.thread.threadId ?? null;
@@ -62,30 +60,6 @@ export function useAgentModeSessionProps({
     if (threadId === null) return;
     void externalHistory?.load(threadId);
   }, [externalHistory, threadId]);
-  const findBar = useMemo(
-    () =>
-      find.open ? (
-        <AgentThreadFindBar
-          currentIndex={find.hitIndex}
-          hitCount={find.hits.length}
-          onChangeQuery={find.setQuery}
-          onClose={navigation.closeFindBar}
-          onNavigate={find.navigate}
-          query={find.query}
-          truncated={find.truncated}
-        />
-      ) : null,
-    [
-      find.open,
-      find.hitIndex,
-      find.hits.length,
-      find.setQuery,
-      find.navigate,
-      find.query,
-      find.truncated,
-      navigation.closeFindBar,
-    ],
-  );
   const deferredFollowUps = useMemo(
     () =>
       threadId === null
@@ -116,16 +90,13 @@ export function useAgentModeSessionProps({
     inlineImages: agents.inlineImages,
     onRevealAttachment: activity.revealAttachment,
     attachmentDownloads: activity.attachmentDownloads,
-    findBar,
-    findOpen: find.open,
+    find: navigation.find,
+    onCloseFind: navigation.closeFindBar,
     goToTurnSignal,
     externalHistoryState: threadId === null ? undefined : externalHistory?.states.get(threadId),
     onRetryExternalHistory:
       threadId === null || externalHistory === undefined ? undefined : retryExternalHistory,
     composerRepositoryLabel,
-    findHitIndex: navigation.findHitIndex,
-    findHits: find.open ? find.hits : undefined,
-    findQuery: find.open ? find.query : undefined,
     deferredFollowUps,
     onRemoveDeferredFollowUp: agents.removeDeferredFollowUp,
     onEditDeferredFollowUp:
@@ -147,7 +118,6 @@ export function useAgentModeSessionProps({
         ? agents.turnChangesRevision
         : (agents.getTurnChangesRevision?.(threadId) ?? agents.turnChangesRevision),
     getTurnChanges: agents.getTurnChanges,
-    reveal: find.reveal,
     textClipboard,
     thread: sessionThread,
     turnLog: agents.turnLog ?? null,

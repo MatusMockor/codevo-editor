@@ -11,18 +11,26 @@ import { useLiveAgentThread } from "../../application/agentThreads/useLiveAgentT
 
 export const AGENT_THREAD_FIND_DEBOUNCE_MS = 80;
 
-export interface AgentThreadFindState {
+export interface AgentThreadFindControl {
   readonly open: boolean;
   readonly query: string;
-  readonly hits: ReadonlyArray<AgentThreadFindHit>;
-  readonly hitIndex: number;
-  readonly truncated: boolean;
+  readonly index: number;
+  readonly searchTarget: AgentThreadRevealRequest | null;
   readonly reveal: AgentThreadRevealRequest | null;
   openBar(): void;
   close(): void;
   setQuery(query: string): void;
   navigate(index: number): void;
   requestReveal(reveal: AgentThreadRevealRequest): void;
+  resolveReveal(index: number): void;
+  dropReveal(): void;
+}
+
+export interface AgentThreadFindResults {
+  readonly hits: ReadonlyArray<AgentThreadFindHit>;
+  readonly hitIndex: number;
+  readonly truncated: boolean;
+  readonly reveal: AgentThreadRevealRequest | null;
 }
 
 interface PublishedHits {
@@ -34,14 +42,99 @@ interface PublishedHits {
 const NO_HITS: ReadonlyArray<AgentThreadFindHit> = [];
 const NOTHING_PUBLISHED: PublishedHits = { query: "", thread: null, hits: NO_HITS };
 
-export function useAgentThreadFind(shown: AgentThread | null): AgentThreadFindState {
+export function useAgentThreadFindControl(shown: AgentThread | null): AgentThreadFindControl {
   const [open, setOpen] = useState(false);
-  const live = useLiveAgentThread(open ? shown : null);
-  const thread = open ? live : shown;
   const [query, setQueryState] = useState("");
   const [index, setIndex] = useState(0);
   const [searchTarget, setSearchTarget] = useState<AgentThreadRevealRequest | null>(null);
   const [reveal, setReveal] = useState<AgentThreadRevealRequest | null>(null);
+  const ownerKey = shown === null ? null : JSON.stringify([shown.threadId, shown.owner]);
+  const ownerRef = useRef(ownerKey);
+  useLayoutEffect(() => {
+    if (ownerRef.current === ownerKey) return;
+    ownerRef.current = ownerKey;
+    setQueryState("");
+    setSearchTarget(null);
+    setReveal(null);
+    setIndex(0);
+  }, [ownerKey]);
+
+  const openBar = useCallback((): void => setOpen(true), []);
+
+  const close = useCallback((): void => {
+    setOpen(false);
+    setQueryState("");
+    setSearchTarget(null);
+    setIndex(0);
+    setReveal(null);
+  }, []);
+
+  const setQuery = useCallback((next: string): void => {
+    setQueryState(next.slice(0, MAX_THREAD_SEARCH_QUERY_CHARS));
+    setSearchTarget(null);
+    setReveal(null);
+    setIndex(0);
+  }, []);
+
+  const navigate = useCallback((next: number): void => setIndex(Math.max(0, next)), []);
+
+  const requestReveal = useCallback((next: AgentThreadRevealRequest): void => {
+    setOpen(true);
+    setQueryState(next.query.slice(0, MAX_THREAD_SEARCH_QUERY_CHARS));
+    setSearchTarget(next.resolveQuery === true ? next : null);
+    setIndex(0);
+    setReveal(next);
+  }, []);
+
+  const resolveReveal = useCallback((found: number): void => {
+    setIndex(found);
+    setReveal(null);
+  }, []);
+
+  const dropReveal = useCallback((): void => setReveal(null), []);
+
+  return useMemo(
+    () => ({
+      open,
+      query,
+      index,
+      searchTarget,
+      reveal,
+      openBar,
+      close,
+      setQuery,
+      navigate,
+      requestReveal,
+      resolveReveal,
+      dropReveal,
+    }),
+    [
+      close,
+      dropReveal,
+      index,
+      navigate,
+      open,
+      openBar,
+      query,
+      requestReveal,
+      resolveReveal,
+      reveal,
+      searchTarget,
+      setQuery,
+    ],
+  );
+}
+
+export function useAgentThreadFindResults(
+  control: AgentThreadFindControl | null,
+  shown: AgentThread | null,
+): AgentThreadFindResults {
+  const open = control?.open ?? false;
+  const query = control?.query ?? "";
+  const searchTarget = control?.searchTarget ?? null;
+  const reveal = control?.reveal ?? null;
+  const live = useLiveAgentThread(open ? shown : null);
+  const thread = open ? live : shown;
   const [published, setPublished] = useState<PublishedHits>(NOTHING_PUBLISHED);
   const generationRef = useRef(0);
   const ownerKey = thread === null ? null : JSON.stringify([thread.threadId, thread.owner]);
@@ -51,10 +144,6 @@ export function useAgentThreadFind(shown: AgentThread | null): AgentThreadFindSt
     if (ownerRef.current === ownerKey) return;
     ownerRef.current = ownerKey;
     generationRef.current += 1;
-    setQueryState("");
-    setSearchTarget(null);
-    setReveal(null);
-    setIndex(0);
     setPublished(NOTHING_PUBLISHED);
   }, [ownerKey]);
 
@@ -87,89 +176,41 @@ export function useAgentThreadFind(shown: AgentThread | null): AgentThreadFindSt
     return () => clearTimeout(timer);
   }, [open, query, searchTarget, thread]);
 
-  const current = sameOwner && open && published.thread === thread && published.query === query;
+  const current =
+    control !== null &&
+    sameOwner &&
+    open &&
+    published.thread === thread &&
+    published.query === query;
   const hits = current ? published.hits : NO_HITS;
-  const hitIndex = hits.length === 0 ? -1 : Math.min(index, hits.length - 1);
+  const hitIndex = hits.length === 0 ? -1 : Math.min(control?.index ?? 0, hits.length - 1);
   const truncated = hits.length >= MAX_THREAD_FIND_HITS;
   const publishedReveal = current ? reveal : null;
+  const resolveReveal = control?.resolveReveal;
+  const dropReveal = control?.dropReveal;
+  const close = control?.close;
 
   useEffect(() => {
     if (reveal === null || !current) return;
     const found = hits.findIndex((hit) => sameHit(hit, reveal, thread));
     if (found >= 0) {
-      setIndex(found);
-      setReveal(null);
+      resolveReveal?.(found);
     } else if (
       reveal.resolveQuery !== true &&
       thread?.turns.some((turn) => turn.turnId === reveal.turnId)
     ) {
-      setReveal(null);
+      dropReveal?.();
     }
-  }, [current, hits, reveal, thread]);
+  }, [current, dropReveal, hits, resolveReveal, reveal, thread]);
 
   useEffect(() => {
     if (thread !== null || !open) return;
-    setOpen(false);
-    setQueryState("");
-    setSearchTarget(null);
-    setIndex(0);
-    setReveal(null);
-  }, [open, thread]);
-
-  const openBar = useCallback((): void => setOpen(true), []);
-
-  const close = useCallback((): void => {
-    setOpen(false);
-    setQueryState("");
-    setSearchTarget(null);
-    setIndex(0);
-    setReveal(null);
-  }, []);
-
-  const setQuery = useCallback((next: string): void => {
-    setQueryState(next.slice(0, MAX_THREAD_SEARCH_QUERY_CHARS));
-    setSearchTarget(null);
-    setReveal(null);
-    setIndex(0);
-  }, []);
-
-  const navigate = useCallback((next: number): void => setIndex(Math.max(0, next)), []);
-
-  const requestReveal = useCallback((next: AgentThreadRevealRequest): void => {
-    setOpen(true);
-    setQueryState(next.query.slice(0, MAX_THREAD_SEARCH_QUERY_CHARS));
-    setSearchTarget(next.resolveQuery === true ? next : null);
-    setIndex(0);
-    setReveal(next);
-  }, []);
+    close?.();
+  }, [close, open, thread]);
 
   return useMemo(
-    () => ({
-      open,
-      query,
-      hits,
-      hitIndex,
-      truncated,
-      reveal: publishedReveal,
-      openBar,
-      close,
-      setQuery,
-      navigate,
-      requestReveal,
-    }),
-    [
-      close,
-      hitIndex,
-      hits,
-      navigate,
-      open,
-      openBar,
-      publishedReveal,
-      query,
-      requestReveal,
-      setQuery,
-      truncated,
-    ],
+    () => ({ hits, hitIndex, truncated, reveal: publishedReveal }),
+    [hitIndex, hits, publishedReveal, truncated],
   );
 }
 
