@@ -15,6 +15,13 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now updates only the parts of the window that show that data instead of
   re-rendering the whole agent view.
 
+### Fixed
+
+- Server threads use the configured default model.
+- File paths in agent transcripts are linked the way T3 Code links them.
+- The Files viewer shows a readable message instead of a raw system error when a
+  file cannot be read.
+
 ## [0.2.0-beta.130] - 2026-10-16
 
 ### Changed
