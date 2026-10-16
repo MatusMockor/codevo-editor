@@ -7,6 +7,14 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.131] - 2026-10-16
+
+### Changed
+
+- Selecting a thread, a git status refresh, or a status change of another thread
+  now updates only the parts of the window that show that data instead of
+  re-rendering the whole agent view.
+
 ## [0.2.0-beta.130] - 2026-10-16
 
 ### Changed
