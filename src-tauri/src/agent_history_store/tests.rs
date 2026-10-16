@@ -339,6 +339,8 @@ fn committed_save_with_lost_receipt_can_only_replay_the_exact_payload() {
     assert!(fixture.store.save(ROOT, &owner(), &thread(), 0).is_err());
 }
 
+#[path = "delta_tests.rs"]
+mod delta_tests;
 #[path = "halt_request_tests.rs"]
 mod halt_request_tests;
 #[path = "management_tests.rs"]

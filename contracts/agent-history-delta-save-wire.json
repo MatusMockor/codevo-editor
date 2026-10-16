@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "command": "save_agent_history_turn_delta",
+  "requestFields": ["rootKey", "ownerId", "thread", "expectedRevision", "delta", "haltRequests"],
+  "deltaFields": ["baseEventCount", "baseEventsDigest", "edits"],
+  "editKinds": ["copy", "insert"],
+  "refusalReasons": ["baseMismatch", "missingBase", "invalidDelta"],
+  "baseEvents": [
+    {
+      "kind": "assistantText",
+      "text": "kept"
+    }
+  ],
+  "validRequest": {
+    "rootKey": "/workspace/app",
+    "ownerId": "agent-root:b01b10a03e5d25eb",
+    "thread": {
+      "threadId": "agt-1-0a1b",
+      "owner": {
+        "rootKey": "/workspace/app",
+        "ownerId": "agent-root:b01b10a03e5d25eb",
+        "repositoryRoot": "/workspace/app"
+      },
+      "target": {
+        "isolation": "worktree",
+        "worktreePath": "/workspace/app/.worktrees/one"
+      },
+      "provider": {
+        "kind": "claudeCode",
+        "sessionId": null
+      },
+      "title": "Fix the parser",
+      "pinned": false,
+      "archived": false,
+      "createdAtEpochMs": 10,
+      "updatedAtEpochMs": 10,
+      "turns": [
+        {
+          "turnId": "agt-1-0a1c",
+          "prompt": "do the thing",
+          "status": {
+            "kind": "running"
+          },
+          "startedAtEpochMs": 10,
+          "endedAtEpochMs": null,
+          "events": [],
+          "eventsTruncated": false,
+          "lastStatusSequence": 2,
+          "lastOutputSequence": 2,
+          "streamMetrics": null,
+          "launch": null,
+          "cliVersion": null
+        }
+      ],
+      "turnsTruncated": false,
+      "integration": null,
+      "viewedAtEpochMs": 30,
+      "externalOrigin": null
+    },
+    "expectedRevision": 3,
+    "delta": {
+      "baseEventCount": 1,
+      "baseEventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14",
+      "edits": [
+        {
+          "kind": "copy",
+          "start": 0,
+          "count": 1
+        },
+        {
+          "kind": "insert",
+          "events": [
+            {
+              "kind": "toolCall",
+              "toolId": "tool-1",
+              "name": "Bash",
+              "inputSummary": "ls"
+            }
+          ]
+        }
+      ]
+    },
+    "haltRequests": []
+  },
+  "invalidDeltas": [
+    {
+      "baseEventCount": 1,
+      "baseEventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14",
+      "edits": [],
+      "extra": true
+    },
+    {
+      "baseEventCount": 1,
+      "baseEventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14",
+      "edits": [
+        {
+          "kind": "copy",
+          "start": 0,
+          "count": 1,
+          "extra": 1
+        }
+      ]
+    },
+    {
+      "baseEventCount": 1,
+      "baseEventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14",
+      "edits": [
+        {
+          "kind": "replace",
+          "events": []
+        }
+      ]
+    },
+    {
+      "baseEventCount": 1,
+      "baseEventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14",
+      "edits": [
+        {
+          "kind": "insert",
+          "events": [
+            {
+              "kind": "assistantText",
+              "text": "x",
+              "extra": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "baseEventCount": -1,
+      "baseEventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14",
+      "edits": []
+    },
+    {
+      "baseEventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14",
+      "edits": []
+    },
+    {
+      "baseEventCount": 1,
+      "edits": [
+        {
+          "kind": "copy",
+          "start": 0,
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "fullSaveReceipt": {
+    "revision": 4,
+    "eventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14"
+  },
+  "outcomes": [
+    {
+      "kind": "saved",
+      "revision": 4,
+      "eventsDigest": "a197eee65ae41e69e0b5c234e44ac0a85b496ea7fa6bdbd997bdffbe6f3a7e14"
+    },
+    {
+      "kind": "needsFullSave",
+      "reason": "baseMismatch"
+    }
+  ],
+  "invalidOutcomes": [
+    null,
+    {
+      "kind": "saved"
+    },
+    {
+      "kind": "saved",
+      "revision": 4,
+      "extra": 1
+    },
+    {
+      "kind": "saved",
+      "revision": -1
+    },
+    {
+      "kind": "needsFullSave",
+      "reason": "later"
+    },
+    {
+      "kind": "needsFullSave"
+    },
+    {
+      "kind": "applied",
+      "revision": 4
+    },
+    {
+      "kind": "saved",
+      "revision": 4
+    },
+    {
+      "kind": "saved",
+      "revision": 4,
+      "eventsDigest": "ABC"
+    }
+  ]
+}

@@ -8,7 +8,9 @@ use tauri::State;
 #[path = "../agent_history_store/mod.rs"]
 pub(crate) mod agent_history_store;
 use agent_history_store::{
-    legacy::AgentThread, AgentHistoryStore, HistorySnapshot, TurnHaltRequest, TurnPage,
+    delta::{HistoryDeltaOutcome, HistoryTurnDelta},
+    legacy::AgentThread,
+    AgentHistoryStore, HistorySnapshot, TurnHaltRequest, TurnPage,
 };
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -23,6 +25,16 @@ pub(crate) struct HistorySaveRequest {
     owner_id: String,
     thread: AgentThread,
     expected_revision: u64,
+    halt_requests: Vec<TurnHaltRequest>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct HistoryDeltaSaveRequest {
+    root_key: String,
+    owner_id: String,
+    thread: AgentThread,
+    expected_revision: u64,
+    delta: HistoryTurnDelta,
     halt_requests: Vec<TurnHaltRequest>,
 }
 #[derive(Deserialize)]
@@ -60,6 +72,24 @@ pub(crate) async fn save_agent_history_thread(
             &request.owner_id,
             &request.thread,
             request.expected_revision,
+            &request.halt_requests,
+        )
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn save_agent_history_turn_delta(
+    request: HistoryDeltaSaveRequest,
+    store: State<'_, Arc<AgentHistoryStore>>,
+) -> Result<HistoryDeltaOutcome, String> {
+    let store = Arc::clone(&store);
+    run_blocking_command(move || {
+        store.save_turn_delta(
+            &request.root_key,
+            &request.owner_id,
+            &request.thread,
+            request.expected_revision,
+            &request.delta,
             &request.halt_requests,
         )
     })

@@ -172,3 +172,27 @@ fn deleting_a_history_thread_ends_its_claude_session_after_the_owner_check() {
     assert_eq!(events.reasons(), vec![ClaudeSessionEndReason::ThreadEnded]);
     assert!(sessions.shutdown_all());
 }
+
+#[test]
+fn delta_save_requests_accept_the_shared_wire_shape_and_reject_unknown_fields() {
+    let wire: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../contracts/agent-history-delta-save-wire.json"
+    ))
+    .unwrap();
+    let valid = wire["validRequest"].clone();
+    let request: HistoryDeltaSaveRequest = serde_json::from_value(valid.clone()).unwrap();
+    assert_eq!(request.expected_revision, 3);
+    assert_eq!(request.delta.base_event_count, 1);
+    let fields: Vec<_> = valid.as_object().unwrap().keys().cloned().collect();
+    let mut expected: Vec<String> = serde_json::from_value(wire["requestFields"].clone()).unwrap();
+    let mut actual = fields;
+    expected.sort();
+    actual.sort();
+    assert_eq!(actual, expected);
+    let mut extra = valid.clone();
+    extra["extra"] = json!(1);
+    assert!(serde_json::from_value::<HistoryDeltaSaveRequest>(extra).is_err());
+    let mut nested = valid;
+    nested["thread"]["turns"][0]["extra"] = json!(1);
+    assert!(serde_json::from_value::<HistoryDeltaSaveRequest>(nested).is_err());
+}

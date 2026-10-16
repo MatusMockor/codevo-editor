@@ -442,6 +442,7 @@ pub fn run() {
             agent_history_commands::find_agent_history_import,
             agent_history_commands::load_agent_history,
             agent_history_commands::save_agent_history_thread,
+            agent_history_commands::save_agent_history_turn_delta,
             agent_history_commands::read_agent_history_turns,
             agent_history_commands::delete_agent_history_thread,
             agent_session_import_commands::import_agent_session_history,

@@ -107,14 +107,34 @@ export function serializeAgentThread(
 }
 
 export function serializeAgentHistoryThread(thread: AgentThread): Record<string, unknown> {
-  const bounded = { ...thread, turns: thread.turns.map(capAgentHistoryTurn) };
-  const document = serializeThreadDocument(bounded);
-  document.turns = bounded.turns.map((turn) => ({
-    ...serializeTurn(turn),
-    events: turn.events.map(serializeTurnEvent),
-    ...optionalField("subagentLifecycle", turn.subagentLifecycle),
-  }));
+  const bounded = thread.turns.map(capAgentHistoryTurn);
+  const document = serializeThreadDocument({ ...thread, turns: [] });
+  document.turns = bounded.map((turn) => serializeHistoryTurn(turn, turn.events));
   return document;
+}
+
+export function agentHistoryTurnProjection(turn: AgentTurn): AgentTurn {
+  return capAgentHistoryTurn(turn);
+}
+
+export function serializeAgentHistoryTurnHeader(
+  thread: AgentThread,
+  projected: AgentTurn,
+): Record<string, unknown> {
+  const document = serializeThreadDocument({ ...thread, turns: [] });
+  document.turns = [serializeHistoryTurn(projected, [])];
+  return document;
+}
+
+function serializeHistoryTurn(
+  turn: AgentTurn,
+  events: ReadonlyArray<AgentTurnEvent>,
+): Record<string, unknown> {
+  return {
+    ...serializeTurn({ ...turn, events: [] }),
+    events: events.map(serializeTurnEvent),
+    ...optionalField("subagentLifecycle", turn.subagentLifecycle),
+  };
 }
 
 function capAgentHistoryTurn(turn: AgentTurn): AgentTurn {

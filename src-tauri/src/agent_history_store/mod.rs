@@ -2,6 +2,7 @@ pub(crate) use super::super::agent_thread_store_commands::agent_thread_store as 
 pub(crate) mod artifact_turns;
 mod catalog;
 pub(crate) mod connection;
+pub(crate) mod delta;
 pub(crate) mod halt_requests;
 mod migration;
 mod pages;
@@ -44,8 +45,10 @@ pub(crate) struct TurnPage {
     pub revision: u64,
 }
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct HistorySaveReceipt {
     pub revision: u64,
+    pub events_digest: Option<String>,
 }
 pub(crate) fn sql<T>(result: rusqlite::Result<T>) -> Result<T, String> {
     result.map_err(|error| format!("Unable to access saved agent history: {error}"))
@@ -91,6 +94,10 @@ impl AgentHistoryStore {
             return Err("Agent thread save batch exceeds 4 MiB.".into());
         }
         let fingerprint = save_fingerprint(&bytes, halts)?;
+        let events_digest = match thread.turns.as_slice() {
+            [turn] => Some(delta::history_events_digest(&turn.events)?),
+            _ => None,
+        };
         self.with_connection(root, owner, |connection| {
             let tx = sql(
                 connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -119,6 +126,7 @@ impl AgentHistoryStore {
                 if accepted.as_deref() == Some(fingerprint.as_str()) {
                     return Ok(HistorySaveReceipt {
                         revision: expected_revision + 1,
+                        events_digest,
                     });
                 }
             }
@@ -127,19 +135,11 @@ impl AgentHistoryStore {
                     "The saved thread update is stale; reload its current revision.".into(),
                 );
             }
-            upsert(&tx, thread)?;
-            halt_requests::record(&tx, &thread.thread_id, halts)?;
-            let revision = expected_revision + 1;
-            sql(tx.execute(
-                "UPDATE threads SET revision=?2,last_save_hash=?3 WHERE thread_id=?1",
-                rusqlite::params![thread.thread_id, revision as i64, fingerprint],
-            ))?;
-            sql(tx.execute(
-                "INSERT OR IGNORE INTO migrated(thread_id) VALUES (?1)",
-                [&thread.thread_id],
-            ))?;
-            sql(tx.commit())?;
-            Ok(HistorySaveReceipt { revision })
+            let revision = commit_save(tx, thread, expected_revision, halts, &fingerprint)?;
+            Ok(HistorySaveReceipt {
+                revision,
+                events_digest,
+            })
         })
     }
     pub(crate) fn load(&self, root: &str, owner: &str) -> Result<HistorySnapshot, String> {
@@ -285,6 +285,27 @@ impl AgentHistoryStore {
         }
         Ok(())
     }
+}
+fn commit_save(
+    tx: rusqlite::Transaction<'_>,
+    thread: &AgentThread,
+    expected_revision: u64,
+    halts: &[TurnHaltRequest],
+    fingerprint: &str,
+) -> Result<u64, String> {
+    upsert(&tx, thread)?;
+    halt_requests::record(&tx, &thread.thread_id, halts)?;
+    let revision = expected_revision + 1;
+    sql(tx.execute(
+        "UPDATE threads SET revision=?2,last_save_hash=?3 WHERE thread_id=?1",
+        rusqlite::params![thread.thread_id, revision as i64, fingerprint],
+    ))?;
+    sql(tx.execute(
+        "INSERT OR IGNORE INTO migrated(thread_id) VALUES (?1)",
+        [&thread.thread_id],
+    ))?;
+    sql(tx.commit())?;
+    Ok(revision)
 }
 fn save_fingerprint(thread: &[u8], halts: &[TurnHaltRequest]) -> Result<String, String> {
     let mut hasher = Sha256::new();

@@ -84,20 +84,32 @@ export function prepareAgentHistoryThreadWrite(
     haltRequests: serializeAgentTurnHaltRequests(thread.turns),
   };
 }
+export interface AgentHistorySaveReceipt {
+  readonly revision: number;
+  readonly eventsDigest: string | null;
+}
 export async function savePreparedAgentHistoryThread(
   invoke: InvokeAgentThreadStoreCommand,
   request: PreparedAgentHistoryWrite,
-): Promise<number> {
+): Promise<AgentHistorySaveReceipt> {
+  const raw = await invoke("save_agent_history_thread", { request });
   const result = object(
-    await invoke("save_agent_history_thread", {
-      request,
-    }),
-    ["revision"],
+    raw,
+    typeof raw === "object" && raw !== null && "eventsDigest" in raw
+      ? ["revision", "eventsDigest"]
+      : ["revision"],
   );
   const revision = parseRevision(result.revision);
   if (revision !== request.expectedRevision + 1)
     throw new TypeError("Invalid agent history save revision.");
-  return revision;
+  const digest = result.eventsDigest;
+  if (digest === undefined || digest === null) return { revision, eventsDigest: null };
+  return { revision, eventsDigest: parseAgentHistoryEventsDigest(digest) };
+}
+export function parseAgentHistoryEventsDigest(value: unknown): string {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value))
+    throw new TypeError("Invalid agent history events digest.");
+  return value;
 }
 export async function readAgentHistoryTurns(
   invoke: InvokeAgentThreadStoreCommand,

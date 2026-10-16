@@ -11,7 +11,14 @@ import type {
   FindAgentHistoryImportRequest,
   ReadAgentHistoryTurnsRequest,
 } from "../domain/agentHistory";
-import type { AgentThread, AgentTurn } from "../domain/agentThread";
+import {
+  isTerminalAgentTurnStatus,
+  type AgentThread,
+  type AgentTurn,
+  type AgentTurnEvent,
+} from "../domain/agentThread";
+import { planAgentHistoryTurnDelta } from "../domain/agentHistoryTurnDelta";
+import { agentHistoryTurnProjection } from "../domain/agentThreadWire";
 import {
   NO_AGENT_TURN_LOG_EVIDENCE,
   type AgentTurnLogEvidenceLookup,
@@ -28,18 +35,45 @@ import {
   readAgentHistoryTurns,
   prepareAgentHistoryThreadWrite,
   savePreparedAgentHistoryThread,
+  type AgentHistorySaveReceipt,
   type PreparedAgentHistoryWrite,
 } from "./tauriAgentHistoryIpcContract";
 import type { InvokeAgentThreadStoreCommand } from "./tauriAgentThreadStoreIpcContract";
+import {
+  prepareAgentHistoryTurnDelta,
+  savePreparedAgentHistoryTurnDelta,
+  type PreparedAgentHistoryTurnDelta,
+} from "./tauriAgentHistoryDeltaIpcContract";
+
+export const MIN_AGENT_HISTORY_DELTA_RETAINED_BYTES = 16 * 1_024;
+
+interface AcknowledgedTurnBase {
+  readonly turnId: string;
+  readonly events: ReadonlyArray<AgentTurnEvent>;
+  readonly terminal: boolean;
+}
+
+interface StoredTurnBase {
+  readonly events: ReadonlyArray<AgentTurnEvent>;
+  readonly digest: string;
+}
+
+type PendingHistoryWrite =
+  | { readonly kind: "full"; readonly write: PreparedAgentHistoryWrite }
+  | { readonly kind: "delta"; readonly write: PreparedAgentHistoryTurnDelta };
+
+interface PendingHistoryEntry {
+  readonly write: PendingHistoryWrite;
+  readonly base: AcknowledgedTurnBase | null;
+  readonly bytes: number;
+}
 
 /** SQLite retains every turn; this adapter only sends changed bounded snapshots. */
 export class TauriAgentHistoryGateway implements AgentThreadStoreGateway {
   private readonly acknowledged = new Map<string, WeakSet<AgentTurn>>();
   private readonly revisions = new Map<string, number>();
-  private readonly pending = new Map<
-    string,
-    { readonly write: PreparedAgentHistoryWrite; readonly bytes: number }
-  >();
+  private readonly bases = new Map<string, Map<string, StoredTurnBase>>();
+  private readonly pending = new Map<string, PendingHistoryEntry>();
   private pendingBytes = 0;
   private readonly captures = new AgentArtifactCaptureLedger();
   constructor(
@@ -55,8 +89,9 @@ export class TauriAgentHistoryGateway implements AgentThreadStoreGateway {
       const key = JSON.stringify([request.rootKey, request.ownerId, thread.threadId]);
       if ((this.revisions.get(key) ?? 0) > (thread.historyRevision ?? 0)) continue;
       this.acknowledged.delete(key);
+      this.bases.delete(key);
       const pending = this.pending.get(key);
-      if (pending && (thread.historyRevision ?? 0) > pending.write.expectedRevision)
+      if (pending && (thread.historyRevision ?? 0) > pending.write.write.expectedRevision)
         this.clearPending(key);
       this.revisions.set(key, thread.historyRevision ?? 0);
     }
@@ -71,51 +106,91 @@ export class TauriAgentHistoryGateway implements AgentThreadStoreGateway {
     const key = JSON.stringify([request.rootKey, request.ownerId, request.thread.threadId]);
     const previous = this.acknowledged.get(key);
     const changed = request.thread.turns.filter((turn) => !previous?.has(turn));
+    const known = this.revisions.get(key);
+    const incoming = request.thread.historyRevision ?? 0;
+    if (
+      known === undefined ||
+      (request.onRevision === undefined ? incoming > known : incoming !== known)
+    )
+      this.bases.delete(key);
     let revision =
       request.onRevision === undefined
         ? Math.max(this.revisions.get(key) ?? 0, request.thread.historyRevision ?? 0)
         : (request.thread.historyRevision ?? 0);
-    const commit = async (write: PreparedAgentHistoryWrite): Promise<number> => {
+    const commit = async (entry: PendingHistoryEntry): Promise<number | null> => {
       assertCurrent();
-      let next: number;
+      let receipt: AgentHistorySaveReceipt | null;
       try {
-        next = await savePreparedAgentHistoryThread(this.invokeCommand, write);
+        receipt =
+          entry.write.kind === "full"
+            ? await savePreparedAgentHistoryThread(this.invokeCommand, entry.write.write)
+            : await savePreparedAgentHistoryTurnDelta(this.invokeCommand, entry.write.write);
       } catch (error) {
-        if (definiteSaveRejection(error)) this.clearPending(key, write);
+        if (definiteSaveRejection(error)) this.clearPending(key, entry);
         throw error;
       }
+      if (receipt === null) {
+        this.clearPending(key, entry);
+        this.bases.delete(key);
+        return null;
+      }
+      const next = receipt.revision;
       assertCurrent();
       request.onRevision?.(next);
       assertCurrent();
-      this.clearPending(key, write);
+      this.clearPending(key, entry);
       this.revisions.delete(key);
       this.revisions.set(key, next);
       while (this.revisions.size > 4096) this.revisions.delete(this.revisions.keys().next().value!);
+      if (entry.base !== null) this.recordBase(key, entry.base, receipt.eventsDigest);
       return next;
     };
+    const track = (write: PendingHistoryWrite, base: AcknowledgedTurnBase | null) => {
+      const bytes = new TextEncoder().encode(JSON.stringify(write.write)).byteLength;
+      if (this.pending.size >= 64 || this.pendingBytes + bytes > 32 * 1_024 * 1_024)
+        throw new Error(
+          "Agent thread pending history saves reached the memory limit. Retry saving before continuing.",
+        );
+      const entry = { write, base, bytes };
+      this.pending.set(key, entry);
+      this.pendingBytes += bytes;
+      return entry;
+    };
     const unsettled = this.pending.get(key);
-    if (unsettled) revision = await commit(unsettled.write);
+    if (unsettled) revision = (await commit(unsettled)) ?? revision;
     for (const turn of changed.length === 0 ? [null] : changed) {
       assertCurrent();
+      const projected = turn === null ? null : agentHistoryTurnProjection(turn);
+      const base =
+        projected === null
+          ? null
+          : {
+              turnId: projected.turnId,
+              events: projected.events,
+              terminal: isTerminalAgentTurnStatus(projected.status),
+            };
+      const delta =
+        projected === null ? null : this.prepareDelta(key, request, projected, revision);
+      if (delta !== null) {
+        const saved = await commit(track({ kind: "delta", write: delta }, base));
+        if (saved !== null) {
+          revision = saved;
+          continue;
+        }
+      }
       const write = prepareAgentHistoryThreadWrite(
         request,
         { ...request.thread, turns: turn === null ? [] : [turn] },
         revision,
       );
-      const bytes = new TextEncoder().encode(JSON.stringify(write)).byteLength;
-      if (this.pending.size >= 64 || this.pendingBytes + bytes > 32 * 1_024 * 1_024)
-        throw new Error(
-          "Agent thread pending history saves reached the memory limit. Retry saving before continuing.",
-        );
-      this.pending.set(key, { write, bytes });
-      this.pendingBytes += bytes;
-      revision = await commit(write);
+      revision = (await commit(track({ kind: "full", write }, base))) ?? revision;
     }
     assertCurrent();
     this.acknowledged.delete(key);
     this.acknowledged.set(key, new WeakSet(request.thread.turns));
     while (this.acknowledged.size > 64)
       this.acknowledged.delete(this.acknowledged.keys().next().value!);
+    this.retainBases(key, request.thread.turns);
     const isCurrent = this.captures.claim(request.thread.threadId);
     void captureLocalAgentArtifacts({
       loader: new TauriAgentArtifactGateway(this.invokeCommand),
@@ -125,9 +200,44 @@ export class TauriAgentHistoryGateway implements AgentThreadStoreGateway {
       evidenceOf: this.evidenceOf,
     }).catch(() => undefined);
   }
-  private clearPending(key: string, expected?: PreparedAgentHistoryWrite): void {
+  private prepareDelta(
+    key: string,
+    request: SaveAgentThreadRequest,
+    projected: AgentTurn,
+    revision: number,
+  ): PreparedAgentHistoryTurnDelta | null {
+    if (request.thread.externalOrigin?.history !== undefined) return null;
+    const base = this.bases.get(key)?.get(projected.turnId);
+    if (base === undefined) return null;
+    const plan = planAgentHistoryTurnDelta(base.events, projected.events);
+    if (plan === null || plan.retainedBytes < MIN_AGENT_HISTORY_DELTA_RETAINED_BYTES) return null;
+    return prepareAgentHistoryTurnDelta(
+      request,
+      request.thread,
+      projected,
+      plan,
+      base.digest,
+      revision,
+    );
+  }
+  private recordBase(key: string, base: AcknowledgedTurnBase, digest: string | null): void {
+    const turns = this.bases.get(key) ?? new Map<string, StoredTurnBase>();
+    this.bases.delete(key);
+    if (base.terminal || digest === null) turns.delete(base.turnId);
+    else turns.set(base.turnId, { events: base.events, digest });
+    if (turns.size === 0) return;
+    this.bases.set(key, turns);
+    while (this.bases.size > 64) this.bases.delete(this.bases.keys().next().value!);
+  }
+  private retainBases(key: string, turns: ReadonlyArray<AgentTurn>): void {
+    const bases = this.bases.get(key);
+    if (bases === undefined) return;
+    const live = new Set(turns.map((turn) => turn.turnId));
+    for (const turnId of [...bases.keys()]) if (!live.has(turnId)) bases.delete(turnId);
+  }
+  private clearPending(key: string, expected?: PendingHistoryEntry): void {
     const pending = this.pending.get(key);
-    if (pending && (expected === undefined || pending.write === expected)) {
+    if (pending && (expected === undefined || pending === expected)) {
       this.pendingBytes -= pending.bytes;
       this.pending.delete(key);
     }
@@ -148,6 +258,7 @@ export class TauriAgentHistoryGateway implements AgentThreadStoreGateway {
     const key = JSON.stringify([request.rootKey, request.ownerId, request.threadId]);
     this.acknowledged.delete(key);
     this.revisions.delete(key);
+    this.bases.delete(key);
     this.clearPending(key);
     if (this.available()) await deleteAgentHistoryThread(this.invokeCommand, request);
   }
