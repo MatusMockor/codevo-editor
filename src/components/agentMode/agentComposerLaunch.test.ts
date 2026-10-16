@@ -18,6 +18,7 @@ import {
   defaultAgentComposerLaunch,
   launchScopeExecutionTarget,
   newThreadComposerLaunch,
+  newThreadDefaultsWithConfiguredModels,
   providerSwitchComposerLaunch,
   resolveComposerLaunch,
   type LaunchScope,
@@ -668,5 +669,48 @@ describe("stale new-thread defaults", () => {
       model: "claude-opus-4-5",
       effort: "high",
     });
+  });
+});
+
+describe("newThreadDefaultsWithConfiguredModels", () => {
+  const DEFAULTS: AgentNewThreadDefaults = {
+    source: "defaults",
+    claudeCode: { model: "default", effort: "high" },
+    codex: { model: "default", effort: "default" },
+  };
+
+  it("resolves the default sentinels to the configured models", () => {
+    expect(
+      newThreadDefaultsWithConfiguredModels(
+        DEFAULTS,
+        { claudeCode: "claude-opus-5[1m]", codex: "gpt-6-astra" },
+        BUNDLED_CLAUDE_MODEL_MANIFEST,
+        BUNDLED_CODEX_MODEL_CATALOG,
+      ),
+    ).toEqual({
+      ...DEFAULTS,
+      claudeCode: { model: "claude-opus-5", effort: "high" },
+      codex: { model: "gpt-6-astra", effort: "default" },
+    });
+  });
+
+  it("keeps explicit models and an unknown configured Claude model unchanged", () => {
+    const explicit: AgentNewThreadDefaults = CONFIGURED;
+    expect(
+      newThreadDefaultsWithConfiguredModels(
+        explicit,
+        { claudeCode: "claude-sonnet-5-5", codex: "gpt-6-luna" },
+        BUNDLED_CLAUDE_MODEL_MANIFEST,
+        BUNDLED_CODEX_MODEL_CATALOG,
+      ),
+    ).toBe(explicit);
+    expect(
+      newThreadDefaultsWithConfiguredModels(
+        DEFAULTS,
+        { claudeCode: "unknown-model", codex: null },
+        BUNDLED_CLAUDE_MODEL_MANIFEST,
+        BUNDLED_CODEX_MODEL_CATALOG,
+      ).claudeCode.model,
+    ).toBe("default");
   });
 });

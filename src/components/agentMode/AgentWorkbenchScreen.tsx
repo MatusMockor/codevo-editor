@@ -82,7 +82,7 @@ import type { RevealPathGateway } from "../../infrastructure/tauriRevealPathGate
 import { useAgentWorkbenchPorts } from "../agentWorkbenchPortsContext";
 import { AgentModeView, type AgentModeViewProps } from "./AgentModeView";
 import { AgentNewThreadDefaultsProvider } from "./AgentNewThreadDefaultsProvider";
-import { configuredProviderVersion } from "./agentModelProviderState";
+import { configuredProviderModel, configuredProviderVersion } from "./agentModelProviderState";
 import {
   AGENT_REVEAL_BLOCKED_REASON,
   agentRevealRootForPath,
@@ -672,6 +672,13 @@ export function AgentWorkbenchScreen({
                 workbench.agents.providerManagement,
                 "claudeCode",
               )}
+              localConfiguredModels={{
+                claudeCode: configuredProviderModel(
+                  workbench.agents.providerManagement,
+                  "claudeCode",
+                ),
+                codex: configuredProviderModel(workbench.agents.providerManagement, "codex"),
+              }}
             >
               <AgentModeView
                 followUpBehavior={appSettings.agentFollowUpBehavior}

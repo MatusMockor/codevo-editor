@@ -65,6 +65,7 @@ interface RenderOptions {
   readonly codexCatalog?: CodexModelCatalog;
   readonly mismatchedLaunch?: AgentLaunchOptions;
   readonly localClaudeCliVersion?: string | null;
+  readonly localConfiguredModels?: Readonly<Record<AgentCliKind, string | null>>;
   readonly executionServerId?: string | null;
 }
 
@@ -131,6 +132,7 @@ describe("composer launch controls with configured new-thread defaults", () => {
     codexCatalog = BUNDLED_CODEX_MODEL_CATALOG,
     mismatchedLaunch,
     localClaudeCliVersion = null,
+    localConfiguredModels,
     executionServerId = null,
   }: RenderOptions): void {
     act(() =>
@@ -140,6 +142,7 @@ describe("composer launch controls with configured new-thread defaults", () => {
             <AgentNewThreadDefaultsProvider
               settings={settings}
               localClaudeCliVersion={localClaudeCliVersion}
+              localConfiguredModels={localConfiguredModels}
             >
               <Harness
                 provider={provider}
@@ -321,6 +324,23 @@ describe("composer launch controls with configured new-thread defaults", () => {
     expect(submittedLaunch()).toMatchObject({
       provider: "claudeCode",
       model: "default",
+      effort: "high",
+    });
+  });
+
+  it("resolves the Claude default for a server composer from the locally configured model", () => {
+    render({
+      settings: { ...CONFIGURED, claudeCode: { model: "default", effort: "high" } },
+      localConfiguredModels: { claudeCode: "claude-opus-5[1m]", codex: null },
+      executionServerId: "server",
+      mismatchedLaunch: CONFIGURED_CODEX,
+    });
+
+    expect(displayedModel()).toBe("claude-opus-5");
+    expect(host.querySelector("button#agent-launch-model")?.textContent).toContain("Claude Opus 5");
+    expect(submittedLaunch()).toMatchObject({
+      provider: "claudeCode",
+      model: "claude-opus-5",
       effort: "high",
     });
   });

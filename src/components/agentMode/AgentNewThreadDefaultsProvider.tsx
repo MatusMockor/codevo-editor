@@ -3,8 +3,14 @@ import {
   defaultAgentNewThreadDefaults,
   type AgentNewThreadDefaults,
 } from "../../domain/agentNewThreadDefaults";
-import { availableNewThreadDefaults, newThreadClaudeModelFallback } from "./agentComposerLaunch";
+import type { AgentCliKind } from "../../domain/agentTask";
+import {
+  availableNewThreadDefaults,
+  newThreadClaudeModelFallback,
+  newThreadDefaultsWithConfiguredModels,
+} from "./agentComposerLaunch";
 import { useAgentClaudeModelCatalog } from "./useAgentClaudeModelCatalog";
+import { useAgentCodexModelCatalog } from "./useAgentCodexModelCatalog";
 import {
   AgentNewThreadDefaultsContext,
   AgentNewThreadModelFallbackContext,
@@ -12,17 +18,26 @@ import {
 } from "./useAgentNewThreadDefaults";
 
 const UNSET_DEFAULTS = defaultAgentNewThreadDefaults();
+const UNDETECTED_MODELS: Readonly<Record<AgentCliKind, string | null>> = {
+  claudeCode: null,
+  codex: null,
+};
 
 export function AgentNewThreadDefaultsProvider({
   settings,
   localClaudeCliVersion = null,
+  localConfiguredModels = UNDETECTED_MODELS,
   children,
 }: {
   readonly settings: AgentNewThreadDefaults | undefined;
   readonly localClaudeCliVersion?: string | null;
+  readonly localConfiguredModels?: Readonly<Record<AgentCliKind, string | null>>;
   readonly children: ReactNode;
 }) {
   const catalog = useAgentClaudeModelCatalog();
+  const codexCatalog = useAgentCodexModelCatalog();
+  const localClaudeModel = localConfiguredModels.claudeCode;
+  const localCodexModel = localConfiguredModels.codex;
   const { source, claudeCode, codex } = settings ?? UNSET_DEFAULTS;
   const claudeModel = claudeCode.model;
   const claudeEffort = claudeCode.effort;
@@ -36,18 +51,28 @@ export function AgentNewThreadDefaultsProvider({
     }),
     [source, claudeModel, claudeEffort, codexModel, codexEffort],
   );
-  const server = useMemo(
+  const offered = useMemo(
     () => availableNewThreadDefaults(configured, catalog),
     [configured, catalog],
   );
   const local = useMemo(
-    () => availableNewThreadDefaults(server, catalog, localClaudeCliVersion),
-    [server, catalog, localClaudeCliVersion],
+    () => availableNewThreadDefaults(offered, catalog, localClaudeCliVersion),
+    [offered, catalog, localClaudeCliVersion],
+  );
+  const server = useMemo(
+    () =>
+      newThreadDefaultsWithConfiguredModels(
+        offered,
+        { claudeCode: localClaudeModel, codex: localCodexModel },
+        catalog,
+        codexCatalog,
+      ),
+    [offered, localClaudeModel, localCodexModel, catalog, codexCatalog],
   );
   const value = useMemo<AgentNewThreadDefaultsByTarget>(() => ({ local, server }), [local, server]);
   const fallback = useMemo(
-    () => ({ local: newThreadClaudeModelFallback(server, local, catalog), server: null }),
-    [server, local, catalog],
+    () => ({ local: newThreadClaudeModelFallback(offered, local, catalog), server: null }),
+    [offered, local, catalog],
   );
   return (
     <AgentNewThreadDefaultsContext.Provider value={value}>

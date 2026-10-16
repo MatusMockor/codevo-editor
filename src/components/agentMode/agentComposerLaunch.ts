@@ -17,7 +17,10 @@ import {
   type CodexModelCatalog,
 } from "../../domain/codexModelCatalog";
 import type { AgentThreadView } from "../../application/agentThreadPorts";
-import { agentClaudeModelChoiceForVersion } from "./agentLaunchPresentation";
+import {
+  agentClaudeModelChoiceForVersion,
+  explicitConfiguredClaudeModel,
+} from "./agentLaunchPresentation";
 import { lastAgentTurn } from "./agentModePresentation";
 import { codexEffectiveModel } from "./codexLaunchPresentation";
 
@@ -77,6 +80,32 @@ export function availableNewThreadDefaults(
     agentClaudeModelChoiceForVersion(model, claudeCliVersion, claudeCatalog) ?? "default";
   if (offered === model) return defaults;
   return { ...defaults, claudeCode: { model: offered, effort } };
+}
+
+export function newThreadDefaultsWithConfiguredModels(
+  defaults: AgentNewThreadDefaults,
+  configuredModels: Readonly<Record<AgentCliKind, string | null>>,
+  claudeCatalog: ClaudeModelManifest,
+  codexCatalog: CodexModelCatalog,
+): AgentNewThreadDefaults {
+  const claudeModel = explicitConfiguredClaudeModel(
+    defaults.claudeCode.model,
+    configuredModels.claudeCode,
+    claudeCatalog,
+  );
+  const codexModel = codexEffectiveModel(
+    defaults.codex.model,
+    configuredModels.codex,
+    codexCatalog,
+  );
+  if (claudeModel === defaults.claudeCode.model && codexModel === defaults.codex.model) {
+    return defaults;
+  }
+  return {
+    ...defaults,
+    claudeCode: { ...defaults.claudeCode, model: claudeModel },
+    codex: { ...defaults.codex, model: codexModel },
+  };
 }
 
 export interface ClaudeNewThreadModelFallback {

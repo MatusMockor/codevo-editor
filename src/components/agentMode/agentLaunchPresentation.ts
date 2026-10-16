@@ -798,7 +798,7 @@ function manifestClaudeModel(
   );
 }
 
-function explicitConfiguredClaudeModel(
+export function explicitConfiguredClaudeModel(
   model: ClaudeModelChoice,
   configuredModel: string | null,
   catalog: ClaudeModelManifest = BUNDLED_CLAUDE_MODEL_MANIFEST,
