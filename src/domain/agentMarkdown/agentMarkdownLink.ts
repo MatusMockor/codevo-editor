@@ -2,7 +2,7 @@ import { isSafeExternalMarkdownUrl, type MarkdownLinkPolicy } from "../markdownP
 
 export const MAX_AGENT_MARKDOWN_LINK_CHARS = 4_096;
 
-export type AgentLocalFileAnchor = "absolute" | "relative";
+export type AgentLocalFileAnchor = "absolute" | "relative" | "home";
 
 export interface AgentLocalFileLocation {
   readonly path: string;
@@ -44,6 +44,7 @@ const NAVIGABLE_SCHEMES: ReadonlySet<string> = new Set([
   "vbscript",
 ]);
 const HOME_RELATIVE_PATH = /^~[^/]*\//;
+const HOME_PATH_PREFIX = "~/";
 const FORMAT_CHARACTER = /\p{Cf}/u;
 const FRAGMENT_DELIMITER = "#";
 const SCHEME_DELIMITER = ":";
@@ -72,6 +73,7 @@ export function parseAgentMarkdownImageSource(source: string | null): AgentMarkd
   if (link.location.line !== null) return NO_AGENT_MARKDOWN_LINK;
   const path = link.location.path;
   if (FORMAT_CHARACTER.test(path)) return NO_AGENT_MARKDOWN_LINK;
+  if (link.anchor === "home") return NO_AGENT_MARKDOWN_LINK;
   if (link.anchor === "absolute") return link;
   if (HOME_RELATIVE_PATH.test(path)) return NO_AGENT_MARKDOWN_LINK;
   if (firstSegment(path).includes(SCHEME_DELIMITER)) return NO_AGENT_MARKDOWN_LINK;
@@ -93,9 +95,34 @@ export function resolveAgentLocalFilePath(
   link: AgentLocalFileLink,
   base: string | null,
 ): string | null {
-  if (link.anchor === "absolute") return link.location.path;
+  switch (link.anchor) {
+    case "absolute":
+      return link.location.path;
+    case "home":
+      return null;
+    case "relative":
+      return resolveBelow(base, link.location.path);
+    default:
+      return unsupportedAnchor(link.anchor);
+  }
+}
+
+export function resolveAgentHomeFilePath(path: string, home: string): string | null {
+  return resolveBelow(home, path);
+}
+
+export function agentLocalFileLinkWrittenPath(link: AgentLocalFileLink): string {
+  const path = link.location.path;
+  return link.anchor === "home" ? `${HOME_PATH_PREFIX}${path}` : path;
+}
+
+function resolveBelow(base: string | null, path: string): string | null {
   if (base === null || !base.startsWith("/")) return null;
-  return normalizeSegments(`${base}/${link.location.path}`, "absolute");
+  return normalizeSegments(`${base}/${path}`, "absolute");
+}
+
+function unsupportedAnchor(anchor: never): never {
+  throw new Error(`Unsupported local file link anchor: ${String(anchor)}`);
 }
 
 function firstSegment(path: string): string {
@@ -138,6 +165,9 @@ function barePathLink(href: string): AgentMarkdownLink {
   if (rawPath === "") return NO_AGENT_MARKDOWN_LINK;
   const path = percentDecoded(rawPath);
   if (path === null || urlScheme(path) !== undefined) return NO_AGENT_MARKDOWN_LINK;
+  if (path.startsWith(HOME_PATH_PREFIX)) {
+    return localFileLink("home", path.slice(HOME_PATH_PREFIX.length), fragment);
+  }
   return localFileLink(path.startsWith("/") ? "absolute" : "relative", path, fragment);
 }
 

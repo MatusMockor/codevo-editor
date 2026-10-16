@@ -125,6 +125,7 @@ describe("useAgentFileViewerOpeners", () => {
     layout.bindThread?.("agt-a");
 
     const opened = linked({
+      kind: "path",
       location: { path: "/home/me/notes.txt", line: 2, column: null },
       root: null,
     });
@@ -142,6 +143,7 @@ describe("useAgentFileViewerOpeners", () => {
     layout.bindThread?.("agt-a");
 
     const opened = linked({
+      kind: "path",
       location: { path: "/home/me/notes.txt", line: 2, column: null },
       root: null,
     });

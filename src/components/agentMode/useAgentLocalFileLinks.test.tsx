@@ -7,12 +7,13 @@ import {
   agentLocalFileLinkFailure,
   agentLocalFileLinkPlace,
 } from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
-import type { AgentLocalFileLinkPort } from "./agentMarkdownLinks";
+import type { AgentLocalFileLinkPort, AgentLocalFileOpenRequest } from "./agentMarkdownLinks";
 import { useAgentLocalFileLinks, type AgentFileLocationOpener } from "./useAgentLocalFileLinks";
 
 const EDITOR = agentLocalFileLinkPlace("project", "/Users/me/Developer/editor");
 
-const REQUEST = {
+const REQUEST: AgentLocalFileOpenRequest = {
+  kind: "path",
   location: { path: "/workspace/app/src/a.ts", line: 3, column: null },
   root: "/workspace/app",
 };
@@ -41,7 +42,11 @@ it("has no port without an editor opener", () => {
 it("passes a request without a containing root through unchanged", async () => {
   const opener = vi.fn<AgentFileLocationOpener>().mockResolvedValueOnce("opened");
   const view = probe(opener, []);
-  const outside = { location: { path: "/tmp/handoff.md", line: null, column: null }, root: null };
+  const outside: AgentLocalFileOpenRequest = {
+    kind: "path",
+    location: { path: "/tmp/handoff.md", line: null, column: null },
+    root: null,
+  };
 
   await expect(view.port?.open(outside)).resolves.toBe("opened");
   expect(opener).toHaveBeenCalledExactlyOnceWith(outside);

@@ -1,3 +1,4 @@
+import { hasAgentFilePathPosition, isAgentFilePathMentionShape } from "./agentFilePathShape";
 import { parseAgentMarkdownLink, type AgentLocalFileLink } from "./agentMarkdownLink";
 
 export const MAX_AGENT_PATH_MENTION_SCAN_CHARS = 4_096;
@@ -9,60 +10,18 @@ export type AgentPathMentionSegment =
 
 const PROSE_TOKEN = /\S+/g;
 const PROSE_PATH =
-  /^(?:\.{1,2}\/)?(?:[\w@.-]+\/)+[\w@.-]*\.[A-Za-z][A-Za-z0-9]{0,11}(?::[1-9]\d{0,8}(?::[1-9]\d{0,8})?)?$/;
+  /^(?:~\/(?:[\w@.-]+\/)*|(?:\.{1,2}\/)?(?:[\w@.-]+\/)+)[\w@.-]*\.[A-Za-z][A-Za-z0-9]{0,11}(?::[1-9]\d{0,8}(?::[1-9]\d{0,8})?)?$/;
 const LEADING_PUNCTUATION = /^[("'\u2018\u201c<[{]+/;
 const TRAILING_PUNCTUATION = /[)"'\u2019\u201d>\]},.;:!?]+$/;
-const CODE_PATH =
-  /^(?:\.{1,2}\/)?(?:[\w@.-]+\/)*[\w@.-]*\.([A-Za-z][A-Za-z0-9]{0,11})(?::[1-9]\d{0,8}(?::[1-9]\d{0,8})?)?$/;
-
-const SOURCE_FILE_EXTENSIONS: ReadonlySet<string> = new Set([
-  "cjs",
-  "cpp",
-  "cs",
-  "css",
-  "cts",
-  "go",
-  "graphql",
-  "hpp",
-  "html",
-  "java",
-  "js",
-  "json",
-  "jsonc",
-  "jsx",
-  "kt",
-  "less",
-  "lock",
-  "md",
-  "mdx",
-  "mjs",
-  "mts",
-  "php",
-  "py",
-  "rb",
-  "rs",
-  "scss",
-  "sh",
-  "sql",
-  "svelte",
-  "swift",
-  "toml",
-  "ts",
-  "tsx",
-  "vue",
-  "xml",
-  "yaml",
-  "yml",
-]);
+const CODE_PATH = /^(?:~\/|\.{1,2}\/)?(?:[\w@.-]+\/)*[\w@.-]+(?::[1-9]\d{0,8}(?::[1-9]\d{0,8})?)?$/;
 
 export function agentInlineCodePathMention(code: string): AgentLocalFileLink | null {
   const text = code.trim();
   if (text === "" || text.length > MAX_AGENT_PATH_MENTION_CHARS) return null;
-  const match = CODE_PATH.exec(text);
-  if (match === null) return null;
-  const extension = (match[1] ?? "").toLowerCase();
-  if (!text.includes("/") && !SOURCE_FILE_EXTENSIONS.has(extension)) return null;
-  return relativeFileLink(text);
+  if (!CODE_PATH.test(text)) return null;
+  if (!text.includes("/") && !hasAgentFilePathPosition(text)) return null;
+  if (!isAgentFilePathMentionShape(text)) return null;
+  return mentionFileLink(text);
 }
 
 export function agentProsePathMentions(
@@ -101,14 +60,14 @@ function tokenPathMention(token: string, offset: number): TokenPathMention | nul
   if (token.length > MAX_AGENT_PATH_MENTION_CHARS || !token.includes("/")) return null;
   const leading = LEADING_PUNCTUATION.exec(token)?.[0].length ?? 0;
   const body = token.slice(leading).replace(TRAILING_PUNCTUATION, "");
-  if (!PROSE_PATH.test(body)) return null;
-  const link = relativeFileLink(body);
+  if (!PROSE_PATH.test(body) || !isAgentFilePathMentionShape(body)) return null;
+  const link = mentionFileLink(body);
   if (link === null) return null;
   return { start: offset + leading, text: body, link };
 }
 
-function relativeFileLink(mention: string): AgentLocalFileLink | null {
+function mentionFileLink(mention: string): AgentLocalFileLink | null {
   const link = parseAgentMarkdownLink(mention);
-  if (link.kind !== "localFile" || link.anchor !== "relative") return null;
+  if (link.kind !== "localFile" || link.anchor === "absolute") return null;
   return link;
 }

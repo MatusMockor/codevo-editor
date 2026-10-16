@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   AGENT_MARKDOWN_LINK_POLICY,
   MAX_AGENT_MARKDOWN_LINK_CHARS,
+  agentLocalFileLinkWrittenPath,
   parseAgentMarkdownImageSource,
   parseAgentMarkdownLink,
+  resolveAgentHomeFilePath,
   resolveAgentLocalFilePath,
+  type AgentLocalFileAnchor,
   type AgentLocalFileLink,
   type AgentMarkdownLink,
 } from "./agentMarkdownLink";
 
 function local(
-  anchor: "absolute" | "relative",
+  anchor: AgentLocalFileAnchor,
   path: string,
   line: number | null = null,
   column: number | null = null,
@@ -270,7 +273,7 @@ describe("parseAgentMarkdownImageSource", () => {
   });
 
   it("keeps a home-relative path a link target while refusing it as an image source", () => {
-    expect(parseAgentMarkdownLink("~/x.png")).toEqual(local("relative", "~/x.png"));
+    expect(parseAgentMarkdownLink("~/x.png")).toEqual(local("home", "x.png"));
     expect(AGENT_MARKDOWN_LINK_POLICY.accepts("~/x.png")).toBe(true);
     expect(AGENT_MARKDOWN_LINK_POLICY.acceptsImage("~/x.png")).toBe(false);
   });
@@ -297,5 +300,40 @@ describe("resolveAgentLocalFilePath", () => {
   it("fails closed without an absolute base", () => {
     expect(resolveAgentLocalFilePath(localLink("src/a.ts"), null)).toBeNull();
     expect(resolveAgentLocalFilePath(localLink("src/a.ts"), "workspace/app")).toBeNull();
+  });
+
+  it("never resolves a home path against the project", () => {
+    expect(resolveAgentLocalFilePath(localLink("~/.coderabbit/auth.json"), "/workspace/app")).toBe(
+      null,
+    );
+  });
+});
+
+describe("home paths", () => {
+  it("parses ~/ links as home-anchored with their position", () => {
+    expect(parseAgentMarkdownLink("~/.coderabbit/auth.json:3")).toEqual(
+      local("home", ".coderabbit/auth.json", 3),
+    );
+    expect(parseAgentMarkdownLink("~/notes/todo.md#L9")).toEqual(local("home", "notes/todo.md", 9));
+  });
+
+  it("refuses a home path that climbs out of the home folder", () => {
+    expect(parseAgentMarkdownLink("~/../etc/passwd")).toEqual({ kind: "none" });
+    expect(parseAgentMarkdownLink("~/")).toEqual({ kind: "none" });
+  });
+
+  it("resolves a home path only below an absolute home folder", () => {
+    expect(resolveAgentHomeFilePath(".coderabbit/auth.json", "/Users/me/")).toBe(
+      "/Users/me/.coderabbit/auth.json",
+    );
+    expect(resolveAgentHomeFilePath("a.md", "Users/me")).toBeNull();
+    expect(resolveAgentHomeFilePath("a.md", "C:\\Users\\me")).toBeNull();
+  });
+
+  it("shows a home link as the user wrote it", () => {
+    expect(agentLocalFileLinkWrittenPath(localLink("~/.coderabbit/auth.json"))).toBe(
+      "~/.coderabbit/auth.json",
+    );
+    expect(agentLocalFileLinkWrittenPath(localLink("src/a.ts"))).toBe("src/a.ts");
   });
 });

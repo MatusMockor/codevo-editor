@@ -159,6 +159,7 @@ describe("activateAgentMarkdownLink", () => {
     const local = localPort();
     activate(`${ROOT}/src/server.ts:12:3`, ports(local.port, openExternal));
     expect(local.open).toHaveBeenCalledWith({
+      kind: "path",
       location: { path: `${ROOT}/src/server.ts`, line: 12, column: 3 },
       root: ROOT,
     });
@@ -177,6 +178,7 @@ describe("activateAgentMarkdownLink", () => {
       localFiles: scope,
     });
     expect(local.open).toHaveBeenCalledWith({
+      kind: "path",
       location: { path: `${ROOT}/.worktrees/agt-1/src/a.ts`, line: 7, column: null },
       root: `${ROOT}/.worktrees/agt-1`,
     });
@@ -190,11 +192,37 @@ describe("activateAgentMarkdownLink", () => {
     await settle();
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(local.open).toHaveBeenCalledExactlyOnceWith({
+      kind: "path",
       location: { path, line: 7, column: 2 },
       root: null,
     });
     expect(local.report).not.toHaveBeenCalled();
     expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("asks the opener to look up a bare file name in the thread root", () => {
+    const local = localPort();
+    activate("ChatView.tsx:12", ports(local.port));
+    expect(local.open).toHaveBeenCalledExactlyOnceWith({
+      kind: "name",
+      location: { path: `${ROOT}/ChatView.tsx`, line: 12, column: null },
+      root: ROOT,
+    });
+  });
+
+  it("hands a home link to the opener unresolved and names it as written", async () => {
+    const local = localPort("doesNotExist");
+    activate("~/.coderabbit/auth.json", ports(local.port));
+    await settle();
+    expect(local.open).toHaveBeenCalledExactlyOnceWith({
+      kind: "home",
+      location: { path: ".coderabbit/auth.json", line: null, column: null },
+    });
+    expect(local.report).toHaveBeenCalledExactlyOnceWith({
+      kind: "doesNotExist",
+      path: "~/.coderabbit/auth.json",
+      place: { kind: "project", label: "app" },
+    });
   });
 
   it("treats a sibling-prefix path and a traversal out of the root as outside files", async () => {
@@ -204,9 +232,21 @@ describe("activateAgentMarkdownLink", () => {
     activate(`file://${ROOT}/../notes/handoff.md#L4`, ports(local.port));
     await settle();
     expect(local.open.mock.calls.map(([request]) => request)).toEqual([
-      { location: { path: "/workspace/app-docs/readme.md", line: null, column: null }, root: null },
-      { location: { path: "/workspace/secret.txt", line: null, column: null }, root: null },
-      { location: { path: "/workspace/notes/handoff.md", line: 4, column: null }, root: null },
+      {
+        kind: "path",
+        location: { path: "/workspace/app-docs/readme.md", line: null, column: null },
+        root: null,
+      },
+      {
+        kind: "path",
+        location: { path: "/workspace/secret.txt", line: null, column: null },
+        root: null,
+      },
+      {
+        kind: "path",
+        location: { path: "/workspace/notes/handoff.md", line: 4, column: null },
+        root: null,
+      },
     ]);
     expect(local.report).not.toHaveBeenCalled();
   });
@@ -415,6 +455,21 @@ describe("activateAgentMarkdownLink", () => {
     expect(remote.report).not.toHaveBeenCalled();
   });
 
+  it("refuses a home link of a server thread with a notice instead of resolving it", async () => {
+    const remote = remotePort();
+    activateRemote("~/.coderabbit/auth.json", remote.port);
+    await settle();
+    expect(remote.open).not.toHaveBeenCalled();
+    expect(remote.report).toHaveBeenCalledExactlyOnceWith({
+      kind: "serverHomePath",
+      path: "~/.coderabbit/auth.json",
+      place: { kind: "worktree", label: "Server app" },
+    });
+    expect(agentLocalFileLinkNotice(remote.report.mock.calls[0]![0]).message).toBe(
+      "Server threads can't open files from a home folder, so ~/.coderabbit/auth.json wasn't opened.",
+    );
+  });
+
   it("reports a link to the worktree root itself without contacting the server", async () => {
     const remote = remotePort();
     activateRemote("/var/lib/runner/workspaces/conv-1", remote.port);
@@ -554,6 +609,7 @@ describe("activateAgentMarkdownLink", () => {
     activateAgentMarkdownLink(event, parseAgentMarkdownLink("src/a.ts:4"), ports(local.port));
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(local.open).toHaveBeenCalledWith({
+      kind: "path",
       location: { path: `${ROOT}/src/a.ts`, line: 4, column: null },
       root: ROOT,
     });
@@ -617,6 +673,7 @@ describe("activateAgentMarkdownLink", () => {
     const preventDefault = activate("docs/design/page.html", ports(local.port), "docs/other.html");
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(local.open).toHaveBeenCalledWith({
+      kind: "path",
       location: { path: `${ROOT}/docs/design/page.html`, line: null, column: null },
       root: ROOT,
     });

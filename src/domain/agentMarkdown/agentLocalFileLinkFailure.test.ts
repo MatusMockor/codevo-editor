@@ -41,6 +41,15 @@ describe("outside file link failures", () => {
     expect(MAX_AGENT_OUTSIDE_LINKED_FILE_BYTES).toBe(10 * 1024 * 1024);
   });
 
+  it("refuses a server thread's home path by the path the agent wrote", () => {
+    const failure = agentLocalFileLinkFailure("serverHomePath", "~/.coderabbit/auth.json", PROJECT);
+
+    expect(agentLocalFileLinkFailureMessage(failure)).toBe(
+      "Server threads can't open files from a home folder, so ~/.coderabbit/auth.json wasn't opened.",
+    );
+    expect(agentLocalFileLinkFailureRemembered("serverHomePath")).toBe(true);
+  });
+
   it("keeps the in-project wording for a file missing from its project", () => {
     const failure = agentLocalFileLinkFailure("notFound", "src/env.ts", PROJECT);
 

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act } from "react";
+import { FilePreviewReadError } from "../../../../application/filePreview/filePreviewReader";
 import { describe, expect, it, vi } from "vitest";
 import { press } from "../../../../ui/foundation/foundationTestSupport";
 import {
@@ -153,7 +154,7 @@ describe("Files viewer", () => {
         truncated: true,
       },
       "src/big.ts": { kind: "binary", relativePath: "src/big.ts", byteLength: 2048 },
-      "README.md": new Error("Permission denied"),
+      "README.md": new FilePreviewReadError("unreadable"),
     });
     const host = render({ reader });
 
@@ -175,8 +176,25 @@ describe("Files viewer", () => {
     act(() => row(host, `${ROOT}/README.md`).click());
     await settle();
     expect(host.querySelector('.cv-file-viewer [role="alert"]')?.textContent).toBe(
-      "Permission denied",
+      "This file couldn't be read. Check its permissions and try again.",
     );
+  });
+
+  it.each([
+    [new FilePreviewReadError("notFound"), "This file doesn't exist in this project or worktree."],
+    [
+      new Error("No such file or directory (os error 2)"),
+      "This file couldn't be opened. Try again.",
+    ],
+  ])("shows safe copy for a failed linked file read", async (error, message) => {
+    const { reader } = memoryReader({ "missing.ts": error });
+    const host = render({
+      reader,
+      reveal: { path: `${ROOT}/missing.ts`, line: null, sequence: 1 },
+    });
+    await settle();
+    expect(host.querySelector('.cv-file-viewer [role="alert"]')?.textContent).toBe(message);
+    expect(host.textContent).not.toContain("os error");
   });
 
   it("ignores a late result for a file that is no longer shown", async () => {

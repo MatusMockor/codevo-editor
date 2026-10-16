@@ -4,7 +4,10 @@ import {
   type AgentLocalFileLinkFailure,
   type AgentLocalFileLinkPlace,
 } from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
-import type { AgentLocalFileLink } from "../../domain/agentMarkdown/agentMarkdownLink";
+import {
+  agentLocalFileLinkWrittenPath,
+  type AgentLocalFileLink,
+} from "../../domain/agentMarkdown/agentMarkdownLink";
 import {
   resolveAgentRemoteFileLink,
   type AgentRemoteFileLinkAnchors,
@@ -80,10 +83,13 @@ export async function attemptRemoteFileLink(
   link: AgentLocalFileLink,
   scope: AgentRemoteFileLinkScope,
 ): Promise<AgentLocalFileLinkFailure | null> {
-  const written = link.location.path;
+  const written = agentLocalFileLinkWrittenPath(link);
   const resolution = resolveAgentRemoteFileLink(link, scope.anchors);
   if (resolution.kind === "absolute") {
     return agentLocalFileLinkFailure("serverAbsolutePath", written, scope.place);
+  }
+  if (resolution.kind === "home") {
+    return agentLocalFileLinkFailure("serverHomePath", written, scope.place);
   }
   if (resolution.kind === "unsupported") {
     return agentLocalFileLinkFailure("outsideProject", written, scope.place);

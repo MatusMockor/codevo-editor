@@ -25,7 +25,8 @@ import { chromeFixture } from "./agentWorkbenchChromeTestFixtures";
 const remoteThreadId = remoteAgentThreadKey("linux", "runner", "first");
 const ANSWER =
   "Handler lives in `src/app.ts:2`; compare [config](/srv/app/config.ts) and `src/gone.ts`. " +
-  "The agent also wrote [the absolute handler](/var/lib/codevo/workspaces/first/src/app.ts:2).";
+  "The agent also wrote [the absolute handler](/var/lib/codevo/workspaces/first/src/app.ts:2). " +
+  "Its token is [the auth file](~/.coderabbit/auth.json), also `~/.coderabbit/token.json`.";
 
 function task(): RemoteRunnerTask {
   return {
@@ -223,6 +224,23 @@ describe("file links in server threads", () => {
 
     await waitForReact(() =>
       expect(notice()?.textContent).toContain("/srv/app/config.ts wasn't opened."),
+    );
+    expect(surfaces.readFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses a home link without resolving it on this computer or the server", async () => {
+    const surfaces = surfacesFixture();
+    await renderRemoteThread(surfaces);
+    await pathLink("src/app.ts:2");
+    const paths = [...host.querySelectorAll<HTMLAnchorElement>("a.agent-md__path-link")];
+    expect(paths.map((link) => link.textContent)).not.toContain("~/.coderabbit/token.json");
+
+    await act(async () => (await markdownLink("the auth file")).click());
+
+    await waitForReact(() =>
+      expect(notice()?.textContent).toContain(
+        "Server threads can't open files from a home folder, so ~/.coderabbit/auth.json wasn't opened.",
+      ),
     );
     expect(surfaces.readFile).not.toHaveBeenCalled();
   });

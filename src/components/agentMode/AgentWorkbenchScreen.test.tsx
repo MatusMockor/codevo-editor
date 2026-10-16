@@ -125,6 +125,7 @@ function rootWithTestPorts(root: Root): Root {
 const ROOT_A = "/workspace/app";
 const OUTSIDE_FILE = "/Users/dev/handoffs/oktober/02-cms-slideshow.md";
 const ORDERS_ENTRY = { name: "orders.ts", path: `${ROOT_A}/orders.ts`, kind: "file" as const };
+const SRC_ORDERS = { name: "orders.ts", path: `${ROOT_A}/src/orders.ts`, kind: "file" as const };
 const ROOT_B = "/workspace/api";
 
 describe("AgentWorkbenchScreen", () => {
@@ -752,6 +753,23 @@ describe("AgentWorkbenchScreen", () => {
     expect(host.querySelector(".agent-notice")).toBeNull();
   });
 
+  it("explains a linked project file that does not exist instead of opening the Files viewer", async () => {
+    const { link, layout, readOutsideTextFile } = await renderOutsideLink(
+      { kind: "doesNotExist" },
+      `${ROOT_A}/src/missing.ts`,
+    );
+
+    await act(async () => link.click());
+
+    await waitForReact(() =>
+      expect(host.querySelector(".agent-notice")?.textContent).toContain(
+        "src/missing.ts isn't in this project (app).",
+      ),
+    );
+    expect(layout.actions.filter((action) => action.kind === "revealFile")).toEqual([]);
+    expect(readOutsideTextFile).not.toHaveBeenCalled();
+  });
+
   async function renderOutsideLink(file: AgentOutsideTextFile, target: string = OUTSIDE_FILE) {
     await loadAgentMarkdownRenderer();
     const agents = surface(ROOT_A);
@@ -772,6 +790,7 @@ describe("AgentWorkbenchScreen", () => {
       root.render(
         <AgentWorkbenchScreen
           {...defaultProps(workbench)}
+          files={{ readDirectory: async (path) => (path === `${ROOT_A}/src` ? [SRC_ORDERS] : []) }}
           outsideLinkedFiles={{ readOutsideTextFile }}
         />,
       ),

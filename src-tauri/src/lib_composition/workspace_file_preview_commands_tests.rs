@@ -83,3 +83,44 @@ fn the_command_is_registered_under_its_wire_name() {
     assert!(include_str!("runtime.rs")
         .contains("workspace_file_preview_commands::workspace_read_file_preview,"));
 }
+
+#[test]
+fn read_errors_classify_io_kinds_and_serialize_without_os_messages() {
+    for (io_kind, wire_kind) in [
+        (std::io::ErrorKind::NotFound, "notFound"),
+        (std::io::ErrorKind::PermissionDenied, "unreadable"),
+        (std::io::ErrorKind::InvalidInput, "notRegularFile"),
+        (std::io::ErrorKind::IsADirectory, "notRegularFile"),
+        (std::io::ErrorKind::Other, "operationFailed"),
+    ] {
+        let error = FilePreviewReadError::from_io(std::io::Error::new(io_kind, "os error 2"));
+        assert_eq!(
+            serde_json::to_value(error).unwrap(),
+            serde_json::json!({ "kind": wire_kind })
+        );
+    }
+}
+
+#[test]
+fn a_symlink_rejected_by_the_no_follow_open_is_not_a_regular_file() {
+    let directory = std::env::temp_dir().join(format!(
+        "codevo-preview-symlink-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("target.txt"), "x").unwrap();
+    std::os::unix::fs::symlink("target.txt", directory.join("link.txt")).unwrap();
+
+    let root = std::fs::File::open(&directory).unwrap();
+    let error = read_file_preview_from_root(&root, "link.txt").unwrap_err();
+    std::fs::remove_dir_all(&directory).unwrap();
+
+    assert_eq!(
+        FilePreviewReadError::from_io(error),
+        FilePreviewReadError::NotRegularFile
+    );
+}
