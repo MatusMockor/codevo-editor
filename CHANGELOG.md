@@ -7,6 +7,25 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.132] - 2026-10-16
+
+### Added
+
+- When a new Claude thread starts on a server, Codevo installs this Mac's Claude
+  MCP servers (user scope and the project's local scope, including its subfolders
+  for folder projects) in the server project, so the server keeps using them after
+  the Mac goes offline. Servers that need a sign-in, or whose command is missing on
+  the server, are reported in a short notice. Requires an updated runner.
+- The Codex usage panel lists limit reset credits with their expiry and lets you
+  redeem a chosen one.
+
+### Fixed
+
+- Recording turn changes no longer fails with "The repository exceeds the
+  checkpoint file limit." in repositories with more than 10,000 files; the limit is
+  now 32,768 files.
+- The active non-Git folder project is paired with its server folder.
+
 ## [0.2.0-beta.131] - 2026-10-16
 
 ### Changed
