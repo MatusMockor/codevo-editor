@@ -1,6 +1,6 @@
 [package]
 name = "codevo-editor"
-version = "0.2.0-beta.128"
+version = "0.2.0-beta.129"
 description = "Codevo is a desktop app for running and reviewing AI coding agents"
 authors = ["Matus Mockor"]
 edition = "2021"

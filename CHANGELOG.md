@@ -7,6 +7,19 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.129] - 2026-10-16
+
+### Changed
+
+- Streaming agent output no longer re-renders the whole window. While a thread
+  streams text, only its transcript updates, so typing in the composer and
+  scrolling stay smooth during long replies.
+- Saving threads no longer rescans the whole thread folder on every save.
+- Local and remote terminals share the same terminal setup.
+- Internal cleanup after the IDE removal: large components and hooks were split
+  into focused parts and leftover editor-era names and unused code were
+  removed. Settings, threads, and projects are kept as they were.
+
 ## [0.2.0-beta.128] - 2026-10-16
 
 ### Changed
