@@ -458,6 +458,8 @@ export function AgentWorkbenchScreen({
       workspaceId,
       admissionToken,
     },
+    fileSearch,
+    resolveHome: ports.resolveWorkspaceHome,
     revealFileInViewer,
     showExternalFileInViewer: fileViewer.showExternalFileInViewer,
     captureViewerOwner: fileViewer.captureViewerOwner,

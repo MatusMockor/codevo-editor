@@ -434,11 +434,13 @@ describe("AgentThreadSession markdown", () => {
 
     expect(clickAt(0).defaultPrevented).toBe(true);
     expect(open).toHaveBeenLastCalledWith({
+      kind: "path",
       location: { path: `${ROOT}/odovzdávky/prepis ž.txt`, line: 12, column: 4 },
       root: ROOT,
     });
     clickAt(1);
     expect(open).toHaveBeenLastCalledWith({
+      kind: "path",
       location: { path: `${ROOT}/src/server.ts`, line: 7, column: null },
       root: ROOT,
     });
@@ -448,6 +450,7 @@ describe("AgentThreadSession markdown", () => {
     await act(async () => undefined);
     expect(open).toHaveBeenCalledTimes(3);
     expect(open).toHaveBeenLastCalledWith({
+      kind: "path",
       location: { path: "/etc/passwd", line: null, column: null },
       root: null,
     });

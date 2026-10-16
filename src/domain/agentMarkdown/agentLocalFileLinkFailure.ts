@@ -21,6 +21,7 @@ export type AgentLocalFileLinkFailureKind =
   | Exclude<AgentLocalFileOpenOutcome, "opened" | "superseded">
   | "outsideProject"
   | "serverAbsolutePath"
+  | "serverHomePath"
   | "checkoutFolder"
   | "notRegularFile"
   | "filesUnavailable";
@@ -85,6 +86,8 @@ export function agentLocalFileLinkFailureMessage(failure: AgentLocalFileLinkFail
       return `Another linked file is still being read, so ${path} wasn't opened. Try again.`;
     case "serverAbsolutePath":
       return `Server threads can only open files inside ${place}, so ${path} wasn't opened.`;
+    case "serverHomePath":
+      return `Server threads can't open files from a home folder, so ${path} wasn't opened.`;
     case "checkoutFolder":
       return `${path} is the folder of ${place}, not a file.`;
     case "notRegularFile":
@@ -110,6 +113,7 @@ export function agentLocalFileLinkFailureRemembered(kind: AgentLocalFileLinkFail
     case "notLocal":
     case "otherProject":
     case "serverAbsolutePath":
+    case "serverHomePath":
     case "checkoutFolder":
     case "notRegularFile":
       return true;

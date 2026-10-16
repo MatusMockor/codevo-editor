@@ -12,6 +12,7 @@ export type AgentRemoteFileLinkResolution =
   | { readonly kind: "server"; readonly target: RemoteFileRevealTarget }
   | { readonly kind: "checkoutRoot" }
   | { readonly kind: "absolute" }
+  | { readonly kind: "home" }
   | { readonly kind: "unsupported" };
 
 export const NO_AGENT_REMOTE_FILE_LINK_ANCHORS: AgentRemoteFileLinkAnchors = Object.freeze({
@@ -21,6 +22,7 @@ export const NO_AGENT_REMOTE_FILE_LINK_ANCHORS: AgentRemoteFileLinkAnchors = Obj
 
 const CHECKOUT_ROOT: AgentRemoteFileLinkResolution = Object.freeze({ kind: "checkoutRoot" });
 const ABSOLUTE: AgentRemoteFileLinkResolution = Object.freeze({ kind: "absolute" });
+const HOME: AgentRemoteFileLinkResolution = Object.freeze({ kind: "home" });
 const UNSUPPORTED: AgentRemoteFileLinkResolution = Object.freeze({ kind: "unsupported" });
 
 export function resolveAgentRemoteFileLink(
@@ -29,6 +31,7 @@ export function resolveAgentRemoteFileLink(
 ): AgentRemoteFileLinkResolution {
   const { path, line, column } = link.location;
   if (link.anchor === "relative") return serverResolution(path, line, column);
+  if (link.anchor === "home") return HOME;
   const remainder = anchoredRemainder(path, anchors);
   if (remainder === null) return ABSOLUTE;
   if (remainder.length === 0) return CHECKOUT_ROOT;

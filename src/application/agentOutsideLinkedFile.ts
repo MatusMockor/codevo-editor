@@ -2,9 +2,11 @@ import type {
   AgentLocalFileOpenOutcome,
   AgentOutsideFileRefusal,
 } from "../domain/agentMarkdown/agentLocalFileLinkFailure";
+import { resolveAgentHomeFilePath } from "../domain/agentMarkdown/agentMarkdownLink";
 import { workspaceRelativePath } from "../domain/workspace";
 import { workspaceRootKeysEqual } from "../domain/workspaceRootKey";
-import { classifyUnopenedLinkedFile, type LinkedFileDirectoryReader } from "./agentLinkedFileProbe";
+import { openOrClassifyLinkedFile, type LinkedFileDirectoryReader } from "./agentLinkedFileProbe";
+import type { HomeDirectoryResolver } from "./useHomeDirectory";
 
 export type ReadOnlySnapshotReader = () => Promise<string | null>;
 
@@ -60,9 +62,30 @@ export async function openOutsideLinkedFile(
     attempt.read = snapshotRead(result, path, opening.workspace());
     return result?.kind === "file" && attempt.read.kind === "delivered" ? result.content : null;
   });
-  if (opened) return "opened";
   if (!opening.isCurrent()) return "superseded";
+  if (opened) return "opened";
   return unopenedOutcome(attempt.read, opening);
+}
+
+export async function openHomeLinkedFile(
+  homeRelativePath: string,
+  resolveHome: HomeDirectoryResolver | null,
+  opening: AgentOutsideLinkedFileOpening,
+): Promise<AgentLocalFileOpenOutcome> {
+  const home = await homeDirectory(resolveHome);
+  if (!opening.isCurrent()) return "superseded";
+  const path = home === null ? null : resolveAgentHomeFilePath(homeRelativePath, home);
+  if (path === null) return "failed";
+  return openOutsideLinkedFile(path, opening);
+}
+
+async function homeDirectory(resolveHome: HomeDirectoryResolver | null): Promise<string | null> {
+  if (resolveHome === null) return null;
+  try {
+    return (await resolveHome()).path;
+  } catch {
+    return null;
+  }
 }
 
 function unopenedOutcome(
@@ -119,10 +142,13 @@ async function openWorkspaceFile(
   root: string,
   opening: AgentOutsideLinkedFileOpening,
 ): Promise<AgentLocalFileOpenOutcome> {
-  if (await opening.open(path)) return "opened";
-  if (!opening.isCurrent()) return "superseded";
-  const outcome = await classifyUnopenedLinkedFile(path, root, opening.directories);
-  if (!opening.isCurrent()) return "superseded";
+  const outcome = await openOrClassifyLinkedFile(
+    () => opening.open(path),
+    path,
+    root,
+    opening.directories,
+    () => opening.isCurrent(),
+  );
   return outcome === "notFound" ? "doesNotExist" : outcome;
 }
 

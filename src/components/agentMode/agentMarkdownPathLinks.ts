@@ -23,6 +23,7 @@ export function agentMarkdownPathLinks(
   const { base, roots } = scope;
   return {
     accepts(link) {
+      if (link.anchor === "home") return true;
       const path = resolveAgentLocalFilePath(link, base);
       return path !== null && agentRevealRootForPath(path, roots) !== null;
     },

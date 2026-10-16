@@ -34,6 +34,17 @@ describe("resolveAgentRemoteFileLink", () => {
     });
   });
 
+  it("never resolves a home path on the server, even when it names the checkout", () => {
+    for (const anchors of [WORKTREE, IN_PLACE, NO_AGENT_REMOTE_FILE_LINK_ANCHORS]) {
+      expect(resolveAgentRemoteFileLink(fileLink("~/.coderabbit/auth.json"), anchors)).toEqual({
+        kind: "home",
+      });
+      expect(resolveAgentRemoteFileLink(fileLink(`~/${WORKSPACE}/src/a.ts`), anchors)).toEqual({
+        kind: "home",
+      });
+    }
+  });
+
   it("anchors an absolute worktree path at the runner workspace directory", () => {
     const href = `/var/lib/codevo/workspaces/${WORKSPACE}/src/app.ts:12:3`;
     expect(resolveAgentRemoteFileLink(fileLink(href), WORKTREE)).toEqual({

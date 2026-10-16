@@ -3,6 +3,7 @@ import type { FileEntry } from "../domain/workspace";
 import type { LinkedFileDirectoryReader } from "./agentLinkedFileProbe";
 import {
   OUTSIDE_LINKED_FILE_READ_TIMEOUT_MS,
+  openHomeLinkedFile,
   openOutsideLinkedFile,
   type AgentLinkedFileWorkspace,
   type AgentOutsideLinkedFileOpening,
@@ -163,6 +164,44 @@ describe("openOutsideLinkedFile", () => {
     await expect(openOutsideLinkedFile(HANDOFF, link.ports)).resolves.toBe("superseded");
   });
 
+  it("supersedes a snapshot the viewer accepted only after a newer request", async () => {
+    const link = opening(text(HANDOFF));
+    const viewer: { accept: ((accepted: boolean) => void) | null } = { accept: null };
+    link.openSnapshot.mockImplementationOnce(async (_path, read) => {
+      await read();
+      return new Promise<boolean>((resolve) => {
+        viewer.accept = resolve;
+      });
+    });
+
+    const pending = openOutsideLinkedFile(HANDOFF, link.ports);
+    await vi.waitFor(() => expect(viewer.accept).not.toBeNull());
+    link.state.current = false;
+    viewer.accept?.(true);
+
+    await expect(pending).resolves.toBe("superseded");
+  });
+
+  it("supersedes a workspace file the viewer opened only after a newer request", async () => {
+    const inside = `${PROJECT}/docs/a.md`;
+    const link = opening(text(inside));
+    link.readDirectoryBounded.mockResolvedValue({ entries: [fileEntry(inside)], truncated: false });
+    let accept: (accepted: boolean) => void = () => undefined;
+    link.open.mockImplementationOnce(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+
+    const pending = openOutsideLinkedFile(inside, link.ports);
+    await vi.waitFor(() => expect(link.open).toHaveBeenCalledOnce());
+    link.state.current = false;
+    accept(true);
+
+    await expect(pending).resolves.toBe("superseded");
+  });
+
   it.each<AgentOutsideTextFileRefusal>(["doesNotExist", "unreadable", "busy", "unavailable"])(
     "supersedes a %s refusal that arrives after the request went stale",
     async (kind) => {
@@ -294,6 +333,10 @@ describe("openOutsideLinkedFile", () => {
     const sibling = `${PROJECT}/packages/web/App.tsx`;
     const link = opening(text(sibling));
     link.state.workspace = { root: PROJECT, tabs: [PROJECT, `${PROJECT}/packages`] };
+    link.readDirectoryBounded.mockResolvedValue({
+      entries: [fileEntry(sibling)],
+      truncated: false,
+    });
 
     await expect(openOutsideLinkedFile(sibling, link.ports)).resolves.toBe("opened");
 
@@ -317,11 +360,13 @@ describe("openOutsideLinkedFile", () => {
       `${PROJECT}/packages/web`,
       expect.any(Number),
     );
+    expect(link.open).not.toHaveBeenCalled();
   });
 
   it("opens an alias that resolves into the workspace as the real editable file", async () => {
     const real = `${PROJECT}/docs/handoff.md`;
     const link = opening(text(real));
+    link.readDirectoryBounded.mockResolvedValue({ entries: [fileEntry(real)], truncated: false });
 
     await expect(openOutsideLinkedFile("/Users/me/handoff-link.md", link.ports)).resolves.toBe(
       "opened",
@@ -343,5 +388,67 @@ describe("openOutsideLinkedFile", () => {
     );
 
     expect(link.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("openHomeLinkedFile", () => {
+  const HOME = "/Users/me";
+  const home = (path: string | null) => async () => ({ path, pathCase: "sensitive" as const });
+
+  it("reads a home path below the home folder the backend reports", async () => {
+    const link = opening(text(`${HOME}/.coderabbit/auth.json`, "{}"));
+
+    await expect(openHomeLinkedFile(".coderabbit/auth.json", home(HOME), link.ports)).resolves.toBe(
+      "opened",
+    );
+
+    expect(link.readOutsideTextFile).toHaveBeenCalledExactlyOnceWith(
+      `${HOME}/.coderabbit/auth.json`,
+    );
+    expect(link.snapshots).toEqual([{ path: `${HOME}/.coderabbit/auth.json`, content: "{}" }]);
+  });
+
+  it("refuses a home path that the backend says does not exist", async () => {
+    const link = opening({ kind: "doesNotExist" });
+
+    await expect(openHomeLinkedFile(".coderabbit/auth.json", home(HOME), link.ports)).resolves.toBe(
+      "doesNotExist",
+    );
+  });
+
+  it("fails without reading anything when the home folder is unknown", async () => {
+    for (const resolveHome of [
+      null,
+      home(null),
+      home("relative/home"),
+      async () => Promise.reject(new Error("no home")),
+    ]) {
+      const link = opening(text(`${HOME}/a.md`));
+      await expect(openHomeLinkedFile("a.md", resolveHome, link.ports)).resolves.toBe("failed");
+      expect(link.readOutsideTextFile).not.toHaveBeenCalled();
+    }
+  });
+
+  it("drops a home path whose request went stale while the home folder resolved", async () => {
+    const link = opening(text(`${HOME}/a.md`));
+    const resolveHome = async () => {
+      link.state.current = false;
+      return { path: HOME, pathCase: "sensitive" as const };
+    };
+
+    await expect(openHomeLinkedFile("a.md", resolveHome, link.ports)).resolves.toBe("superseded");
+    expect(link.readOutsideTextFile).not.toHaveBeenCalled();
+  });
+
+  it("opens a home path inside the project through the normal workspace open", async () => {
+    const inside = `${PROJECT}/docs/a.md`;
+    const link = opening(text(inside));
+    link.readDirectoryBounded.mockResolvedValue({ entries: [fileEntry(inside)], truncated: false });
+
+    await expect(
+      openHomeLinkedFile("Developer/mono/docs/a.md", home(HOME), link.ports),
+    ).resolves.toBe("opened");
+    expect(link.open).toHaveBeenCalledExactlyOnceWith(inside);
+    expect(link.readOutsideTextFile).not.toHaveBeenCalled();
   });
 });

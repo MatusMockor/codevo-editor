@@ -184,21 +184,26 @@ describe("AgentThreadSession transcript", () => {
       localFileLinks: port,
       thread: view([
         turn("t1", "Where?", { kind: "exited", exitCode: 0 }, [
-          { kind: "assistantText", text: "Look at src/app.ts:12 and `package.json`, not ../x.ts." },
+          {
+            kind: "assistantText",
+            text: "Look at src/app.ts:12, `package.json` and `package.json:3`, not ../x.ts.",
+          },
         ]),
       ]),
     });
     const links = [...host.querySelectorAll<HTMLAnchorElement>("a.agent-md__path-link")];
-    expect(links.map((link) => link.textContent)).toEqual(["src/app.ts:12", "package.json"]);
+    expect(links.map((link) => link.textContent)).toEqual(["src/app.ts:12", "package.json:3"]);
 
     act(() => links[0]?.click());
     expect(open).toHaveBeenCalledWith({
+      kind: "path",
       location: { path: `${ROOT}/src/app.ts`, line: 12, column: null },
       root: ROOT,
     });
     act(() => links[1]?.click());
     expect(open).toHaveBeenLastCalledWith({
-      location: { path: `${ROOT}/package.json`, line: null, column: null },
+      kind: "name",
+      location: { path: `${ROOT}/package.json`, line: 3, column: null },
       root: ROOT,
     });
     expect(report).not.toHaveBeenCalled();

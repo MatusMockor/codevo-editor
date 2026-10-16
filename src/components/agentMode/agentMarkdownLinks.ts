@@ -12,6 +12,7 @@ import {
   type AgentLocalFileOpenOutcome,
 } from "../../domain/agentMarkdown/agentLocalFileLinkFailure";
 import {
+  agentLocalFileLinkWrittenPath,
   resolveAgentLocalFilePath,
   type AgentLocalFileLink,
   type AgentLocalFileLocation,
@@ -70,10 +71,14 @@ export function agentServerLinkOpener(
   };
 }
 
-export interface AgentLocalFileOpenRequest {
-  readonly location: AgentLocalFileLocation;
-  readonly root: string | null;
-}
+export type AgentLocalFileOpenRequest =
+  | {
+      readonly kind: "path";
+      readonly location: AgentLocalFileLocation;
+      readonly root: string | null;
+    }
+  | { readonly kind: "name"; readonly location: AgentLocalFileLocation; readonly root: string }
+  | { readonly kind: "home"; readonly location: AgentLocalFileLocation };
 
 export interface AgentLocalFileLinkPort {
   open(request: AgentLocalFileOpenRequest): Promise<AgentLocalFileOpenOutcome>;
@@ -187,20 +192,50 @@ async function attemptLocalFileLink(
   link: AgentLocalFileLink,
   scope: AgentLocalFileLinkLocalScope,
 ): Promise<AgentLocalFileLinkFailure | null> {
-  const written = link.location.path;
   const project = agentLocalFileLinkPlace("project", scope.repositoryRoot);
+  if (link.anchor === "home") return attemptHomeFileLink(link, scope.port, project);
+  const written = link.location.path;
   const path = resolveAgentLocalFilePath(link, scope.base);
   if (path === null || !isAgentRevealPathBounded(path)) {
     return agentLocalFileLinkFailure("failed", written, project);
   }
   const root = agentRevealRootForPath(path, scope.roots);
-  const outcome = await scope.port
-    .open({ location: { ...link.location, path }, root })
-    .catch((): AgentLocalFileOpenOutcome => "failed");
+  const outcome = await openLocalFile(scope.port, localFileOpenRequest(link, path, root));
   if (outcome === "opened" || outcome === "superseded") return null;
   if (root === null) return agentLocalFileLinkFailure(outcome, path, project);
   const display = agentLocalFileLinkDisplayPath(written, path, root);
   return agentLocalFileLinkFailure(outcome, display, placeOfRoot(root, scope.repositoryRoot));
+}
+
+async function attemptHomeFileLink(
+  link: AgentLocalFileLink,
+  port: AgentLocalFileLinkPort,
+  project: AgentLocalFileLinkPlace,
+): Promise<AgentLocalFileLinkFailure | null> {
+  const outcome = await openLocalFile(port, { kind: "home", location: link.location });
+  if (outcome === "opened" || outcome === "superseded") return null;
+  return agentLocalFileLinkFailure(outcome, agentLocalFileLinkWrittenPath(link), project);
+}
+
+function localFileOpenRequest(
+  link: AgentLocalFileLink,
+  path: string,
+  root: string | null,
+): AgentLocalFileOpenRequest {
+  const location = { ...link.location, path };
+  if (root === null || !isBareFileName(link)) return { kind: "path", location, root };
+  return { kind: "name", location, root };
+}
+
+function isBareFileName(link: AgentLocalFileLink): boolean {
+  return link.anchor === "relative" && !link.location.path.includes("/");
+}
+
+function openLocalFile(
+  port: AgentLocalFileLinkPort,
+  request: AgentLocalFileOpenRequest,
+): Promise<AgentLocalFileOpenOutcome> {
+  return port.open(request).catch((): AgentLocalFileOpenOutcome => "failed");
 }
 
 function placeOfRoot(root: string, repositoryRoot: string): AgentLocalFileLinkPlace {

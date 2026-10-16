@@ -78,6 +78,7 @@ describe("local file links in agent messages", () => {
     await waitForReact(() => expect(notice()?.textContent).toContain(message));
     expect(notice()?.className).toContain("agent-notice--info");
     expect(openFileLocation).toHaveBeenCalledExactlyOnceWith({
+      kind: "path",
       location: {
         path: `${SURFACE_FIXTURE_ROOT}/src/environment.prod.ts`,
         line: null,
@@ -105,6 +106,7 @@ describe("local file links in agent messages", () => {
     await act(async () => link.click());
 
     expect(openFileLocation).toHaveBeenCalledExactlyOnceWith({
+      kind: "path",
       location: { path: `${SURFACE_FIXTURE_ROOT}/src/app.ts`, line: 12, column: null },
       root: SURFACE_FIXTURE_ROOT,
     });
@@ -121,6 +123,7 @@ describe("local file links in agent messages", () => {
 
     await waitForReact(() =>
       expect(openFileLocation).toHaveBeenCalledExactlyOnceWith({
+        kind: "path",
         location: { path: OUTSIDE_FILE, line: 4, column: null },
         root: null,
       }),
@@ -166,6 +169,41 @@ describe("local file links in agent messages", () => {
       expect(notice()?.textContent).toContain(
         "/Users/me/handoffs/oktober is a folder, not a file.",
       ),
+    );
+  });
+
+  it("links a home path but leaves a bare file name mentioned beside it as code", async () => {
+    const openFileLocation = vi.fn<AgentFileLocationOpener>(async () => "opened");
+    await renderAnswer(
+      "The token is in `~/.coderabbit/auth.json`. Delete `auth.json` to sign out; see `src/app.ts`.",
+      openFileLocation,
+    );
+
+    const home = await pathLink("~/.coderabbit/auth.json");
+    const links = [...host.querySelectorAll<HTMLAnchorElement>("a.agent-md__path-link")];
+    expect(links.map((link) => link.textContent)).toEqual([
+      "~/.coderabbit/auth.json",
+      "src/app.ts",
+    ]);
+
+    await act(async () => home.click());
+
+    expect(openFileLocation).toHaveBeenCalledExactlyOnceWith({
+      kind: "home",
+      location: { path: ".coderabbit/auth.json", line: null, column: null },
+    });
+    expect(notice()).toBeNull();
+  });
+
+  it("names a missing home file as written without the home folder", async () => {
+    const openFileLocation = vi.fn<AgentFileLocationOpener>(async () => "doesNotExist");
+    await renderAnswer("Check `~/.coderabbit/auth.json`.", openFileLocation);
+    const link = await pathLink("~/.coderabbit/auth.json");
+
+    await act(async () => link.click());
+
+    await waitForReact(() =>
+      expect(notice()?.textContent).toContain("~/.coderabbit/auth.json doesn't exist."),
     );
   });
 

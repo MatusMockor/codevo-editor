@@ -28,9 +28,23 @@ export async function openOrClassifyLinkedFile(
   path: string,
   root: string,
   reader: LinkedFileDirectoryReader,
+  isCurrent: () => boolean,
 ): Promise<AgentLocalFileOpenOutcome> {
-  if (await open()) return "opened";
-  return classifyUnopenedLinkedFile(path, root, reader);
+  const presence = await classifyUnopenedLinkedFile(path, root, reader);
+  if (!isCurrent()) return "superseded";
+  return openClassifiedLinkedFile(open, presence, isCurrent);
+}
+
+export async function openClassifiedLinkedFile(
+  open: () => Promise<boolean>,
+  presence: UnopenedLinkedFileOutcome,
+  isCurrent: () => boolean,
+): Promise<AgentLocalFileOpenOutcome> {
+  if (presence === "notFound") return "notFound";
+  const opened = await open();
+  if (!isCurrent()) return "superseded";
+  if (opened) return "opened";
+  return presence;
 }
 
 export async function classifyUnopenedLinkedFile(

@@ -106,21 +106,63 @@ describe("classifyUnopenedLinkedFile", () => {
 });
 
 describe("openOrClassifyLinkedFile", () => {
-  it("reports an opened file without probing the directory", async () => {
-    const files = reader({});
+  const current = () => true;
+
+  it("opens a file its folder lists", async () => {
+    const files = reader({ [`${ROOT}/src`]: [file(`${ROOT}/src/a.ts`)] });
     const open = vi.fn(async () => true);
-    await expect(openOrClassifyLinkedFile(open, `${ROOT}/src/a.ts`, ROOT, files)).resolves.toBe(
-      "opened",
-    );
+    await expect(
+      openOrClassifyLinkedFile(open, `${ROOT}/src/a.ts`, ROOT, files, current),
+    ).resolves.toBe("opened");
     expect(open).toHaveBeenCalledOnce();
-    expect(files.calls).toEqual([]);
+    expect(files.calls).toEqual([`${ROOT}/src`]);
   });
 
-  it("classifies a file the editor could not open", async () => {
+  it("reports a missing file as notFound without handing it to the viewer", async () => {
     const files = reader({ [`${ROOT}/src`]: [] });
+    const open = vi.fn(async () => true);
     await expect(
-      openOrClassifyLinkedFile(async () => false, `${ROOT}/src/a.ts`, ROOT, files),
+      openOrClassifyLinkedFile(open, `${ROOT}/src/a.ts`, ROOT, files, current),
     ).resolves.toBe("notFound");
-    expect(files.calls).toEqual([`${ROOT}/src`]);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("still opens when the folder cannot be listed and classifies a refusal", async () => {
+    const files = reader({});
+    const open = vi.fn(async () => true);
+    await expect(
+      openOrClassifyLinkedFile(open, `${ROOT}/src/a.ts`, ROOT, files, current),
+    ).resolves.toBe("opened");
+    const listed = reader({ [`${ROOT}/src`]: [file(`${ROOT}/src/a.ts`)] });
+    await expect(
+      openOrClassifyLinkedFile(async () => false, `${ROOT}/src/a.ts`, ROOT, listed, current),
+    ).resolves.toBe("unreadable");
+  });
+
+  it("supersedes an open that the viewer accepted only after a newer request", async () => {
+    const files = reader({ [`${ROOT}/src`]: [file(`${ROOT}/src/a.ts`)] });
+    let live = true;
+    let accept: (accepted: boolean) => void = () => undefined;
+    const open = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          accept = resolve;
+        }),
+    );
+    const pending = openOrClassifyLinkedFile(open, `${ROOT}/src/a.ts`, ROOT, files, () => live);
+    await vi.waitFor(() => expect(open).toHaveBeenCalledOnce());
+    live = false;
+    accept(true);
+    await expect(pending).resolves.toBe("superseded");
+  });
+
+  it("drops a probe that finished after the request went stale", async () => {
+    const files = reader({ [`${ROOT}/src`]: [] });
+    const open = vi.fn(async () => true);
+    let live = true;
+    const pending = openOrClassifyLinkedFile(open, `${ROOT}/src/a.ts`, ROOT, files, () => live);
+    live = false;
+    await expect(pending).resolves.toBe("superseded");
+    expect(open).not.toHaveBeenCalled();
   });
 });
