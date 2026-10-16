@@ -3,8 +3,9 @@ use super::workspace_file_preview::{
 };
 use crate::run_blocking_command;
 use crate::workspace_registry::{validate_relative_path, WorkspaceRegistry};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
+    io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -21,6 +22,29 @@ static ACTIVE_PREVIEW_READS: AtomicUsize = AtomicUsize::new(0);
 pub(crate) struct WorkspaceFilePreviewRequest {
     workspace_root: String,
     relative_path: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum FilePreviewReadError {
+    NotFound,
+    NotRegularFile,
+    Unreadable,
+    OperationFailed,
+}
+
+impl FilePreviewReadError {
+    fn from_io(error: io::Error) -> Self {
+        if error.raw_os_error() == Some(libc::ELOOP) {
+            return Self::NotRegularFile;
+        }
+        match error.kind() {
+            io::ErrorKind::NotFound => Self::NotFound,
+            io::ErrorKind::PermissionDenied => Self::Unreadable,
+            io::ErrorKind::InvalidInput | io::ErrorKind::IsADirectory => Self::NotRegularFile,
+            _ => Self::OperationFailed,
+        }
+    }
 }
 
 struct ValidatedPreviewRequest {
@@ -51,18 +75,21 @@ impl Drop for PreviewReadPermit {
 pub(crate) async fn workspace_read_file_preview(
     registry: State<'_, WorkspaceRegistry>,
     request: WorkspaceFilePreviewRequest,
-) -> Result<WorkspaceFilePreview, String> {
-    let request = validate_request(request)?;
-    let permit = PreviewReadPermit::acquire()?;
+) -> Result<WorkspaceFilePreview, FilePreviewReadError> {
+    let request = validate_request(request).map_err(|_| FilePreviewReadError::OperationFailed)?;
+    let permit = PreviewReadPermit::acquire().map_err(|_| FilePreviewReadError::OperationFailed)?;
     let registered = registry.clone_root_for_path(&request.workspace_root);
     run_blocking_command(move || {
         let _permit = permit;
-        let root = resolve_preview_root(registered, &request.workspace_root)
-            .map_err(|error| error.to_string())?;
-        read_file_preview_from_root(&root, &request.relative_path)
-            .map_err(|error| error.to_string())
+        Ok(resolve_preview_root(registered, &request.workspace_root)
+            .map_err(FilePreviewReadError::from_io)
+            .and_then(|root| {
+                read_file_preview_from_root(&root, &request.relative_path)
+                    .map_err(FilePreviewReadError::from_io)
+            }))
     })
     .await
+    .map_err(|_| FilePreviewReadError::OperationFailed)?
 }
 
 fn validate_request(

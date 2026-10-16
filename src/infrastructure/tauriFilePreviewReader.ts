@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FilePreviewReader } from "../application/filePreview/filePreviewReader";
+import {
+  FilePreviewReadError,
+  type FilePreviewReader,
+} from "../application/filePreview/filePreviewReader";
 import {
   parseFilePreviewPayload,
   parseFilePreviewRequest,
@@ -39,8 +42,20 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   throw new DOMException("File preview read was aborted.", "AbortError");
 }
 
-function readFailure(error: unknown): Error {
-  if (error instanceof Error) return error;
-  if (typeof error === "string" && error.length > 0) return new Error(error.slice(0, 1_000));
-  return new Error("File preview read failed.");
+function readFailure(error: unknown): FilePreviewReadError {
+  if (typeof error !== "object" || error === null || Array.isArray(error)) {
+    return new FilePreviewReadError("operationFailed");
+  }
+  if (Object.keys(error).length !== 1 || !("kind" in error)) {
+    return new FilePreviewReadError("operationFailed");
+  }
+  switch (error.kind) {
+    case "notFound":
+    case "notRegularFile":
+    case "unreadable":
+    case "operationFailed":
+      return new FilePreviewReadError(error.kind);
+    default:
+      return new FilePreviewReadError("operationFailed");
+  }
 }

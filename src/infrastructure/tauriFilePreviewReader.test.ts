@@ -74,15 +74,33 @@ describe("createTauriFilePreviewReader", () => {
     ).rejects.toBeInstanceOf(FilePreviewContractError);
   });
 
-  it("turns backend string errors into Error rejections", async () => {
+  it("replaces legacy backend string errors with a safe fallback", async () => {
     const { invokeCommand } = recordingInvoke(() =>
       Promise.reject("No such file or directory (os error 2)"),
     );
 
     await expect(
       createTauriFilePreviewReader(invokeCommand).read("/work", "missing.ts"),
-    ).rejects.toThrow("No such file or directory (os error 2)");
+    ).rejects.toThrow("This file couldn't be opened. Try again.");
   });
+
+  it.each(["notFound", "notRegularFile", "unreadable", "operationFailed"])(
+    "parses the typed %s wire failure",
+    async (kind) => {
+      const reader = createTauriFilePreviewReader(() => Promise.reject({ kind }));
+      await expect(reader.read("/work", "a.ts")).rejects.toMatchObject({ kind });
+    },
+  );
+
+  it.each([{ kind: "unknown" }, { kind: "notFound", message: "os error 2" }, null])(
+    "fails closed on an invalid error payload",
+    async (payload) => {
+      const reader = createTauriFilePreviewReader(() => Promise.reject(payload));
+      await expect(reader.read("/work", "a.ts")).rejects.toMatchObject({
+        kind: "operationFailed",
+      });
+    },
+  );
 
   it("does not invoke when the signal is already aborted", async () => {
     const { calls, invokeCommand } = recordingInvoke(() => Promise.resolve(null));

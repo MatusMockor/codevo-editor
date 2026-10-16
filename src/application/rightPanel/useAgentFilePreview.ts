@@ -1,6 +1,10 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { FilePreview } from "../../domain/filePreview";
-import type { FilePreviewReader } from "../filePreview/filePreviewReader";
+import {
+  FilePreviewReadError,
+  filePreviewFailureMessage,
+  type FilePreviewReader,
+} from "../filePreview/filePreviewReader";
 
 export const FilePreviewReaderContext = createContext<FilePreviewReader | null>(null);
 
@@ -32,8 +36,7 @@ interface OwnedPreview {
 const IDLE: AgentFilePreviewState = { kind: "idle" };
 const UNAVAILABLE: AgentFilePreviewState = { kind: "unavailable" };
 const LOADING: AgentFilePreviewState = { kind: "loading" };
-const FALLBACK_FAILURE = "The file could not be read.";
-const MAX_FAILURE_CHARS = 300;
+const FALLBACK_FAILURE = filePreviewFailureMessage("operationFailed");
 
 export function useAgentFilePreview({
   owner,
@@ -99,12 +102,6 @@ export function useAgentFilePreview({
 }
 
 function failureMessage(error: unknown): string {
-  if (error instanceof Error && error.message !== "") return bounded(error.message);
-  if (typeof error === "string" && error !== "") return bounded(error);
+  if (error instanceof FilePreviewReadError) return filePreviewFailureMessage(error.kind);
   return FALLBACK_FAILURE;
-}
-
-function bounded(message: string): string {
-  if (message.length <= MAX_FAILURE_CHARS) return message;
-  return `${message.slice(0, MAX_FAILURE_CHARS - 1)}…`;
 }
