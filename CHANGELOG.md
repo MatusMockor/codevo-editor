@@ -7,6 +7,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.133] - 2026-10-17
+
+### Changed
+
+- Saving a running thread sends only the new events and changed fields instead
+  of the whole turn, so long threads with large tool output save much less data.
+  The stored format is unchanged.
+- Find in thread (Cmd+F) no longer re-renders the whole agent view while a
+  thread streams; only the transcript and the find bar update.
+
 ## [0.2.0-beta.132] - 2026-10-16
 
 ### Added
