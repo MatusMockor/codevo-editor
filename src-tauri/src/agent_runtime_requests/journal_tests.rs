@@ -19,7 +19,7 @@ use crate::agent_task_admission::AgentTaskHistoryScope;
 use runtime_requests::HistoryRuntimeRequestStore;
 use serde_json::Value;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 const THREAD: &str = "agt-thread-0001";
@@ -65,6 +65,7 @@ fn eventually(check: impl Fn() -> bool) -> bool {
 struct Boot {
     journal: Arc<RuntimeRequestJournal>,
     sequence: Arc<AtomicU64>,
+    store: Weak<dyn crate::agent_runtime_requests::store::RuntimeRequestStore>,
 }
 
 impl Boot {
@@ -82,6 +83,7 @@ impl Boot {
         run_id: &str,
         limits: JournalLimits,
     ) -> Self {
+        let weak_store = Arc::downgrade(&store);
         let ticks = AtomicU64::new(1_760_000_000_000);
         let clock: JournalClock = Arc::new(move || ticks.fetch_add(1, Ordering::SeqCst));
         let journal = Arc::new(RuntimeRequestJournal::start_with_limits(
@@ -92,7 +94,11 @@ impl Boot {
         ));
         let sequence = Arc::new(AtomicU64::new(0));
         assert!(journal.share_sequence(Arc::clone(&sequence)));
-        Self { journal, sequence }
+        Self {
+            journal,
+            sequence,
+            store: weak_store,
+        }
     }
 
     fn next_version(&self) -> u64 {
@@ -176,6 +182,13 @@ impl Boot {
             .read(&scope_of(root), thread_id, 256)
             .expect("read journaled requests")
     }
+}
+
+fn assert_released(store: Weak<dyn crate::agent_runtime_requests::store::RuntimeRequestStore>) {
+    assert!(
+        eventually(|| store.strong_count() == 0),
+        "the stopped journal still holds its history store"
+    );
 }
 
 fn resolution_for(request_id: &str) -> RequestResolution {
@@ -606,8 +619,10 @@ fn reopening_under_a_new_run_id_recovers_an_unsettled_intent_as_answer_unconfirm
     assert!(boot.begin(&turn, "question-sent").is_recorded());
     assert!(boot.begin(&turn, "approval-sent").is_recorded());
     assert!(boot.journal.flush(FLUSH));
+    let store = boot.store.clone();
     drop(boot);
     drop(turn);
+    assert_released(store);
     assert_eq!(
         dump(&fixture)
             .iter()
@@ -701,8 +716,10 @@ fn second_running_instance_never_expires_the_first_instances_live_requests() {
         ["question-1:resolved:unknown", "question-2:pending:-"]
     );
 
+    let store = first.store.clone();
     drop(first);
     drop(first_turn);
+    assert_released(store);
     second_turn.ask("question-2");
     assert!(second.journal.flush(FLUSH));
     assert_eq!(

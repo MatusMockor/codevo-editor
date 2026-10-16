@@ -54,7 +54,9 @@ fn answer_known_only_from_a_digest_keeps_its_thread_degraded_and_is_reported_aft
         .iter()
         .any(|row| row.contains("/agt-turn-0001/question-1:resolved:")));
 
+    let store = boot.store.clone();
     drop((answered, busy, boot));
+    assert_released(store);
     let restarted = Boot::start(&fixture, "boot-0002");
     let (requests, unreadable, truncated) = incomplete(&restarted);
     assert_eq!(requests, ["question-2:expired:appRestarted"]);

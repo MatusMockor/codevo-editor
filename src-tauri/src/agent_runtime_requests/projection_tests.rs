@@ -379,7 +379,9 @@ fn finished_turns_and_recovered_rows_are_served_after_a_restart() {
     interrupted.ask("question-1");
     interrupted.ask_approval("approval-1");
     assert!(boot.journal.flush(FLUSH));
+    let store = boot.store.clone();
     drop((finished, interrupted, boot));
+    assert_released(store);
 
     let restarted = Boot::start(&fixture, "boot-0002");
     let page = pull(&restarted, &TURNS[..2], None).expect("rows after the restart");
