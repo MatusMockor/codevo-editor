@@ -5,6 +5,7 @@ pub(super) const MAX_FILE_BYTES: usize = 128 * 1024;
 pub(super) const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 pub(super) const MAX_READ_BYTES: usize = 128 * 1024 * 1024;
 pub(super) const MAX_HASH_FILE_BYTES: u64 = 32 * 1024 * 1024;
+pub(super) const MAX_CHECKPOINT_FILES: usize = 32_768;
 pub(super) const MAX_RECORD_BYTES: u64 = 128 * 1024 * 1024;
 pub(super) const MAX_STORAGE_BYTES: u64 = 256 * 1024 * 1024;
 pub(super) const MAX_TURNS: usize = 512;

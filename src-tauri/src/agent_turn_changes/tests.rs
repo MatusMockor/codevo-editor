@@ -287,6 +287,65 @@ fn file_display_limit_is_reported_and_omitted_paths_are_not_exposed() {
 }
 
 #[test]
+fn checkpoints_capture_and_read_back_more_than_ten_thousand_files() {
+    let fixture = Fixture::new();
+    for n in 0..10_050 {
+        fixture.write(&format!("file-{n:05}"), b"x\n");
+    }
+    fixture.capture("large", CapturePhase::Before);
+    fixture.write("file-00000", b"changed\n");
+    let summary = fixture.capture("large", CapturePhase::After);
+    assert_eq!(summary.state, ChangesState::Ready);
+    assert_eq!(summary.files.len(), 1);
+    assert_eq!(summary.files[0].relative_path, "file-00000");
+    let reopened = AgentTurnChangesStore::new(fixture.base.join("appdata"));
+    assert_eq!(reopened.get(&fixture.root, "large").unwrap(), summary);
+    let diff = reopened
+        .file_diff(&fixture.root, "large", "file-00000")
+        .unwrap();
+    assert_eq!(diff.original.text, "x\n");
+    assert_eq!(diff.modified.text, "changed\n");
+    assert!(
+        !fs::read_dir(&fixture.store.base).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("temporary-"))
+    );
+}
+#[test]
+fn checkpoint_file_limit_accepts_the_boundary_and_rejects_beyond_it() {
+    let fixture = Fixture::new();
+    for n in 0..MAX_CHECKPOINT_FILES {
+        fixture.write(&format!("file-{n:05}"), b"");
+    }
+    assert_eq!(
+        fixture
+            .capture("boundary", CapturePhase::Before)
+            .reason
+            .as_deref(),
+        Some("No completed snapshot is available for this turn.")
+    );
+    fs::remove_file(fixture.root.join("file-00000")).unwrap();
+    fs::remove_file(fixture.root.join("file-00001")).unwrap();
+    fixture.write("extra-0", b"");
+    fixture.write("extra-1", b"");
+    let union = fixture.capture("boundary", CapturePhase::After);
+    assert_eq!(union.state, ChangesState::Unavailable);
+    assert_eq!(
+        union.reason.as_deref(),
+        Some("The repository exceeds the checkpoint file limit.")
+    );
+    fixture.write("extra-2", b"");
+    let inventory = fixture.capture("beyond", CapturePhase::Before);
+    assert_eq!(inventory.state, ChangesState::Unavailable);
+    assert_eq!(
+        inventory.reason.as_deref(),
+        Some("Too many files to capture turn changes.")
+    );
+}
+
+#[test]
 fn newly_ignored_baseline_files_are_not_fabricated_as_deletions() {
     let fixture = Fixture::new();
     fixture.write("untracked", b"user data\n");

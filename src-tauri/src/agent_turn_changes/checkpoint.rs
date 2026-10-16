@@ -117,7 +117,7 @@ pub(super) fn tree(
             || !matches!(fields[0], "100644" | "100755" | "120000")
             || !object_id(fields[2])
             || !snapshot::valid_relative(path)
-            || result.len() >= 10_000
+            || result.len() >= MAX_CHECKPOINT_FILES
         {
             return Err("Unsupported checkpoint tree entry.".into());
         }
@@ -162,7 +162,7 @@ pub(super) fn capture(
         verify_checkpoint(identity, baseline)?;
         paths.extend(tree(identity, baseline)?.into_keys());
     }
-    if paths.len() > 10_000 {
+    if paths.len() > MAX_CHECKPOINT_FILES {
         return Err("The repository exceeds the checkpoint file limit.".into());
     }
     let temp = storage::TemporaryDirectory::new(base)?;

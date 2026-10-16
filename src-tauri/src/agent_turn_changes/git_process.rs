@@ -3,14 +3,14 @@ use std::path::{Component, Path};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use super::types::MAX_CHECKPOINT_FILES;
 use crate::repository_process_support::pipes::{read_streams, StreamLimits, StreamsResult};
 use crate::repository_process_support::process_guard::{
     await_exit_without_reaping, ChildGuard, Watchdog,
 };
 
-const MAX_FILES: usize = 10_000;
 const MAX_PATH_BYTES: usize = 4096;
-const MAX_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) fn inventory(root: &Path) -> Result<Vec<String>, String> {
@@ -28,7 +28,7 @@ pub(super) fn inventory(root: &Path) -> Result<Vec<String>, String> {
     for path in nul_records(&bytes)? {
         let path = relative_path(path)?;
         paths.insert(path);
-        if paths.len() > MAX_FILES {
+        if paths.len() > MAX_CHECKPOINT_FILES {
             return Err("Too many files to capture turn changes.".into());
         }
     }
@@ -253,7 +253,7 @@ fn parse_numstat(
                     .map_err(|_| "Invalid deletion count.")?,
             )
         };
-        if result.insert(path, counts).is_some() || result.len() > MAX_FILES {
+        if result.insert(path, counts).is_some() || result.len() > MAX_CHECKPOINT_FILES {
             return Err("Invalid or excessive snapshot diff entries.".into());
         }
     }

@@ -294,7 +294,7 @@ fn remove_contents(directory: &File, depth: usize, budget: &mut usize) -> Result
     if depth > 128 {
         return Err("Temporary turn directory exceeds depth limit.".into());
     }
-    for name in names(directory, 10_002)? {
+    for name in names(directory, MAX_CHECKPOINT_FILES + 3)? {
         *budget = budget
             .checked_sub(1)
             .ok_or("Temporary directory exceeds cleanup limit.")?;
@@ -310,7 +310,7 @@ fn remove_contents(directory: &File, depth: usize, budget: &mut usize) -> Result
 }
 impl Drop for TemporaryDirectory {
     fn drop(&mut self) {
-        let _ = remove_contents(&self.2, 0, &mut 30_000);
+        let _ = remove_contents(&self.2, 0, &mut (3 * MAX_CHECKPOINT_FILES));
         if let Ok(current) = child_directory(&self.1, &self.3, false) {
             if let (Ok(old), Ok(new)) = (self.2.metadata(), current.metadata()) {
                 if old.dev() == new.dev() && old.ino() == new.ino() {
