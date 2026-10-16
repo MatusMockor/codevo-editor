@@ -1544,3 +1544,6 @@ mod unreadable_budget_tests;
 
 #[path = "agent_thread_store_management_tests.rs"]
 mod management_tests;
+
+#[path = "agent_thread_store_root_budget_tests.rs"]
+mod root_budget_tests;

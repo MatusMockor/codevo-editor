@@ -3,7 +3,7 @@
   "productionStructuralTokenLimit": 10000,
   "groups": {},
   "files": {
-    "src-tauri/src/git.rs": { "rawLines": 3513, "structuralTokens": 22322 },
+    "src-tauri/src/git.rs": { "rawLines": 1560, "structuralTokens": 8766 },
     "src-tauri/src/lib.rs": { "rawLines": 87, "structuralTokens": 424 },
     "src-tauri/src/workspace_file_commands.rs": {
       "rawLines": 697,

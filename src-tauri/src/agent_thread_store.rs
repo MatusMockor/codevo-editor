@@ -12,10 +12,16 @@ pub mod agent_attachment_paths;
 
 #[path = "agent_thread_store_appserver.rs"]
 mod appserver;
+#[path = "agent_thread_store_root_budget.rs"]
+mod root_budget;
 use crate::agent_subagent_lifecycle as subagent_lifecycle;
 pub use appserver::{
     AgentAppServerUsage, AgentUsageScope, CodexTransport, SubagentActivity, SubagentSpawnEffort,
     SubagentSpawnStatus,
+};
+use root_budget::{
+    evict_to_budget, read_thread_file, root_directory_entries, thread_is_evictable, RootUsageCache,
+    StoredThreadFile,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -615,7 +621,6 @@ pub const AGENT_THREAD_STORE_FULL_ERROR: &str =
 pub const AGENT_THREAD_OWNER_MISMATCH_ERROR: &str =
     "The saved thread belongs to another agent project root.";
 
-const MAX_AGENT_THREAD_DIRECTORY_ENTRIES: usize = 1024;
 const MAX_UNREADABLE_REASON_BYTES: usize = 200;
 const MAX_TRACKED_ROOT_LOCKS: usize = 256;
 
@@ -633,18 +638,9 @@ pub struct AgentThreadLoadResult {
     pub evicted: usize,
 }
 
-#[derive(Clone, Debug)]
-struct StoredThreadFile {
-    thread_id: String,
-    path: PathBuf,
-    size: u64,
-    updated_at_epoch_ms: u64,
-    evictable: bool,
-}
-
 pub struct AgentThreadStore {
     base_dir: PathBuf,
-    root_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    root_locks: Mutex<HashMap<String, Arc<Mutex<RootUsageCache>>>>,
     temp_nonce: AtomicU64,
 }
 
@@ -660,7 +656,8 @@ impl AgentThreadStore {
     pub fn load(&self, root_key: &str) -> Result<AgentThreadLoadResult, String> {
         let directory = self.root_directory(root_key)?;
         let lock = self.root_lock(root_key);
-        let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut usage = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        usage.invalidate();
         let entries = root_directory_entries(&directory)?;
         let mut stored = Vec::new();
         let mut threads = HashMap::new();
@@ -718,32 +715,17 @@ impl AgentThreadStore {
         }
         let directory = self.root_directory(root_key)?;
         let lock = self.root_lock(root_key);
-        let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut usage = lock.lock().unwrap_or_else(PoisonError::into_inner);
         create_private_directory(&directory)?;
-        let mut stored: Vec<StoredThreadFile> = root_directory_entries(&directory)?
-            .into_iter()
-            .filter(|entry| entry.thread_id != thread_id)
-            .map(|entry| StoredThreadFile {
-                thread_id: entry.thread_id,
-                path: entry.path,
-                size: entry.size,
-                updated_at_epoch_ms: 0,
-                evictable: false,
-            })
-            .collect();
         let incoming_bytes = payload.len() as u64;
-        if over_budget(stored.len() + 1, stored_bytes(&stored) + incoming_bytes) {
-            classify_evictable(root_key, &mut stored);
-            let (_, within_budget) = evict_to_budget(&mut stored, 1, incoming_bytes);
-            if !within_budget {
-                return Err(AGENT_THREAD_STORE_FULL_ERROR.to_string());
-            }
-        }
-        write_thread_file_atomically(
+        usage.admit(root_key, &directory, &thread_id, incoming_bytes)?;
+        let written = write_thread_file_atomically(
             &directory.join(format!("{thread_id}.json")),
             &payload,
             self.temp_nonce.fetch_add(1, Ordering::SeqCst),
-        )
+        );
+        usage.settle_save(&thread_id, incoming_bytes, written.is_ok());
+        written
     }
 
     pub fn delete(&self, root_key: &str, thread_id: &str) -> Result<(), String> {
@@ -751,11 +733,14 @@ impl AgentThreadStore {
         let directory = self.root_directory(root_key)?;
         let attachments = agent_attachment_thread_directory(&self.base_dir, &thread_id)?;
         let lock = self.root_lock(root_key);
-        let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut usage = lock.lock().unwrap_or_else(PoisonError::into_inner);
         let path = directory.join(format!("{thread_id}.json"));
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                usage.forget(&thread_id);
+                return Ok(());
+            }
             Err(error) => return Err(format!("Unable to inspect the saved thread: {error}")),
         };
         if !metadata.is_file() {
@@ -781,8 +766,11 @@ impl AgentThreadStore {
             false
         };
         match fs::remove_file(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Ok(()) => usage.forget(&thread_id),
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                usage.forget(&thread_id);
+                return Ok(());
+            }
             Err(error) => return Err(format!("Unable to delete the saved thread: {error}")),
         }
         if owns_attachments {
@@ -799,7 +787,7 @@ impl AgentThreadStore {
             .join(fnv1a64hex(root_key)))
     }
 
-    fn root_lock(&self, root_key: &str) -> Arc<Mutex<()>> {
+    fn root_lock(&self, root_key: &str) -> Arc<Mutex<RootUsageCache>> {
         let mut locks = self
             .root_locks
             .lock()
@@ -810,7 +798,7 @@ impl AgentThreadStore {
         Arc::clone(
             locks
                 .entry(root_key.to_string())
-                .or_insert_with(|| Arc::new(Mutex::new(()))),
+                .or_insert_with(|| Arc::new(Mutex::new(RootUsageCache::default()))),
         )
     }
 }
@@ -1404,134 +1392,6 @@ fn ensure_root_key_bounds(root_key: &str) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-fn thread_is_evictable(thread: &AgentThread) -> bool {
-    !thread.pinned && thread.turns.iter().all(|turn| turn.status.is_terminal())
-}
-
-#[derive(Clone, Debug)]
-struct RootDirectoryEntry {
-    thread_id: String,
-    path: PathBuf,
-    size: u64,
-}
-
-fn root_directory_entries(directory: &Path) -> Result<Vec<RootDirectoryEntry>, String> {
-    let reader = match fs::read_dir(directory) {
-        Ok(reader) => reader,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("Unable to read the agent thread store: {error}")),
-    };
-    let mut entries = Vec::new();
-    for entry in reader.take(MAX_AGENT_THREAD_DIRECTORY_ENTRIES) {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if !file_type.is_file() {
-            continue;
-        }
-        let file_name = entry.file_name();
-        let Some(file_name) = file_name.to_str() else {
-            continue;
-        };
-        if file_name.contains(".json.tmp-") {
-            let _ = fs::remove_file(entry.path());
-            continue;
-        }
-        let Some(thread_id) = file_name.strip_suffix(".json") else {
-            continue;
-        };
-        if safe_agent_task_id(thread_id).is_err() {
-            continue;
-        }
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        entries.push(RootDirectoryEntry {
-            thread_id: thread_id.to_string(),
-            path: entry.path(),
-            size: metadata.len(),
-        });
-    }
-    entries.sort_by(|left, right| left.thread_id.cmp(&right.thread_id));
-    Ok(entries)
-}
-
-fn read_thread_file(root_key: &str, entry: &RootDirectoryEntry) -> Result<AgentThread, String> {
-    if entry.size > MAX_AGENT_THREAD_FILE_BYTES as u64 {
-        return Err("The saved thread exceeds the supported file size.".to_string());
-    }
-    let content = fs::read_to_string(&entry.path)
-        .map_err(|error| format!("The saved thread could not be read: {error}"))?;
-    let document: AgentThreadDocument = serde_json::from_str(&content)
-        .map_err(|error| format!("The saved thread is not valid JSON: {error}"))?;
-    validate_agent_thread_document(root_key, &document)?;
-    if document.thread.thread_id != entry.thread_id {
-        return Err("The saved thread identifier does not match its file name.".to_string());
-    }
-    Ok(document.thread)
-}
-
-fn classify_evictable(root_key: &str, stored: &mut [StoredThreadFile]) {
-    for file in stored.iter_mut() {
-        let entry = RootDirectoryEntry {
-            thread_id: file.thread_id.clone(),
-            path: file.path.clone(),
-            size: file.size,
-        };
-        let Ok(thread) = read_thread_file(root_key, &entry) else {
-            continue;
-        };
-        file.updated_at_epoch_ms = thread.updated_at_epoch_ms;
-        file.evictable = thread_is_evictable(&thread);
-    }
-}
-
-fn stored_bytes(stored: &[StoredThreadFile]) -> u64 {
-    stored.iter().map(|file| file.size).sum()
-}
-
-fn over_budget(count: usize, bytes: u64) -> bool {
-    count > MAX_AGENT_THREADS_PER_ROOT || bytes > MAX_AGENT_THREAD_ROOT_BYTES
-}
-
-fn evict_to_budget(
-    stored: &mut Vec<StoredThreadFile>,
-    extra_count: usize,
-    extra_bytes: u64,
-) -> (usize, bool) {
-    let mut evicted = 0;
-    loop {
-        if !over_budget(
-            stored.len() + extra_count,
-            stored_bytes(stored) + extra_bytes,
-        ) {
-            return (evicted, true);
-        }
-        let Some(index) = evictable_index(stored) else {
-            return (evicted, false);
-        };
-        let victim = stored.remove(index);
-        let _ = fs::remove_file(&victim.path);
-        evicted += 1;
-    }
-}
-
-fn evictable_index(stored: &[StoredThreadFile]) -> Option<usize> {
-    stored
-        .iter()
-        .enumerate()
-        .filter(|(_, file)| file.evictable)
-        .min_by(|(_, left), (_, right)| {
-            left.updated_at_epoch_ms
-                .cmp(&right.updated_at_epoch_ms)
-                .then_with(|| left.thread_id.cmp(&right.thread_id))
-        })
-        .map(|(index, _)| index)
 }
 
 struct TemporaryFileGuard {
