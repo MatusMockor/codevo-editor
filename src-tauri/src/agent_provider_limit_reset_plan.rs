@@ -14,6 +14,7 @@ use std::{
 const MAX_STREAM: usize = 256 * 1024;
 const INITIAL: &str = "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codevo_editor\",\"title\":\"Codevo\",\"version\":\"0.2.0\"},\"capabilities\":{\"experimentalApi\":true}}}\n";
 type Authority = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
+type Consume = (String, String, Option<String>);
 
 #[derive(Debug, Default)]
 struct Protocol {
@@ -27,7 +28,7 @@ struct Protocol {
 
 pub struct LimitResetProbe {
     protocol: Mutex<Protocol>,
-    consume: Option<(String, String)>,
+    consume: Option<Consume>,
     identity: fn(&[u8]) -> Option<String>,
     authority: Authority,
 }
@@ -38,7 +39,7 @@ impl fmt::Debug for LimitResetProbe {
 }
 impl LimitResetProbe {
     pub fn new(
-        consume: Option<(String, String)>,
+        consume: Option<Consume>,
         identity: fn(&[u8]) -> Option<String>,
         authority: Authority,
     ) -> Arc<Self> {
@@ -81,13 +82,18 @@ impl LimitResetProbe {
             2 => json!({"id":1,"method":"account/rateLimits/read"}),
             3 => json!({"id":3,"method":"account/read","params":{"refreshToken":false}}),
             4 => {
-                let (expected, key) = self.consume.as_ref().ok_or("Reset protocol was invalid.")?;
+                let (expected, key, credit_id) =
+                    self.consume.as_ref().ok_or("Reset protocol was invalid.")?;
                 if (self.identity)(&p.transcript).as_ref() != Some(expected) {
                     return Err(
                         "Codex account changed before reset. Refresh usage and try again.".into(),
                     );
                 }
-                json!({"id":4,"method":"account/rateLimitResetCredit/consume","params":{"idempotencyKey":key}})
+                let mut params = json!({"idempotencyKey":key});
+                if let Some(credit_id) = credit_id {
+                    params["creditId"] = json!(credit_id);
+                }
+                json!({"id":4,"method":"account/rateLimitResetCredit/consume","params":params})
             }
             _ => return Err("Reset protocol was invalid.".into()),
         };
@@ -212,21 +218,24 @@ mod tests {
     #[test]
     fn rejects_switched_account_before_consume_and_unknown_outcome() {
         let p = LimitResetProbe::new(
-            Some(("foreign".into(), "key".into())),
+            Some(("foreign".into(), "key".into(), None)),
             identity,
             Arc::new(|| Ok(())),
         );
         through_account(&p);
         assert!(p.next().is_err());
         let p = LimitResetProbe::new(
-            Some(("account".into(), "key".into())),
+            Some(("account".into(), "key".into(), None)),
             identity,
             Arc::new(|| Ok(())),
         );
         through_account(&p);
         let request = String::from_utf8(p.next().unwrap().unwrap()).unwrap();
         assert!(request.contains("account/rateLimitResetCredit/consume"));
-        assert!(request.contains("idempotencyKey"));
+        assert_eq!(
+            serde_json::from_str::<Value>(request.trim()).unwrap()["params"],
+            json!({"idempotencyKey":"key"})
+        );
         observe(&p, 4, json!({"outcome":"future"}));
         assert!(p.snapshot().is_err());
     }
@@ -237,5 +246,23 @@ mod tests {
         assert!(p.next().unwrap().is_none());
         p.observe(&vec![b'x'; MAX_STREAM + 1]);
         assert!(p.snapshot().is_err());
+    }
+    #[test]
+    fn consume_targets_the_chosen_credit_only_when_one_was_selected() {
+        let p = LimitResetProbe::new(
+            Some(("account".into(), "key".into(), Some("credit-1".into()))),
+            identity,
+            Arc::new(|| Ok(())),
+        );
+        through_account(&p);
+        let request = String::from_utf8(p.next().unwrap().unwrap()).unwrap();
+        let request: Value = serde_json::from_str(request.trim()).unwrap();
+        assert_eq!(request["method"], "account/rateLimitResetCredit/consume");
+        assert_eq!(
+            request["params"],
+            json!({"idempotencyKey":"key","creditId":"credit-1"})
+        );
+        observe(&p, 4, json!({"outcome":"reset"}));
+        assert_eq!(p.snapshot().unwrap().1.as_deref(), Some("reset"));
     }
 }

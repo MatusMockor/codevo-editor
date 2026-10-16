@@ -4,7 +4,7 @@ use crate::agent_task_spawner::{
         agent_cli_version::now_epoch_ms,
         process::{
             execute_agent_provider_plan_cancellable, limit_reset_plan::LimitResetProbe,
-            parse_provider_probe_json, AgentProviderProcessPlan,
+            AgentProviderProcessPlan,
         },
         runtime::{AgentProviderRuntimeRegistry, ProviderHealthLease},
     },
@@ -12,12 +12,14 @@ use crate::agent_task_spawner::{
 };
 use crate::run_blocking_command;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Instant};
 use tauri::{Manager, State, WebviewWindow};
+#[path = "codex_limit_reset_credits.rs"]
+mod credits;
 #[path = "codex_limit_reset_store.rs"]
 pub(super) mod store;
+use credits::{availability, Credit};
 use store::{Confirmation, HistoryRecord, LimitResetStore};
 
 #[derive(Deserialize)]
@@ -30,6 +32,8 @@ pub(crate) struct ReadRequest {
 pub(crate) struct PrepareRequest {
     provider_generation: u64,
     account_identity: String,
+    #[serde(deserialize_with = "Option::deserialize")]
+    credit_id: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -43,6 +47,7 @@ pub(crate) struct ConsumeRequest {
 pub(crate) struct Snapshot {
     account_identity: Option<String>,
     available_count: Option<u64>,
+    credits: Option<Vec<Credit>>,
     history: Vec<HistoryRecord>,
     history_truncated: bool,
     pending_operation_id: Option<String>,
@@ -82,22 +87,6 @@ fn read_probe(
     registry.revalidate_health(&lease)?;
     Ok(probe.snapshot()?.0)
 }
-fn availability(stdout: &[u8]) -> Result<Option<u64>, String> {
-    let rates = stdout
-        .split(|b| *b == b'\n')
-        .filter_map(parse_provider_probe_json)
-        .find(|v| v.get("id").and_then(Value::as_u64) == Some(1))
-        .ok_or("Codex reset availability was unavailable.")?;
-    let value = &rates["result"]["rateLimitResetCredits"]["availableCount"];
-    if value.is_null() {
-        return Ok(None);
-    }
-    value
-        .as_u64()
-        .filter(|count| *count <= 1_000_000)
-        .map(Some)
-        .ok_or_else(|| "Codex returned invalid reset availability.".into())
-}
 #[tauri::command]
 pub(crate) async fn read_codex_limit_resets(
     request: ReadRequest,
@@ -113,13 +102,14 @@ pub(crate) async fn read_codex_limit_resets(
         )?);
         let stdout = read_probe(&registry, Arc::clone(&lease))?;
         let account_identity = identity::codex_reset_identity(&stdout);
-        let available_count = availability(&stdout)?;
+        let (available_count, credits) = availability(&stdout)?;
         let (history, history_truncated, pending_operation_id) =
             store.history(account_identity.as_deref())?;
         registry.revalidate_health(&lease)?;
         Ok(Snapshot {
             account_identity,
             available_count,
+            credits,
             history,
             history_truncated,
             pending_operation_id,
@@ -140,6 +130,9 @@ pub(crate) async fn prepare_codex_limit_reset(
         if !store::account_id(&request.account_identity) {
             return Err("Codex reset account identity was invalid.".into());
         }
+        if request.credit_id.as_deref().is_some_and(|id| !credits::credit_id(id)) {
+            return Err("Codex reset credit was invalid.".into());
+        }
         let lease = Arc::new(registry.acquire_account_usage_for_generation(
             AgentCliInvocation::CodexExec,
             request.provider_generation,
@@ -148,11 +141,22 @@ pub(crate) async fn prepare_codex_limit_reset(
         if identity::codex_reset_identity(&stdout).as_ref() != Some(&request.account_identity) {
             return Err("Codex account changed. Refresh usage before resetting.".into());
         }
-        if availability(&stdout)?.is_none_or(|count| count == 0)
-            && store.history(Some(&request.account_identity))?.2.is_none()
-        {
+        let (available_count, available) = availability(&stdout)?;
+        let pending = store.history(Some(&request.account_identity))?.2;
+        if pending.is_some() && request.credit_id.is_some() {
+            return Err("A previous reset has an uncertain outcome. Retry that operation before choosing another reset.".into());
+        }
+        if available_count.is_none_or(|count| count == 0) && pending.is_none() {
             return Err("No Codex limit resets are available.".into());
         }
+        let credit = request
+            .credit_id
+            .as_deref()
+            .map(|id| {
+                credits::chosen(available.as_deref(), id)
+                    .ok_or("This reset is no longer available. Check resets again.")
+            })
+            .transpose()?;
         registry.revalidate_health(&lease)?;
         let confirmation_token = store.prepare(Confirmation {
             window_label: window.label().to_string(),
@@ -160,6 +164,7 @@ pub(crate) async fn prepare_codex_limit_reset(
             identity: request.account_identity,
             cli_identity: lease.cli_identity.clone(),
             discovery_generation: lease.discovery_generation,
+            credit,
             deadline: Instant::now(),
         })?;
         Ok(Prepared { confirmation_token })
@@ -186,14 +191,14 @@ pub(crate) async fn consume_codex_limit_reset(
         let lease = Arc::new(registry.acquire_account_usage_for_generation(AgentCliInvocation::CodexExec, request.provider_generation)?);
         if lease.cli_identity != confirmation.cli_identity || lease.discovery_generation != confirmation.discovery_generation { return Err("Codex provider changed before reset. Refresh usage.".into()); }
         registry.revalidate_health(&lease)?;
-        store.begin(&confirmation.identity, &request.idempotency_key)?;
+        let credit_id = store.begin(&confirmation.identity, &request.idempotency_key, confirmation.credit.clone())?.map(|credit| credit.id);
         // Scope the provider's idempotency namespace to the exact account, including after local history eviction.
         let provider_key = format!("{:x}", Sha256::digest(format!("codevo-reset-v1:{}:{}", confirmation.identity, request.idempotency_key).as_bytes()));
         let authority_registry = Arc::clone(&registry); let authority_lease = Arc::clone(&lease);
         let deadline = confirmation.deadline;
         let authority_app = app.clone();
         let authority_window_label = window_label.clone();
-        let probe = LimitResetProbe::new(Some((confirmation.identity.clone(), provider_key)), identity::codex_reset_identity, Arc::new(move || {
+        let probe = LimitResetProbe::new(Some((confirmation.identity.clone(), provider_key, credit_id)), identity::codex_reset_identity, Arc::new(move || {
             if Instant::now() >= deadline { return Err("Codex reset confirmation expired.".into()); }
             if authority_app.get_webview_window(&authority_window_label).is_none() { return Err("Codex reset window closed before submission.".into()); }
             authority_registry.revalidate_health(&authority_lease)
@@ -217,7 +222,25 @@ mod tests {
         )
         .is_err());
         assert!(serde_json::from_value::<PrepareRequest>(
-            serde_json::json!({"providerGeneration":1,"accountIdentity":"account","extra":true})
+            serde_json::json!({"providerGeneration":1,"accountIdentity":"account","creditId":null,"extra":true})
+        )
+        .is_err());
+        let prepare: PrepareRequest = serde_json::from_value(
+            serde_json::json!({"providerGeneration":1,"accountIdentity":"account","creditId":"credit"}),
+        )
+        .unwrap();
+        assert_eq!(prepare.credit_id.as_deref(), Some("credit"));
+        let prepare: PrepareRequest = serde_json::from_value(
+            serde_json::json!({"providerGeneration":1,"accountIdentity":"account","creditId":null}),
+        )
+        .unwrap();
+        assert!(prepare.credit_id.is_none());
+        assert!(serde_json::from_value::<PrepareRequest>(
+            serde_json::json!({"providerGeneration":1,"accountIdentity":"account","creditId":7})
+        )
+        .is_err());
+        assert!(serde_json::from_value::<PrepareRequest>(
+            serde_json::json!({"providerGeneration":1,"accountIdentity":"account"})
         )
         .is_err());
         assert!(serde_json::from_value::<ConsumeRequest>(serde_json::json!({"providerGeneration":1,"confirmationToken":"token","idempotencyKey":"key","extra":true})).is_err());
@@ -229,6 +252,31 @@ mod tests {
         ] {
             assert!(availability(serde_json::json!({"id":1,"result":{"rateLimitResetCredits":{"availableCount":count}}}).to_string().as_bytes()).is_err());
         }
-        assert_eq!(availability(b"{\"id\":1,\"result\":{}}"), Ok(None));
+        assert_eq!(availability(b"{\"id\":1,\"result\":{}}"), Ok((None, None)));
+    }
+    #[test]
+    fn snapshot_wire_names_match_the_typescript_contract() {
+        let snapshot = Snapshot {
+            account_identity: None,
+            available_count: Some(1),
+            credits: Some(vec![Credit {
+                id: "credit".into(),
+                title: None,
+                description: Some("Resets limits".into()),
+                granted_at_epoch_ms: 1_000,
+                expires_at_epoch_ms: None,
+            }]),
+            history: vec![HistoryRecord {
+                operation_id: "key".into(),
+                used_at_epoch_ms: 2,
+                credit_title: None,
+            }],
+            history_truncated: false,
+            pending_operation_id: None,
+        };
+        assert_eq!(
+            serde_json::to_value(snapshot).unwrap(),
+            serde_json::json!({"accountIdentity":null,"availableCount":1,"credits":[{"id":"credit","title":null,"description":"Resets limits","grantedAtEpochMs":1000,"expiresAtEpochMs":null}],"history":[{"operationId":"key","usedAtEpochMs":2,"creditTitle":null}],"historyTruncated":false,"pendingOperationId":null})
+        );
     }
 }

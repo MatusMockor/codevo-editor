@@ -10,6 +10,7 @@ describe("TauriCodexRateLimitResetGateway", () => {
     invoke.mockResolvedValueOnce({
       accountIdentity: "a",
       availableCount: null,
+      credits: null,
       history: [],
       historyTruncated: false,
       pendingOperationId: null,
@@ -19,9 +20,14 @@ describe("TauriCodexRateLimitResetGateway", () => {
       request: { providerGeneration: 3 },
     });
     invoke.mockResolvedValueOnce({ confirmationToken: "token" });
-    await gateway.prepare({ providerGeneration: 3, accountIdentity: "a" });
+    await gateway.prepare({ providerGeneration: 3, accountIdentity: "a", creditId: null });
     expect(invoke).toHaveBeenLastCalledWith("prepare_codex_limit_reset", {
-      request: { providerGeneration: 3, accountIdentity: "a" },
+      request: { providerGeneration: 3, accountIdentity: "a", creditId: null },
+    });
+    invoke.mockResolvedValueOnce({ confirmationToken: "token" });
+    await gateway.prepare({ providerGeneration: 3, accountIdentity: "a", creditId: "credit-1" });
+    expect(invoke).toHaveBeenLastCalledWith("prepare_codex_limit_reset", {
+      request: { providerGeneration: 3, accountIdentity: "a", creditId: "credit-1" },
     });
     invoke.mockResolvedValueOnce({ outcome: "alreadyRedeemed" });
     await gateway.consume({
@@ -36,6 +42,19 @@ describe("TauriCodexRateLimitResetGateway", () => {
   it("validates outgoing and incoming data", async () => {
     await expect(gateway.read({ providerGeneration: -1 })).rejects.toThrow();
     expect(invoke).not.toHaveBeenCalled();
+    await expect(
+      gateway.prepare({ providerGeneration: 1, accountIdentity: "a", creditId: "" }),
+    ).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
+    invoke.mockResolvedValueOnce({
+      accountIdentity: "a",
+      availableCount: 1,
+      credits: [{ id: "c", title: null, description: null, grantedAtEpochMs: 1 }],
+      history: [],
+      historyTruncated: false,
+      pendingOperationId: null,
+    });
+    await expect(gateway.read({ providerGeneration: 1 })).rejects.toThrow();
     invoke.mockResolvedValueOnce({ outcome: "success" });
     await expect(
       gateway.consume({ providerGeneration: 1, confirmationToken: "token", idempotencyKey: "key" }),

@@ -14,8 +14,10 @@ export interface CodexRateLimitResetState {
   readonly status:
     "idle" | "loading" | "ready" | "preparing" | "confirming" | "consuming" | "uncertain" | "error";
   readonly snapshot: CodexRateLimitResetDisplaySnapshot | null;
-  readonly outcome: CodexRateLimitResetOutcome | null;
+  readonly outcome: CodexRateLimitResetOutcome | "notApplied" | null;
   readonly error: string | null;
+  readonly targetCreditId: string | null;
+  readonly intent: "reset" | "retry" | null;
 }
 
 interface Options {
@@ -37,6 +39,8 @@ const INITIAL_STATE: CodexRateLimitResetState = {
   snapshot: null,
   outcome: null,
   error: null,
+  targetCreditId: null,
+  intent: null,
 };
 
 export function useCodexRateLimitResets({
@@ -88,6 +92,32 @@ export function useCodexRateLimitResets({
     [accountIdentity, gateway, lease, providerGeneration],
   );
 
+  const settle = useCallback(
+    async (sequence: number, snapshot: CodexRateLimitResetSnapshot, attempt: Attempt) => {
+      lease.attempt = null;
+      const applied = snapshot.history.some(
+        (entry) => entry.operationId === attempt.idempotencyKey,
+      );
+      publish({
+        ...INITIAL_STATE,
+        status: "ready",
+        snapshot: display(snapshot),
+        outcome: applied ? "reset" : "notApplied",
+      });
+      if (!applied) return;
+      try {
+        await refreshLimitsRef.current();
+      } catch {
+        if (!lease.active || lease.sequence !== sequence) return;
+        publish({
+          ...lease.state,
+          error: "Reset result received. Refresh usage to update the displayed limits.",
+        });
+      }
+    },
+    [lease, publish],
+  );
+
   const refresh = useCallback(async () => {
     if (
       !lease.active ||
@@ -112,6 +142,10 @@ export function useCodexRateLimitResets({
         };
       }
       lease.snapshot = snapshot;
+      if (lease.attempt?.uncertain && !snapshot.pendingOperationId) {
+        await settle(sequence, snapshot, lease.attempt);
+        return;
+      }
       publish({
         ...INITIAL_STATE,
         status: lease.attempt ? "uncertain" : "ready",
@@ -126,7 +160,7 @@ export function useCodexRateLimitResets({
         error: "Reset information is unavailable. Try refreshing.",
       });
     }
-  }, [gateway, lease, providerGeneration, publish, read]);
+  }, [gateway, lease, providerGeneration, publish, read, settle]);
 
   useLayoutEffect(() => {
     lease.active = true;
@@ -139,78 +173,114 @@ export function useCodexRateLimitResets({
     };
   }, [lease, refresh]);
 
-  const requestReset = useCallback(async () => {
-    if (
-      !lease.active ||
-      !gateway ||
-      providerGeneration === null ||
-      !["ready", "uncertain"].includes(lease.state.status)
-    )
-      return;
-    const sequence = ++lease.sequence;
-    const previous = lease.snapshot;
-    let retry = lease.attempt;
-    if (
-      !previous?.accountIdentity ||
-      (!retry && (previous.availableCount === null || previous.availableCount < 1))
-    )
-      return;
-    publish({ ...lease.state, status: "preparing", outcome: null, error: null });
-    try {
-      const snapshot = await read(sequence);
-      if (!lease.active || lease.sequence !== sequence || !snapshot) return;
+  const requestReset = useCallback(
+    async (creditId: string | null) => {
       if (
-        snapshot.accountIdentity !== previous.accountIdentity ||
-        (retry && retry.accountIdentity !== snapshot.accountIdentity)
-      ) {
-        lease.attempt = null;
-        lease.snapshot = null;
-        throw new Error("Account changed");
-      }
-      lease.snapshot = snapshot;
-      if (snapshot.pendingOperationId) {
-        retry = {
-          accountIdentity: previous.accountIdentity,
-          idempotencyKey: snapshot.pendingOperationId,
-          confirmation: null,
-          uncertain: true,
-        };
-        lease.attempt = retry;
-      }
-      if (!retry && (snapshot.availableCount === null || snapshot.availableCount < 1)) {
-        publish({ ...INITIAL_STATE, status: "ready", snapshot: display(snapshot) });
+        !lease.active ||
+        !gateway ||
+        providerGeneration === null ||
+        !["ready", "uncertain"].includes(lease.state.status)
+      )
         return;
-      }
-      const attempt: Attempt = retry ?? {
-        accountIdentity: previous.accountIdentity,
-        idempotencyKey: crypto.randomUUID(),
-        confirmation: null,
-        uncertain: false,
-      };
-      lease.attempt = attempt;
-      const preparation = parseCodexRateLimitResetPreparation(
-        await gateway.prepare({
-          providerGeneration,
-          accountIdentity: attempt.accountIdentity,
-        }),
-      );
-      if (!lease.active || lease.sequence !== sequence || lease.attempt !== attempt) return;
-      attempt.confirmation = {
-        token: preparation.confirmationToken,
-        expiresAt: Date.now() + CODEX_RESET_CONFIRMATION_TIMEOUT_MS,
-      };
-      publish({ ...INITIAL_STATE, status: "confirming", snapshot: display(snapshot) });
-    } catch {
-      if (!lease.active || lease.sequence !== sequence) return;
-      if (!lease.attempt?.uncertain) lease.attempt = null;
+      const sequence = ++lease.sequence;
+      const previous = lease.snapshot;
+      let retry = lease.attempt;
+      if (
+        !previous?.accountIdentity ||
+        (!retry && (previous.availableCount === null || previous.availableCount < 1))
+      )
+        return;
+      let targetCreditId = retry ? null : creditId;
+      if (targetCreditId !== null && !hasCredit(previous, targetCreditId)) return;
       publish({
-        ...INITIAL_STATE,
-        status: lease.attempt ? "uncertain" : "error",
-        snapshot: lease.snapshot ? display(lease.snapshot) : null,
-        error: "Could not prepare the reset. Refresh and try again.",
+        ...lease.state,
+        status: "preparing",
+        outcome: null,
+        error: null,
+        targetCreditId,
+        intent: retry ? "retry" : "reset",
       });
-    }
-  }, [gateway, lease, providerGeneration, publish, read]);
+      try {
+        const snapshot = await read(sequence);
+        if (!lease.active || lease.sequence !== sequence || !snapshot) return;
+        if (
+          snapshot.accountIdentity !== previous.accountIdentity ||
+          (retry && retry.accountIdentity !== snapshot.accountIdentity)
+        ) {
+          lease.attempt = null;
+          lease.snapshot = null;
+          throw new Error("Account changed");
+        }
+        lease.snapshot = snapshot;
+        if (snapshot.pendingOperationId) {
+          retry = {
+            accountIdentity: previous.accountIdentity,
+            idempotencyKey: snapshot.pendingOperationId,
+            confirmation: null,
+            uncertain: true,
+          };
+          lease.attempt = retry;
+          targetCreditId = null;
+          publish({ ...lease.state, targetCreditId, intent: "retry" });
+        }
+        if (!snapshot.pendingOperationId && retry?.uncertain) {
+          await settle(sequence, snapshot, retry);
+          return;
+        }
+        if (!retry && (snapshot.availableCount === null || snapshot.availableCount < 1)) {
+          publish({ ...INITIAL_STATE, status: "ready", snapshot: display(snapshot) });
+          return;
+        }
+        if (targetCreditId !== null && !hasCredit(snapshot, targetCreditId)) {
+          publish({
+            ...INITIAL_STATE,
+            status: "ready",
+            snapshot: display(snapshot),
+            error: "This reset is no longer available. Check resets again.",
+          });
+          return;
+        }
+        const attempt: Attempt = retry ?? {
+          accountIdentity: previous.accountIdentity,
+          idempotencyKey: crypto.randomUUID(),
+          confirmation: null,
+          uncertain: false,
+        };
+        lease.attempt = attempt;
+        const preparation = parseCodexRateLimitResetPreparation(
+          await gateway.prepare({
+            providerGeneration,
+            accountIdentity: attempt.accountIdentity,
+            creditId: targetCreditId,
+          }),
+        );
+        if (!lease.active || lease.sequence !== sequence || lease.attempt !== attempt) return;
+        attempt.confirmation = {
+          token: preparation.confirmationToken,
+          expiresAt: Date.now() + CODEX_RESET_CONFIRMATION_TIMEOUT_MS,
+        };
+        publish({
+          ...INITIAL_STATE,
+          status: "confirming",
+          snapshot: display(snapshot),
+          targetCreditId,
+          intent: retry ? "retry" : "reset",
+        });
+      } catch {
+        if (!lease.active || lease.sequence !== sequence) return;
+        if (!lease.attempt?.uncertain) lease.attempt = null;
+        publish({
+          ...INITIAL_STATE,
+          status: lease.attempt ? "uncertain" : "error",
+          snapshot: lease.snapshot ? display(lease.snapshot) : null,
+          error: "Could not prepare the reset. Refresh and try again.",
+        });
+      }
+    },
+    [gateway, lease, providerGeneration, publish, read, settle],
+  );
+
+  const retryReset = useCallback(() => requestReset(null), [requestReset]);
 
   const cancelReset = useCallback(() => {
     if (!lease.active || lease.state.status !== "confirming") return;
@@ -218,7 +288,13 @@ export function useCodexRateLimitResets({
     if (attempt) attempt.confirmation = null;
     if (!attempt?.uncertain) lease.attempt = null;
     ++lease.sequence;
-    publish({ ...lease.state, status: attempt?.uncertain ? "uncertain" : "ready", error: null });
+    publish({
+      ...lease.state,
+      status: attempt?.uncertain ? "uncertain" : "ready",
+      error: null,
+      targetCreditId: null,
+      intent: null,
+    });
   }, [lease, publish]);
 
   const confirmReset = useCallback(async () => {
@@ -239,6 +315,8 @@ export function useCodexRateLimitResets({
         ...lease.state,
         status: attempt.uncertain ? "uncertain" : "ready",
         error: "Confirmation expired. Prepare the reset again.",
+        targetCreditId: null,
+        intent: null,
       });
       return;
     }
@@ -262,11 +340,13 @@ export function useCodexRateLimitResets({
         ...lease.state,
         status: "uncertain",
         error: "The reset result is unknown. Retry safely to check the result.",
+        targetCreditId: null,
+        intent: null,
       });
       return;
     }
     lease.attempt = null;
-    publish({ ...lease.state, status: "loading", outcome });
+    publish({ ...lease.state, status: "loading", outcome, targetCreditId: null, intent: null });
     try {
       const snapshot = await read(sequence);
       if (!lease.active || lease.sequence !== sequence || !snapshot) return;
@@ -303,14 +383,19 @@ export function useCodexRateLimitResets({
     requestReset,
     confirmReset,
     cancelReset,
-    retryReset: requestReset,
+    retryReset,
   };
 }
 
 function display(snapshot: CodexRateLimitResetSnapshot): CodexRateLimitResetDisplaySnapshot {
   return {
     availableCount: snapshot.availableCount,
+    credits: snapshot.credits,
     history: snapshot.history,
     historyTruncated: snapshot.historyTruncated,
   };
+}
+
+function hasCredit(snapshot: CodexRateLimitResetSnapshot, creditId: string): boolean {
+  return snapshot.credits?.some((credit) => credit.id === creditId) === true;
 }

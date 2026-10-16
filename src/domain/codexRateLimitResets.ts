@@ -1,10 +1,20 @@
 export interface CodexRateLimitResetHistoryEntry {
   readonly operationId: string;
   readonly usedAtEpochMs: number;
+  readonly creditTitle: string | null;
+}
+
+export interface CodexRateLimitResetCredit {
+  readonly id: string;
+  readonly title: string | null;
+  readonly description: string | null;
+  readonly grantedAtEpochMs: number;
+  readonly expiresAtEpochMs: number | null;
 }
 
 export interface CodexRateLimitResetDisplaySnapshot {
   readonly availableCount: number | null;
+  readonly credits: ReadonlyArray<CodexRateLimitResetCredit> | null;
   readonly history: ReadonlyArray<CodexRateLimitResetHistoryEntry>;
   readonly historyTruncated: boolean;
 }
@@ -22,6 +32,7 @@ export interface CodexRateLimitResetReadRequest {
 }
 export interface CodexRateLimitResetPrepareRequest extends CodexRateLimitResetReadRequest {
   readonly accountIdentity: string;
+  readonly creditId: string | null;
 }
 export interface CodexRateLimitResetConsumeRequest extends CodexRateLimitResetReadRequest {
   readonly confirmationToken: string;
@@ -29,12 +40,15 @@ export interface CodexRateLimitResetConsumeRequest extends CodexRateLimitResetRe
 }
 
 export const MAX_CODEX_RESET_HISTORY = 100;
+export const MAX_CODEX_RESET_CREDITS = 50;
 export const CODEX_RESET_CONFIRMATION_TIMEOUT_MS = 60_000;
+const MAX_EPOCH_MS = 8_640_000_000_000_000;
 
 export function parseCodexRateLimitResetSnapshot(value: unknown): CodexRateLimitResetSnapshot {
   const item = record(value, [
     "accountIdentity",
     "availableCount",
+    "credits",
     "history",
     "historyTruncated",
     "pendingOperationId",
@@ -45,19 +59,22 @@ export function parseCodexRateLimitResetSnapshot(value: unknown): CodexRateLimit
   if (typeof item.historyTruncated !== "boolean") invalid();
   if (!Array.isArray(item.history) || item.history.length > MAX_CODEX_RESET_HISTORY) invalid();
   const history = item.history.map((value) => {
-    const entry = record(value, ["operationId", "usedAtEpochMs"]);
+    const entry = record(value, ["operationId", "usedAtEpochMs", "creditTitle"]);
     return Object.freeze({
       operationId: boundedText(entry.operationId, 256),
-      usedAtEpochMs: integer(entry.usedAtEpochMs, 8_640_000_000_000_000),
+      usedAtEpochMs: integer(entry.usedAtEpochMs, MAX_EPOCH_MS),
+      creditTitle: nullableText(entry.creditTitle, 200),
     });
   });
   if (new Set(history.map((entry) => entry.operationId)).size !== history.length) invalid();
+  const credits = item.credits === null ? null : parseCredits(item.credits);
   if (item.accountIdentity === null && (item.pendingOperationId !== null || history.length > 0))
     invalid();
   return Object.freeze({
     accountIdentity: item.accountIdentity as string | null,
     pendingOperationId: item.pendingOperationId as string | null,
     availableCount: item.availableCount as number | null,
+    credits,
     history: Object.freeze(history),
     historyTruncated: item.historyTruncated,
   });
@@ -73,10 +90,11 @@ export function parseCodexRateLimitResetReadRequest(
 export function parseCodexRateLimitResetPrepareRequest(
   value: unknown,
 ): CodexRateLimitResetPrepareRequest {
-  const item = record(value, ["providerGeneration", "accountIdentity"]);
+  const item = record(value, ["providerGeneration", "accountIdentity", "creditId"]);
   return Object.freeze({
     providerGeneration: integer(item.providerGeneration),
     accountIdentity: boundedText(item.accountIdentity, 1024),
+    creditId: nullableText(item.creditId, 256),
   });
 }
 
@@ -111,6 +129,33 @@ export function parseCodexRateLimitResetReceipt(value: unknown): {
     default:
       return invalid();
   }
+}
+
+function parseCredits(value: unknown): ReadonlyArray<CodexRateLimitResetCredit> {
+  if (!Array.isArray(value) || value.length > MAX_CODEX_RESET_CREDITS) invalid();
+  const credits = value.map((value) => {
+    const credit = record(value, [
+      "id",
+      "title",
+      "description",
+      "grantedAtEpochMs",
+      "expiresAtEpochMs",
+    ]);
+    return Object.freeze({
+      id: boundedText(credit.id, 256),
+      title: nullableText(credit.title, 200),
+      description: nullableText(credit.description, 1000),
+      grantedAtEpochMs: integer(credit.grantedAtEpochMs, MAX_EPOCH_MS),
+      expiresAtEpochMs:
+        credit.expiresAtEpochMs === null ? null : integer(credit.expiresAtEpochMs, MAX_EPOCH_MS),
+    });
+  });
+  if (new Set(credits.map((credit) => credit.id)).size !== credits.length) invalid();
+  return Object.freeze(credits);
+}
+
+function nullableText(value: unknown, maxBytes: number): string | null {
+  return value === null ? null : boundedText(value, maxBytes);
 }
 
 function record(value: unknown, keys: ReadonlyArray<string>): Record<string, unknown> {

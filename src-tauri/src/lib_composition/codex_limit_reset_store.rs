@@ -1,3 +1,4 @@
+use super::credits::{bounded_text, credit_id, ChosenCredit, MAX_TITLE_BYTES};
 use crate::agent_task_spawner::agent_provider::process::ExecutableIdentity;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -17,6 +18,8 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 pub(super) struct HistoryRecord {
     pub operation_id: String,
     pub used_at_epoch_ms: u64,
+    #[serde(default)]
+    pub credit_title: Option<String>,
 }
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +32,8 @@ struct AccountHistory {
 struct Persisted {
     accounts: BTreeMap<String, AccountHistory>,
     pending: BTreeMap<String, String>,
+    #[serde(default)]
+    pending_credits: BTreeMap<String, ChosenCredit>,
 }
 pub(super) struct Confirmation {
     pub window_label: String,
@@ -36,6 +41,7 @@ pub(super) struct Confirmation {
     pub identity: String,
     pub cli_identity: ExecutableIdentity,
     pub discovery_generation: u64,
+    pub credit: Option<ChosenCredit>,
     pub deadline: Instant,
 }
 pub(crate) struct LimitResetStore {
@@ -102,12 +108,18 @@ impl LimitResetStore {
                     || h.records.iter().any(|r| {
                         !operation_key(&r.operation_id)
                             || r.used_at_epoch_ms > 8_640_000_000_000_000
+                            || !credit_title(r.credit_title.as_deref())
                     })
             })
             || data
                 .pending
                 .iter()
                 .any(|(key, id)| !operation_key(key) || !account_id(id))
+            || data.pending_credits.iter().any(|(key, credit)| {
+                !data.pending.contains_key(key)
+                    || !credit_id(&credit.id)
+                    || !credit_title(credit.title.as_deref())
+            })
         {
             return Err("Reset history was invalid or excessive.".into());
         }
@@ -174,9 +186,20 @@ impl LimitResetStore {
             pending,
         ))
     }
-    pub(super) fn begin(&self, identity: &str, key: &str) -> Result<(), String> {
+    pub(super) fn begin(
+        &self,
+        identity: &str,
+        key: &str,
+        credit: Option<ChosenCredit>,
+    ) -> Result<Option<ChosenCredit>, String> {
         if !account_id(identity) || !operation_key(key) {
             return Err("Reset operation identity was invalid.".into());
+        }
+        if credit
+            .as_ref()
+            .is_some_and(|credit| !credit_id(&credit.id) || !credit_title(credit.title.as_deref()))
+        {
+            return Err("Reset credit was invalid.".into());
         }
         let _guard = self
             .history
@@ -207,8 +230,19 @@ impl LimitResetStore {
         if !data.pending.contains_key(key) && data.pending.len() >= 64 {
             return Err("Too many reset operations have uncertain outcomes.".into());
         }
+        if data.pending.contains_key(key) {
+            let persisted = data.pending_credits.get(key).cloned();
+            if credit.is_some() && credit != persisted {
+                return Err("Reset operation already targets a different reset.".into());
+            }
+            return Ok(persisted);
+        }
         data.pending.insert(key.to_string(), identity.to_string());
-        self.save(&data)
+        if let Some(credit) = &credit {
+            data.pending_credits.insert(key.to_string(), credit.clone());
+        }
+        self.save(&data)?;
+        Ok(credit)
     }
     pub(super) fn finish(
         &self,
@@ -226,6 +260,10 @@ impl LimitResetStore {
             return Err("Reset operation history authority changed.".into());
         }
         data.pending.remove(key);
+        let credit_title = data
+            .pending_credits
+            .remove(key)
+            .and_then(|credit| credit.title);
         if matches!(outcome, "reset" | "alreadyRedeemed") {
             let h = data.accounts.entry(identity.to_string()).or_default();
             if !h.records.iter().any(|r| r.operation_id == key) {
@@ -236,6 +274,7 @@ impl LimitResetStore {
                 h.records.push(HistoryRecord {
                     operation_id: key.to_string(),
                     used_at_epoch_ms: timestamp,
+                    credit_title,
                 });
             }
         }
@@ -253,6 +292,9 @@ pub(super) fn account_id(value: &str) -> bool {
     value
         .strip_prefix("account:v1:sha256:")
         .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+fn credit_title(value: Option<&str>) -> bool {
+    value.is_none_or(|title| bounded_text(title, MAX_TITLE_BYTES))
 }
 fn random_token() -> Result<String, String> {
     let mut bytes = [0u8; 32];
@@ -276,6 +318,7 @@ mod tests {
             )
             .unwrap(),
             discovery_generation: 1,
+            credit: None,
             deadline: Instant::now(),
         }
     }
@@ -318,17 +361,17 @@ mod tests {
         let store = store();
         let first = account('a');
         let second = account('b');
-        store.begin(&first, "key-1").unwrap();
+        store.begin(&first, "key-1", None).unwrap();
         let restarted = LimitResetStore::new(store.path.parent().unwrap().to_path_buf());
         assert_eq!(
             restarted.history(Some(&first)).unwrap().2.as_deref(),
             Some("key-1")
         );
-        assert!(restarted.begin(&first, "key-2").is_err());
-        assert!(restarted.begin(&second, "key-1").is_err());
-        restarted.begin(&first, "key-1").unwrap();
+        assert!(restarted.begin(&first, "key-2", None).is_err());
+        assert!(restarted.begin(&second, "key-1", None).is_err());
+        restarted.begin(&first, "key-1", None).unwrap();
         restarted.finish(&first, "key-1", "reset", 123).unwrap();
-        restarted.begin(&first, "key-1").unwrap();
+        restarted.begin(&first, "key-1", None).unwrap();
         restarted
             .finish(&first, "key-1", "alreadyRedeemed", 456)
             .unwrap();
@@ -336,7 +379,7 @@ mod tests {
         assert_eq!(history.0.len(), 1);
         assert_eq!(history.0[0].used_at_epoch_ms, 123);
         assert!(history.2.is_none());
-        assert!(restarted.begin(&second, "key-1").is_err());
+        assert!(restarted.begin(&second, "key-1", None).is_err());
         assert!(restarted.history(Some(&second)).unwrap().0.is_empty());
         fs::remove_dir_all(store.path.parent().unwrap()).unwrap();
     }
@@ -346,10 +389,10 @@ mod tests {
         let account = account('a');
         for index in 0..65 {
             let key = format!("key-{index}");
-            store.begin(&account, &key).unwrap();
+            store.begin(&account, &key, None).unwrap();
             store.finish(&account, &key, "reset", index).unwrap();
         }
-        store.begin(&account, "no-credit").unwrap();
+        store.begin(&account, "no-credit", None).unwrap();
         store.finish(&account, "no-credit", "noCredit", 99).unwrap();
         let (records, truncated, pending) = store.history(Some(&account)).unwrap();
         assert_eq!(records.len(), 64);
@@ -364,7 +407,90 @@ mod tests {
         fs::create_dir_all(store.path.parent().unwrap()).unwrap();
         fs::write(&store.path, vec![b'x'; MAX_FILE_BYTES as usize + 1]).unwrap();
         assert!(store.history(Some(&account('a'))).is_err());
-        assert!(store.begin(&account('a'), "bad key").is_err());
+        assert!(store.begin(&account('a'), "bad key", None).is_err());
+        fs::remove_dir_all(store.path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn retries_reuse_the_persisted_credit_and_history_records_its_title() {
+        let store = store();
+        let account = account('a');
+        let credit = ChosenCredit {
+            id: "credit-1".into(),
+            title: Some("Full reset".into()),
+        };
+        assert_eq!(
+            store.begin(&account, "key-1", Some(credit.clone())),
+            Ok(Some(credit.clone()))
+        );
+        let restarted = LimitResetStore::new(store.path.parent().unwrap().to_path_buf());
+        assert_eq!(
+            restarted.begin(&account, "key-1", None),
+            Ok(Some(credit.clone()))
+        );
+        assert!(restarted
+            .begin(
+                &account,
+                "key-1",
+                Some(ChosenCredit {
+                    id: "credit-2".into(),
+                    title: None,
+                }),
+            )
+            .is_err());
+        restarted.finish(&account, "key-1", "reset", 7).unwrap();
+        assert_eq!(
+            restarted.history(Some(&account)).unwrap().0[0]
+                .credit_title
+                .as_deref(),
+            Some("Full reset")
+        );
+        assert_eq!(restarted.begin(&account, "key-2", None), Ok(None));
+        restarted.finish(&account, "key-2", "reset", 8).unwrap();
+        assert_eq!(
+            restarted.history(Some(&account)).unwrap().0[0].credit_title,
+            None
+        );
+        assert!(restarted
+            .begin(
+                &account,
+                "key-3",
+                Some(ChosenCredit {
+                    id: " bad".into(),
+                    title: None,
+                }),
+            )
+            .is_err());
+        fs::remove_dir_all(store.path.parent().unwrap()).unwrap();
+    }
+    #[test]
+    fn legacy_history_without_credit_fields_still_loads() {
+        let store = store();
+        let account = account('a');
+        fs::create_dir_all(store.path.parent().unwrap()).unwrap();
+        fs::write(
+            &store.path,
+            serde_json::json!({
+                "accounts": {account.clone(): {"records": [{"operationId": "old", "usedAtEpochMs": 5}], "truncated": false}},
+                "pending": {"legacy-key": account.clone()},
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let (records, _, pending) = store.history(Some(&account)).unwrap();
+        assert_eq!(records[0].credit_title, None);
+        assert_eq!(pending.as_deref(), Some("legacy-key"));
+        assert_eq!(store.begin(&account, "legacy-key", None), Ok(None));
+        fs::write(
+            &store.path,
+            serde_json::json!({
+                "accounts": {},
+                "pending": {},
+                "pending_credits": {"orphan": {"id": "credit", "title": null}},
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(store.history(Some(&account)).is_err());
         fs::remove_dir_all(store.path.parent().unwrap()).unwrap();
     }
 }
