@@ -7,6 +7,21 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0-beta.134] - 2026-10-18
+
+### Changed
+
+- Each server in Settings > Environments has a connection switch and shows its
+  connection status, including the reason when a connection fails. Removing a
+  server now asks for confirmation.
+
+### Fixed
+
+- Selecting a thread from a disconnected server no longer leaves the composer
+  waiting indefinitely. A banner offers to reconnect or start a new thread while
+  keeping the draft. If the server was removed or the thread is missing, Codevo
+  opens a new thread in the current project.
+
 ## [0.2.0-beta.133] - 2026-10-17
 
 ### Changed
