@@ -29,7 +29,7 @@ function setup(overrides = {}) {
     ...overrides,
   };
   useRemoteRunnerContext.mockReturnValue(surface);
-  const host = document.createElement("div");
+  const host = document.body.appendChild(document.createElement("div"));
   const root = createRoot(host);
   act(() => root.render(<EnvironmentsSettingsPage />));
   const click = async (text: string) => {
@@ -39,7 +39,29 @@ function setup(overrides = {}) {
     expect(button).toBeDefined();
     await act(async () => button?.click());
   };
-  return { host, root, surface, click, close: () => act(() => root.unmount()) };
+  const byLabel = (label: string) => {
+    const element = host.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+    expect(element).not.toBeNull();
+    return element as HTMLButtonElement;
+  };
+  const press = async (label: string) => {
+    await act(async () => byLabel(label).click());
+  };
+  const status = () =>
+    host.querySelector(".settings-environments__status")?.getAttribute("data-status");
+  return {
+    host,
+    root,
+    surface,
+    click,
+    byLabel,
+    press,
+    status,
+    close: () => {
+      act(() => root.unmount());
+      host.remove();
+    },
+  };
 }
 
 beforeEach(() => {
@@ -135,14 +157,18 @@ describe("EnvironmentsSettingsPage", () => {
     }
   });
 
-  it("disconnects and removes the exact saved server", async () => {
+  it("disconnects the exact saved server with the switch", async () => {
     const view = setup({ servers: [server] });
     try {
+      expect(view.status()).toBe("connected");
       expect(view.host.textContent).toContain("Connected");
-      await view.click("Disconnect");
+      expect(view.host.textContent).toContain("codex@192.168.1.110:22");
+      const toggle = view.byLabel("Linux connection");
+      expect(toggle.getAttribute("role")).toBe("switch");
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      await view.press("Linux connection");
       expect(view.surface.disconnect).toHaveBeenCalledWith(server.id);
-      await view.click("Remove");
-      expect(view.surface.remove).toHaveBeenCalledWith(server.id);
+      expect(view.surface.remove).not.toHaveBeenCalled();
     } finally {
       view.close();
     }
@@ -151,7 +177,9 @@ describe("EnvironmentsSettingsPage", () => {
   it("reconnects with a closed input contract without display status", async () => {
     const view = setup({ servers: [{ ...server, connected: false }] });
     try {
-      await view.click("Connect");
+      expect(view.status()).toBe("disconnected");
+      expect(view.byLabel("Linux connection").getAttribute("aria-checked")).toBe("false");
+      await view.press("Linux connection");
       expect(view.surface.connect).toHaveBeenCalledWith({
         id: server.id,
         name: server.name,
@@ -159,6 +187,158 @@ describe("EnvironmentsSettingsPage", () => {
         username: server.username,
         port: server.port,
       });
+    } finally {
+      view.close();
+    }
+  });
+
+  it("shows connecting and locks the switch and trash while this server connects", async () => {
+    let settle: (value: typeof server | null) => void = () => undefined;
+    const pending = new Promise<typeof server | null>((resolve) => {
+      settle = resolve;
+    });
+    const view = setup({
+      servers: [{ ...server, connected: false }],
+      connect: vi.fn().mockReturnValue(pending),
+    });
+    try {
+      await view.press("Linux connection");
+      expect(view.status()).toBe("connecting");
+      expect(view.host.textContent).toContain("Connecting…");
+      expect(view.byLabel("Linux connection").disabled).toBe(true);
+      expect(view.byLabel("Remove Linux").disabled).toBe(true);
+      await act(async () => settle(server));
+      expect(view.status()).toBe("disconnected");
+      expect(view.byLabel("Linux connection").disabled).toBe(false);
+      expect(view.byLabel("Remove Linux").disabled).toBe(false);
+    } finally {
+      view.close();
+    }
+  });
+
+  it("shows the failure reason and returns the switch to off when connecting fails", async () => {
+    const view = setup({
+      servers: [{ ...server, connected: false }],
+      connect: vi.fn().mockResolvedValue(null),
+      error: "server unreachable",
+    });
+    try {
+      await view.press("Linux connection");
+      expect(view.status()).toBe("error");
+      expect(view.host.querySelector(".settings-environments__status")?.textContent).toBe(
+        "Could not connect - server unreachable",
+      );
+      const toggle = view.byLabel("Linux connection");
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(toggle.disabled).toBe(false);
+    } finally {
+      view.close();
+    }
+  });
+
+  it("asks for confirmation before removing and cancels without removing", async () => {
+    const view = setup({ servers: [server] });
+    try {
+      expect(view.byLabel("Remove Linux").textContent).toBe("");
+      await view.press("Remove Linux");
+      expect(view.surface.remove).not.toHaveBeenCalled();
+      expect(view.host.textContent).toContain(
+        "Remove Linux? Threads stay on the server; you can add it again later.",
+      );
+      expect(document.activeElement?.textContent).toBe("Cancel");
+      await view.press("Remove Linux");
+      expect(view.host.querySelectorAll(".settings-environments__confirm")).toHaveLength(1);
+      await view.click("Cancel");
+      expect(view.host.querySelector(".settings-environments__confirm")).toBeNull();
+      expect(document.activeElement).toBe(view.byLabel("Remove Linux"));
+      expect(view.surface.remove).not.toHaveBeenCalled();
+    } finally {
+      view.close();
+    }
+  });
+
+  it("closes the removal confirmation on Escape without removing", async () => {
+    const view = setup({ servers: [server] });
+    try {
+      await view.press("Remove Linux");
+      const confirm = view.host.querySelector(".settings-environments__confirm");
+      expect(confirm).not.toBeNull();
+      const escape = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      await act(async () => document.activeElement?.dispatchEvent(escape));
+      expect(escape.defaultPrevented).toBe(true);
+      expect(view.host.querySelector(".settings-environments__confirm")).toBeNull();
+      expect(document.activeElement).toBe(view.byLabel("Remove Linux"));
+      expect(view.surface.remove).not.toHaveBeenCalled();
+    } finally {
+      view.close();
+    }
+  });
+
+  it("closes the confirmation and keeps focus in the row when connecting starts", async () => {
+    const view = setup({
+      servers: [{ ...server, connected: false }],
+      connect: vi.fn().mockReturnValue(new Promise(() => undefined)),
+    });
+    try {
+      await view.press("Remove Linux");
+      expect(document.activeElement?.textContent).toBe("Cancel");
+      await view.press("Linux connection");
+      expect(view.status()).toBe("connecting");
+      expect(view.host.querySelector(".settings-environments__confirm")).toBeNull();
+      expect(view.byLabel("Remove Linux").disabled).toBe(true);
+      expect(document.activeElement).not.toBe(document.body);
+      expect(document.activeElement).toBe(view.byLabel("Linux"));
+    } finally {
+      view.close();
+    }
+  });
+
+  it("closes the confirmation when another operation locks the row", async () => {
+    const view = setup({ servers: [server] });
+    try {
+      await view.press("Remove Linux");
+      useRemoteRunnerContext.mockReturnValue({ ...view.surface, status: "busy" });
+      act(() => view.root.render(<EnvironmentsSettingsPage />));
+      expect(view.host.querySelector(".settings-environments__confirm")).toBeNull();
+      expect(document.activeElement).toBe(view.byLabel("Linux"));
+      useRemoteRunnerContext.mockReturnValue(view.surface);
+      act(() => view.root.render(<EnvironmentsSettingsPage />));
+      expect(view.host.querySelector(".settings-environments__confirm")).toBeNull();
+      expect(view.surface.remove).not.toHaveBeenCalled();
+    } finally {
+      view.close();
+    }
+  });
+
+  it("shows a pending automatic startup connection and locks its controls", () => {
+    const view = setup({
+      servers: [{ ...server, connected: false }],
+      connectingServerIds: [server.id],
+    });
+    try {
+      expect(view.status()).toBe("connecting");
+      expect(view.host.textContent).toContain("Connecting…");
+      const toggle = view.byLabel("Linux connection");
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(toggle.disabled).toBe(true);
+      expect(view.byLabel("Remove Linux").disabled).toBe(true);
+    } finally {
+      view.close();
+    }
+  });
+
+  it("removes the exact saved server once after confirmation", async () => {
+    const view = setup({ servers: [server] });
+    try {
+      await view.press("Remove Linux");
+      await view.click("Remove");
+      expect(view.surface.remove).toHaveBeenCalledTimes(1);
+      expect(view.surface.remove).toHaveBeenCalledWith(server.id);
+      expect(view.host.querySelector(".settings-environments__confirm")).toBeNull();
     } finally {
       view.close();
     }

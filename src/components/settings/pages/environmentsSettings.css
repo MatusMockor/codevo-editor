@@ -79,17 +79,183 @@
   gap: 8px;
 }
 
-.settings-environments__server-actions .settings-btn {
-  height: 32px;
-  padding: 0 12px;
+.settings-environments__server {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--settings-well);
+  border-radius: var(--settings-r-md);
 }
 
-.settings-environments__server-actions .settings-btn--outline {
-  background: var(--settings-surface);
+.settings-environments__server:focus:not(:focus-visible) {
+  outline: none;
 }
 
-.settings-environments__server-actions .settings-btn--outline:hover:not(:disabled) {
-  background: var(--settings-row-selected);
+.settings-environments__server:focus-visible {
+  outline: none;
+  box-shadow: var(--settings-focus-ring);
+}
+
+.settings-environments__server-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: var(--settings-r-sm);
+  background: var(--cv-tint-2);
+  color: var(--settings-muted-fg);
+}
+
+.settings-environments__server-main {
+  min-width: 0;
+}
+
+.settings-environments__server-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--settings-fg);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-environments__server-title {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-environments__server-meta {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--settings-muted-fg);
+  font-family: var(--settings-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-environments__status {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--settings-muted-fg);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.settings-environments__status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-environments__status-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--settings-subtle-fg);
+}
+
+.settings-environments__status[data-status="connected"] .settings-environments__status-dot {
+  background: var(--settings-success);
+}
+
+.settings-environments__status[data-status="connecting"] .settings-environments__status-dot {
+  background: var(--settings-warning);
+  animation: settings-environments-pulse 1s ease-in-out infinite;
+}
+
+.settings-environments__status[data-status="error"] {
+  color: var(--settings-danger);
+}
+
+.settings-environments__status[data-status="error"] .settings-environments__status-dot {
+  background: var(--settings-danger);
+}
+
+@keyframes settings-environments-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.settings-environments__server-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-environments__trash {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--settings-r-sm);
+  background: transparent;
+  color: var(--settings-danger);
+  cursor: pointer;
+}
+
+.settings-environments__trash:hover:not(:disabled),
+.settings-environments__trash[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--settings-danger) 12%, transparent);
+}
+
+.settings-environments__trash:focus-visible {
+  outline: none;
+  box-shadow: var(--settings-focus-ring);
+}
+
+.settings-environments__trash:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.settings-environments__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--settings-r-sm);
+  background: color-mix(in srgb, var(--settings-danger) 8%, transparent);
+}
+
+.settings-environments__confirm-text {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin: 0;
+  color: var(--settings-muted-fg);
+  font-size: 12px;
+}
+
+.settings-environments__confirm-text strong {
+  color: var(--settings-fg);
+  font-weight: 500;
+}
+
+.settings-environments__server-details {
+  grid-column: 2 / -1;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-environments__status[data-status="connecting"] .settings-environments__status-dot {
+    animation: none;
+  }
 }
 
 .settings-environments__error {

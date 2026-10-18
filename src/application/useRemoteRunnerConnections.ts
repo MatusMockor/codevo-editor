@@ -11,6 +11,7 @@ export interface RemoteRunnerConnectionsSurface {
   readonly servers: readonly RemoteRunnerServer[];
   readonly status: "loading" | "ready" | "busy" | "error";
   readonly error: string | null;
+  readonly connectingServerIds: readonly string[];
   refresh(): Promise<void>;
   connect(input: RemoteRunnerServerInput): Promise<RemoteRunnerServer | null>;
   disconnect(serverId: string): Promise<void>;
@@ -25,6 +26,7 @@ export function useRemoteRunnerConnections({
   const [servers, setServers] = useState<readonly RemoteRunnerServer[]>([]);
   const [status, setStatus] = useState<RemoteRunnerConnectionsSurface["status"]>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [connectingServerIds, setConnectingServerIds] = useState<readonly string[]>([]);
   const owner = useRef({ gateway, generation: 0 });
   if (owner.current.gateway !== gateway)
     owner.current = { gateway, generation: owner.current.generation + 1 };
@@ -34,6 +36,19 @@ export function useRemoteRunnerConnections({
   const nextOperation = useCallback(() => ++operation.current, []);
   const busy = useRef(false);
   const startup = useRef<RemoteRunnerStartupConnections | null>(null);
+  const trackedConnect = useCallback(
+    async (input: RemoteRunnerServerInput) => {
+      const owned = () => mounted.current && owner.current === renderOwner;
+      if (owned())
+        setConnectingServerIds((ids) => (ids.includes(input.id) ? ids : [...ids, input.id]));
+      try {
+        return await gateway.connectServer(input);
+      } finally {
+        if (owned()) setConnectingServerIds((ids) => ids.filter((id) => id !== input.id));
+      }
+    },
+    [gateway, renderOwner],
+  );
   const refresh = useCallback(async () => {
     if (
       busy.current ||
@@ -64,8 +79,9 @@ export function useRemoteRunnerConnections({
     mounted.current = true;
     busy.current = false;
     setServers([]);
+    setConnectingServerIds([]);
     const pass = new RemoteRunnerStartupConnections(
-      gateway,
+      { connectServer: trackedConnect },
       () => mounted.current && owner.current === renderOwner,
       (server) =>
         setServers((previous) => previous.map((item) => (item.id === server.id ? server : item))),
@@ -78,7 +94,7 @@ export function useRemoteRunnerConnections({
       mounted.current = false;
       nextOperation();
     };
-  }, [refresh, nextOperation, gateway, renderOwner]);
+  }, [refresh, nextOperation, gateway, renderOwner, trackedConnect]);
 
   const mutate = useCallback(
     async (action: () => Promise<readonly RemoteRunnerServer[] | RemoteRunnerServer | null>) => {
@@ -115,10 +131,10 @@ export function useRemoteRunnerConnections({
   );
   const connect = useCallback(
     async (input: RemoteRunnerServerInput) => {
-      const result = await mutate(() => gateway.connectServer(input));
+      const result = await mutate(() => trackedConnect(input));
       return result !== null && !Array.isArray(result) ? (result as RemoteRunnerServer) : null;
     },
-    [gateway, mutate],
+    [trackedConnect, mutate],
   );
   const disconnect = useCallback(
     async (serverId: string) => {
@@ -142,7 +158,7 @@ export function useRemoteRunnerConnections({
     },
     [gateway, mutate, renderOwner],
   );
-  return { servers, status, error, refresh, connect, disconnect, remove };
+  return { servers, status, error, connectingServerIds, refresh, connect, disconnect, remove };
 }
 
 function message(error: unknown): string {

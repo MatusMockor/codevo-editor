@@ -7,7 +7,11 @@ import type { RepositoryLookupGateway } from "../../application/repositoryLookup
 import type { SpeechDictationPorts } from "../../application/speechDictationPorts";
 import type { RemoteServerListState } from "../../domain/remoteThreadSelection";
 
-export type RemoteRunnerContextValue = RemoteRunnerConnectionsSurface & {
+export type RemoteRunnerContextValue = Omit<
+  RemoteRunnerConnectionsSurface,
+  "connectingServerIds"
+> & {
+  readonly connectingServerIds?: RemoteRunnerConnectionsSurface["connectingServerIds"];
   readonly gateway: RemoteRunnerGateway;
   readonly surfacesGateway?: RemoteRunnerSurfacesGateway | null;
   readonly repositoryLookup?: RepositoryLookupGateway | null;

@@ -3,12 +3,15 @@ import { RemoteProjectLinksSettings } from "../../remoteRunner/RemoteProjectLink
 import { RemoteInstructionSettings } from "../../remoteRunner/RemoteInstructionSettings";
 import { RemoteRunnerExecutionPolicy } from "../../remoteRunner/RemoteRunnerExecutionPolicy";
 import { useState, type FormEvent } from "react";
-import { Check, Monitor, Plus, Server, Trash2 } from "lucide-react";
+import { Check, Monitor, Plus, Server } from "lucide-react";
 import { useRemoteRunnerContext } from "../../remoteRunner/remoteRunnerContext";
 import { ProjectGroupingSettings } from "../ProjectGroupingSettings";
 import { SettingsButton } from "../primitives/SettingsButton";
 import { SettingsRow } from "../primitives/SettingsRow";
 import { SettingsSectionHeading } from "../primitives/SettingsSectionHeading";
+import { EnvironmentServerRow } from "./EnvironmentServerRow";
+import { environmentServerStatus } from "./environmentServerStatus";
+import { useEnvironmentServerActions } from "./useEnvironmentServerActions";
 import "./environmentsSettings.css";
 
 export function EnvironmentsSettingsPage({
@@ -24,10 +27,12 @@ export function EnvironmentsSettingsPage({
   const [port, setPort] = useState("22");
   const [serverId, setServerId] = useState("");
   const busy = remote?.status === "busy" || remote?.status === "loading";
+  const actions = useEnvironmentServerActions(remote);
 
   const connect = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!remote || busy) return;
+    actions.resetAttempt();
     const connected = await remote.connect({
       id: serverId,
       name: name.trim(),
@@ -162,15 +167,23 @@ export function EnvironmentsSettingsPage({
             </form>
           )}
           {remote?.servers.map((server) => (
-            <div className="settings-environments__empty" key={server.id}>
-              <Server aria-hidden="true" className="settings-environments__icon" size={20} />
-              <div className="settings-environments__copy">
-                <p className="settings-environments__title">{server.name}</p>
-                <p className="settings-environments__description">
-                  {server.username}@{server.host}:{server.port} ·{" "}
-                  {server.connected ? "Connected" : "Disconnected"}
-                </p>
-                {remote.gateway && (
+            <EnvironmentServerRow
+              disabled={busy}
+              key={server.id}
+              onConnect={() => actions.connect(server)}
+              onDisconnect={() => actions.disconnect(server.id)}
+              onRemove={() => actions.remove(server.id)}
+              server={server}
+              status={environmentServerStatus(
+                server.connected,
+                remote.connectingServerIds?.includes(server.id)
+                  ? "connecting"
+                  : actions.phaseOf(server.id),
+                remote.error,
+              )}
+            >
+              {remote.gateway && (
+                <>
                   <RemoteProjectLinksSettings
                     key={`projects:${server.id}:${server.connected}`}
                     gateway={remote.gateway}
@@ -178,8 +191,6 @@ export function EnvironmentsSettingsPage({
                     connected={server.connected}
                     projects={projects}
                   />
-                )}
-                {remote.gateway && (
                   <RemoteInstructionSettings
                     key={`${server.id}:${server.connected}`}
                     gateway={remote.gateway}
@@ -187,47 +198,14 @@ export function EnvironmentsSettingsPage({
                     connected={server.connected}
                     projects={projects}
                   />
-                )}
-                {remote.gateway && (
                   <RemoteRunnerExecutionPolicy
                     gateway={remote.gateway}
                     serverId={server.id}
                     connected={server.connected}
                   />
-                )}
-              </div>
-              <div className="settings-environments__actions settings-environments__server-actions">
-                <SettingsButton
-                  disabled={busy}
-                  label={`${server.connected ? "Disconnect" : "Connect"} ${server.name}`}
-                  onClick={() => {
-                    void (server.connected
-                      ? remote.disconnect(server.id)
-                      : remote.connect({
-                          id: server.id,
-                          name: server.name,
-                          host: server.host,
-                          username: server.username,
-                          port: server.port,
-                        }));
-                  }}
-                  variant={server.connected ? "outline" : "primary"}
-                >
-                  {server.connected ? "Disconnect" : "Connect"}
-                </SettingsButton>
-                <SettingsButton
-                  disabled={busy}
-                  label={`Remove ${server.name}`}
-                  variant="danger"
-                  onClick={() => {
-                    void remote.remove(server.id);
-                  }}
-                >
-                  <Trash2 aria-hidden="true" />
-                  Remove
-                </SettingsButton>
-              </div>
-            </div>
+                </>
+              )}
+            </EnvironmentServerRow>
           ))}
           <ProjectGroupingSettings projects={projects} remote={remote} />
         </div>

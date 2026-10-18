@@ -222,4 +222,38 @@ describe("RemoteRunnerProvider", () => {
       act(() => root.unmount());
     }
   });
+
+  it("shares the server of a pending startup connection with consumers", async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+    const host = document.createElement("div");
+    const root = createRoot(host);
+    let settle: (value: unknown) => void = () => undefined;
+    const invoke = vi.fn(async (command: string) => {
+      if (command === "remote_runner_list_servers") return [{ ...LINUX, connected: false }];
+      if (command !== "remote_runner_connect_server") return null;
+      return new Promise((resolve) => {
+        settle = resolve;
+      });
+    });
+    const gateway = new TauriRemoteRunnerGateway(invoke);
+    const seen: (readonly string[] | undefined)[] = [];
+    function Probe() {
+      seen.push(useRemoteRunnerContext()?.connectingServerIds);
+      return null;
+    }
+    try {
+      await act(async () =>
+        root.render(
+          <RemoteRunnerProvider gateway={gateway}>
+            <Probe />
+          </RemoteRunnerProvider>,
+        ),
+      );
+      expect(seen[seen.length - 1]).toEqual(["linux"]);
+      await act(async () => settle(LINUX));
+      expect(seen[seen.length - 1]).toEqual([]);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
 });

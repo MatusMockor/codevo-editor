@@ -106,6 +106,24 @@ describe("useRemoteRunnerConnections", () => {
     expect(h.current().servers).toEqual([canonical]);
   });
 
+  it("exposes the server of a pending manual connection until it settles", async () => {
+    const api = gateway();
+    const h = await render(api);
+    expect(h.current().connectingServerIds).toEqual([]);
+    const pending = deferred<RemoteRunnerServer>();
+    api.connectServer.mockReturnValue(pending.promise);
+    let result: Promise<RemoteRunnerServer | null> = Promise.resolve(null);
+    await act(async () => {
+      result = h.current().connect(saved);
+    });
+    expect(h.current().connectingServerIds).toEqual([saved.id]);
+    await act(async () => {
+      pending.resolve(connected);
+      await result;
+    });
+    expect(h.current().connectingServerIds).toEqual([]);
+  });
+
   it("refreshes persisted state after disconnect and removal", async () => {
     const api = gateway();
     api.listServers
@@ -390,6 +408,33 @@ describe("startup server connections", () => {
     expect(h.current().servers).toEqual([connected]);
     await act(async () => h.current().refresh());
     expect(api.connectServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes the server of a pending startup connection until it settles", async () => {
+    const api = gateway();
+    api.listServers.mockResolvedValue([saved]);
+    const pending = deferred<RemoteRunnerServer>();
+    api.connectServer.mockReturnValue(pending.promise);
+    const h = await render(api);
+    expect(h.current().status).toBe("ready");
+    expect(h.current().connectingServerIds).toEqual([saved.id]);
+    await act(async () => pending.reject(new Error("unreachable")));
+    expect(h.current().connectingServerIds).toEqual([]);
+  });
+
+  it("does not carry a pending startup connection across a gateway replacement", async () => {
+    const first = gateway();
+    first.listServers.mockResolvedValue([saved]);
+    const pending = deferred<RemoteRunnerServer>();
+    first.connectServer.mockReturnValue(pending.promise);
+    const h = await render(first);
+    expect(h.current().connectingServerIds).toEqual([saved.id]);
+    const second = gateway();
+    second.listServers.mockResolvedValue([connected]);
+    await h.replace(second);
+    expect(h.current().connectingServerIds).toEqual([]);
+    await act(async () => pending.resolve(connected));
+    expect(h.current().connectingServerIds).toEqual([]);
   });
 
   it("continues sequentially after failure and leaves a named error visible", async () => {
