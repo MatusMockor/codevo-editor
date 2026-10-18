@@ -2,12 +2,17 @@ import { useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import type { AgentThreadView } from "../../../application/agentThreadPorts";
 import type { AgentProjectDescriptor } from "../../../domain/agentProject";
 import type { AgentCliKind } from "../../../domain/agentTask";
+import {
+  remoteThreadSelectionBlocksComposer,
+  type RemoteThreadSelection,
+} from "../../../domain/remoteThreadSelection";
 import type { RemoteRunnerContextValue } from "../../remoteRunner/remoteRunnerContext";
 import { agentComposerThreadLocation } from "../agentComposerThreadLocation";
 import { newThreadEnvironmentProjectRootKey } from "../agentEnvironmentProjects";
 import type { AgentWorkbenchChrome } from "../agentWorkbenchChrome";
 import { useAgentComposerControllerState } from "../useAgentComposerState";
 import { useAgentOwnedStartingThreads } from "../useAgentOwnedStartingThreads";
+import { agentProjectGroupIsLinked } from "../useAgentProjectThreadCommands";
 import { useAgentQueuedFollowUpEdit } from "../useAgentQueuedFollowUpEdit";
 import {
   queuedEditImageOwner,
@@ -23,6 +28,10 @@ import {
   type AgentModeNoticeReporter,
 } from "./agentModeViewProps";
 import type { AgentModeProjects } from "./useAgentModeProjects";
+import {
+  remoteThreadComposerBlockedReason,
+  useAgentModeRemoteThreadRecovery,
+} from "./useAgentModeRemoteThreadRecovery";
 import type { AgentModeScope } from "./useAgentModeScope";
 
 const COMPOSER_PROPS_DEPTH = 4;
@@ -39,7 +48,7 @@ export interface AgentModeComposerOptions {
   readonly sessionThread: AgentThreadView | null;
   readonly selectedServerId: string | null;
   readonly effectiveProviderEnabled: Readonly<Record<AgentCliKind, boolean>>;
-  readonly resolvingRemoteThread: boolean;
+  readonly remoteThreadSelection: RemoteThreadSelection;
   readonly remoteContext: RemoteRunnerContextValue | null;
   readonly setLocalNotice: AgentModeNoticeReporter;
   readonly setProjectSelectionIntent: Dispatch<SetStateAction<number>>;
@@ -58,7 +67,7 @@ export function useAgentModeComposer({
   sessionThread,
   selectedServerId,
   effectiveProviderEnabled,
-  resolvingRemoteThread,
+  remoteThreadSelection,
   remoteContext,
   setLocalNotice,
   setProjectSelectionIntent,
@@ -116,6 +125,21 @@ export function useAgentModeComposer({
     resetDraftLaunch(draft.rootKey ?? navigation.newThreadTarget()?.projectRootKey ?? null);
     composer.clearSelection();
   });
+  const startRemoteFallbackThread = useAgentLatestCallback(() => {
+    const projectRootKey = navigation.newThreadTarget()?.projectRootKey ?? draft.rootKey ?? null;
+    if (projectRootKey !== null && !agentProjectGroupIsLinked(groups, projectRootKey))
+      onSelectProjectEnvironment(projectRootKey);
+    resetDraftLaunch(projectRootKey);
+    composer.clearSelection();
+  });
+  const remoteThreadBanner = useAgentModeRemoteThreadRecovery({
+    selection: remoteThreadSelection,
+    selectedThreadId,
+    remoteContext,
+    startNewThread: startRemoteFallbackThread,
+  });
+  const resolvingRemoteThread = remoteThreadSelectionBlocksComposer(remoteThreadSelection);
+  const remoteThreadBlockedReason = remoteThreadComposerBlockedReason(remoteThreadSelection);
   const selectComposerRepository = useAgentLatestCallback((repositoryRoot: string) => {
     chrome.addProject?.cancelSelection?.();
     setProjectSelectionIntent((current) => current + 1);
@@ -153,7 +177,7 @@ export function useAgentModeComposer({
         ? {
             mode: {
               kind: "followUp" as const,
-              blockedReason: "Waiting for the server conversation to load.",
+              blockedReason: remoteThreadBlockedReason,
             },
             draftKey: selectedThreadId,
             promptOwnerKey: selectedThreadId!,
@@ -176,6 +200,7 @@ export function useAgentModeComposer({
       composerThreadLocation,
       remoteExecution,
       remoteTaskSteering,
+      remoteThreadBlockedReason,
       resolvingRemoteThread,
       selectComposerRepository,
       selectedThreadId,
@@ -191,6 +216,7 @@ export function useAgentModeComposer({
     resetDraftLaunch,
     resetProjectDraftLaunch,
     composerProps,
+    remoteThreadBanner,
   };
 }
 

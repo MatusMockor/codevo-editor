@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AgentLiveThreadContext } from "../../application/agentThreads/useLiveAgentThread";
 import { useUnifiedAgentThreads } from "../../application/useUnifiedAgentThreads";
 import {
@@ -95,6 +95,14 @@ export function AgentModeView(props: AgentModeViewProps) {
     externalUrlOpener: ports.remoteCompareUrlOpener,
     deviceMcpSource: deviceMcpSources.resolve,
   });
+  const remoteInventory = useMemo(
+    () => ({
+      selectedThreadId: selection.selectedThreadId,
+      loading: unified.remoteLoading,
+      authoritativeProjectKeys: unified.authoritativeRemoteProjectKeys,
+    }),
+    [selection.selectedThreadId, unified.remoteLoading, unified.authoritativeRemoteProjectKeys],
+  );
   const view = (
     <LocalAgentModeView
       {...props}
@@ -109,6 +117,7 @@ export function AgentModeView(props: AgentModeViewProps) {
       refreshRemoteProjects={unified.refreshRemote}
       selectedServerId={remote?.selectedServerId ?? null}
       authoritativeRemoteProjectKeys={unified.authoritativeRemoteProjectKeys}
+      remoteInventory={remoteInventory}
       cloneAttachments={unified.cloneAttachments}
       deviceMcpSources={deviceMcpSources}
     />
@@ -164,6 +173,7 @@ function LocalAgentModeView({
   refreshRemoteProjects,
   selectedServerId,
   authoritativeRemoteProjectKeys,
+  remoteInventory,
   cloneAttachments,
   deviceMcpSources,
 }: LocalAgentModeViewProps) {
@@ -206,6 +216,7 @@ function LocalAgentModeView({
     selectedServerId,
     providerEnabled,
     projects,
+    remoteInventory,
     onSelectedThreadChange,
   });
   const { selectedThread, effectiveProviderEnabled } = selected;
@@ -234,7 +245,7 @@ function LocalAgentModeView({
     sessionThread,
     selectedServerId,
     effectiveProviderEnabled,
-    resolvingRemoteThread: selected.resolvingRemoteThread,
+    remoteThreadSelection: selected.remoteThreadSelection,
     remoteContext,
     setLocalNotice,
     setProjectSelectionIntent,

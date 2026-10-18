@@ -5,6 +5,7 @@ import type { AgentFollowUpBehavior } from "../../../domain/agentFollowUpBehavio
 import { useAgentLatestCallback } from "../useAgentThreadPresentationViews";
 import type { AgentModeThreadFooterProps } from "./AgentModeThreadFooter";
 import type { AgentModeRegionInputs } from "./agentModeRegionProps";
+import { withAgentRemoteThreadBanner } from "./agentModeRemoteThreadBanners";
 
 type RestartFollowUpAction = Parameters<
   NonNullable<AgentModeThreadFooterProps["onRestartFollowUp"]>
@@ -43,11 +44,15 @@ export function useAgentModeFooterProps({
     onOpenEnvironmentSettings,
   } = regions;
   const { creation, cloneComposerVisible } = creationState;
-  const { composer, composerProps, submitComposer } = composerState;
+  const { composer, composerProps, submitComposer, remoteThreadBanner } = composerState;
   const { threadUndo, menu } = threadMenu;
   const { composerExtras } = headerChrome;
   const { selectedThread, pendingRemoteIdentity, resolvingRemoteThread, compactionOffer } =
     selected;
+  const banners = useMemo(
+    () => withAgentRemoteThreadBanner(composerExtras.banners, remoteThreadBanner),
+    [composerExtras.banners, remoteThreadBanner],
+  );
   const sessionThreadId = sessionThread?.thread.threadId ?? null;
   const interactions = useMemo(
     () => ({ gateway: questionGateway, thread: sessionThread }),
@@ -96,7 +101,7 @@ export function useAgentModeFooterProps({
     submissionBlocked: resolvingRemoteThread || composer.submissionBlocked,
     submit: submitComposer,
     interactions,
-    banners: composerExtras.banners,
+    banners,
     endSessionConfirmation: menu.endSessionConfirmation,
     onShowUsageLimits: composerExtras.onShowUsageLimits,
     onOpenMcpServers: onOpenMcpSettings,

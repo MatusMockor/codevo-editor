@@ -42,7 +42,7 @@ export function useAgentProjectThreadCommands({
   picker,
 }: AgentProjectThreadCommandsOptions): AgentProjectThreadCommands {
   const selectEnvironmentFor = (projectRootKey: string): void => {
-    if (linkedGroup(groups, projectRootKey)) return;
+    if (agentProjectGroupIsLinked(groups, projectRootKey)) return;
     onSelectProjectEnvironment(projectRootKey);
   };
 
@@ -123,7 +123,10 @@ function sameProject(
   return (entry?.projectRootKey ?? projectRootKey) === current.projectRootKey;
 }
 
-function linkedGroup(groups: ReadonlyArray<AgentProjectGroup>, projectRootKey: string): boolean {
+export function agentProjectGroupIsLinked(
+  groups: ReadonlyArray<AgentProjectGroup>,
+  projectRootKey: string,
+): boolean {
   return groups.some(
     (group) => group.projectRootKey === projectRootKey && group.memberProjectRootKeys !== undefined,
   );

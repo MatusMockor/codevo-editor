@@ -60,7 +60,8 @@ describe("restoring a server conversation before inventory arrives", () => {
       );
       expect(host.querySelector(".agent-composer__lock")?.textContent).toContain("Runs on:Server");
       expect(host.querySelector('[aria-label^="Workspace: This computer,"]')).toBeNull();
-      expect(host.textContent).toContain("Waiting for the server conversation to load.");
+      expect(host.textContent).toContain("This thread lives on a server that is not available.");
+      expect(host.textContent).not.toContain("Waiting for the server conversation to load.");
       const textarea = host.querySelector<HTMLTextAreaElement>(".agent-composer textarea")!;
       act(() => {
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(

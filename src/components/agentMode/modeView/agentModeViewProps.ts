@@ -29,6 +29,7 @@ import type { WorkspaceTrustOrigin } from "../../../domain/trust";
 import type { AgentWorkbenchChrome } from "../agentWorkbenchChrome";
 import type { AgentNavigationSession } from "../useAgentThreadNavigation";
 import type { AgentRemotePortPreviewWiring } from "../useAgentServerPorts";
+import type { AgentModeRemoteInventory } from "./useAgentModeRemoteThreadSelection";
 
 export type AgentModeAgents = AgentThreadsSurface & {
   readonly accountUsage?: Readonly<Record<"claudeCode" | "codex", AgentAccountUsageLoadState>>;
@@ -86,6 +87,7 @@ export type LocalAgentModeViewProps = AgentModeViewProps & {
   refreshRemoteProjects(): Promise<void>;
   selectedServerId: string | null;
   authoritativeRemoteProjectKeys: ReadonlySet<string>;
+  remoteInventory: AgentModeRemoteInventory;
   cloneAttachments: AgentModeCloneAttachments;
   deviceMcpSources?: RemoteDeviceMcpSources;
 };

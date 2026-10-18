@@ -5,6 +5,7 @@ import { useAgentResumeCompactionOffer } from "../../../application/useAgentResu
 import type { AgentProjectDescriptor } from "../../../domain/agentProject";
 import type { AgentCliKind } from "../../../domain/agentTask";
 import { parseRemoteAgentThreadIdentity } from "../../../domain/remoteAgentIdentity";
+import { remoteThreadSelectionBlocksComposer } from "../../../domain/remoteThreadSelection";
 import { agentThreadCheckoutRoot } from "../agentSurfacePolicy";
 import type { AgentWorkbenchChrome } from "../agentWorkbenchChrome";
 import { useAgentPendingInteractionObservations } from "../useAgentPendingInteractionObservations";
@@ -14,6 +15,10 @@ import {
 } from "../useAgentRailWorkingRail";
 import { useAgentSurfacePresentationView } from "../useAgentThreadPresentationViews";
 import { REMOTE_PROVIDERS_ENABLED, type AgentModeAgents } from "./agentModeViewProps";
+import {
+  useAgentModeRemoteThreadSelection,
+  type AgentModeRemoteInventory,
+} from "./useAgentModeRemoteThreadSelection";
 
 export interface AgentModeSelectedThreadOptions {
   readonly agents: AgentModeAgents;
@@ -25,6 +30,7 @@ export interface AgentModeSelectedThreadOptions {
   readonly selectedServerId: string | null;
   readonly providerEnabled: Readonly<Record<AgentCliKind, boolean>>;
   readonly projects: ReadonlyArray<AgentProjectDescriptor>;
+  readonly remoteInventory: AgentModeRemoteInventory;
   onSelectedThreadChange(threadId: string | null): void;
 }
 
@@ -38,6 +44,7 @@ export function useAgentModeSelectedThread({
   selectedServerId,
   providerEnabled,
   projects,
+  remoteInventory,
   onSelectedThreadChange,
 }: AgentModeSelectedThreadOptions) {
   const contextThread = sessionThread?.thread ?? null;
@@ -65,8 +72,12 @@ export function useAgentModeSelectedThread({
   useAgentRailWorkingPendingInteractions(workingRail, pendingInteractions);
   const pendingRemoteIdentity =
     selectedThread === null ? parseRemoteAgentThreadIdentity(selectedThreadId) : null;
-  const resolvingRemoteThread =
-    selectedThread === null && selectedThreadId?.startsWith("remote-thread:") === true;
+  const remoteThreadSelection = useAgentModeRemoteThreadSelection(
+    selectedThreadId,
+    selectedThread !== null,
+    remoteInventory,
+  );
+  const resolvingRemoteThread = remoteThreadSelectionBlocksComposer(remoteThreadSelection);
   const effectiveProviderEnabled =
     selectedThread?.execution?.kind === "remote" ||
     (selectedThread === null && selectedServerId !== null)
@@ -83,6 +94,7 @@ export function useAgentModeSelectedThread({
     pendingObservations,
     pendingInteractions,
     pendingRemoteIdentity,
+    remoteThreadSelection,
     resolvingRemoteThread,
     effectiveProviderEnabled,
     surfaceThread,
